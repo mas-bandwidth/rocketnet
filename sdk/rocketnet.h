@@ -1571,8 +1571,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( rto_min_ms,                 10,      1, 60000,                  0 )                                         \
     INT_FIELD( rto_max_ms,                250,     10, 60000,                  0 )                                         \
     INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
-    INT_FIELD( client_send_kbps,         1000, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )   /* R6, 0 or lower uncapped */ \
-    INT_FIELD( server_send_kbps,        10000, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )   /* R6, per client slot */
+    INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )   /* R6, 0 or lower uncapped */ \
+    INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )   /* R6, per client slot */
 
 struct rocketnet_message_config_t
 {

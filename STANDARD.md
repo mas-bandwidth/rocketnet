@@ -295,7 +295,7 @@ section, and this table exists so an implementer never hunts for a number.
 | CONFIG control body | 28 bytes | _Messages_ |
 | Packet size | 1500-byte link MTU; 1472 bytes of UDP payload over the smaller IP header, 1452 over the larger | _Packet sizes_ |
 | Send budget | 1452 default, 1472 maximum | _Packet sizes_ |
-| Send bandwidth budget | 1000 client, 10000 server per client | _Send bandwidth budget_ |
+| Send bandwidth budget | 1000 kbps client, 10000 kbps server per client | _Send bandwidth budget_ |
 | Receive ceiling | 1472, fixed | _Packet sizes_ |
 | Payload capacity | 1416 sent, 1439 received | _Packet sizes_ |
 | SINGLE message | 1415 bytes | _Messages_ |
@@ -2351,7 +2351,8 @@ Every connection has a send bandwidth budget, in kbps (1 kbps = 1000 bit/s)
 of the transport's wire bytes: **1000 kbps for the client's one connection,
 10000 kbps for each server client slot**, per direction. It is configuration,
 not a wire constant: the message config fields `client_send_kbps` and
-`server_send_kbps` carry those defaults, and an application changes one
+`server_send_kbps` carry those defaults, a positive value is at most
+10000000 kbps (10 Gbit/s) and a larger one is refused, and an application changes one
 connection with `rocketnet_message_client_set_send_kbps` or
 `rocketnet_message_server_set_send_kbps`. An operator overrides either field
 with the environment variable `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` or

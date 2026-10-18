@@ -75,6 +75,11 @@ ASSUME /\ W \in Nat \ {0, 1} /\ Rate \in Nat \ {0}
 \* the largest capped rate SetKbps accepts. A definition, not a constant, so
 \* the existing witness configurations need no new line.
 MaxKbps == 2
+\* TRUE: an uncapped connection holds no bucket. A definition so the reversed
+\* witness MCRNSendBudgetBrokenUncapped.cfg can replace it with FALSE (an
+\* uncapped connection that still consults the bucket) and no other cfg
+\* needs a new line.
+UncapHonoured == TRUE
 Budget == Rate * W
 DropCap == 2
 Min(a, b) == IF a < b THEN a ELSE b
@@ -127,7 +132,10 @@ ReliableWaiting == rtx # << >> \/ rel # << >>
 \* the bytes the unreliable class may spend: none while a reliable item waits
 AvailUnrel == IF ReliableWaiting THEN 0 ELSE tokens
 
-Fits(c) == uncapped \/ ~CheckBudget \/ SizeOf(c) <= tokens
+\* the budget does not apply: uncapped, and the model honours it
+Bypass == uncapped /\ UncapHonoured
+
+Fits(c) == Bypass \/ ~CheckBudget \/ SizeOf(c) <= tokens
 
 \* a class sent while a class ahead of it in the design order was queued
 HigherQueued(c) == \E i, j \in 1..3 : Classes[i] = c /\ j < i /\ Queued(Classes[j])
@@ -189,8 +197,8 @@ Send ==
     /\ LET c == NextClass
            s == SizeOf(c)
        IN /\ Fits(c)
-          /\ tokens' = IF uncapped THEN tokens ELSE Max(0, tokens - s)
-          /\ cur' = IF uncapped THEN cur ELSE cur + s
+          /\ tokens' = IF Bypass THEN tokens ELSE Max(0, tokens - s)
+          /\ cur' = IF Bypass THEN cur ELSE cur + s
           /\ orderBad' = (orderBad \/ HigherQueued(c))
           /\ CASE c = "rtx" ->
                     /\ inflight' = inflight \cup {Head(rtx)}
@@ -214,7 +222,7 @@ Drop ==
     /\ phase = "send"
     /\ AnyQueued
     /\ NextClass = "unrel"
-    /\ ~uncapped
+    /\ ~Bypass
     /\ ~Fits("unrel")
     /\ unrel' = unrel - 1
     /\ drops' = Min(DropCap, drops + 1)

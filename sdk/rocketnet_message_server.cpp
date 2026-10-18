@@ -156,6 +156,16 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 // the message config sizes the caller's memory, and its WIRE fields must
 // match the peer's. false on a value that does not parse.
 
+bool rn_message_object_send_kbps_env_valid( int is_server )
+{
+    const char * name = is_server ? "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" : "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS";
+    const char * value = rocketnet_platform_getenv( name );
+    if ( !value || value[0] == '\0' )
+        return true;
+    int parsed = 0;
+    return rocketnet_config_parse_int_value( value, &parsed ) && parsed <= ROCKETNET_SEND_BUDGET_MAX_KBPS;
+}
+
 static bool rn_message_object_send_kbps_from_env( int is_server, int32_t * kbps )
 {
     const char * name = is_server ? "server_send_kbps" : "client_send_kbps";
@@ -860,7 +870,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
     const int max_clients = rn_message_server_max_clients( transport_config );
 
     // refuse before the transport opens a socket
-    if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
+    if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) || !rn_message_object_send_kbps_env_valid( 1 ) )
     {
         rocketnet_error( "message server create refused: message config, client count or send budget" );
         return NULL;

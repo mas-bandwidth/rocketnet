@@ -144,7 +144,7 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
     }
 
     // refuse before the transport opens a socket
-    if ( rn_message_object_required_bytes( message_config, 1, 0 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
+    if ( rn_message_object_required_bytes( message_config, 1, 0 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) || !rn_message_object_send_kbps_env_valid( 0 ) )
     {
         rocketnet_error( "message client create refused: message config or send budget" );
         return NULL;

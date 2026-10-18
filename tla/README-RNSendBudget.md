@@ -8,7 +8,7 @@ packet writer asks before it writes each item. The code is
 implements. The model was written before the code.
 
 `tla/MCRNSendBudget.tla` and `tla/MCRNSendBudget.cfg` are the small instance.
-The two `tla/MCRNSendBudgetBroken*.cfg` files are the reversed witnesses. The
+The three `tla/MCRNSendBudgetBroken*.cfg` files are the reversed witnesses. The
 cases are rows of `tla/CASES.tsv` (group `rnsendbudget`) with measured
 records in `tla/RUNS.tsv`.
 
@@ -110,8 +110,10 @@ Properties:
 `W = 2`, `Rate = 1` (so `Budget = 2`), `Depth = 2 = MaxPkt`, `RelSize = 2`
 (larger than one tick's refill, so a reliable item can be starved),
 `UnrelSize = 1`, `UPerTick = 2`, `MaxRel = 2`, `MaxLoss = 1`; the module
-defines `MaxKbps = 2` (so `SetKbps` ranges over 0, 1, 2 and the refused 3).
-A constant would have forced a new line into the reversal configurations.
+defines `MaxKbps = 2` (so `SetKbps` ranges over 0, 1, 2 and the refused 3)
+and `UncapHonoured = TRUE`. Definitions, not constants: a constant would have
+forced a new line into the other reversal configurations, and the uncapped
+witness replaces `UncapHonoured` with `<-`.
 
 ## Reversed witnesses
 
@@ -119,3 +121,4 @@ A constant would have forced a new line into the reversal configurations.
 |---|---|---|---|
 | `MCRNSendBudgetBrokenOverspend.cfg` | `CheckBudget = FALSE`: spend without the check, the bucket saturating at zero | `NeverOverspend` (exit 12) | In the first update a reliable item (2) and an unreliable item (1) arrive; the reliable item spends the bucket to 0 and the unreliable one is sent anyway; the reliable packet is lost and retransmitted in the same update (2 more): 5 bytes in one tick, above `Budget + Depth = 4`. In the code this is `spend` without `can_send`; the unit test `never_exceeds_budget_per_window` fails under that mutation. |
 | `MCRNSendBudgetBrokenUnreliableFirst.cfg` | `ReliableFirst = FALSE`: the writer offers unreliable items first | `EveryReliableEventuallySent` (exit 13) | After the first reliable item is acked, the second waits with the bucket at 0. Each update refills 1, an unreliable item arrives and is sent first, spending it; the reliable item (2) never fits. The lasso repeats forever. `ClassOrder` is the safety face of the same flaw and is left out of this cfg so the liveness failure is the one checked. |
+| `MCRNSendBudgetBrokenUncapped.cfg` | `UncapHonoured <- BrokenUncap` (FALSE): an uncapped connection still consults the bucket | `UncappedNeverDropsOrWaits` (exit 12) | In the first update a reliable item (2) and an unreliable item (1) arrive; `SetKbps(0)` uncaps the connection; the reliable item is sent and still spends the bucket to 0, and the unreliable item, which no longer fits, is dropped while `uncapped` is TRUE (5 states). In the code this is the endpoint charging or settling the bucket on an uncapped connection; the unit test `endpoint_uncapped_large_sequenced_skips_the_bucket` fails under that mutation. |

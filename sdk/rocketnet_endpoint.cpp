@@ -765,8 +765,12 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
             // The plan's maximum wire charge is conservative; packet_sent
             // settles with the sum the transport returns after it stages
             // every sealed fragment.
-            endpoint->budget.tokens -= (double) endpoint->large_admitted;
-            endpoint->budget.bytes_spent += (uint64_t) endpoint->large_admitted;
+            // R6: an uncapped connection holds no bucket to charge
+            if ( endpoint->send_budget_enabled )
+            {
+                endpoint->budget.tokens -= (double) endpoint->large_admitted;
+                endpoint->budget.bytes_spent += (uint64_t) endpoint->large_admitted;
+            }
             endpoint->packet_written = 1;
             return payload_bytes;
         }
@@ -836,7 +840,8 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
             break;
 
         case RN_ENDPOINT_PACKET_SEQUENCED_LARGE:
-            rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, wire_bytes );
+            if ( endpoint->send_budget_enabled )                       // R6: uncapped, no bucket to settle
+                rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, wire_bytes );
             rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor, RN_DESCRIPTOR_NONE );
             break;
 

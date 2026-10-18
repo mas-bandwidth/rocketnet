@@ -67,8 +67,14 @@
 #include "rocketnet_protocol.h"     // ROCKETNET_PACKET_OVERHEAD_BYTES
 #include "rocketnet_wire.h"         // ROCKETNET_SEND_BUDGET, ROCKETNET_ACK_BLOCK_MIN_BYTES, ROCKETNET_ACK_BLOCK_MAX_BYTES
 
+// the defaults of the message config fields client_send_kbps and
+// server_send_kbps (sdk/rocketnet.h), not limits: only the config table reads them
+#ifndef ROCKETNET_DEFAULT_CLIENT_SEND_KBPS
 #define ROCKETNET_DEFAULT_CLIENT_SEND_KBPS                  1000        // client to server
+#endif
+#ifndef ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS
 #define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000       // server to each client slot
+#endif
 
 #define ROCKETNET_SEND_BUDGET_MIN_KBPS                      1
 #ifndef ROCKETNET_SEND_BUDGET_MAX_KBPS
