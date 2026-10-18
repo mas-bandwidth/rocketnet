@@ -562,7 +562,7 @@ a row marked server or client applies only at that end.
     only after the open succeeds.
 12. A receiver MUST open the sealed data with the key for the type and the
     associated data of [t9 Packet protection](#t9). A packet that does not
-    open, or whose required handshake plaintext size is not exact, is
+    open, or whose expected handshake plaintext size is not exact, is
     `DID_NOT_OPEN`; this check alone increments the integrity-failure count
     that [t14 Replay protection](#t14) bounds.
 13. A server MUST reject a session packet whose mapping has no assigned
@@ -597,7 +597,7 @@ a row marked server or client applies only at that end.
 | 8 | server mapping | before decryption | `NO_MAPPING` |
 | 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
 | 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
-| 12 | sealed open and required handshake plaintext size | decryption | `DID_NOT_OPEN` |
+| 12 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
 | 13 | server slot gate | after decryption, before the replay mark | `NOT_CONNECTED` |
 | 15 | session ack block | after decryption | `BAD_ACK_BLOCK` |
 | 16 | session opened size less the ack block | after decryption | `WRONG_OPENED_SIZE` |
