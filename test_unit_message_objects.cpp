@@ -1073,12 +1073,14 @@ static void slot_reuse_starts_clean()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
+    config.server_send_kbps = 7000;                                   // R6: a reused slot starts at the config field
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config );
+    mo_pair_setup( &pair, 1, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0 );
     mo_step( &pair );
 
     rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
     const uint64_t carves = slot->region->carves;
+    check( slot->budget.kbps == 7000 );
 
     // traffic, a runtime budget, then exhaustion
     for ( int i = 0; i < 5; i++ )
@@ -1092,6 +1094,8 @@ static void slot_reuse_starts_clean()
     check( slot->region->channel_receive[0].ordered_read == 5 );
     check( rocketnet_message_server_set_send_kbps( pair.server, 0, 500 ) == 1 );
     check( slot->budget.kbps == 500 );
+    check( rocketnet_message_server_set_send_kbps( pair.server, 0, -1 ) == 1 );
+    check( slot->send_budget_enabled == 0 );
     while ( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 100 ) )
         check( rocketnet_message_server_finish( pair.server, 0, 100 ) != 0 );
     check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
@@ -1118,7 +1122,8 @@ static void slot_reuse_starts_clean()
     check( slot->region->descriptors_free == slot->region->queue - 1 );          // the new connection's CONFIG, in flight (10.3)
     check( slot->region->channel_receive[0].ordered_read == 0 );
     check( slot->region->channel_send[0].ordered_write == 0 );
-    check( slot->budget.kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    check( slot->budget.kbps == 7000 );                                // not the setter's -1 nor the default
+    check( slot->send_budget_enabled == 1 );
     check( slot->held == 0 && slot->unreliable_count == 0 && slot->serial == 0 );
     mo_step( &pair );
     mo_step( &pair );
@@ -1229,7 +1234,9 @@ static void budget_set_at_create_and_runtime()
     rocketnet_message_client_t * client = pair.clients[0];
     check( rocketnet_message_client_set_send_kbps( client, 40 ) == 1 );            // 5000 bytes a second
     check( mo_client_connection( client )->budget.kbps == 40 );
-    check( rocketnet_message_client_set_send_kbps( client, 0 ) == 0 );             // refused, unchanged
+    check( rocketnet_message_client_set_send_kbps( client, 0 ) == 1 );             // 0 uncaps
+    check( mo_client_connection( client )->send_budget_enabled == 0 );
+    check( rocketnet_message_client_set_send_kbps( client, 40 ) == 1 );            // cap again for this case
     check( mo_client_connection( client )->budget.kbps == 40 );
 
     std::vector<uint32_t> sent, got;
@@ -1283,6 +1290,244 @@ static void budget_set_at_create_and_runtime()
     // and the server's per-client rate, at runtime
     check( rocketnet_message_server_set_send_kbps( pair.server, 0, 777 ) == 1 );
     check( mo_server_slot( &pair, 0 )->budget.kbps == 777 );
+
+    mo_pair_teardown( &pair );
+}
+
+// ---------------------------------------------------------------------------
+// R6: the send budget is a configured default, and 0 or lower disables it
+// (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla)
+// ---------------------------------------------------------------------------
+
+static void send_budget_defaults_from_config()
+{
+    // a NULL config and a default config both give the owner's defaults: the
+    // client 1000 kbps up, every server slot 10000 kbps down. The create
+    // argument 0 takes the config field.
+    {
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, NULL, 0, 0 );
+        check( mo_client_connection( pair.clients[0] )->budget.kbps == 1000 );
+        check( mo_client_connection( pair.clients[0] )->send_budget_enabled == 1 );
+        check( mo_server_slot( &pair, 0 )->budget.kbps == 10000 );
+        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 1 );
+        mo_step( &pair );
+        check( mo_server_slot( &pair, 0 )->budget.kbps == 10000 );
+        mo_pair_teardown( &pair );
+    }
+    {
+        rocketnet_message_config_t config;
+        rocketnet_message_default_config( &config );
+        check( config.client_send_kbps == 1000 );
+        check( config.server_send_kbps == 10000 );
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config, 0, 0 );
+        check( mo_client_connection( pair.clients[0] )->budget.kbps == 1000 );
+        check( mo_server_slot( &pair, 0 )->budget.kbps == 10000 );
+        check( mo_server_slot( &pair, 1 )->budget.kbps == 10000 );
+        mo_pair_teardown( &pair );
+    }
+}
+
+static void send_budget_configured_value_honoured()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    config.client_send_kbps = 250;
+    config.server_send_kbps = 4000;
+
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, &config, 0, 0 );
+    check( mo_client_connection( pair.clients[0] )->budget.kbps == 250 );
+    check( mo_server_slot( &pair, 0 )->budget.kbps == 4000 );
+    mo_step( &pair );
+
+    // a burst at 250 kbps (31250 bytes a second, the bucket depth one packet)
+    // over budget: unreliable sends are dropped and counted, reliable ones
+    // wait and are never dropped
+    rocketnet_message_client_t * client = pair.clients[0];
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
+    const uint64_t drops_before = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
+
+    std::vector<uint32_t> reliable_sent;
+    for ( int i = 0; i < 5; i++ )
+    {
+        uint8_t message[1000];
+        mo_fill( message, (uint32_t) i + 1, sizeof( message ) );
+        check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        reliable_sent.push_back( (uint32_t) i + 1 );
+    }
+    for ( int i = 0; i < 8; i++ )
+    {
+        uint8_t u[1000];
+        mo_fill( u, 900000 + (uint32_t) i, sizeof( u ) );
+        check( rocketnet_message_client_send( client, 1, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
+    }
+
+    std::vector<mo_received_t> got;
+    mo_step( &pair, &got, NULL, 0.01 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) > drops_before );
+
+    int reliable_received = 0;
+    for ( size_t i = 0; i < got.size(); i++ )
+    {
+        uint32_t id = 0;
+        check( mo_verify( got[i].bytes, &id ) );
+        if ( id < 900000 )
+            reliable_received++;
+    }
+    check( reliable_received < (int) reliable_sent.size() );           // some reliable send waits for budget
+
+    for ( int round = 0; round < 400 && reliable_received < (int) reliable_sent.size(); round++ )
+    {
+        got.clear();
+        mo_step( &pair, &got, NULL, 0.01 );
+        for ( size_t i = 0; i < got.size(); i++ )
+        {
+            uint32_t id = 0;
+            check( mo_verify( got[i].bytes, &id ) );
+            if ( id < 900000 )
+                reliable_received++;
+        }
+    }
+    check( reliable_received == (int) reliable_sent.size() );          // never dropped for budget
+
+    mo_pair_teardown( &pair );
+}
+
+static void mo_uncapped_case( int client_kbps, int server_kbps )
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    config.client_send_kbps = client_kbps;
+    config.server_send_kbps = server_kbps;
+
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, &config, 0, 0 );
+    check( mo_client_connection( pair.clients[0] )->send_budget_enabled == 0 );
+    check( mo_server_slot( &pair, 0 )->send_budget_enabled == 0 );
+    check( rocketnet_message_client_counters( pair.clients[0] ) != NULL );
+    mo_step( &pair );                                                  // bind the server's slot
+
+    // simulated time starts at 1000.0; one update per millisecond, and eight
+    // packets per update above the 10 Mbit/s equivalent in both directions
+    const int rounds = 200;
+    std::vector<uint32_t> sent;
+    int reliable_received = 0;
+    int reliable_received_by_client = 0;
+    for ( int round = 0; round < rounds; round++ )
+    {
+        uint8_t message[1000];
+        mo_fill( message, (uint32_t) round + 1, sizeof( message ) );
+        check( rocketnet_message_client_send( pair.clients[0], 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        sent.push_back( (uint32_t) round + 1 );
+        check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+
+        for ( int i = 0; i < 7; i++ )
+        {
+            uint8_t u[1000];
+            mo_fill( u, 900000 + (uint32_t) ( round * 10 + i ), sizeof( u ) );
+            check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
+            check( rocketnet_message_server_send( pair.server, 0, 1, ROCKETNET_UNRELIABLE, u, (int) sizeof( u ) ) );
+        }
+
+        std::vector<mo_received_t> server_got, client_got;
+        mo_step( &pair, &server_got, &client_got, 0.001 );
+        for ( size_t i = 0; i < server_got.size(); i++ )
+        {
+            uint32_t id = 0;
+            check( mo_verify( server_got[i].bytes, &id ) );
+            if ( id < 800000 )
+                reliable_received++;
+        }
+        for ( size_t i = 0; i < client_got.size(); i++ )
+        {
+            uint32_t id = 0;
+            check( mo_verify( client_got[i].bytes, &id ) );
+            if ( id < 800000 )
+                reliable_received_by_client++;
+        }
+    }
+
+    // drain the last reliable sends of the run
+    for ( int extra = 0; extra < 5; extra++ )
+    {
+        std::vector<mo_received_t> server_got, client_got;
+        mo_step( &pair, &server_got, &client_got, 0.001 );
+        for ( size_t i = 0; i < server_got.size(); i++ )
+        {
+            uint32_t id = 0;
+            check( mo_verify( server_got[i].bytes, &id ) );
+            if ( id < 800000 )
+                reliable_received++;
+        }
+        for ( size_t i = 0; i < client_got.size(); i++ )
+        {
+            uint32_t id = 0;
+            check( mo_verify( client_got[i].bytes, &id ) );
+            if ( id < 800000 )
+                reliable_received_by_client++;
+        }
+    }
+
+    // no unreliable drop and no reliable wait by the budget in either direction
+    check( mo_counter( rocketnet_message_client_counters( pair.clients[0] ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) == 0 );
+    check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) == 0 );
+    check( reliable_received == rounds );                              // every reliable client message arrived
+    check( reliable_received_by_client == rounds );                    // every reliable server message arrived
+    check( mo_client_connection( pair.clients[0] )->budget.reliable_waiting == 0 );
+    check( mo_server_slot( &pair, 0 )->budget.reliable_waiting == 0 );
+    check( mo_client_connection( pair.clients[0] )->budget.refusals == 0 );   // the bucket is never touched
+    check( mo_server_slot( &pair, 0 )->budget.refusals == 0 );
+    check( mo_client_connection( pair.clients[0] )->budget.bytes_spent == 0 );
+    check( mo_server_slot( &pair, 0 )->budget.bytes_spent == 0 );
+
+    // well over 10 Mbit/s of wire bytes in the simulated second, each direction
+    uint64_t wire = 0;
+    for ( size_t i = 0; i < pair.net->clients[0]->sent_log.size(); i++ )
+        wire += (uint64_t) rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, pair.net->clients[0]->sent_log[i].bytes );
+    check( (double) wire > 10.0e6 / 8.0 * ( rounds * 0.001 ) );
+    uint64_t server_wire = 0;
+    for ( size_t i = 0; i < pair.net->server->sent_log.size(); i++ )
+        server_wire += (uint64_t) rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, pair.net->server->sent_log[i].bytes );
+    check( (double) server_wire > 10.0e6 / 8.0 * ( rounds * 0.001 ) );
+
+    mo_pair_teardown( &pair );
+}
+
+static void send_budget_zero_or_negative_is_uncapped()
+{
+    mo_uncapped_case( 0, 0 );
+    mo_uncapped_case( -1, -1 );
+}
+
+static void set_send_kbps_zero_or_negative_uncaps()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );
+    mo_step( &pair );
+
+    rocketnet_message_client_t * client = pair.clients[0];
+    rn_message_connection_t * connection = mo_client_connection( client );
+
+    check( rocketnet_message_client_set_send_kbps( client, 0 ) == 1 );
+    check( connection->send_budget_enabled == 0 );
+    check( rocketnet_message_client_set_send_kbps( client, -1 ) == 1 );
+    check( connection->send_budget_enabled == 0 );
+    check( rocketnet_message_client_set_send_kbps( client, 500 ) == 1 );
+    check( connection->send_budget_enabled == 1 && connection->budget.kbps == 500 );
+    check( rocketnet_message_client_set_send_kbps( client, ROCKETNET_SEND_BUDGET_MAX_KBPS + 1 ) == 0 );
+    check( connection->budget.kbps == 500 );
+
+    rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+    check( rocketnet_message_server_set_send_kbps( pair.server, 0, 0 ) == 1 );
+    check( slot->send_budget_enabled == 0 );
+    check( rocketnet_message_server_set_send_kbps( pair.server, 0, -1 ) == 1 );
+    check( slot->send_budget_enabled == 0 );
+    check( rocketnet_message_server_set_send_kbps( pair.server, 0, 777 ) == 1 );
+    check( slot->send_budget_enabled == 1 && slot->budget.kbps == 777 );
+    check( rocketnet_message_server_set_send_kbps( pair.server, 0, ROCKETNET_SEND_BUDGET_MAX_KBPS + 1 ) == 0 );
+    check( slot->budget.kbps == 777 );
 
     mo_pair_teardown( &pair );
 }
@@ -1901,12 +2146,103 @@ static void unreliable_over_a_lossy_link_arrives_intact_at_most_once()
 REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
+
+// the operator's environment overrides the config field and the create
+// argument, loudly: DEFAULT < STRUCT < ENV (docs/CHANNELS.md 11.5). Windows
+// has no setenv or unsetenv: _putenv_s sets, and an empty value removes.
+
+#if defined( _WIN32 )
+static void mo_setenv( const char * name, const char * value ) { _putenv_s( name, value ); }
+static void mo_unsetenv( const char * name ) { _putenv_s( name, "" ); }
+#else
+static void mo_setenv( const char * name, const char * value ) { setenv( name, value, 1 ); }
+static void mo_unsetenv( const char * name ) { unsetenv( name ); }
+#endif
+
+static void send_budget_env_overrides_config()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    config.client_send_kbps = 250;
+    config.server_send_kbps = 4000;
+
+    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "300" );
+    mo_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "-1" );
+    {
+        // over the config field: the client takes 300, every server slot is uncapped
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config, 0, 0 );
+        check( mo_client_connection( pair.clients[0] )->budget.kbps == 300 );
+        check( mo_client_connection( pair.clients[0] )->send_budget_enabled == 1 );
+        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 0 );
+        check( mo_server_slot( &pair, 1 )->send_budget_enabled == 0 );
+        mo_pair_teardown( &pair );
+    }
+    {
+        // and over a positive create argument
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config, 500, 5000 );
+        check( mo_client_connection( pair.clients[0] )->budget.kbps == 300 );
+        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 0 );
+        mo_pair_teardown( &pair );
+    }
+    {
+        // a value that does not parse, or one above the maximum, refuses the create
+        mo_net_t * net = mo_net_new();
+        mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
+        check( mo_client_create( net, 0, &config, 0 ) == NULL );
+        mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "10000001" );
+        check( mo_client_create( net, 0, &config, 0 ) == NULL );
+        mo_net_free( net );
+    }
+    mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
+    mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
+    {
+        // unset: the config fields again
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config, 0, 0 );
+        check( mo_client_connection( pair.clients[0] )->budget.kbps == 250 );
+        check( mo_server_slot( &pair, 0 )->budget.kbps == 4000 );
+        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 1 );
+        mo_pair_teardown( &pair );
+    }
+}
+
+// the pre-check rocketnet_message_client_create and rocketnet_message_server_create
+// run before their transport opens a socket: a budget variable that does not
+// parse or is above the maximum is refused, per direction; 0 or lower is valid
+// (uncapped). The creates themselves are not called here, so a regression can
+// never open a socket in the unit suite.
+static void send_budget_env_refused_before_the_socket()
+{
+    check( rn_message_object_send_kbps_env_valid( 0 ) );
+    check( rn_message_object_send_kbps_env_valid( 1 ) );
+
+    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
+    check( !rn_message_object_send_kbps_env_valid( 0 ) );
+    check( rn_message_object_send_kbps_env_valid( 1 ) );                // each direction its own variable
+    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "-5" );
+    check( rn_message_object_send_kbps_env_valid( 0 ) );                // 0 or lower uncaps: valid
+    mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
+
+    mo_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "10000001" );
+    check( !rn_message_object_send_kbps_env_valid( 1 ) );
+    mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
+    check( rn_message_object_send_kbps_env_valid( 1 ) );
+}
+
 REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory );
 REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
 REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
 REGISTER_UNIT_TEST( slot_reuse_starts_clean );
 REGISTER_UNIT_TEST( acks_only_from_transport_acked_packets );
 REGISTER_UNIT_TEST( budget_set_at_create_and_runtime );
+REGISTER_UNIT_TEST( send_budget_defaults_from_config );
+REGISTER_UNIT_TEST( send_budget_configured_value_honoured );
+REGISTER_UNIT_TEST( send_budget_zero_or_negative_is_uncapped );
+REGISTER_UNIT_TEST( set_send_kbps_zero_or_negative_uncaps );
+REGISTER_UNIT_TEST( send_budget_env_overrides_config );
+REGISTER_UNIT_TEST( send_budget_env_refused_before_the_socket );
 REGISTER_UNIT_TEST( message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( rnslots_witness_replays );
 REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );

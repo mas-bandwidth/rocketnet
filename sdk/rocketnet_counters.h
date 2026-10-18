@@ -569,6 +569,13 @@
     /* appended: indices are the contract. */ \
     X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE ) \
     \
+    /* Client received a connection challenge or connection denied packet */ \
+    /* whose wire length was not ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES */ \
+    /* or ROCKETNET_CONNECTION_DENIED_WIRE_BYTES: refused before the state */ \
+    /* gate and before any AEAD open (STANDARD.md, Reading packets). */ \
+    /* appended: indices are the contract. */ \
+    X( CLIENT_CHALLENGE_WRONG_SIZE, REFUSAL, CLIENT_CHALLENGE_RECEIVED ) \
+    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED ) \
     /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
     /* too big for one packet's record is promoted to its reliable twin, as */ \
     /* RakNet's ReliabilityLayer does. EXPECTED: promotion is the normal path */ \
