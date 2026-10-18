@@ -151,6 +151,9 @@ HandshakeStep ==
 
 Deny == st \in HandshakeStates /\ End(conn, "CONNECTION_DENIED", "CONNECTION_DENIED")
 
+\* The token expires while the handshake is still running.
+TokenExpires == st \in HandshakeStates /\ End(conn, "CONNECT_TOKEN_EXPIRED", "CONNECT_TOKEN_EXPIRED")
+
 \* The stage deadlines and the connected timeout.
 Timer == st \in Live /\ End(conn, TimedOut(st), TimedOut(st))
 
@@ -210,7 +213,7 @@ Lose(s) ==
 Next ==
     \/ Create \/ Destroy
     \/ \E tok \in Tokens : Connect(tok)
-    \/ HandshakeStep \/ Deny \/ Timer \/ ServerDisconnect
+    \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
     \/ ClientDisconnect \/ DisconnectFromError \/ Send
     \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
 

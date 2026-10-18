@@ -46,12 +46,17 @@ inventory each field below stands for, citing this model.
 **The used-token history across stop and start.** STANDARD.md, _Processing Connection
 Requests_, the used-token history paragraph (`STANDARD.md:2913`): "Entries expire with the
 tokens they name." An entry's lifetime is its token's, not the server's run, so the history
-survives stop and start, and the model keeps it in `kept`; a token established before a stop is
-refused after the next start (`TokenAdmitsOnce`). Only destroy discards it, with the object. The
+survives stop and start, and the model keeps it in `kept`; only destroy discards it, with the
+object. Every request in this model comes from its own address, the replay case the history
+exists for, so a token in the history is refused (`TokenAdmitsOnce`, which holds by that guard
+while the history is kept); the standard binds a token to its first source address, and a
+re-presentation from that same address is not modelled here. The
 restart sentences under _Keys_ and _Per-connection keys_ (`STANDARD.md:189`, `:1058`) make key
 freshness independent of the history: the session nonce is chosen when the mapping is created,
-so a restart can never recreate a key. A cookie key regenerated at start would invalidate only
-outstanding cookies, which no slot state holds; the model keeps the keys as one kept value.
+so a restart can never recreate a key. STANDARD.md:189 has the server generate its cookie key "at start"; the
+model keeps the keys as one value fresh at create and unchanged by stop and start, as the card
+lists them kept. A cookie key regenerated at each start instead would invalidate only
+outstanding cookies, which no slot record holds, so no property here depends on the choice.
 
 **Actions.**
 
@@ -81,7 +86,7 @@ Restart is `Stop`, `StopComplete`, `Start`. Every path out of a slot's connectio
 | `RecordIsCurrent` | invariant | a slot's record holds only Init and its current session's writes |
 | `SlotReuseObservesNothing` | invariant | per slot, no packet of session s opens in another session, and no step reads a field another session wrote (a stale ack, a stale fragment, a replay-window false reject) |
 | `NoClientWhileStopped` | invariant | no slot is occupied while STOPPED (or with no object) |
-| `StopDisconnectsAll` | invariant | after a stop every slot is free and Init, and every connected client the server ended was sent its disconnect |
+| `StopDisconnectsAll` | invariant | after a stop every slot is free and Init, and every connected client the server ended was sent its disconnect (the second part is structural: every server-initiated end passes the burst, and no witness breaks it) |
 | `ReasonKeptUntilNextConnection` | invariant | a slot's reason equals the one its ended connection set until its next client is established, where it is NONE |
 | `ResetTouchesOnlyItsSlot` | invariant | `Reset(i)` leaves every slot `j # i` unchanged |
 | `TokenAdmitsOnce` | invariant | a token admits one connection over the object's life, across stop and start |

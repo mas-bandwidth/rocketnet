@@ -1095,7 +1095,7 @@ and recorded: `tla/ClientSession.tla`, `tla/README-ClientSession.md`, group `cli
 - VARIABLES: `st` (NONE, DISCONNECTED, the three handshake stages, CONNECTED, seven error
   states), `cur`, `conn` (one field per row of the reset inventory, Init or a session tag),
   `reason`, `kept` (lifetime counters, config), `link`.
-- Actions: `Create`, `Destroy`, `Connect`, `HandshakeStep`, `Deny`, `Timer`,
+- Actions: `Create`, `Destroy`, `Connect`, `HandshakeStep`, `Deny`, `TokenExpires`, `Timer`,
   `ServerDisconnect`, `ClientDisconnect`, `DisconnectFromError`, `Send`, `ServerSend`,
   `Deliver`, `Lose`; every exit from a connection goes through one `Reset`.
 - Properties: `ConnectOnlyFromDisconnected`, `NoSendUnlessConnected`, `ResetIsInit`,

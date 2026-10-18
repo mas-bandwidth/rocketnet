@@ -49,7 +49,7 @@ writes the reset inventory each field below stands for and cites this model.
 | `Create`, `Destroy` | create (DISCONNECTED, a fresh object); destroy from any state (packets in flight outlive it) |
 | `Connect(tok)` | connect(token): refused with a status code unless DISCONNECTED (a refused call changes nothing); a valid token starts a session; an invalid or expired token goes straight to its error state |
 | `HandshakeStep` | the server's reply to the current stage arrives; the challenge writes the session keys; the establishing keep-alive reaches CONNECTED and clears the reason |
-| `Deny`, `Timer` | a denial during the handshake; each stage's deadline and the connected timeout |
+| `Deny`, `TokenExpires`, `Timer` | a denial during the handshake; the token expiring during the handshake; each stage's deadline and the connected timeout |
 | `ServerDisconnect`, `ClientDisconnect` | the server's disconnect; the client's disconnect from the handshake or connected |
 | `DisconnectFromError` | disconnect from an error state: back to DISCONNECTED, the reason kept |
 | `Send` | message start/finish, only while CONNECTED |
@@ -74,7 +74,7 @@ the new session's first sequences (`replay_window`).
 | `ResetIsInit` | invariant | outside a connection every per-connection field is Init; the lifetime counter equals the connections this object made, and the config stays |
 | `RecordIsCurrent` | invariant | the record holds only Init and the current session's writes |
 | `ReconnectObservesNothing` | invariant | no packet of session s opens in session s' # s, and no step reads a field another session wrote |
-| `ReasonKeptUntilNextConnection` | invariant | the reason equals the one the ended connection set until the next connection reaches CONNECTED, where it is NONE |
+| `ReasonKeptUntilNextConnection` | invariant | the reason equals the one the ended connection set until the next connection reaches CONNECTED, where it is NONE (the ghost `lastEnd` is written in the same step as the reason on every end path, so this catches a reason cleared or overwritten by a reset, a connect or a handshake step; no witness breaks it) |
 | `ConnectReachesConnectedOrError` | liveness | under weak fairness of the handshake replies and the timers, a handshake stage reaches CONNECTED or an error (or the application disconnects or destroys first) |
 
 ## Reversed witnesses
@@ -98,9 +98,9 @@ case, one for witnesses, 110-second cap per case):
 
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
-| `MCClientSession.cfg` | pass | 67,696 | 8,044 | 2.849 | 0 |
-| `MCClientSessionUnreset.cfg` | `ReconnectObservesNothing` violated | 4,235 | 923 | 1.156 | 12 |
-| `MCClientSessionConnectAnywhere.cfg` | `ConnectOnlyFromDisconnected` violated | 11 | 8 | 1.107 | 12 |
+| `MCClientSession.cfg` | pass | 70,880 | 8,044 | 6.949 | 0 |
+| `MCClientSessionUnreset.cfg` | `ReconnectObservesNothing` violated | 4,693 | 949 | 2.109 | 12 |
+| `MCClientSessionConnectAnywhere.cfg` | `ConnectOnlyFromDisconnected` violated | 11 | 8 | 1.599 | 12 |
 
 ## Bounds
 
