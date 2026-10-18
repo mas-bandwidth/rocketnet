@@ -480,11 +480,331 @@ generation wrap; structural checks; vectors.
 <a id="t6"></a>
 ## t6. Connect token
 
-Status: pending
+A connect token is a fixed-size credential that a backend gives to a client. It names one server and carries the keys the client and that server use to establish a session. A server MUST accept a connection request only after it verifies the request's token as this section specifies.
 
-Scope: the private block, the signed connect data, the 768-byte token layout,
-minting and verification order (signature before sealed block), the token
-identifier, the frozen connect token vector.
+1. A token MUST be exactly the `connect token` size of [t3 Constants and registries](#t3) long. Every byte of the token is part of the layout below; there is no variable-length field.
+2. The version field MUST hold the `version` value of [t3 Constants and registries](#t3). The protocol performs no version negotiation and defines no mode by version. A server MUST ignore a connection request whose token carries any other version.
+3. The backend MUST write the session keys twice: in the clear for the client, and inside the sealed block for the server. A client MUST NOT verify the signature; it trusts the clear copy because the secure channel delivered the token. A tampered clear copy causes the handshake to fail and nothing worse.
+4. The token identifier MUST be the BLAKE2b hash, of the `token identifier` size of [t3 Constants and registries](#t3) and with no key, of the signed connect data. The identifier is content-determined, never the signature bytes.
+
+### t6.1. Private connect token data
+
+The private connect token data is the block that only the target server reads. Before sealing it is:
+
+```
+0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                          client id                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                         protocol id                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      expire timestamp                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   client to server key                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   server to client key                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        user data                             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                         zero pad                             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| client id | 0 | 8 | u64 | the identity the backend keys on | any |
+| protocol id | 8 | 8 | u64 | the title this token belongs to | any; MUST equal the signed protocol id |
+| expire timestamp | 16 | 8 | u64 | the time the token expires | any; MUST equal the signed expire timestamp |
+| client to server key | 24 | 32 | bytes[32] | the session key from client to server | any |
+| server to client key | 56 | 32 | bytes[32] | the session key from server to client | any |
+| user data | 88 | 256 | bytes[256] | application-defined data bound to the session | any |
+| zero pad | 344 | 40 | zero[40] | zero | zero |
+
+A backend MUST seal this block with crypto_box_seal to the server's X25519 public key: draw an ephemeral X25519 key pair, write the ephemeral public key, then the ciphertext of crypto_box_easy under the nonce that is the BLAKE2b-192 hash of the ephemeral public key concatenated with the server public key. The sealed block is the `sealed block` size of [t3 Constants and registries](#t3): the private block plus the `sealed box overhead` size of [t3 Constants and registries](#t3). A server MUST open the sealed block with its own X25519 secret key.
+
+### t6.2. Signed connect data
+
+Everything the server checks is gathered into one fixed buffer of the `signed connect data` size of [t3 Constants and registries](#t3) and signed by the backend. The token carries this buffer and its signature verbatim, so the server verifies with no shared secret. The signature MUST be an Ed25519 detached signature over the whole buffer, including its zero padding.
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| version | 0 | 4 | u32 | the wire revision | the version constant |
+| protocol id | 4 | 8 | u64 | the title; MUST equal the receiving server's configured protocol id | any |
+| create timestamp | 12 | 8 | u64 | unix time the token was created | any |
+| expire timestamp | 20 | 8 | u64 | unix time the token expires | any |
+| timeout seconds | 28 | 4 | i32 | the connection timeout in seconds; a negative value disables the timeout (development only); zero is invalid | `-2147483648..2147483647` |
+| address flags | 32 | 1 | u8 | bit 0 set means an IPv4 address is present, bit 1 an IPv6 address; bits 2 to 7 MUST be zero; at least one address MUST be present | `0x01`, `0x02`, `0x03` |
+| ipv4 address | 33 | 6 | bytes[6] | four octets then the port little-endian; zero when bit 0 is clear | any |
+| ipv6 address | 39 | 18 | bytes[18] | eight uint16 groups little-endian then the port little-endian; zero when bit 1 is clear | any |
+| server public key | 57 | 32 | bytes[32] | the X25519 key the private block is sealed to | any |
+| sealed private block | 89 | 432 | bytes[432] | the sealed block of [t6.1 Private connect token data](#t6.1) | any |
+| zero pad | 521 | 55 | zero[55] | zero | zero |
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| address flag IPv4 | `0x01` | bit | bit 0: an IPv4 address is present |
+| address flag IPv6 | `0x02` | bit | bit 1: an IPv6 address is present |
+| address flags both | `0x03` | bit | both address families are present |
+
+### t6.3. Connect token format
+
+The full token is handed to the client over the secure channel. The client splits it into its parts without parsing any length:
+
+```
+0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                signed connect data (576 bytes)               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   signature (64 bytes)                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|             client to server key (32 bytes)                  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|             server to client key (32 bytes)                  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       zero pad (64 bytes)                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| signed connect data | 0 | 576 | bytes[576] | the buffer of [t6.2 Signed connect data](#t6.2) | any |
+| signature | 576 | 64 | bytes[64] | the detached signature over the signed connect data | any |
+| client to server key | 640 | 32 | bytes[32] | the clear session key, for the client | any |
+| server to client key | 672 | 32 | bytes[32] | the clear session key, for the client | any |
+| zero pad | 704 | 64 | zero[64] | zero | zero |
+
+### t6.4. Verification and refusal order
+
+A server MUST check a token in this order and MUST stop at the first failure and refuse the request:
+
+1. The version field holds the `version` value of [t3 Constants and registries](#t3); otherwise the request is ignored.
+2. The address flags are valid: not zero, and no bit above bit 1 set.
+3. The signed server public key equals the server's configured X25519 public key.
+4. The signature verifies against the backend's Ed25519 public key.
+5. The sealed block opens with the server's X25519 secret key.
+6. The opened private protocol id and expire timestamp equal the signed ones.
+
+Checks of the protocol id, the expiry, the timeout and the advertised address belong to [t12 Handshake: server](#t12) and do not change this order.
+
+```vector t6.frozen-token
+input: the minting inputs of the frozen token: IPv4 203.0.113.10, port 40000, empty user data
+input: the signed connect data (576 bytes) then the signature, then the clear keys, then zero pad
+93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
+29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
+0c f2 21 5f 76 14 f4 80 1c b3 10 fd d3 03 d6 aa
+d8 c7 90 0d fc 42 52 d9 4d 21 34 f1 e6 e1 73 20
+f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87 72 08 61 88
+73 78 ed f0 1d e9 be fc 09 f1 bf 01 fd 3d f1 9e
+2a 79 e6 08 59 e8 96 34 6e b6 0c 08 f6 86 72 1d
+81 94 6e 78 1e 1a e2 c3 71 6a 46 58 80 a3 a5 f0
+68 ed e0 b0 39 cf 52 81 a9 7c d3 67 17 76 6b 5b
+b1 38 69 83 8e cb 33 3d 9e eb 10 42 bf 7a 7b 8f
+62 f9 cb b0 20 dd bd a6 cb 5f 44 e4 de f4 36 66
+64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b f2 26 86 84
+b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b 09 92 7b 6a
+fa c3 ec 0f 00 50 8e 9d 43 31 66 00 c6 b7 45 d6
+db b9 c6 8f 12 d5 69 a1 95 73 d4 60 ba 34 e8 01
+d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d 52 03 bb bd
+44 36 7e f8 9b cb b3 82 7f d8 02 95 f2 b9 40 4c
+dd 29 79 e3 aa 17 51 3f f9 f4 2b 67 06 24 8e a7
+62 28 20 28 d4 fe 0c f7 11 56 55 4f 26 bf 90 cb
+2b fc fe f4 38 b5 e6 8a d2 50 1f 9e 3b e2 4b c0
+b3 36 51 ec 75 6f 60 f4 23 f3 24 d9 03 23 ad c9
+f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26 06 7f e7 f1
+09 59 4a 80 3d 33 05 02 fe b0 3f 61 e9 29 7e c1
+1a ad eb cd 69 ba c0 bf d0 5c 1c 5c 14 4a e2 3b
+cd 11 4c 35 32 2e 79 78 43 e9 5c cb 8b c9 74 8f
+da 08 19 7c e6 d5 a1 0c 83 bc b0 eb 7f f4 71 d7
+38 a7 42 f6 8f a3 eb 77 df ad d3 20 a1 1a 55 42
+0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c f8 65 7f a7
+12 b7 c9 74 96 00 0e 6a 54 68 d8 00 d4 9d 13 45
+ce 18 5d c0 f7 bc 71 47 a9 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+6b 36 92 b4 9d 36 b7 a2 76 30 33 40 ab 83 99 b9
+85 61 ac 68 81 fc 7a a2 bb 60 ff e0 77 32 ea 71
+21 fe 50 44 eb b5 f5 3d be 76 8b 80 0c 30 d7 53
+70 eb 9b eb 49 14 ae 13 3d a6 4e a6 b0 9e 76 0d
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+```vector t6.token-identifier
+input: the signed connect data, bytes 0 to 575 of the frozen connect token
+input: BLAKE2b, output 16 bytes, no key
+f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
+```
+
+```vector t6.bad-address-flags
+input: IPv4 127.0.0.1, port 40000, empty user data, address flags 0x05 (a bit above bit 1 set)
+input: a token the server MUST refuse at the address-flags check, before any signature work
+93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+05 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
+29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
+0c f2 21 5f 76 14 f4 80 1c 39 2d 17 4a 38 b3 b1
+be af af 1f e8 24 87 08 41 c5 fa 53 1b c6 ea fd
+b6 40 2c 12 46 64 48 8c 1c a2 b9 57 f0 72 74 7e
+f5 ea 9e 73 f1 a1 d1 c2 d1 18 60 72 cd 71 30 5c
+22 e1 e4 84 55 14 6f 1b 4d 53 03 ab 2f 8c 0c f0
+08 62 b2 7b b9 46 f0 e6 8d 71 10 d0 d0 2c 7d 32
+a8 32 54 57 e1 98 48 28 35 3d 13 d8 84 01 34 99
+64 8a 55 d5 1f 5d ad 4c 37 4d 1b d6 c2 40 e7 70
+07 e1 55 11 3c bd a3 57 38 50 7b 96 40 1a a6 10
+cf 2f 5c 42 e8 4a 92 93 90 bb af c5 da 0e a8 75
+d2 61 3b 47 d3 a0 6c d0 e0 17 8d ee b7 5f ad 63
+dd 86 6c 56 a5 09 15 ff 44 8c 3f 2f f1 4d c2 db
+b0 60 e5 c5 fc 88 56 5a 00 c4 2a e4 a6 57 a3 38
+7e 5d b9 97 a9 f9 62 27 57 33 d0 29 a8 f6 f1 f3
+bb 09 a1 e3 e6 ad 15 5f cd 02 e4 69 42 c0 6a c8
+75 97 ee 1e 14 ee df a4 b6 4c 43 1f 63 ef fc b2
+4a ef 3e 22 ec 05 f2 ef b1 4a 59 bc 5a 80 a1 2e
+cb d0 d4 c7 51 bc 21 62 35 37 d5 a5 a6 8b 98 3a
+8b 69 4a 9b 9d ed 5e e7 d6 8c 90 c2 0d 0d e3 fb
+88 45 5e bc c6 95 27 b6 52 e8 58 8c 90 98 a3 af
+c7 61 5d 65 91 92 fe cc 28 29 06 63 e3 62 fc e1
+b3 df f5 f0 74 bb 04 fa e3 73 d2 a4 b0 14 5c 12
+34 a0 08 7c 44 73 12 21 79 68 2c 1f a1 36 c2 f1
+c3 9f 18 b3 48 78 78 ef 05 53 db a3 e9 01 a6 a1
+b3 58 a7 3c 8d 34 d2 fd e7 ff 83 ad 04 a1 c7 65
+69 5f 9a b9 5f e8 2e 31 71 e6 a0 d5 15 da fd ff
+12 b0 91 2a 4c ac 7e ec 77 14 10 19 83 4f 3e b8
+af 6a 8d 23 bf ba 36 79 4a 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+80 6f 9f 78 d4 60 9e 47 5d ae 14 5d 4d 0c dc 9b
+cc 3f 46 2c d8 83 10 2d d1 dd 1c 65 e6 8b 39 f3
+fb 89 f8 82 50 47 65 0f a5 0d e6 b0 70 e0 01 1a
+90 a5 2f 7c ac 91 39 a7 85 f2 b6 b6 52 fd 7f 07
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+```vector t6.wrong-server-key
+input: IPv4 127.0.0.1, port 40000, empty user data, the signed server public key replaced by a fixed key that is not the target server's
+input: a token the server MUST refuse at the server-public-key check
+93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+01 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 11 22 33 44 55 66 77
+88 99 aa bb cc dd ee ff 00 10 20 30 40 50 60 70
+80 90 a0 b0 c0 d0 e0 f0 01 23 b7 bb 8c 91 ae 00
+87 11 fb 12 84 67 80 bc df 1e 06 5f 82 1b df ec
+49 f5 7e 7c 7d cd 4c 48 23 d2 10 cb 80 cd 26 ae
+d6 3b 32 c3 03 f7 a1 c5 c2 35 1e 3b 77 87 5c e2
+fa 40 20 77 ec e6 68 29 70 6f b8 b4 9c ed 85 0c
+90 cc 84 bc e7 7d 3e 1c f7 53 62 ec 49 c0 23 6a
+44 bf 63 7f bb cf aa d7 bb b1 59 83 63 d2 8a fb
+57 c7 d5 59 f7 8e dc 84 96 95 46 eb 3f 9e 32 38
+8a 4d 3b f9 a2 bd 23 59 4c 0b 92 af d5 a9 5b f1
+7b 4e ee c3 14 40 d3 58 e6 39 20 52 c3 e2 b0 f2
+cc 2d be a3 9f d1 48 d7 80 77 57 98 70 ea 94 f3
+b5 17 6e e6 2f c4 ac 79 29 6b ba 3a 67 cd a2 c6
+23 57 2c f8 bf ec 80 8b 3c 3e 9e e4 43 de cf 14
+31 a7 c6 78 7c 03 2f d9 17 65 d5 63 42 da 1f 02
+59 b0 31 3b 73 b5 5f be b9 1f 3a ef c0 2d 6f 87
+91 31 97 11 76 bf 03 37 a9 a8 0e a1 39 a3 b7 92
+2e 0b 80 de 84 27 a3 33 84 2d 31 16 08 56 30 78
+4a 39 fa b9 6a d2 3e c9 27 60 77 be 6f ff 38 02
+85 41 68 ef d3 69 72 89 3b ea ac c0 86 4f 4f 78
+5c fe 0d 8a 04 23 f9 c7 9e ed 62 40 7a 78 d5 0b
+41 21 ad ff 38 1a c9 0c e3 2c 0b 37 f8 ab 3f 9d
+06 8e 02 3b bd 89 c0 1f d3 f4 cc 96 8e b1 d5 9c
+94 5d fa 4f 7d c0 ee 5d 5c aa 4c 39 9b 3a 4f cf
+83 24 c8 3e ac 3f 78 da 50 a1 d8 8d 47 c2 4a 43
+e1 08 83 06 3e e1 89 f5 cd 3a 17 ea 20 c5 f8 7a
+bf ae 42 a2 6c 75 d5 36 d1 05 90 0d 91 69 15 96
+51 4a c8 c1 c1 6e 4c 92 7c a3 56 0d 59 c3 de 9e
+86 0e e1 6f c3 6e 4a 40 2c 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+f7 cf 86 58 f0 9f 18 16 96 e5 99 c0 d2 09 d2 61
+5c 8b 62 ed c5 d6 f1 6a 69 c7 59 b3 91 9a 37 80
+d2 c7 64 0e bd 57 b2 79 ae df fe 74 32 cb 63 e4
+3e 26 01 b2 c6 a0 9c 30 06 9f 32 1c 22 c3 e3 0b
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+```vector t6.sealed-mismatch
+input: IPv4 127.0.0.1, port 40000, empty user data, the sealed private block's protocol id is the signed protocol id plus one
+input: a token whose signature verifies and whose sealed block opens, but whose private fields disagree with the signed fields
+93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+01 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
+29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
+0c f2 21 5f 76 14 f4 80 1c 9f d7 ad 6d cf f4 29
+8d d3 f9 6d 5b 1b 2a f9 10 a0 53 5b 14 88 d7 f8
+fa bb 34 9a 98 28 80 b6 15 c9 ae 23 6b 18 ad 61
+1e bf 16 e2 3c 9d cc 80 b2 0b 7b 3a 4a ad 40 f4
+20 63 e2 ea 16 12 d1 4e 23 e6 34 58 b6 04 5c 44
+32 5a 1f 38 a0 d6 d0 f4 d0 e3 74 5b 28 e4 9a 87
+2f 30 e8 b9 2c d2 ec 71 a7 f1 7c be 71 ff 64 1e
+76 20 2c 26 6e 24 30 3b d0 15 be f9 03 f5 7c ea
+c4 dd 4d 2d 8f d6 8a 80 16 d4 fc 43 a2 0b f4 5d
+5c f7 77 42 30 58 9f 98 7b 20 fa 74 64 ce 1c d0
+f5 52 f1 eb a7 a2 87 f9 b9 f2 e1 41 d9 b6 50 68
+74 79 78 ba 60 89 23 c0 13 6f 24 c9 57 a2 86 7c
+04 ae fd 78 70 c1 cf 53 93 16 ef 9a 6f 1f ec 93
+ab 6a 9e cf 66 45 de 72 91 e7 58 47 94 5e e9 1c
+f4 f5 3c 36 de 56 d7 cb b5 17 53 30 11 5a 67 14
+20 85 c4 7d 79 50 02 b6 29 79 fb 54 eb 33 f4 56
+4a 34 58 52 b5 1f ea e8 4b 07 ae 42 6d 12 3f fd
+42 80 2a 44 a4 1f b0 1f 03 0a 5f f3 1a c4 df 3f
+d8 26 50 a2 43 64 89 9a bb a5 b3 0f f2 80 70 56
+00 b0 1c ea d1 fb ac 12 f6 8d 13 d4 ef 19 48 57
+42 42 b7 24 4e 18 42 85 0b 68 43 91 d8 dd 58 e9
+85 19 9f 03 ec d5 f1 b2 28 b6 2e 6b 38 4b 18 b0
+6f 9a 17 1a 39 a6 64 ef 49 6a 9f 87 11 93 fa 31
+6d eb da de da ca 44 00 fa 44 09 c5 be 84 30 79
+c0 70 2b 52 ee dd 59 5e 58 37 b8 9c e2 0a 27 19
+74 eb b3 84 17 5f 54 dc b9 21 ea fb 64 65 be ff
+fe e0 3d 07 71 7e 56 7e 80 0b 7b 22 2a 31 b0 11
+7b 1d 4d fc 8e 66 89 14 3f 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+61 99 ef a8 e8 67 01 40 c3 1b 0e 6c ea b4 29 81
+f7 7d 88 51 69 01 87 b2 15 69 9b b2 4d ea c5 52
+5f c1 5a 46 22 f7 2e 68 f7 af 40 cf 2b d9 3e fd
+5a 4d 79 ca fb 1e 9c d9 f5 40 fc 5a f3 f0 03 05
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
 
 <a id="t7"></a>
 ## t7. Key schedule
@@ -618,6 +938,11 @@ It is generated; the bytes are in the sections.
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
+| [t6 Connect token](#t6) | `t6.bad-address-flags` |
+| [t6 Connect token](#t6) | `t6.frozen-token` |
+| [t6 Connect token](#t6) | `t6.sealed-mismatch` |
+| [t6 Connect token](#t6) | `t6.token-identifier` |
+| [t6 Connect token](#t6) | `t6.wrong-server-key` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
