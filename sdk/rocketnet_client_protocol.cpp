@@ -450,6 +450,13 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED]++;
 
+    if ( packet_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
+    {
+        rocketnet_spam( "client ignored challenge. wrong size" );
+        counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_SIZE]++;
+        return 0;
+    }
+
     // processed in sending connection request only: past it the client no
     // longer sends requests, so a genuine retransmitted challenge has no
     // question left to answer
@@ -458,14 +465,6 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     {
         rocketnet_spam( "client ignored challenge. wrong state" );
         counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_STATE]++;
-        return 0;
-    }
-
-    if ( packet_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
-    {
-        rocketnet_spam( "client ignored challenge. wrong size" );
-        counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN]++;
-        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
@@ -577,19 +576,18 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     counters[ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED]++;
 
+    if ( packet_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
+    {
+        rocketnet_spam( "client ignored denied. wrong size" );
+        counters[ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_SIZE]++;
+        return 0;
+    }
+
     if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST &&
          client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
         rocketnet_spam( "client ignored denied. wrong state" );
         counters[ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_STATE]++;
-        return 0;
-    }
-
-    if ( packet_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
-    {
-        rocketnet_spam( "client ignored denied. wrong size" );
-        counters[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN]++;
-        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
