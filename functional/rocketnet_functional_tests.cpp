@@ -5459,11 +5459,9 @@ void rocketnet_test_platform_wake_windows_wakes_and_reads()
     // wait(true, 0) is false: no wake set and nothing readable
     rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
 
-    // a wait with a 0.01 s timeout and nothing pending returns false, after
-    // waiting (not at once)
-    const double wait_start = rocketnet_platform_time();
+    // a wait with a 0.01 s timeout and nothing pending returns false (no
+    // elapsed-time check: a Windows wait deadline rounds to the clock tick)
     rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.01 ) );
-    rocketnet_check( rocketnet_platform_time() - wait_start >= 0.005 );
     rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.01 ) );
 
     // set, then wait(true, 0) is true and the next wait(true, 0) is false
@@ -5507,7 +5505,9 @@ void rocketnet_test_platform_wake_windows_wakes_and_reads()
     rocketnet_platform_wake_set( wake );
     rocketnet_check( rocketnet_platform_wake_wait( wake, false, 0.0 ) );
 
-    // and the following wait(true) sees the datagram
+    // and the following wait(true) sees the datagram (a 1.0 s bound, as the
+    // first datagram above: loopback delivery and the FD_READ post are not
+    // synchronous with the send; the wait returns as soon as it lands)
     rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
     rocketnet_check( rocketnet_platform_socket_receive_packet( socket, &from, received, sizeof(received) ) == (int) sizeof(packet) );
 
