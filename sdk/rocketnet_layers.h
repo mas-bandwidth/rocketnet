@@ -1171,6 +1171,8 @@ struct rocketnet_message_config_t
     int rto_min_ms;                     // 1 .. 60000; default 10
     int rto_max_ms;                     // 10 .. 60000; default 250
     int reliable_timeout_ms;            // 1000 .. 600000; default 10000
+    int client_send_kbps;                // client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
+    int server_send_kbps;                // server per-client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
 };
 
 // a NULL config is a counted no-op.
