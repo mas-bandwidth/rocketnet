@@ -177,8 +177,38 @@ leg bench_portable recv recv-errno recvfrom  "a receive refused for a reason tha
 leg bench_kqueue   recv recv-errno kevent    "a kqueue readiness call refused"
 leg bench_msgx     recv recv-errno recvmsg_x "a batch receive refused"
 leg bench_gso      recv recv-errno recvmmsg  "a GRO batch receive refused"
-leg bench_uring    recv recv-errno "io_uring multishot recv" "a multishot receive that failed, which used to be stepped over"
-leg bench_uring    recv sqe-exhausted io_uring_get_sqe "a full submission queue, which used to be a NULL dereference"
+
+# The io_uring receiver needs a provided-buffer ring before it can arm a
+# multishot receive, and some kernels refuse IORING_REGISTER_PBUF_RING
+# outright (EINVAL at every ring size). On such a host the receiver aborts at
+# setup, before either fault below can be reached, so its two legs cannot
+# prove anything there. One unfaulted probe decides: when it aborts naming
+# io_uring_setup_buf_ring, both legs are SKIPPED with that line as the reason
+# and counted; otherwise they run, and a host with a working buffer ring still
+# has to show both faults aborting loudly.
+
+uring_recv_refused=""
+if [ -x ./bench_uring ]; then
+    next_port
+    ./bench_uring recv "$PORT" 1 1 1 > "$WORK/bench_uring_recv_probe.txt" 2>&1
+    if grep -q 'BENCH ABORTED: io_uring_setup_buf_ring' "$WORK/bench_uring_recv_probe.txt"; then
+        uring_recv_refused="$( grep -m1 'BENCH ABORTED' "$WORK/bench_uring_recv_probe.txt" )"
+    fi
+fi
+
+uring_recv_leg()
+{
+    if [ -n "$uring_recv_refused" ]; then
+        echo "SKIP  bench_uring recv $1 -- this host cannot run the receiver ($3); the unfaulted probe said: $uring_recv_refused"
+        skipped=$(( skipped + 1 ))
+        COVERED="$COVERED bench_uring"
+        return
+    fi
+    leg bench_uring recv "$@"
+}
+
+uring_recv_leg recv-errno "io_uring multishot recv" "a multishot receive that failed, which used to be stepped over"
+uring_recv_leg sqe-exhausted io_uring_get_sqe "a full submission queue, which used to be a NULL dereference"
 leg bench_nw       recv-pair recv-errno nw_connection_receive_message "a Network.framework receive completion carrying an error, which used to be swallowed"
 
 # ---------------------------------------------------------------------------
@@ -289,7 +319,7 @@ for h in $ALL_HARNESSES; do
 done
 
 if [ "$skipped" -ne 0 ]; then
-    echo "bench-selftest: $skipped leg(s) skipped for harnesses this host cannot build"
+    echo "bench-selftest: $skipped leg(s) skipped for harnesses this host cannot build or run"
 fi
 
 if [ "$failures" -ne 0 ]; then

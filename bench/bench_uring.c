@@ -90,19 +90,27 @@ static void run_receiver( int port, double warmup, double window, int windows )
     int fd = bench_udp_socket();
     struct sockaddr_in address = bench_address( "0.0.0.0", port );
     if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) < 0 )
-        { perror( "bind" ); exit( 1 ); }
+        bench_fatal( "bind", strerror(errno) );
     bench_report_buffers( fd );
 
     struct io_uring ring;
     int result = io_uring_queue_init( URING_ENTRIES, &ring, 0 );
     if ( result < 0 )
-        { fprintf( stderr, "io_uring_queue_init: %s\n", strerror(-result) ); exit( 1 ); }
+        bench_fatal( "io_uring_queue_init", strerror(-result) );
 
     static uint8_t buffer_memory[URING_NUM_BUFFERS * URING_BUFFER_SIZE];
     int ring_error = 0;
     struct io_uring_buf_ring * buf_ring = io_uring_setup_buf_ring( &ring, URING_NUM_BUFFERS, URING_BUF_GROUP, 0, &ring_error );
     if ( !buf_ring )
-        { fprintf( stderr, "io_uring_setup_buf_ring: %s\n", strerror(-ring_error) ); exit( 1 ); }
+    {
+        /* a kernel that refuses the provided-buffer ring leaves the multishot
+           receiver with nothing to receive into: this run measured nothing,
+           and says so rather than exiting as if it had merely failed */
+        char detail[256];
+        snprintf( detail, sizeof(detail), "%s (errno %d) -- this host cannot run the io_uring multishot receiver, so nothing was measured",
+                  strerror(-ring_error), -ring_error );
+        bench_fatal( "io_uring_setup_buf_ring", detail );
+    }
     for ( int i = 0; i < URING_NUM_BUFFERS; i++ )
         io_uring_buf_ring_add( buf_ring, buffer_memory + i * URING_BUFFER_SIZE, URING_BUFFER_SIZE, (unsigned short) i,
                                io_uring_buf_ring_mask( URING_NUM_BUFFERS ), i );
@@ -208,12 +216,12 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
        rather than like for like (#98 item 2). */
 
     if ( connect( fd, (struct sockaddr*) &to, sizeof(to) ) < 0 )
-        { perror( "connect" ); exit( 1 ); }
+        bench_fatal( "connect", strerror(errno) );
 
     struct io_uring ring;
     int result = io_uring_queue_init( URING_ENTRIES, &ring, 0 );
     if ( result < 0 )
-        { fprintf( stderr, "io_uring_queue_init: %s\n", strerror(-result) ); exit( 1 ); }
+        bench_fatal( "io_uring_queue_init", strerror(-result) );
 
     static uint8_t buffers[BENCH_BATCH_SIZE][BENCH_MAX_PACKET];
 
