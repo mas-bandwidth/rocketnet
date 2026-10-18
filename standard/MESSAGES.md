@@ -34,8 +34,7 @@ apply to RN-2 unchanged. Constants of RN-1 are named by their rows in
 | Term | Meaning |
 |---|---|
 | message | the bytes one application send hands to the message layer, delivered whole or not at all. |
-| reliability | one of the eight reliability types of
-[m1 Scope, terminology and relation to RN-1](#m1), chosen per send. |
+| reliability | one of the eight reliability types of [m1.3 Reliability types](#m1.3), chosen per send. |
 | record | the encoding of one message, or one fragment of a block, inside a payload ([m3 Record format](#m3)). |
 | code | the 3-bit wire form of a record's reliability, 0 to 4. |
 | number | the reliable message counter, one per connection and direction ([m5 Message numbering and the reliable window](#m5)). |
@@ -74,39 +73,43 @@ rules below. An implementation of RN-2 MUST run over an RN-1 implementation
 that keeps every one of them. Each rule is a requirement on that RN-1
 implementation, stated here because RN-2 is the party that relies on it.
 
-1. **One packet.** A payload of at most the RN-1 payload capacity (the row
-   `payload capacity` of [RN-1 t3 Constants and registries](TRANSPORT.md#t3))
-   MUST travel as exactly one type 5 packet, never fragmented.
-2. **An acknowledged packet was delivered once.** When RN-1 reports a type 5
-   packet acknowledged, its payload MUST have been handed to the peer's
-   message layer exactly once. The connection layer MUST NOT acknowledge a
-   type 5 packet whose payload it then discards.
+1. **One packet.** The connection layer MUST send a payload of at most the
+   row `payload capacity` of [RN-1 t3 Constants and registries](TRANSPORT.md#t3)
+   as exactly one type 5 packet, never fragmented.
+2. **An acknowledged packet was delivered once.** When the connection layer
+   reports a type 5 packet acknowledged, the peer's connection layer MUST have
+   handed its payload to the peer's message layer exactly once. A connection
+   layer MUST NOT acknowledge a type 5 packet whose payload it then discards.
 3. **A fragmented payload carries no delivery fact.** An acknowledgement of
    the fragments of a type 9 payload does not prove the payload was
-   delivered. A sender MUST NOT place a reliable record or a CONTROL record
-   in a payload longer than the RN-1 payload capacity.
-4. **Silence is not loss.** The absence of an acknowledgement proves nothing.
-   RN-1 MAY leave a sequence unacknowledged for ever, and RN-2 resends after
-   its timeout instead of inferring loss from a gap.
-5. **Acknowledgements are reported once, and attributed.** RN-1 MUST report
-   each acknowledged packet to the message layer at most once, with the
-   connection it was sent on. On a server the connection is identified by a
-   value that differs for every connection a slot has held, not only by the
-   slot index; every delivered payload carries the same identification.
-6. **Replies open later.** A packet the peer sends in reply to a packet this
-   endpoint opened in one update MUST be opened in a later update.
-7. **Replay window depth.** The RN-1 replay window MUST refuse every packet
-   as many sequences behind the highest opened sequence as its depth, or
-   more, and every packet it opened before. Its depth MUST be at least the
-   row `replay window depth` of
-   [RN-1 t3 Constants and registries](TRANSPORT.md#t3) and MUST NOT exceed
-   32768 sequences (unpinned). RN-2's 24-bit numbers do not alias within this
-   depth ([m5 Message numbering and the reliable window](#m5)).
+   delivered. A message layer sender MUST NOT place a reliable record or a
+   CONTROL record in a payload longer than the row `payload capacity`.
+4. **Silence is not loss.** The connection layer MAY leave a sequence
+   unacknowledged indefinitely. A message layer sender MUST NOT infer loss
+   from a missing acknowledgement; it resends after its timeout
+   ([m9 Acknowledgement mapping, resend and send budget](#m9)).
+5. **Acknowledgements are reported once, and attributed.** The connection
+   layer MUST report each acknowledged packet to the message layer at most
+   once, with the connection it was sent on. A server's connection layer MUST
+   identify that connection by a value that differs for every connection a
+   slot has held, not only by the slot index, and MUST attach the same
+   identification to every payload it delivers.
+6. **Replies open later.** When the peer sends a packet in reply to a packet
+   this endpoint's connection layer opened in one update, the connection
+   layer MUST open the reply in a later update, never in the same one.
+7. **Replay window depth.** The connection layer's replay window MUST refuse
+   every packet as many sequences behind the highest opened sequence as its
+   depth, or more, and every packet it opened before. The connection layer
+   MUST configure that depth no smaller than the row
+   `replay window depth minimum` and no larger than the row
+   `replay window depth maximum` of [RN-1 t3 Constants and registries](TRANSPORT.md#t3).
+   Within that depth RN-2's 24-bit numbers do not alias
+   ([m5 Message numbering and the reliable window](#m5)).
 8. **Sequences rise in write order.** Within one direction of one
-   connection's session phase, RN-1 sequences MUST rise in the order the
-   message layer writes the packets' payloads. An implementation that fills
-   one connection's packets from several threads MUST keep the fills in the
-   order their sequences were taken.
+   connection's session phase, the connection layer MUST assign sequences
+   that rise in the order the message layer writes the packets' payloads. An
+   implementation that fills one connection's packets from several threads
+   MUST keep the fills in the order their sequences were taken.
 
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules
@@ -117,7 +120,7 @@ Scope: the form byte (last byte of the payload), SINGLE and RECORDS, the size
 rules a sender keeps, and promotion. Decided requirements this section
 states: a message sent as unreliable, unreliable sequenced or unreliable with
 ack receipt that is larger than one packet's records can carry MUST be sent
-under its reliable twin in [m1 Scope, terminology and relation to RN-1](#m1), as a block where it needs one; the
+under its reliable twin in [m1.3 Reliability types](#m1.3), as a block where it needs one; the
 promotion is visible to the application as a named outcome or counter, never
 silent.
 
@@ -145,7 +148,7 @@ Status: pending
 
 Scope: 24-bit numbers, sequencing and ordering indexes; reconstruction by
 signed half range; the window; the no-alias bound from the replay window
-depth that [m1 Scope, terminology and relation to RN-1](#m1) requires.
+depth that [m1.4 What RN-2 requires of RN-1](#m1.4) requires.
 
 <a id="m6"></a>
 ## m6. Delivery: unreliable codes 0 and 1

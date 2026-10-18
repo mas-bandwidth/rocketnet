@@ -1,7 +1,9 @@
-# The rows of RN-1 t3 (TRANSPORT.md) this skeleton wrote: document name, sdk expression, value.
+# The rows of RN-1 t2.3 and t3 (TRANSPORT.md) this skeleton wrote: document name, sdk expression, value.
 # Format and rules: standard/STYLE.md section 10. Section cards add rows to
 # standard/pins/<section id>.tsv, never to this file.
 #include "rocketnet_constants.h"
+#unpinned	replay window depth minimum	the sdk states 4096 only inside an #if bound on ROCKETNET_HISTORY_PACKETS; no macro names it
+#unpinned	replay window depth maximum	the sdk states 32768 only inside an #if bound on ROCKETNET_HISTORY_PACKETS; no macro names it
 version	ROCKETNET_VERSION	0x4E7C1A93
 connection request packet	ROCKETNET_CONNECTION_REQUEST_PACKET	0
 connection denied packet	ROCKETNET_CONNECTION_DENIED_PACKET	1
@@ -27,7 +29,7 @@ X25519 secret key	crypto_box_SECRETKEYBYTES	32
 sealed box overhead	crypto_box_SEALBYTES	48
 AEAD key	crypto_aead_chacha20poly1305_ietf_KEYBYTES	32
 AEAD nonce	crypto_aead_chacha20poly1305_ietf_NPUBBYTES	12
-AEAD tag	ROCKETNET_PACKET_TAG_BYTES	16
+AEAD tag	crypto_aead_chacha20poly1305_ietf_ABYTES	16
 BLAKE2b key	crypto_generichash_KEYBYTES	32
 SipHash key	crypto_shorthash_KEYBYTES	16
 prefilter header	ROCKETNET_PREFILTER_BYTES	6
@@ -50,19 +52,31 @@ ack block minimum	ROCKETNET_ACK_BLOCK_MIN_BYTES	7
 fragment header	ROCKETNET_FRAGMENT_HEADER_BYTES	6
 fragments per payload maximum	ROCKETNET_MAX_FRAGMENTS	256
 link MTU	ROCKETNET_LINK_MTU_BYTES	1500
-receive ceiling	ROCKETNET_RECEIVE_CEILING	1472
-maximum packet size limit	ROCKETNET_RECEIVE_CEILING	1472
+receive ceiling	ROCKETNET_MAX_PACKET_BYTES	1472
+maximum packet size limit	ROCKETNET_MAX_PACKET_BYTES	1472
 payload capacity	ROCKETNET_MAX_PAYLOAD_BYTES	1416
 received payload maximum	ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES	1439
 fragment stride	ROCKETNET_MAX_FRAGMENT_BYTES	1413
 received fragment stride maximum	ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES	1433
 maximum packet size	ROCKETNET_SEND_BUDGET	1452
-replay window depth	ROCKETNET_REPLAY_WINDOW_BITS	4096
 send rate	ROCKETNET_DEFAULT_SEND_RATE	10
-handshake deadline	ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS	5
 cookie lifetime	ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS	3
 cookie key rotation	ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS	60
 server redundant disconnect packets	ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS	10
 client redundant disconnect packets	ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS	10
 ack debt threshold	ROCKETNET_ACK_DEBT_THRESHOLD	64
 used-token history per slot	ROCKETNET_USED_TOKEN_HISTORY_RATIO	8
+# RN-1 t2.3, the connection layer's configuration fields
+server protocol_id	rn_pin_server_default_protocol_id	0
+server max_clients	rn_pin_server_default_max_clients	1000
+server max_clients limit	ROCKETNET_MAX_CLIENTS	1000
+server max_payload_bytes	ROCKETNET_MAX_PAYLOAD_BYTES	1416
+server num_reassembly_slots	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
+server transport	rn_pin_server_default_driver	"auto"
+server public_address	rn_pin_server_default_public_address	""
+server max_timeout_seconds	rn_pin_server_default_max_timeout_seconds	60
+server handshake_deadline_seconds	rn_pin_server_default_handshake_deadline_seconds	5
+client max_payload_bytes	ROCKETNET_MAX_PAYLOAD_BYTES	1416
+client num_reassembly_slots	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
+client transport	rn_pin_client_default_driver	"auto"
+fragmented payload maximum	ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES	361728

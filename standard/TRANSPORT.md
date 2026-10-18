@@ -51,7 +51,7 @@ RN-1 does not specify:
 | client | the endpoint that initiates a connection with a connect token. |
 | endpoint | a client or a server. |
 | transport | a selectable packet backend of an implementation (for example `xdp`, `gso`, `msgx`, `portable`), chosen by name in the endpoint's configuration. |
-| connect token | the 768-byte credential a backend gives a client ([t6 Connect token](#t6)). |
+| connect token | the fixed-size credential a backend gives a client ([t6 Connect token](#t6)). |
 | slot | one of a server's connection places, indexed from 0 below `max_clients`. |
 | connection | one client's session with one server, from the request that creates its mapping to its end. |
 | attempt | one run of the client handshake, with a fresh connection salt. |
@@ -140,7 +140,7 @@ party the table names as its holder, except as the table states.
 | backend public key | backend, every server, every client | Ed25519 | Ed25519 public key | long term | as configuration |
 | server secret key | one server | X25519 | X25519 secret key | long term | never |
 | server public key | that server, the backend | X25519 | X25519 public key | long term | to the backend, over the provisioning channel |
-| cookie key | one server | BLAKE2b key | token key | one rotation period | never; never stored |
+| cookie key | one server | BLAKE2b key | BLAKE2b key | one rotation period | never; never stored |
 | lookup key | one server | SipHash-2-4 key | SipHash key | one server run | never |
 | token keys (client to server, server to client) | the backend, then one client and one server | ChaCha20-Poly1305 key input | token key | one connect token | inside the connect token: in clear to the client, sealed to the server |
 | ephemeral keypair | one client attempt, one server mapping | X25519 | X25519 secret key | one attempt | the public half, in handshake packets |
@@ -171,10 +171,10 @@ Rules:
 
 A client is configured by one client configuration and a server by one
 server configuration. Each configuration declares every field once, with its
-type, default and valid range; the field's default is the value of its row in
-[t3 Constants and registries](#t3) or in the owning RN-2 section. These rules bind every field of both
-configurations, including the message layer's settings, the send budgets of
-RN-2 and `max_clients`:
+type, default and valid range. The fields of the connection layer are the
+table below; the fields of the message layer, including its send budgets, are
+declared in the RN-2 section that owns each one. These rules bind every field
+of both configurations:
 
 1. Every field MUST have an environment variable that overrides it, named
    `ROCKETNET_SERVER_` or `ROCKETNET_CLIENT_` followed by the field name in
@@ -184,50 +184,93 @@ RN-2 and `max_clients`:
 2. Precedence is default, then configuration struct, then environment: a
    value from the environment replaces a value from the struct, which
    replaces the default.
-3. An endpoint MUST log each environment override at create, naming the
+3. An environment value is parsed by the field's type: an integer field as a
+   decimal integer with an optional leading minus sign; an unsigned 64-bit
+   field as a decimal integer; a bytes field as standard base64 (RFC 4648,
+   section 4, with padding) that decodes to exactly the field's size; a string
+   field as its bytes, at most the field's capacity. An endpoint MUST refuse to
+   create, naming the variable, when a value does not parse. An empty value
+   is treated as an unset variable, with one log line.
+4. An endpoint MUST log each environment override at create, naming the
    variable and the value it displaced. A field that holds secret material
-   MUST be logged with its value redacted.
-4. An endpoint MUST refuse to create, with an error naming the field, when any
+   MUST be logged, and refused, with its value redacted.
+5. An endpoint MUST refuse to create, with an error naming the field, when any
    field holds a value outside its valid range, from the struct or from the
    environment alike. It MUST NOT clamp or otherwise correct a value.
+
+The fields of the connection layer. A Value of `none` is a field with no
+numeric default: a key the deployment sets, or a bytes field whose unset
+value its range cell names. Where a range admits 0, a value of 0 selects the
+field's default.
+
+| Name | Value | Type | Environment variable | Valid range |
+|---|---|---|---|---|
+| server protocol_id | `0` | u64 | `ROCKETNET_SERVER_PROTOCOL_ID` | any; equal to the connect token's protocol id |
+| server max_clients | `1000` | integer | `ROCKETNET_SERVER_MAX_CLIENTS` | 1 to the server max_clients limit |
+| server max_clients limit | `1000` | integer | none: a limit of this revision | |
+| server filter_value | `none` | bytes[4] | `ROCKETNET_SERVER_FILTER_VALUE` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
+| server backend_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | an Ed25519 public key |
+| server server_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_SERVER_PUBLIC_KEY` | an X25519 public key |
+| server server_secret_key | `none` | bytes[32] | `ROCKETNET_SERVER_SERVER_SECRET_KEY` | an X25519 secret key; secret |
+| server max_payload_bytes | `1416` | integer | `ROCKETNET_SERVER_MAX_PAYLOAD_BYTES` | 0 (the default), or the payload capacity row of [t3 Constants and registries](#t3) to the fragmented payload maximum |
+| server num_reassembly_slots | `8` | integer | `ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
+| server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
+| server public_address | `""` | string | `ROCKETNET_SERVER_PUBLIC_ADDRESS` | an address and port, or empty |
+| server max_timeout_seconds | `60` | integer | `ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS` | 1 to 3600 |
+| server handshake_deadline_seconds | `5` | integer | `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS` | 1 to 60 |
+| client filter_value | `none` | bytes[4] | `ROCKETNET_CLIENT_FILTER_VALUE` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
+| client max_payload_bytes | `1416` | integer | `ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES` | as the server field |
+| client num_reassembly_slots | `8` | integer | `ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS` | as the server field |
+| client transport | `"auto"` | string | `ROCKETNET_CLIENT_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
+| fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
+
+An implementation MAY add fields of its own (for example a count of kernel
+queues for one transport); each one keeps rules 1 to 5.
 
 <a id="t2.4"></a>
 ### t2.4. Transport selection
 
-The field `transport` of each configuration selects the transport that carries
-the endpoint's packets. Its environment variables are
-`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`. A transport
-never changes a byte on the wire. An implementation with exactly one
-transport MAY ignore the rules of this subsection except rule 6.
+The field `transport` selects the transport that carries the endpoint's
+packets. A transport never changes a byte on the wire. A transport is
+applicable to an endpoint when the implementation offers it for that
+endpoint's role (client or server) on the platform it runs on. A transport
+that the implementation documents as pin-only (for example an in-process
+loopback for tests) is never part of an `auto` order and is applicable only
+as the sole name of a list. An implementation with exactly one transport MAY
+ignore rules 1 to 5 and keeps rule 6.
 
-1. The value is an ordered, comma-separated list of transport names. The
-   endpoint MUST try the candidates left to right at create; the first that
-   succeeds carries the endpoint.
-2. The value `auto`, and the empty value, MUST expand to the implementation's
-   documented order for that endpoint on that platform.
-3. An explicit list MUST be used exactly as given: nothing appended, nothing
-   reordered. A list with one applicable name pins that transport: create
-   succeeds on it or fails.
-4. A name the implementation knows but that is not available to this
-   endpoint on this platform MUST be skipped with one log line. A name the
-   implementation does not know MUST fail the create, listing the valid
-   names. A list whose every name was skipped MUST fall to `auto` with one log
-   line.
+1. The value is an ordered, comma-separated list of transport names, or
+   `auto`, or empty. `auto` and the empty value MUST expand to the
+   implementation's documented order for that endpoint's role on that
+   platform.
+2. A name the implementation does not know MUST fail the create, listing the
+   valid names, whatever the length of the list.
+3. A list of one name is a pin. The endpoint MUST create on that transport or
+   fail the create naming the transport and why it refused or is not
+   applicable. A pin never falls to another transport.
+4. A list of two or more names MUST be tried left to right, nothing appended
+   and nothing reordered; the first applicable transport that succeeds
+   carries the endpoint. A name that is not applicable MUST be skipped with
+   one log line. When no name in the list is applicable, the endpoint MUST
+   fall to its `auto` order, with one log line saying so. When at least one
+   name is applicable and every applicable name refuses, the endpoint MUST
+   fail the create, naming each refusal apart from each skip.
 5. A transport MUST NOT change machine state (kernel parameters, queue
    configuration, interrupt affinity) at create. It checks its conditions,
    and refuses by name when one is unmet.
 6. An endpoint MUST report the name of the transport that carries it, and MUST
    log at create the chosen transport and the reason each earlier candidate
-   refused.
+   was skipped or refused.
 
 <a id="t3"></a>
 ## t3. Constants and registries
 
-Every constant and every default of RN-1 is a row of the table below, and is
-stated nowhere else. A section that uses a value names its row. A row whose
-kind is `default` is a value a deployment MAY change through the
-configuration surface of [t2 Architecture and key inventory](#t2); every
-other row is fixed by RN-1, and an implementation MUST use it exactly.
+Every constant of RN-1 is a row of the table below, and is stated nowhere
+else; every configuration field and its default is a row of the table in
+[t2.3 Configuration surface](#t2.3). A section that uses a value names its
+row. An implementation MUST use every row of this table exactly. A row of
+kind `protocol value` is a rate, a count or a size the protocol fixes rather
+than a wire format; it is not configurable in this revision.
 
 Registry rules:
 
@@ -294,16 +337,16 @@ Registry rules:
 | received payload maximum | `1439` | bytes | size | [t10 Receive processing](#t10) |
 | fragment stride | `1413` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
 | received fragment stride maximum | `1433` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
-| maximum packet size | `1452` | bytes | default | [t8 Packet formats](#t8) |
-| replay window depth | `4096` | sequences | default | [t14 Replay protection](#t14) |
-| send rate | `10` | hertz | default | [t17 Timing and defaults](#t17) |
-| handshake deadline | `5` | seconds | default | [t12 Handshake: server](#t12) |
-| cookie lifetime | `3` | seconds | default | [t12 Handshake: server](#t12) |
-| cookie key rotation | `60` | seconds | default | [t12 Handshake: server](#t12) |
-| server redundant disconnect packets | `10` | packets | default | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
-| client redundant disconnect packets | `10` | packets | default | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
-| ack debt threshold | `64` | packets | default | [t15 Acknowledgement](#t15) |
-| used-token history per slot | `8` | entries | default | [t12 Handshake: server](#t12) |
+| maximum packet size | `1452` | bytes | protocol value | [t8 Packet formats](#t8) |
+| replay window depth minimum | `4096` | sequences | size | [t14 Replay protection](#t14) |
+| replay window depth maximum | `32768` | sequences | size | [t14 Replay protection](#t14) |
+| send rate | `10` | hertz | protocol value | [t17 Timing and defaults](#t17) |
+| cookie lifetime | `3` | seconds | protocol value | [t12 Handshake: server](#t12) |
+| cookie key rotation | `60` | seconds | protocol value | [t12 Handshake: server](#t12) |
+| server redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
+| client redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
+| ack debt threshold | `64` | packets | protocol value | [t15 Acknowledgement](#t15) |
+| used-token history per slot | `8` | entries | protocol value | [t12 Handshake: server](#t12) |
 
 The token identifier of a connect token is the BLAKE2b hash, of token
 identifier size and with no key, of the token's signed connect data. For the
@@ -430,8 +473,9 @@ staleness and abandonment; vectors.
 Status: pending
 
 Scope: the timing rules (rates in elapsed time, never per update; fixed
-retransmission with no backoff; deadlines), naming the default rows of
-[t3 Constants and registries](#t3) without restating them.
+retransmission with no backoff; deadlines), naming the rows of
+[t3 Constants and registries](#t3) and
+[t2.3 Configuration surface](#t2.3) without restating them.
 
 <a id="t18"></a>
 ## t18. Error handling and counters

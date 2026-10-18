@@ -15,13 +15,16 @@ checks, and fails with one line per fault naming the section id:
               each with its anchor; RN-R adds 'rh Revision history'
   pins        every pin row's sdk expression, compiled through the real
               headers in one generated translation unit, equals the pin
-              file's value and the value cell of the document row it names
+              file's value and the value cell of the document row it names;
+              every document row with a value has a pin or an #unpinned
+              declaration; every pin lies in a section its file owns
   vectors     every 'vector <id>' block is well formed, sits in the section
               its id names, and equals the RN_STANDARD_VECTOR twin of that id
-              in a test file; every twin has a block
+              in a test file; every twin has a block; a twin counts only
+              outside comments, in a file that calls rn_standard_vectors_walk
   index       each Appendix A vector index is the one the vectors imply
-  references  every section link resolves and carries its target's heading;
-              no bare section id in running text
+  references  every link is a section link that resolves and carries its
+              target's heading; no bare section id in running text
   language    RN-1 and RN-2 use no lower-case 'must', 'shall', 'should' or
               'required', and cite no file path, TLA+ module or test
               function; RN-R and RN-1 tc carry no capitalised BCP 14 key word
@@ -76,6 +79,27 @@ BASE_INCLUDES = """
 #include "rocketnet_keys.cpp"
 #undef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 #include "sodium/sodium.h"
+
+// the configuration tables' defaults, by field name: rn_pin_server_default_<field>,
+// rn_pin_client_default_<field>, rn_pin_message_default_<field>. A bytes field
+// has no scalar default and no name here.
+#define RN_PIN_INT_( tag, name, def ) static const long long rn_pin_##tag##_default_##name = (long long) ( def );
+#define RN_PIN_STR_( tag, name, def ) static const char * const rn_pin_##tag##_default_##name = def;
+#define RN_PIN_S_INT( name, def, min, max, flags )          RN_PIN_INT_( server, name, def )
+#define RN_PIN_S_UINT64( name, def, flags )                 RN_PIN_INT_( server, name, def )
+#define RN_PIN_S_BYTES( name, size, def, flags )
+#define RN_PIN_S_STRING( name, capacity, def, flags )       RN_PIN_STR_( server, name, def )
+#define RN_PIN_C_INT( name, def, min, max, flags )          RN_PIN_INT_( client, name, def )
+#define RN_PIN_C_UINT64( name, def, flags )                 RN_PIN_INT_( client, name, def )
+#define RN_PIN_C_BYTES( name, size, def, flags )
+#define RN_PIN_C_STRING( name, capacity, def, flags )       RN_PIN_STR_( client, name, def )
+#define RN_PIN_M_INT( name, def, min, max, flags )          RN_PIN_INT_( message, name, def )
+#define RN_PIN_M_UINT64( name, def, flags )                 RN_PIN_INT_( message, name, def )
+#define RN_PIN_M_BYTES( name, size, def, flags )
+#define RN_PIN_M_STRING( name, capacity, def, flags )       RN_PIN_STR_( message, name, def )
+ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( RN_PIN_S_INT, RN_PIN_S_UINT64, RN_PIN_S_BYTES, RN_PIN_S_STRING )
+ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( RN_PIN_C_INT, RN_PIN_C_UINT64, RN_PIN_C_BYTES, RN_PIN_C_STRING )
+ROCKETNET_MESSAGE_CONFIG_TABLE( RN_PIN_M_INT, RN_PIN_M_UINT64, RN_PIN_M_BYTES, RN_PIN_M_STRING )
 """
 
 PRINTERS = r"""
@@ -267,6 +291,8 @@ def check_outline(docs, outline, faults, only):
 
 def parse_value(text):
     text = text.strip().strip("`").strip()
+    if text == "none":
+        return ("none", None)
     if re.fullmatch(r'"[^"]*"', text):
         return ("s", text[1:-1])
     if re.fullmatch(r"-?0x[0-9A-Fa-f]+", text):
@@ -309,6 +335,7 @@ def pin_document(path):
 def read_pins(faults):
     pins = []
     includes = []
+    unpinned = []
     for path in sorted(glob.glob(os.path.join(PINS_DIR, "*.tsv"))):
         tag = pin_document(path)
         name = os.path.basename(path)
@@ -317,6 +344,13 @@ def read_pins(faults):
             continue
         for number, line in enumerate(read(path).split("\n"), 1):
             if not line.strip():
+                continue
+            if line.startswith("#unpinned"):
+                fields = line.split("\t")
+                if len(fields) != 3 or not fields[1].strip() or not fields[2].strip():
+                    faults.append((None, "pins/%s:%d: an #unpinned line is '#unpinned<TAB>name<TAB>reason'" % (name, number)))
+                else:
+                    unpinned.append({"file": name, "line": number, "doc": tag, "name": fields[1].strip()})
                 continue
             if line.startswith("#"):
                 if line.startswith("#include"):
@@ -329,7 +363,17 @@ def read_pins(faults):
             pins.append({"file": name, "line": number, "doc": tag,
                          "name": fields[0].strip(), "expr": fields[1].strip(),
                          "value": fields[2].strip()})
-    return pins, includes
+    return pins, includes, unpinned
+
+
+def owned_sections(path):
+    """The sections a pin file may hold rows of (standard/STYLE.md section 10)."""
+    base = os.path.splitext(os.path.basename(path))[0]
+    if base == "transport":
+        return {"t1", "t2", "t3"}
+    if base == "messages":
+        return {"m1"}
+    return {base}
 
 
 def document_rows(doc):
@@ -388,7 +432,7 @@ def compile_pins(pins, includes):
     return values
 
 
-def check_pins(docs, pins, includes, faults, only):
+def check_pins(docs, pins, includes, unpinned, faults, only):
     rows = {}
     for tag in ("RN-1", "RN-2"):
         rows[tag], duplicates = document_rows(docs[tag])
@@ -396,6 +440,31 @@ def check_pins(docs, pins, includes, faults, only):
             faults.append((docs[tag].section_of_line(number),
                            "%s:%d two table rows are named %r" % (docs[tag].name, number, name)))
     selected = []
+    pinned_names = {(pin["doc"], pin["name"]) for pin in pins}
+    declared = {(entry["doc"], entry["name"]) for entry in unpinned}
+    for entry in unpinned:
+        row = rows[entry["doc"]].get(entry["name"])
+        section = row[2] if row else None
+        if only and section != only:
+            continue
+        if row is None:
+            faults.append((None, "pins/%s:%d #unpinned %r is not a Name of any table row in %s"
+                           % (entry["file"], entry["line"], entry["name"], DOCUMENTS[entry["doc"]])))
+        elif (entry["doc"], entry["name"]) in pinned_names:
+            faults.append((section, "pins/%s:%d #unpinned %r also has a pin; drop the declaration"
+                           % (entry["file"], entry["line"], entry["name"])))
+        elif section not in owned_sections(entry["file"]):
+            faults.append((section, "pins/%s:%d #unpinned %r lies in section %s, which this pin file does not own"
+                           % (entry["file"], entry["line"], entry["name"], section)))
+    for tag in ("RN-1", "RN-2"):
+        for name, (cell, number, section) in rows[tag].items():
+            if only and section != only:
+                continue
+            if parse_value(cell)[0] == "none":
+                continue
+            if (tag, name) not in pinned_names and (tag, name) not in declared:
+                faults.append((section, "%s:%d row %r has a value and no pin; add it to pins/%s.tsv"
+                               % (DOCUMENTS[tag], number, name, section)))
     for pin in pins:
         row = rows[pin["doc"]].get(pin["name"])
         pin["row"] = row
@@ -406,6 +475,9 @@ def check_pins(docs, pins, includes, faults, only):
         if row is None:
             faults.append((None, "pins/%s:%d %r is not a Name of any table row in %s"
                            % (pin["file"], pin["line"], pin["name"], DOCUMENTS[pin["doc"]])))
+        elif section not in owned_sections(pin["file"]):
+            faults.append((section, "pins/%s:%d %r lies in section %s, which this pin file does not own"
+                           % (pin["file"], pin["line"], pin["name"], section)))
     if not selected:
         return 0
     compiled = compile_pins(selected, includes)
@@ -417,6 +489,9 @@ def check_pins(docs, pins, includes, faults, only):
         pinned = parse_value(pin["value"])
         code = compiled[index]
         where = "%s:%d" % (DOCUMENTS[pin["doc"]], number)
+        if published[0] == "none":
+            faults.append((section, "%s row %r is pinned but its Value is none" % (where, pin["name"])))
+            continue
         if published[0] == "?":
             faults.append((section, "%s row %r: the Value cell %r is not one value" % (where, pin["name"], cell)))
             continue
@@ -476,11 +551,21 @@ def document_vectors(docs, faults):
     return vectors
 
 
+def strip_c_comments(source):
+    """Source with comments blanked, string literals kept: a twin in a comment is no twin."""
+    return re.sub(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
+                  lambda m: m.group(0) if m.group(0).startswith('"') else " ", source, flags=re.S)
+
+
 def test_twins(faults):
     twins = {}
     for path in sorted(glob.glob(os.path.join(ROOT, "test_unit_standard_*.cpp"))):
         name = os.path.basename(path)
-        for match in TWIN_RE.finditer(read(path)):
+        source = strip_c_comments(read(path))
+        matches = list(TWIN_RE.finditer(source))
+        if matches and "rn_standard_vectors_walk(" not in source:
+            faults.append((None, "%s declares vector twins and never calls rn_standard_vectors_walk" % name))
+        for match in matches:
             ident = match.group(1)
             hexes = "".join(re.findall(r'"([^"]*)"', match.group(2)))
             hexes = hexes.replace(" ", "").lower()
@@ -583,10 +668,10 @@ def check_references(docs, faults, only):
             for number, line in section.lines:
                 for match in LINK_RE.finditer(line):
                     text, target = match.group(1), match.group(2)
-                    if "#" not in target:
-                        continue
-                    file_part, _, anchor = target.partition("#")
-                    if file_part and file_part not in by_file:
+                    file_part, hash_mark, anchor = target.partition("#")
+                    if not hash_mark or (file_part and file_part not in by_file):
+                        faults.append((section.id, "%s:%d link %r is not a link to a section of the three documents"
+                                       % (doc.name, number, target)))
                         continue
                     target_doc = by_file[file_part] if file_part else doc
                     where = "%s:%d" % (doc.name, number)
@@ -657,8 +742,8 @@ def main():
             print("%s %s" % (only, "pending" if section is None or section.pending else "written"))
 
         check_outline(docs, outline, faults, only)
-        pins, includes = read_pins(faults)
-        pin_count = check_pins(docs, pins, includes, faults, only)
+        pins, includes, unpinned_rows = read_pins(faults)
+        pin_count = check_pins(docs, pins, includes, unpinned_rows, faults, only)
         vectors = document_vectors(docs, faults)
         twins = test_twins(faults)
         vector_count = check_vectors(vectors, twins, faults, only)
@@ -672,7 +757,7 @@ def main():
     pending = [s.id for tag in ("RN-1", "RN-2") for s in docs[tag].sections if s.pending
                and (not only or s.id == only)]
     rationale_pending = [s.id for s in docs["RN-R"].sections if s.pending and (not only or s.id == only)]
-    unpinned = sum(len(re.findall(r"\(unpinned\)", docs[t].text)) for t in ("RN-1", "RN-2"))
+    unpinned = len(unpinned_rows)
 
     if faults:
         print("rn standard FAILED: %d fault(s)" % len(faults))
@@ -680,7 +765,7 @@ def main():
             print("  %s: %s" % (section or "-", message))
         return 1
 
-    print("rn standard: %d pins, %d vectors, %d pending sections (%s), %d pending rationale sections, %d unpinned values; green"
+    print("rn standard: %d pins, %d vectors, %d pending sections (%s), %d pending rationale sections, %d declared unpinned rows; green"
           % (pin_count, vector_count, len(pending), " ".join(pending) or "none", len(rationale_pending), unpinned))
     return 0
 

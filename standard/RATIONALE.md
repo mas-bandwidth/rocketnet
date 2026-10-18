@@ -173,8 +173,8 @@ an RN-1 implementation that carries only opaque payloads need not keep the
 stronger ones. The replay window bound is the reason 24-bit message numbers
 are enough: a stale resend cannot arrive from further back than the window
 admits, and within that distance the signed half-range reading of a number
-never aliases. The maximum depth has no named constant in the reference
-implementation yet, so it is marked unpinned until one exists.
+never aliases. Neither depth bound has a named constant in the reference
+implementation yet, so both rows are declared unpinned until one exists.
 
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules

@@ -210,58 +210,81 @@ repository root:
     RN_STANDARD_VECTOR( "t3.token-identifier", "f520da9d95fd072256b47d755f810f61" )
 
 The hex is the same bytes, with or without spaces, and may be split across
-adjacent string literals. The test case regenerates the bytes from the inputs
+adjacent string literals. A twin counts only outside comments, in a file that
+calls `rn_standard_vectors_walk`. The test case regenerates the bytes from the inputs
 through the implementation and compares them (`test_unit_standard.h`). The
 checker fails a vector present in a document and in no test file, a twin in
 a test file and in no document, and any byte that differs between the two.
 
-## 10. Constants, defaults and pins
+## 10. Constants, configuration fields and pins
 
 Every number an implementation has to match is a row in exactly one table:
-RN-1 t3 for the connection layer, including its defaults; for the message
-layer, the table of the m-section that owns the value. Such a table has a
-first column `Name` and a column `Value`, and the value cell holds one value
-only: a decimal or `0x` hexadecimal integer, a decimal real, or a quoted
-string, in backticks. Units go in their own column.
 
-A default is stated once, in that row, with its pin. RN-1 t17 states the
-timing rules and refers to the t3 rows; it does not repeat their numbers.
+- RN-1 t3 for the constants of the connection layer. A t3 row's kind is
+  `version`, `packet type`, `registry`, `key derivation label`, `size` or
+  `protocol value` (a rate, count or size the protocol fixes; not
+  configurable).
+- RN-1 t2.3 for every configuration field of the connection layer, with its
+  default, type, environment variable and valid range.
+- For the message layer, the table of the m-section that owns the value or
+  the configuration field, in the same shape as t2.3 for a field.
 
-Every such row is pinned in a pin file `standard/pins/<name>.tsv`:
+Such a table has a first column `Name` and a column `Value`. The value cell
+holds one value only, in backticks: a decimal or `0x` hexadecimal integer, a
+decimal real, or a quoted string; or `none` for a field with no numeric
+default. Units go in their own column. Row names are unique within a
+document.
+
+A default is stated once, in its field's row, with its pin. RN-1 t17 states
+the timing rules and refers to the rows; it does not repeat their numbers.
+
+Every row with a value is pinned in a pin file `standard/pins/<name>.tsv`:
 
     # comment lines start with '#'
     #include "rocketnet_wire.h"
+    #unpinned	<document name>	<why no sdk expression exists>
     <document name>	<sdk expression>	<value>
 
-three tab-separated fields: the row's `Name` cell, a C or C++ constant
-expression over the real sdk headers (or libsodium's), and the value as the
-document writes it. An `#include` comment line adds a header to the
-translation unit the checker generates. The checker compiles one translation
-unit that prints every pin's expression, and fails when the compiler's value,
-the pin file's value and the document's cell are not all equal, or when a
-pinned row is missing from its document.
-
-`transport.tsv` and `messages.tsv` hold the rows this skeleton wrote. A
-section card adds rows only to its own pin file, `standard/pins/<section
-id>.tsv` (for example `t8.tsv`), never to a shared one; the document a pin
-file names is RN-1 for a `t` id and RN-2 for an `m` id.
+A pin row is three tab-separated fields: the row's `Name` cell, a C or C++
+constant expression over the real sdk headers (or libsodium's), and the value
+as the document writes it. A configuration default is pinned through the
+checker's names for the sdk's configuration tables:
+`rn_pin_server_default_<field>`, `rn_pin_client_default_<field>` and
+`rn_pin_message_default_<field>`. An `#include` comment line adds a header to
+the translation unit the checker generates. The checker compiles one
+translation unit that prints every pin's expression, and fails when the
+compiler's value, the pin file's value and the document's cell are not all
+equal, when a pinned row is missing from its document, and when a document
+row with a value has no pin.
 
 A number with no sdk expression is a finding, never a pinned literal: the
-writer states it in prose followed by the marker `(unpinned)`, reports it, and
-the row is added once the sdk names it. The checker counts the markers.
+writer declares the row with an `#unpinned` line naming the reason, reports
+it, and replaces the declaration with a pin once the sdk names the value. The
+checker counts the declarations and fails a declaration whose row has a pin
+or does not exist.
+
+Pin files are owned by sections. `transport.tsv` holds rows of RN-1 t1 to t3
+and `messages.tsv` rows of RN-2 m1, the sections this skeleton wrote. A
+section card adds rows only to its own pin file, `standard/pins/<section
+id>.tsv` (for example `t8.tsv`), never to a shared one, and every row of that
+file lies in that section; the document is RN-1 for a `t` id and RN-2 for an
+`m` id. The checker fails a row outside its file's sections.
 
 ## 11. Cross-references
 
-Every reference to a section is a markdown link whose text is the target's
-id and heading, prefixed by the document tag when it crosses documents:
+Every link in the three documents is a reference to a section or
+subsection, and its text is the target's id and heading, prefixed by the
+document tag when it crosses documents:
 
     [t6 Connect token](#t6)
+    [t2.3 Configuration surface](#t2.3)
     [RN-1 t14 Replay protection](TRANSPORT.md#t14)
     [RN-R t6 Connect token](RATIONALE.md#t6)
 
 The checker fails a link to an id that does not exist, a link whose text is
-not that id's heading, and a bare section id in running text. External
-standards are cited by name and number (`RFC 8439`) with no link.
+not that id's heading, a link to anything but a section of the three
+documents, and a bare section id in running text. External standards are
+cited by name and number (`RFC 8439`) with no link.
 
 ## 12. Visibility of behaviour
 
