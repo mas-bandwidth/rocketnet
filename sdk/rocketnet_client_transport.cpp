@@ -213,7 +213,8 @@ void rocketnet_client_io_wipe( void * data, size_t bytes )
 static void rocketnet_client_transport_publish_keys( void * context, const struct rocketnet_client_protocol_t * client )
 {
     rocketnet_client_io_publish_keys( (rocketnet_client_io_t *) context, client->keys.session_server_to_client,
-                                      client->signed_fields.protocol_id, client->connection_salt, client->filter_value );
+                                      client->signed_fields.protocol_id, client->connection_salt, client->filter_value,
+                                      &client->server_address );
 }
 
 // tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state

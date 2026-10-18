@@ -775,7 +775,8 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
                                                 out_type_data_offset, type_data_validator );
 }
 
-// The part of the session path after the open and the replay advance, shared
+// tla/RNClientIoDecrypt.tla UpdateConsume, after the open: the part of the
+// session path after the open and the replay advance, shared
 // by rocketnet_client_open_session_packet and the I/O-opened record of
 // rocketnet_client_consume_session_record: the ack block, the type's size and
 // own check, then the commit.
@@ -903,6 +904,28 @@ static int rocketnet_client_consume_session_record( struct rocketnet_client_prot
         return -1;
     }
 
+    // a refused record first takes update's own cheap rungs on replay_session,
+    // in today's order, so its counter matches the path that opens on this
+    // thread; then the I/O thread's rung
+
+    if ( client->record_verdict != ROCKETNET_CLIENT_IO_VERDICT_OPENED )
+    {
+        const uint8_t * q = packet_data + ROCKETNET_PREFILTER_BYTES;
+        const uint64_t own_sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &q ), client->replay_session.highest_opened );
+        if ( own_sequence == 0 )
+        {
+            rocketnet_spam( "client ignored session packet. zero sequence" );
+            counters[type_counters->zero_sequence]++;
+            return -1;
+        }
+        if ( rocketnet_replay_already_received( &client->replay_session, own_sequence ) )
+        {
+            rocketnet_spam( "client ignored session packet. already received" );
+            counters[type_counters->already_received]++;
+            return -1;
+        }
+    }
+
     switch ( client->record_verdict )
     {
         case ROCKETNET_CLIENT_IO_VERDICT_ZERO_SEQUENCE:
@@ -951,8 +974,9 @@ static int rocketnet_client_consume_session_record( struct rocketnet_client_prot
                                                 out_type_data_offset, type_data_validator );
 }
 
-// The session entry every session type calls: a record the I/O thread worked
-// is consumed, anything else takes rocketnet_client_open_session_packet.
+// tla/RNClientIoDecrypt.tla UpdateConsume, the entry every session type calls:
+// a record the I/O thread worked is consumed, anything else takes
+// rocketnet_client_open_session_packet.
 
 static int rocketnet_client_session_entry( struct rocketnet_client_protocol_t * client,
                                            uint8_t packet_type,

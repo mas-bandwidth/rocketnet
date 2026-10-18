@@ -94,6 +94,7 @@ static void client_io_decrypt_setup( client_io_decrypt_fixture_t * f )
     f->client.send_sequence_session = 1;
 
     rocketnet_address_load_ipv4( &f->server, 0x7f000001, 40000 );
+    f->client.server_address = f->server;
 }
 
 static void client_io_decrypt_teardown( client_io_decrypt_fixture_t * f )
@@ -107,7 +108,7 @@ static void client_io_decrypt_teardown( client_io_decrypt_fixture_t * f )
 static void client_io_decrypt_publish( client_io_decrypt_fixture_t * f )
 {
     rocketnet_client_io_publish_keys( &f->io, f->client.keys.session_server_to_client, f->client.signed_fields.protocol_id,
-                                      f->client.connection_salt, f->client.filter_value );
+                                      f->client.connection_salt, f->client.filter_value, &f->client.server_address );
 }
 
 // the plaintext of a payload: the minimum ack block and one payload byte
@@ -119,7 +120,8 @@ static int client_io_decrypt_plaintext( uint8_t * out, uint8_t payload_byte )
 }
 
 // seals a payload packet from the server under the known key and pushes it
-static int client_io_decrypt_push_payload( client_io_decrypt_fixture_t * f, uint64_t sequence, uint8_t payload_byte, bool forge )
+static int client_io_decrypt_push_payload_from( client_io_decrypt_fixture_t * f, const rocketnet_address_t * from,
+                                               uint64_t sequence, uint8_t payload_byte, bool forge )
 {
     uint8_t plaintext[64];
     const int plaintext_bytes = client_io_decrypt_plaintext( plaintext, payload_byte );
@@ -130,8 +132,13 @@ static int client_io_decrypt_push_payload( client_io_decrypt_fixture_t * f, uint
     check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + plaintext_bytes );
     if ( forge )
         packet[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES] ^= 0x01;   // one ciphertext byte flipped
-    rocketnet_fake_client_push( &f->fake, &f->server, packet, bytes );
+    rocketnet_fake_client_push( &f->fake, from, packet, bytes );
     return bytes;
+}
+
+static int client_io_decrypt_push_payload( client_io_decrypt_fixture_t * f, uint64_t sequence, uint8_t payload_byte, bool forge )
+{
+    return client_io_decrypt_push_payload_from( f, &f->server, sequence, payload_byte, forge );
 }
 
 // update's consume of one exposed record (tla/RNClientIoDecrypt.tla UpdateConsume)
@@ -231,14 +238,19 @@ static void client_io_decrypt_replay_refused_before_open()
 }
 REGISTER_UNIT_TEST( client_io_decrypt_replay_refused_before_open );
 
-// RetireKeys then IoDropKeys (NoOpenWithoutKeys): publish, retire, then a
-// sealed datagram. The retire wakes the I/O thread; the step reads retired at
+// RetireKeys then IoDropKeys (NoOpenWithoutKeys): publish and take, retire,
+// then a sealed datagram. The retire wakes the I/O thread; the step reads retired at
 // the top of the drain, zeroes its copy and opens nothing: the record is raw.
 static void client_io_decrypt_no_open_after_retire()
 {
     static client_io_decrypt_fixture_t f;
     client_io_decrypt_setup( &f );
     client_io_decrypt_publish( &f );
+
+    // IoTakeKeys as the I/O thread runs it at the top of a drain: the copy is live
+    rocketnet_client_io_take_keys( &f.io );
+    check( f.io.open.loaded_epoch == ROCKETNET_CLIENT_IO_EPOCH_LIVE );
+    check( memcmp( f.io.open.session_server_to_client, f.key, ROCKETNET_KEY_BYTES ) == 0 );
 
     const int wakes_before = f.fake.wake_calls;
     rocketnet_client_io_retire_keys( &f.io );
@@ -330,3 +342,38 @@ static void client_io_decrypt_verdicts_counted_in_order()
     client_io_decrypt_teardown( &f );
 }
 REGISTER_UNIT_TEST( client_io_decrypt_verdicts_counted_in_order );
+
+// A copy of a genuine datagram from any source but the dialed server stays raw
+// and leaves the I/O thread's window alone: update drops it as junk, so the
+// genuine copy that follows from the server still opens and is delivered.
+static void client_io_decrypt_other_source_stays_raw()
+{
+    static client_io_decrypt_fixture_t f;
+    client_io_decrypt_setup( &f );
+    client_io_decrypt_publish( &f );
+
+    rocketnet_address_t other = {};
+    rocketnet_address_load_ipv4( &other, 0x7f000002, 40000 );
+    client_io_decrypt_push_payload_from( &f, &other, 1, 0xE1, false );
+    client_io_decrypt_push_payload( &f, 1, 0xE1, false );
+
+    const uint64_t opens_before_step = rocketnet_crypto_tally.aead_open;
+    check( rocketnet_client_io_step( &f.io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( rocketnet_crypto_tally.aead_open - opens_before_step == 1 );
+
+    rocketnet_client_receive_buffer_t * buffer = rocketnet_client_io_expose( &f.io );
+    check( buffer );
+    check( buffer->num_packets == 2 );
+    check( buffer->verdict[0] == ROCKETNET_CLIENT_IO_VERDICT_RAW );
+    check( buffer->verdict[1] == ROCKETNET_CLIENT_IO_VERDICT_OPENED );
+    check( buffer->sequence[1] == 1 );
+
+    uint8_t payload[ROCKETNET_FRAME_SIZE];
+    int payload_bytes = 0;
+    check( client_io_decrypt_consume( &f, buffer, 1, payload, &payload_bytes ) == 1 );
+    check( payload_bytes == 1 && payload[0] == 0xE1 );
+
+    rocketnet_client_io_return( &f.io );
+    client_io_decrypt_teardown( &f );
+}
+REGISTER_UNIT_TEST( client_io_decrypt_other_source_stays_raw );
