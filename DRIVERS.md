@@ -223,12 +223,13 @@ DEVMAP before load so a redirect can succeed without an AF_XDP socket, and it
 reads the stats map back after each frame. It needs root, or CAP_BPF and
 CAP_NET_ADMIN; `-v` prints the verifier's last log line. One case,
 `xdp_on_link_reply_reaches_the_peer`, attaches the program to a veth pair and
-runs the example server and client across it, so it refuses outside a
+runs the example server and client across it, so it skips outside a
 virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
-verifies:
+verifies, and with room for the server's UMEM and queues (the default guest
+memory runs out and the server is killed):
 
 ```sh
-vng --run ~/vm-kernels/vmlinuz-$(uname -r) --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
+vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 2G --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from
