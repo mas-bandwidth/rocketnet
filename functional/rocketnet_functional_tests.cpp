@@ -321,10 +321,26 @@ void rocketnet_test_client_io_linux_handoff_round_trip()
     {
         for ( int i = 0; i < PACKETS_PER_FRAME; i++ )
         {
-            struct rocketnet_packet_context_t context;
-            uint8_t * payload = rocketnet_client_transport_start_packet( client, PAYLOAD_BYTES, &context );
-            rocketnet_check( payload );
             const int tag = frame * PACKETS_PER_FRAME + i;
+            struct rocketnet_packet_context_t context;
+            uint8_t * payload = NULL;
+            const double fill_deadline = rocketnet_platform_time() + 5.0;
+            while ( !payload && rocketnet_platform_time() < fill_deadline )
+            {
+                payload = rocketnet_client_transport_start_packet( client, PAYLOAD_BYTES, &context );
+                if ( !payload )
+                {
+                    // ring-full backpressure: the Filling ring is full (256
+                    // slots) while the I/O thread is behind, so a start is
+                    // deferred; update so a handed-off ring is retried with
+                    // the same frame tag (RNClientIo Write, Defer)
+                    rocketnet_client_transport_update( client, rocketnet_platform_time() );
+                    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+                    rocketnet_server_transport_send_packets( server );
+                    rocketnet_platform_sleep( 0.001 );
+                }
+            }
+            rocketnet_check( payload );
             payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
             payload[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
             for ( int j = 2; j < PAYLOAD_BYTES; j++ )
