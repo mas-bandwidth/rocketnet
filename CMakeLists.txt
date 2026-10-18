@@ -298,6 +298,13 @@ if(ROCKETNET_BUILD_TESTS)
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
     add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
+    if(WIN32)
+        # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
+        # the library in test builds, matching the filter-epoch seam above, so
+        # the production shared libraries never carry it.
+        target_compile_definitions(rocketnet PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
+        target_compile_definitions(test PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
+    endif()
     # The counter audit (test_unit_counter_classes.cpp) reads source files: the
     # tests that must name every counter, and the sdk files that count them.
     # Both lists reach it as compile definitions, relative to the source
