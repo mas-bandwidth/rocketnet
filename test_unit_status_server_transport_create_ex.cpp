@@ -82,6 +82,17 @@ static void production_config( struct rocketnet_server_transport_config_t * conf
     config->protocol_id = 1;
 }
 
+#if ROCKETNET_ASSERTS
+// the NULL argument below is the documented counted no-op, which fires
+// rocketnet_assert in a build with asserts on: count it instead of breaking
+static int server_create_ex_expected_null_asserts = 0;
+
+static void server_create_ex_expected_null_assert( const char *, const char *, const char *, int )
+{
+    server_create_ex_expected_null_asserts++;
+}
+#endif
+
 static void server_transport_create_ex_reports_every_status()
 {
     allocator_state state = { 0, 0, 0 };
@@ -94,7 +105,16 @@ static void server_transport_create_ex_reports_every_status()
     // S1: a NULL public_address_string is a logged INVALID_ARGUMENT, even
     // before init (the public NULL guard runs first)
     status = -1;
+#if ROCKETNET_ASSERTS
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    server_create_ex_expected_null_asserts = 0;
+    rocketnet_assert_function( server_create_ex_expected_null_assert );
+#endif
     check( rocketnet_server_transport_create_ex( NULL, NULL, NULL, 1000.0, &status ) == NULL );
+#if ROCKETNET_ASSERTS
+    rocketnet_assert_function( saved_assert );
+    check( server_create_ex_expected_null_asserts == 1 );
+#endif
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // not initialized: a non-NULL create before rocketnet_init is refused

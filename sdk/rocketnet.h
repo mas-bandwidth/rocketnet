@@ -472,6 +472,8 @@ inline void rocketnet_endian_fix( uint16_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
     *value = ( *value & 0x00ff ) << 8 | ( *value & 0xff00 ) >> 8;
+#else // #if ROCKETNET_BIG_ENDIAN
+    (void) value;
 #endif // #if ROCKETNET_BIG_ENDIAN
 }
 
@@ -483,6 +485,8 @@ inline void rocketnet_endian_fix( uint32_t * value )
 #else // #ifdef __GNUC__
     *value = ( *value & 0x000000ff ) << 24 | ( *value & 0x0000ff00 ) << 8 | ( *value & 0x00ff0000 ) >> 8 | ( *value & 0xff000000 ) >> 24;
 #endif // #ifdef __GNUC__
+#else // #if ROCKETNET_BIG_ENDIAN
+    (void) value;
 #endif // #if ROCKETNET_BIG_ENDIAN
 }
 
@@ -496,6 +500,8 @@ inline void rocketnet_endian_fix( uint64_t * value )
     *value = ( *value & 0x0000FFFF0000FFFF ) << 16 | ( *value & 0xFFFF0000FFFF0000 ) >> 16;
     *value = ( *value & 0x00FF00FF00FF00FF ) << 8  | ( *value & 0xFF00FF00FF00FF00 ) >> 8;
 #endif // #ifdef __GNUC__
+#else // #if ROCKETNET_BIG_ENDIAN
+    (void) value;
 #endif // #if ROCKETNET_BIG_ENDIAN
 }
 

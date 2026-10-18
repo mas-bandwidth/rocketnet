@@ -13,12 +13,12 @@ struct rocketnet_ifforward4_t
     uint32_t forward_metric;
 };
 
-static uint32_t rocketnet_route_ip( const uint8_t * ip )
+static inline uint32_t rocketnet_route_ip( const uint8_t * ip )
 {
     return (uint32_t(ip[0]) << 24) | (uint32_t(ip[1]) << 16) | (uint32_t(ip[2]) << 8) | uint32_t(ip[3]);
 }
 
-static bool better_match( const rocketnet_ifforward4_t * a, const rocketnet_ifforward4_t * b, uint32_t ip )
+static inline bool better_match( const rocketnet_ifforward4_t * a, const rocketnet_ifforward4_t * b, uint32_t ip )
 {
     if ( !a || (ip & a->forward_mask) != (a->forward_dest & a->forward_mask) )
         return false;
@@ -34,7 +34,7 @@ static bool better_match( const rocketnet_ifforward4_t * a, const rocketnet_iffo
 #include <sys/socket.h>
 #include <linux/rtnetlink.h>
 
-static bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketnet_ifforward4_t * out )
+static inline bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketnet_ifforward4_t * out )
 {
     if ( msg_ptr->nlmsg_len < NLMSG_LENGTH(sizeof(rtmsg)) || msg_ptr->nlmsg_type != RTM_NEWROUTE )
         return false;
