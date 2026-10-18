@@ -86,5 +86,40 @@ static void platform_sockaddr_in_round_trips_address()
     }
 }
 
+// Pins the same conversion for the loopback sender shape the Linux mmsg batch
+// round trip compares (functional/rocketnet_functional_tests.cpp
+// client_io_linux_mmsg_batch_round_trip): 127.0.0.1 plus a nonzero port whose
+// bytes are not symmetric. The mmsg fill and read helpers
+// (rocketnet_platform_mmsg_fill_sockaddr and
+// rocketnet_platform_mmsg_read_sockaddr, sdk/rocketnet_platform.cpp) call
+// rocketnet_platform_address_to_sockaddr_in and
+// rocketnet_platform_sockaddr_in_to_address, so a host-integer shift of the
+// octets reverses the source address on a big-endian host.
+static void platform_sockaddr_in_loopback_mmsg_round_trip()
+{
+    rocketnet_address_t sender_bind;
+    rocketnet_unit_check( rocketnet_address_parse( &sender_bind, "127.0.0.1:54321" ) );
+
+    const uint8_t expected_addr[4] = { 127, 0, 0, 1 };
+    const uint8_t expected_port[2] = { 0xD4, 0x31 };
+
+    struct sockaddr_in received;
+    memset( &received, 0, sizeof( received ) );
+    received.sin_family = AF_INET;
+    memcpy( &received.sin_addr, expected_addr, 4 );
+    memcpy( &received.sin_port, expected_port, 2 );
+
+    rocketnet_address_t from;
+    rocketnet_platform_sockaddr_in_to_address( &received, &from );
+    rocketnet_unit_check( rocketnet_address_equal( &from, &sender_bind ) );
+
+    struct sockaddr_in filled;
+    rocketnet_platform_address_to_sockaddr_in( &sender_bind, &filled );
+    rocketnet_unit_check( filled.sin_family == AF_INET );
+    rocketnet_unit_check( memcmp( &filled.sin_addr, expected_addr, 4 ) == 0 );
+    rocketnet_unit_check( memcmp( &filled.sin_port, expected_port, 2 ) == 0 );
+}
+
 REGISTER_UNIT_TEST( platform_sockaddr_in_bytes_match_address_bytes );
 REGISTER_UNIT_TEST( platform_sockaddr_in_round_trips_address );
+REGISTER_UNIT_TEST( platform_sockaddr_in_loopback_mmsg_round_trip );
