@@ -335,9 +335,10 @@ it waits on, and the merge refuses a run whose two ends printed different
 values.
 
 **Rates: flat out on the LAN, capped on the internet.** The send budget is
-what pushes the protocol (`sdk/rocketnet.h:1733-1736`). The defaults are far
-below flat out: 1,000 kbps for a client and 10,000 kbps per client for the
-server (`sdk/rocketnet.h:1737-1740`). The runner sets:
+what pushes the protocol. It is configuration, not a compile-time limit: the
+message config fields `client_send_kbps` and `server_send_kbps` carry the
+defaults, 1,000 kbps for a client and 10,000 kbps per client for the server,
+and each runner sets its own caps explicitly in its config. The runner sets:
 
 | Path | Client send | Server per-client send | `max_packets_per_update` | Update rate |
 |---|---|---|---|---|
