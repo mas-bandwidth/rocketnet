@@ -1,5 +1,16 @@
 # ServerConnection: the server's slot lifecycle and encryption mapping
 
+> **Current model note (2026-10-18).** The following historical narrative and RUNS examples describe the earlier admitted-token abstraction. The current model removes `admitted`, `admits`, and `AdmittedCap`: admission is not a separate global token set. `bound[t]` represents used-token history by source address; a mapping is created at request time, while history is bound only when an opened response is accepted. Request-side connected-ID checks are followed by the authoritative response-side connected-ID check. The current properties are `OneTokenOneLiveConnection`, `ChurnNeverDenied`, and `ExpiredTokenNeverMapped`; `OneConnectionPerToken` remains a compatibility alias for the first property for the small `MCServerConnection.tla` wrapper.
+
+> Two reversed witnesses exercise the checks at the point they matter. In `MCServerConnectionClientIdNoCheck.cfg`, two same-token requests from distinct clients create pending mappings before either response arrives. The first response binds the token and occupies a slot; with the response-side client-ID check disabled, the second response occupies another slot too, violating `OneTokenOneLiveConnection` (24,910 generated / 10,671 distinct states; expected invariant violation, exit 12). The production check at `sdk/rocketnet_server_protocol.cpp:734` looks up the client ID when processing the response, after the request race, and prevents that second seat.
+
+> In `MCServerConnectionHoldUntilExpire.cfg`, the trace seats then times out token 1, seats then times out token 2 while history persists, and finally submits fresh token 3 while a slot is free. A global held-token cap would reject token 3 despite no live connection; the current behavior accepts it, so the old hold restriction is exposed by the expected `ChurnNeverDenied` violation (102,917 generated / 39,836 distinct, exit 12). The compact witness uses MapCap=1, Capacity=1, Timeout=1, and disables application disconnect actions to keep the timeout/history sequence small. `MCServerConnectionExpiredToken.cfg` passes `ExpiredTokenNeverMapped` (134 generated / 48 distinct, exit 0).
+
+> The main `MCServerConnection.cfg` is a bounded representative instance: two clients, two selectable tokens (`TokenChoice = "any"`), one slot, disconnect-based slot reuse, and both live safety invariants. To keep full exploration within the runner's 110-second cap it uses MapCap=1, MaxNonces=1, Timeout=0, HandshakeDeadline=0, and link Capacity=1 with no loss, duplication, reordering, or delay. It passes all declared checks (554,563 generated / 116,118 distinct states, depth 38, 52.181 seconds). This bound excludes concurrent pending mappings and timer-driven release; the dedicated reversed client-ID witness retains two pending mappings and exercises the duplicate-identity response race, while the hold witness exercises timeout/history churn. The original larger timer-enabled main instance timed out at 110.481 seconds (192,963 distinct states) and is retained as a limitation in the run evidence.
+>
+> The four tool-generated serverconnection records are merged into the global `tla/RUNS.tsv` with `tlacheck merge --keep tla/RUNS.tsv`, and `tlacheck groups --root . --stale` prints `[]`. The four cases re-measured identically with the pinned runner and JAR: `MCServerConnection.cfg` passes (554,563 generated / 116,118 distinct, exit 0), `MCServerConnectionExpiredToken.cfg` passes (134 / 48, exit 0), `MCServerConnectionClientIdNoCheck.cfg` violates `OneTokenOneLiveConnection` (24,910 / 10,671, exit 12), and `MCServerConnectionHoldUntilExpire.cfg` violates `ChurnNeverDenied` (102,917 / 39,836, exit 12). The earlier sidecar `tla/RUNS-ServerConnection.tsv` is retained as the raw run evidence.
+
+
 `tla/ServerConnection.tla` is the server of `sdk/rocketnet_server_protocol.cpp` (the
 request ladder, the response, the sealed session types, the sweep, the keep-alive and the
 application disconnect) with its tables: the encryption map keyed by source address
@@ -20,7 +31,7 @@ numbers below are at `3ad4179` (origin/main at the time of writing).
 
 | Variable | Code | Meaning |
 |---|---|---|
-| `smap[a]` | `rocketnet_encryption_map_t`, one `rocketnet_encryption_mapping_t` per address | `live`; `est` (`established`, `client_index != -1`); the keys as `[salt, nonce]` (`connection_salt`, `session_nonce`); `tok` (`token_identifier`, `client_id`); `slot` (`client_index`); `age` (the fixed `handshake_deadline`); `sinceRecv` (`last_receive_time`); `sinceKA` (`last_keep_alive_send_time`); `acked` (`keep_alive_acked`) |
+| `smap[a]` | `rocketnet_encryption_map_t`, one `rocketnet_encryption_mapping_t` per address | `live`; `est` (`established`, `client_index != -1`); the keys as `[salt, nonce]` (`connection_salt`, `session_nonce`); `tok` (`token_identifier`, `client_id`); `slot` (`client_index`); `age` (the fixed `handshake_deadline`); `sinceRecv` (`last_receive_time`, the idle clock in either state); `sinceKA` (`last_keep_alive_send_time`); `acked` (`keep_alive_acked`) |
 | `slot[i]` | `rocketnet_client_slots_t` | `used` (`connected[i]`), `addr` (the mapping's address, which the code reaches through `mapping_index[i]`), `tok` (`client_id[i]`), `confirmed` |
 | `bound[t]` | the used-token history | the first address that presented `t`, or none |
 | `admitted` | the admitted-token set | tokens that admitted a connection |
@@ -48,7 +59,7 @@ host vanishes with nothing sent.
 | `ServerRecvSession` | a keep-alive or disconnect opens under the session keys | a mapping without a slot ignores it (`:969`); a keep-alive refreshes the idle clock (`:1014`), confirms the slot (`:1017`) and its block sets the keep-alive-acknowledged latch; a disconnect releases the slot and removes the mapping at once (`:1112-1113`) |
 | `ServerKeepAlive(i)` | the server's timer | `rocketnet_server_protocol_write_keep_alive_if_due` (`:1414`): paced off the keep-alive's own clock (`:1487`, `:1372`) |
 | `ServerAppDisconnect(i)`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client` (`:1801`): the burst (`:1830`), then the slot released and the mapping removed (`:1852-1853`) |
-| `Tick` | time | `rocketnet_server_protocol_update` (`:1194`): a half-open mapping past its handshake deadline is removed (`:1216-1217`); an established one idle past its timeout releases its slot and is removed with it (`:1226-1229`); the clients' send clocks; both links `Age` |
+| `Tick` | time | `rocketnet_server_protocol_update` (`:1194`): a half-open mapping is removed at whichever of its idle and handshake deadlines comes first (`:1216-1230`); an established one idle past its timeout releases its slot and is removed with it (`:1230-1240`); the clients' send clocks; both links `Age` |
 | `ClientConnect`, `ClientSend`, `ClientDiscCopy`, `ClientAppDisconnect` | a client | ClientConnection's `AppConnect`, `ClientSend`, `ClientDiscCopy`, `AppDisconnect`, with the token chosen at connect |
 | `ClientVanish` | the outside | the host is gone; nothing is sent again |
 | `ClientMove` | the outside | the client's address changes to one no client holds (NAT rebinding, a handover); the old address keeps its mapping; the cookie no longer verifies |
@@ -73,7 +84,7 @@ Safety, checked under every loss pattern with no fairness:
 | `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp:821`) |
 | `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
 | `NonceFresh` | no two live mappings share keys (S:32-33, no key or nonce outlives one connection; S:2656-2658) |
-| `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the handshake deadline fire when due |
+| `TimeoutHonoured`, `DeadlineHonoured`, `HalfOpenIdleHonoured` | the idle timeout and the handshake deadline fire when due, for an established mapping and for a half-open one |
 | `PacketsReachOwnSlotOnly` | a client's packets never reach another client's slot: a client packet that touches a used slot (its record, or the mapping behind it) came from that slot's address and opened under that mapping's keys; after an address change the client's packets come from an address with no mapping, or another client's, and touch nothing |
 | `SessionNeverAnswered` | a session packet never provokes a send (S:2852-2853, a disconnect is never answered); the keep-alive is timer driven (S:2894, keep-alive generation reads the clocks, never an arrival) |
 | `TypeOK` | types, including both links' |
@@ -127,7 +138,9 @@ the establishing keep-alive once at the response and never again. The code's beh
   it as a keep-alive does, and neither moves a slot or a mapping. The #90 clock (a payload
   stream suppressing the keep-alive) is ClientConnection's witness.
 - **Time** is a tick of one send interval on every clock, with saturating counters. A
-  `Timeout` or `HandshakeDeadline` of 0 is off.
+  `Timeout` or `HandshakeDeadline` of 0 is off. `Timeout` bounds an established mapping's
+  silence and, after a request refreshes it, a half-open mapping's; a half-open mapping
+  dies at whichever of `Timeout` and `HandshakeDeadline` it reaches first.
 - **The ack block** is one bit: a client session packet accepted by an established mapping
   sets the keep-alive-acknowledged latch.
 - **The sweep and the receive loop** interleave freely; the code runs the sweep after the

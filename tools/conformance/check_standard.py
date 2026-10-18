@@ -458,6 +458,12 @@ def main():
         if implemented is not None:
             compare("handshake deadline (timing table)", ints(cell)[0], implemented)
 
+    cell = timing_row("Half-open idle deadline")
+    if cell is not None:
+        implemented = require("HALF_OPEN_IDLE_TIMEOUT_SECONDS")
+        if implemented is not None:
+            compare("half-open idle deadline (timing table)", ints(cell)[0], implemented)
+
     cell = timing_row("Cookie lifetime")
     if cell is not None:
         implemented = require("DEFAULT_COOKIE_LIFETIME_SECONDS")
@@ -501,6 +507,24 @@ def main():
         if implemented is not None:
             compare("handshake deadline (glance table)", ints(cell)[0], implemented)
 
+    # The two server handshake budgets: each row's number and window are the
+    # implementation's macros, so a doc number and a code number move together.
+    cell = row("Handshake work budget")
+    if cell is not None:
+        implemented = require("ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE")
+        if implemented is not None:
+            compare("handshake work budget (glance table)", ints(cell)[0], implemented)
+
+    cell = row("Failed-signature budget")
+    if cell is not None:
+        published = ints(cell)
+        implemented = require("ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET")
+        if implemented is not None:
+            compare("failed-signature budget (glance table)", published[0], implemented)
+        implemented = require("ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS")
+        if implemented is not None:
+            compare("failed-signature window (glance table)", published[1], implemented)
+
     cell = row("Cookie lifetime / key rotation")
     if cell is not None:
         numbers = ints(cell)
@@ -519,9 +543,16 @@ def main():
     cell = row("Replay buffer")
     if cell is not None:
         compare("replay buffer at least", ints(cell)[0],
-                code["ROCKETNET_HISTORY_PACKETS"])
+                code["ROCKETNET_HISTORY_PACKETS_MIN"])
         compare("replay window bits", ints(cell)[0],
                 code["ROCKETNET_REPLAY_WINDOW_BITS"])
+
+    # the depth's upper bound is a message-tier precondition (STANDARD.md
+    # _Numbers_), so its own row must track the implementation's macro
+    cell = row("Replay buffer maximum")
+    if cell is not None:
+        compare("replay buffer maximum", ints(cell)[0],
+                code["ROCKETNET_HISTORY_PACKETS_MAX"])
 
     cell = row("Kernel replay prefilter")
     if cell is not None:

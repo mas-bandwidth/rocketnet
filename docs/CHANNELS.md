@@ -1782,8 +1782,8 @@ RECORDS, the two records above in one packet:
 RECORDS, fragment 1 of 3 of a RELIABLE_ORDERED block, number 9, ring 72, ordering 7, channel 300 (WIDE):
                                              1b 80 04 09 00 00 48 00 07 00 00 2c 01 01 00 02 00 <1152 data bytes> 01
 CONFIG, defaults, number 0:
-                                             22 1c 00 00 00 00 01 01 09 00 20 00 00 00 00 04 00 00
-                                             00 00 01 00 00 80 00 00 80 04 00 00 00 00 00 00 01
+                                             22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04 00 00
+                                             00 00 04 00 00 00 04 00 80 04 00 00 00 00 00 00 01
 ```
 
 Field by field, for the block vector:
