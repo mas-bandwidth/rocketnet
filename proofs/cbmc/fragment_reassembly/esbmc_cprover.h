@@ -18,5 +18,6 @@
 
 #define __CPROVER_assert( condition, message ) __ESBMC_assert( ( condition ), ( message ) )
 #define __CPROVER_assume( condition ) __ESBMC_assume( ( condition ) )
+#define __CPROVER_same_object( a, b ) __ESBMC_same_object( ( a ), ( b ) )
 
 #endif // #ifndef ROCKETNET_PROOF_ESBMC_CPROVER_H
