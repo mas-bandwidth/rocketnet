@@ -27,9 +27,13 @@
 
 #if !ROCKETNET_DEVELOPMENT
 
+    /** @brief Text form of the selected SDK version. @return "dev" for development builds, otherwise the release version string. */
     #define ROCKETNET_VERSION_FULL                               "1.0.0"
+    /** @brief Major component of the selected SDK version; development builds use 255. */
     #define ROCKETNET_VERSION_MAJOR_INT                                1
+    /** @brief Minor component of the selected SDK version; development builds use 255. */
     #define ROCKETNET_VERSION_MINOR_INT                                0
+    /** @brief Patch component of the selected SDK version; development builds use 255. */
     #define ROCKETNET_VERSION_PATCH_INT                                0
 
 #else // !ROCKETNET_DEVELOPMENT
@@ -70,23 +74,37 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
 
+/** @brief Allows only level-NONE messages when used as the maximum; quiet mode suppresses all messages. */
 #define ROCKETNET_LOG_LEVEL_NONE                                       0
+/** @brief Error log level, the least verbose emitted level. */
 #define ROCKETNET_LOG_LEVEL_ERROR                                      1
+/** @brief Warning log level. */
 #define ROCKETNET_LOG_LEVEL_WARN                                       2
+/** @brief Informational log level. */
 #define ROCKETNET_LOG_LEVEL_INFO                                       3
+/** @brief Debug log level. */
 #define ROCKETNET_LOG_LEVEL_DEBUG                                      4
+/** @brief Most verbose log level. */
 #define ROCKETNET_LOG_LEVEL_SPAM                                       5
 
+/** @brief Address-family value for no address family. */
 #define ROCKETNET_ADDRESS_NONE                                         0
+/** @brief Address-family value for IPv4. */
 #define ROCKETNET_ADDRESS_IPV4                                         1
+/** @brief Address-family value for IPv6. */
 #define ROCKETNET_ADDRESS_IPV6                                         2
 
 #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                          256
 
+/** @brief Connection classification when the type is unknown. */
 #define ROCKETNET_CONNECTION_TYPE_UNKNOWN                              0
+/** @brief Connection classification for wired access. */
 #define ROCKETNET_CONNECTION_TYPE_WIRED                                1
+/** @brief Connection classification for Wi-Fi access. */
 #define ROCKETNET_CONNECTION_TYPE_WIFI                                 2
+/** @brief Connection classification for cellular access. */
 #define ROCKETNET_CONNECTION_TYPE_CELLULAR                             3
+/** @brief Largest defined connection classification value. */
 #define ROCKETNET_CONNECTION_TYPE_MAX                                  3
 
 #define ROCKETNET_PLATFORM_UNKNOWN                                     0
@@ -264,43 +282,123 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 
 // SDK ABI revision, independent of the wire version. Existing public layouts
 // remain unchanged. Increment on any incompatible layout/calling-contract change.
+/**
+ * @brief Identifies the public C struct and calling-convention revision.
+ *
+ * This revision is independent of the wire protocol version. Increment it for
+ * an incompatible public layout or calling-contract change; append-only
+ * additions that preserve old layouts keep the revision unchanged.
+ */
 #define ROCKETNET_ABI_VERSION 1
 
-// Safe before init; no allocation and no caller-owned struct writes. Type names
-// are the public C struct names. Unknown types/fields return SIZE_MAX for size
-// and offset, and -1 for field count. This describes the eight transport/config/
-// packet/frame-sync/message-config structs in this header, not opaque internal
-// objects such as the message client and server.
+/** @brief Returns the SDK ABI revision, without requiring initialization. */
+/** @brief Returns the SDK ABI revision. @return ROCKETNET_ABI_VERSION; safe before init and allocation-free. */
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_abi_version( void );
-// a NULL type is a counted no-op that returns SIZE_MAX.
+
+/**
+ * @brief Returns the byte size of a public struct known to the ABI table.
+ *
+ * This query is allocation-free and safe before initialization. It describes
+ * the transport/config, stats, packet-context, frame-sync-stats and
+ * message-config structs registered in the ABI table, not opaque handles.
+ *
+ * @param type NUL-terminated public C struct name; NULL is a counted no-op.
+ * @return The struct size, or SIZE_MAX for NULL or an unknown name.
+ */
 ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_type_size( const char * type );
-// a NULL type is a counted no-op that returns -1.
+
+/**
+ * @brief Returns the number of ABI-described fields in a known public struct.
+ * @param type NUL-terminated public C struct name; NULL is a counted no-op.
+ * @return The field count, or -1 for NULL or an unknown name.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_abi_field_count( const char * type );
-// a NULL type or field is a counted no-op that returns SIZE_MAX.
+
+/**
+ * @brief Returns the byte offset of a named field in a known public struct.
+ * @param type NUL-terminated public C struct name; NULL is a counted no-op.
+ * @param field NUL-terminated field name; NULL is a counted no-op.
+ * @return The field offset in bytes, or SIZE_MAX if either name is NULL or the pair is unknown.
+ */
 ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_offset( const char * type, const char * field );
-// a NULL type or field is a counted no-op that returns SIZE_MAX.
+
+/**
+ * @brief Returns the byte size of a named field in a known public struct.
+ * @param type NUL-terminated public C struct name; NULL is a counted no-op.
+ * @param field NUL-terminated field name; NULL is a counted no-op.
+ * @return The field size in bytes, or SIZE_MAX if either name is NULL or the pair is unknown.
+ */
 ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_size( const char * type, const char * field );
 
 #ifdef __cplusplus
+/**
+ * @brief Initializes the library and its platform and cryptography state.
+ * @param context Opaque allocator context passed to allocation callbacks; NULL is allowed.
+ * @return true on success; false if already initialized, platform setup fails, or cryptography setup fails.
+ * Call before creating transports; do not race an init or term transition.
+ * @code
+ * if (!rocketnet_init()) {
+ *     // handle failure
+ * }
+ * @endcode
+ */
 ROCKETNET_EXPORT_FUNC bool rocketnet_init( void * context = NULL );
 #else
+/** @brief Initializes the library and its platform and cryptography state. @param context Allocator context; NULL is allowed. @return true on success; false if already initialized or platform/crypto setup fails. Call before creating transports; do not race lifecycle transitions. */
 ROCKETNET_EXPORT_FUNC bool rocketnet_init( void * context );
 #endif
 
-// As rocketnet_init, with the exact section-2.1 code written to *status on
-// every return path when status is not NULL. A failure also logs one
-// rocketnet_error line. The non-_ex form passes NULL and keeps its result.
+/**
+ * @brief Initializes RocketNet and optionally returns the exact status code.
+ *
+ * This has the same lifecycle and logging behavior as rocketnet_init. It writes
+ * status on every return when status is non-NULL; a failure logs one error
+ * line. No transport may be used until initialization succeeds.
+ *
+ * @param context Opaque allocator context retained for platform allocations; NULL is allowed.
+ * @param status Optional writable int receiving a ROCKETNET_STATUS_* value; NULL skips the write.
+ * @return true on success; false on an existing transition or platform/crypto failure.
+ * @code
+ * int status;
+ * if (!rocketnet_init_ex(NULL, &status)) {
+ *     rocketnet_error("init failed: %s", rocketnet_status_string(status));
+ * }
+ * @endcode
+ */
 ROCKETNET_EXPORT_FUNC bool rocketnet_init_ex( void * context, int * status );
 
+/**
+ * @brief Terminates the initialized library after all SDK objects are destroyed.
+ *
+ * This wrapper discards the status returned by rocketnet_term_ex. A refused
+ * termination logs one error line. Do not call concurrently with SDK work that
+ * allocates or depends on platform state.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_term();
 
-// As rocketnet_term, returning the section-2.1 code: OK when the library
-// terminated, NOT_INITIALIZED when there was nothing to terminate, and
-// LIVE_ALLOCATIONS when the term refused. A failure logs one error line.
+/**
+ * @brief Terminates the library and returns why termination did or did not occur.
+ *
+ * Call after every transport, frame-sync object and SDK allocation is released.
+ * A failure logs one error line. Do not race termination with other SDK work.
+ *
+ * @return ROCKETNET_STATUS_OK on termination, ROCKETNET_STATUS_NOT_INITIALIZED
+ * if the library is not initialized or is transitioning, or
+ * ROCKETNET_STATUS_LIVE_ALLOCATIONS while SDK allocations remain.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_term_ex( void );
 
 // -----------------------------------------
 
+/**
+ * @brief Process-wide callback used by enabled rocketnet_assert checks.
+ *
+ * The default callback logs and traps. Set it through rocketnet_assert_function
+ * before concurrent SDK calls; direct writes are not synchronized. With
+ * ROCKETNET_ASSERTS disabled, rocketnet_assert does not invoke this pointer.
+ * The strings are borrowed for the synchronous callback and the line is the
+ * source line that failed.
+ */
 ROCKETNET_EXPORT_DATA void (*rocketnet_assert_function_pointer)( const char * condition, const char * function, const char * file, int line );
 
 #ifndef ROCKETNET_ASSERTS
@@ -324,53 +422,109 @@ do                                                                              
 #define rocketnet_assert( ignore ) ((void)0)
 #endif
 
+/**
+ * @brief Installs the process-wide callback for enabled assertion failures.
+ *
+ * Pass NULL to restore the default callback. The callback receives borrowed
+ * condition, function and file strings plus the source line, and runs
+ * synchronously on the thread that fires the assertion. Install it before
+ * concurrent SDK calls; this setter does not synchronize direct pointer reads.
+ *
+ * @param function Callback to install, or NULL to restore the default.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_assert_function( void (*function)( const char * condition, const char * function, const char * file, int line ) );
 
 // ------------------------------------------
 
+/**
+ * @brief Suppresses or resumes all RocketNet log output.
+ *
+ * Quiet state is process-wide and atomically read by logging calls. It does not
+ * change the configured log level.
+ * @param flag true suppresses output; false resumes output subject to the log level.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_quiet( bool flag );
 
+/**
+ * @brief Sets the process-wide maximum log level.
+ * @param level An integer from 0 (none) through 5 (spam); other values are ignored.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_log_level( int level );
 
-// the level currently in force, so a caller that moves the level for a
-// bounded stretch (the test suite's log-asserting tests) can restore what
-// it found rather than guessing
-
+/**
+ * @brief Reads the current process-wide log level.
+ * This relaxed atomic read is diagnostic only; it is not a synchronization operation.
+ * @return A value from ROCKETNET_LOG_LEVEL_NONE through ROCKETNET_LOG_LEVEL_SPAM.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_get_log_level( void );
 
-// the name of a level, so a replacement log function renders it the way the
-// default one does
-
+/**
+ * @brief Returns the display name for a log level.
+ * The returned string is static and remains valid for the process lifetime.
+ * @param level A log level value.
+ * @return "error", "warning", "info", "debug" or "spam" for levels 1 through 5; "???" for none or an unknown value.
+ */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_log_level_string( int level );
 
+/**
+ * @brief Installs the legacy varargs logging function.
+ *
+ * The last registration across this function and rocketnet_set_log_callback
+ * wins. Passing NULL restores the default sink. The function is called
+ * synchronously on each logging thread with an already formatted message via
+ * the format string "%s"; it must be thread-safe.
+ * @param function Callback to install, or NULL to restore the default sink.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_log_function( void (*function)( int level, const char * format, ... ) );
 
-// a preformatted, FFI-safe log callback (docs/ERRORS-AND-LOGGING.md 3.2). the
-// callback receives the already-formatted bytes and their exact length; message[length]
-// is always NUL-terminated and length is clamped to 1023. message borrows the
-// logging frame's stack buffer and is valid only for the synchronous duration of the
-// call. the callback must be thread-safe and must not call rocketnet_set_log_callback
-// or rocketnet_log_function re-entrantly.
+/**
+ * @brief Receives one preformatted log message through the FFI-safe sink.
+ *
+ * The callback runs synchronously on the logging thread. The message is
+ * NUL-terminated, length is at most 1023 bytes, and the pointer borrows a stack
+ * buffer valid only until the callback returns. The callback must be
+ * thread-safe and must not re-enter rocketnet_set_log_callback or
+ * rocketnet_log_function.
+ * @param context Caller-owned pointer supplied when the callback is installed.
+ * @param level The level passed by the logging call.
+ * @param message Borrowed formatted bytes; valid only during this callback.
+ * @param length Number of message bytes before the NUL terminator, at most 1023.
+ */
 typedef void (*rocketnet_log_callback_t)( void * context, int level, const char * message, size_t length );
 
+/**
+ * @brief Installs the preformatted logging callback.
+ *
+ * The last registration across this function and rocketnet_log_function wins.
+ * Passing NULL restores the default sink and clears its context. Calls already
+ * in flight may finish on their previously captured callback; callbacks must
+ * be thread-safe.
+ * @param callback Callback to install, or NULL to restore the default sink.
+ * @param context Caller-owned pointer passed back to callback; keep it valid until any in-flight callback using it returns.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_set_log_callback( rocketnet_log_callback_t callback, void * context );
 
-// a NULL format is a counted no-op.
+/**
+ * @brief Formats and emits a message at the supplied log level.
+ *
+ * Quiet mode and the configured level filter the message before formatting.
+ * Formatting uses printf rules; output is truncated to 1023 bytes. Unknown
+ * levels are passed to the sink, and the default sink labels them "???".
+ * @param level A log level, normally 0 through 5.
+ * @param format NUL-terminated printf format; NULL is a counted no-op.
+ * The remaining arguments must match the conversion specifiers in format.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_printf( int level, const char * format, ... );
 
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_INFO. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_info( const char * format, ... );
-
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_WARN. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_warn( const char * format, ... );
-
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_ERROR. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_error( const char * format, ... );
-
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_DEBUG. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_debug( const char * format, ... );
-
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_SPAM. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
 
 // ------------------------------------------
@@ -384,16 +538,25 @@ ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
 // alignment/ownership metadata, so callbacks receive larger sizes and their
 // original pointer on free.
 // a NULL malloc_function or free_function is a counted no-op that returns false.
+/**
+ * @brief Replaces the allocator before initialization.
+ * @param malloc_function Allocator callback; NULL is refused. Receives context and requested bytes plus SDK overhead.
+ * @param free_function Matching deallocator; NULL is refused and receives the original allocation pointer.
+ * @return true when both callbacks are installed; false for a partial pair, initialized library, transition, or live allocations.
+ * Call before init with no live allocations; callbacks must be thread-safe.
+ */
 ROCKETNET_EXPORT_FUNC bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 // As rocketnet_allocator, returning the section-2.1 code: INVALID_ARGUMENT for
 // a partial set, ALREADY_INITIALIZED after init or during the transition, and
 // LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line.
+/** @brief Replaces allocator callbacks and returns the refusal reason. @param malloc_function Non-NULL allocator callback. @param free_function Non-NULL matching deallocator. @return ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a partial pair, ALREADY_INITIALIZED during/after init, or LIVE_ALLOCATIONS. Install before init with no live allocations. */
 ROCKETNET_EXPORT_FUNC int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 // Counts every refused API misuse since the process started: a create before
 // rocketnet_init, a late or partial rocketnet_allocator, and any other call the
 // SDK refuses. A relaxed read; a diagnostic, not a synchronization point.
+/** @brief Reads the process-wide count of refused API calls. @return Relaxed atomic diagnostic count; this read does not synchronize SDK work. */
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_api_misuse_count();
 
 // Internal to the SDK. rocketnet_library_initialized reads the lifecycle state
@@ -401,7 +564,9 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_api_misuse_count();
 // it at entry, never per packet. rocketnet_api_misuse_record increments the
 // count above from any refused misuse. The default allocator callbacks let a
 // caller restore them after taking the allocator.
+/** @brief Internal lifecycle-state query used by SDK entry points. @return Whether initialization has completed and the library is active. */
 bool rocketnet_library_initialized();
+/** @brief Internal helper that increments the process-wide refused-call count. */
 void rocketnet_api_misuse_record();
 
 // The public boundary's NULL guard. Every exported entry point calls this once
@@ -418,7 +583,9 @@ static inline bool rocketnet_api_null_guard( const void * p )
     rocketnet_assert( p );
     return false;
 }
+/** @brief Internal default allocator callback. @param context Opaque context, ignored. @param bytes Number of bytes requested. @return Allocated storage or NULL. */
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
+/** @brief Internal default deallocator callback. @param context Opaque context, ignored. @param p Original pointer returned by the default allocator. */
 void rocketnet_default_free_function( void * context, void * p );
 
 // Internal to the SDK. Both transport updates clamp the caller's clock once per
@@ -428,46 +595,62 @@ void rocketnet_default_free_function( void * context, void * p );
 // clamps and goes on, a debug build is loud. It is also the client create's
 // check, seeded with a zero last good time. One compare per update, none per
 // packet.
+/** @brief Internal monotonic-time guard used by transport updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
 
+/** @brief Alignment in bytes returned by rocketnet_malloc. */
 #define ROCKETNET_ALLOCATION_ALIGNMENT 64
 
 // Returns 64-byte-aligned storage, or NULL on overflow/allocation failure.
 // Free only through rocketnet_free; the original allocator/context are retained.
+/** @brief Allocates SDK-counted storage aligned to ROCKETNET_ALLOCATION_ALIGNMENT. @param context Opaque allocator context; NULL is allowed. @param bytes Requested byte count. @return Aligned pointer or NULL on overflow or allocation failure. Release only with rocketnet_free; allocator and context are captured for release. */
 ROCKETNET_EXPORT_FUNC void * rocketnet_malloc( void * context, size_t bytes );
 
+/** @brief Releases storage returned by rocketnet_malloc. @param context Ignored; the allocation's original context and deallocator are retained. @param p Pointer to release; NULL is a no-op. Do not use p after this call. */
 ROCKETNET_EXPORT_FUNC void rocketnet_free( void * context, void * p );
 
+/** @brief Clears a buffer before releasing it through rocketnet_free. @param context Opaque allocator context; allocation metadata selects the original deallocator. @param p Pointer to release; NULL is a no-op. @param p_size Number of bytes to clear. The caller ensures p_size does not exceed the allocation. */
 ROCKETNET_EXPORT_FUNC void rocketnet_clear_and_free( void * context, void * p, size_t p_size );
 
 // -----------------------------------------
 
 // a NULL buffer is a counted no-op that returns NULL.
+/** @brief Formats a user identifier as lowercase hexadecimal. @param user_id Identifier to format. @param buffer Caller-owned output buffer; NULL is a counted no-op returning NULL. @param buffer_size Buffer capacity in bytes; zero writes no bytes. @return buffer, or NULL when buffer is NULL. A nonempty buffer is NUL-terminated and may contain a truncated string. */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size );
 
+/** @brief Returns a cryptographically generated float in the inclusive range [0, 1]. @return Random value. */
 ROCKETNET_EXPORT_FUNC float rocketnet_random_float();
 
+/** @brief Returns a cryptographically generated 8-bit value. @return Value in [0, 255]. */
 ROCKETNET_EXPORT_FUNC uint8_t rocketnet_random_uint8();
 
+/** @brief Returns a cryptographically generated 16-bit value. @return Value in [0, 65535]. */
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_random_uint16();
 
+/** @brief Returns a cryptographically generated 32-bit value. @return Value in [0, UINT32_MAX]. */
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_random_uint32();
 
+/** @brief Returns a cryptographically generated 64-bit value. @return Value in [0, UINT64_MAX]. */
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_random_uint64();
 
 // a NULL data is a counted no-op that writes nothing.
+/** @brief Fills a buffer with cryptographically generated bytes. @param data Writable destination; NULL is a counted no-op. @param bytes Number of bytes to write. The caller owns the buffer. */
 ROCKETNET_EXPORT_FUNC void rocketnet_random_bytes( uint8_t * data, size_t bytes );
 
+/** @brief Returns the protocol identifier derived from the selected release version. @return Hashed release version, or 0 in a development build. Safe before init. */
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_protocol_version();
 
+/** @brief Returns monotonic elapsed time in seconds from an unspecified process-local origin. @return Nondecreasing platform clock value; use the same clock for all time-taking calls. */
 ROCKETNET_EXPORT_FUNC double rocketnet_time();
 
+/** @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; provide a finite nonnegative value representable by the platform. This blocks the calling thread. */
 ROCKETNET_EXPORT_FUNC void rocketnet_sleep( double seconds );
 
 // -----------------------------------------
 
 #ifdef __cplusplus
 
+/** @brief Converts a 16-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
 inline void rocketnet_endian_fix( uint16_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
@@ -477,6 +660,7 @@ inline void rocketnet_endian_fix( uint16_t * value )
 #endif // #if ROCKETNET_BIG_ENDIAN
 }
 
+/** @brief Converts a 32-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
 inline void rocketnet_endian_fix( uint32_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
@@ -490,6 +674,7 @@ inline void rocketnet_endian_fix( uint32_t * value )
 #endif // #if ROCKETNET_BIG_ENDIAN
 }
 
+/** @brief Converts a 64-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
 inline void rocketnet_endian_fix( uint64_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
@@ -510,6 +695,7 @@ inline void rocketnet_endian_fix( uint64_t * value )
 // -----------------------------------------
 
 // a NULL dest or source is a counted no-op that returns 0.
+/** @brief Copies a NUL-terminated string into a bounded caller buffer. @param dest Writable destination; NULL is a counted no-op. @param source NUL-terminated source; NULL is a counted no-op. @param dest_size Destination capacity in bytes; zero writes nothing. @return Bytes copied, excluding NUL; returns 0 for null pointers or zero capacity. For nonzero capacity, output is always terminated; source and destination must not overlap. */
 ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size );
 
 // -----------------------------------------
@@ -557,7 +743,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 // storage for both is allocated once at create, to the maximum. The
 // hard ceiling is 256 fragments at the full stride: 305,408 bytes.
 
+/** @brief Default maximum transport payload in bytes. */
 #define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
+/** @brief Default number of simultaneous fragmented-payload reassembly slots per connection. */
 #define ROCKETNET_DEFAULT_REASSEMBLY_SLOTS                 8
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_client_transport_state_name( int state );
@@ -566,6 +754,7 @@ struct rocketnet_client_transport_t;
 struct rocketnet_counters_t;
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
+/** @brief Required connect-token buffer size in bytes. */
 #define ROCKETNET_CONNECT_TOKEN_BYTES 768
 
 // -----------------------------------------
@@ -615,15 +804,23 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 // addressing. A name in no transport set anywhere is a typo and fails
 // loudly at parse, listing the valid names.
 
+/** @brief Sets the storage capacity for a transport driver candidate list.
+ *
+ * The value includes the terminating NUL byte; a configured string must fit
+ * within this many bytes.
+ */
 #define ROCKETNET_DRIVER_STRING_LENGTH 64
 
 // field flags: ZERO_MEANS_DEFAULT admits zero as "use the built-in
 // default" beside the stated range; SECRET redacts the value in override
 // logging
 
+/** @brief Config-field flag that gives zero the field default meaning. */
 #define ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT     (1<<0)
+/** @brief Config-field flag that redacts its value in override logs. */
 #define ROCKETNET_CONFIG_SECRET                 (1<<1)
 
+/** @brief Zero initializer for fixed-size byte-array configuration fields. */
 #define ROCKETNET_CONFIG_ZERO_BYTES             {0}
 
 // The client transport config table: filter value, fragmentation shape
@@ -700,7 +897,9 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config( struct roc
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_client_transport_required_memory( const struct rocketnet_client_transport_config_t * config, const char * driver );
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
+/** @brief Size in bytes of client transport config revision 1. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
+/** @brief Current known client transport config size, in bytes. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
 
 // the defaults for a caller whose struct is config_bytes long, one of the
@@ -738,6 +937,13 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_update( struct rocketnet_client_transport_t * client_transport, double time );
 
 // a NULL client_transport or packet_data is a counted no-op.
+/**
+ * @brief Queues and flushes one client payload.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op.
+ * @param packet_data Bytes to copy; NULL is a counted no-op.
+ * @param packet_bytes Payload length in bytes, from 1 through configured maximum.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packet( struct rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes );
 
 // The copying cursor: pops the next delivered payload into packet_data,
@@ -750,6 +956,14 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packet( struct rocket
 // rocketnet_client_transport_max_payload_bytes to never refuse.
 
 // a NULL client_transport or packet_data is a counted no-op that returns 0.
+/**
+ * @brief Copies the next delivered client payload into a caller buffer.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op returning zero.
+ * @param packet_data Destination buffer; NULL is a counted no-op returning zero.
+ * @param packet_capacity Destination capacity in bytes.
+ * @return Copied byte count, or zero when drained or no payload fits; oversize payloads are skipped whole and counted.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_receive_packet( struct rocketnet_client_transport_t * client_transport, uint8_t * packet_data, int packet_capacity );
 
 // the configured maximum payload this transport sends and reassembles --
@@ -757,6 +971,12 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_receive_packet( struct rock
 // its receive buffers without carrying the config around
 
 // a NULL client_transport is a counted no-op that returns 0.
+/**
+ * @brief Returns the configured client payload limit.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op returning zero.
+ * @return Maximum send and reassembly payload size in bytes, or zero for NULL.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_max_payload_bytes( struct rocketnet_client_transport_t * client_transport );
 
 // the batch behind the copying cursor above: by count and index, and as
@@ -765,12 +985,34 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_max_payload_bytes( struct r
 // moment they complete, up to the configured maximum payload size.
 
 // a NULL client_transport is a counted no-op that returns 0.
+/**
+ * @brief Returns the number of payloads delivered by the last client update.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op returning zero.
+ * @return Payload count; the batch remains valid until the next update.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_num_payloads( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport or payload_bytes is a counted no-op that returns NULL.
+/**
+ * @brief Returns one payload from the last client update.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op returning NULL.
+ * @param payload_index Zero-based index in the latest batch.
+ * @param payload_bytes Receives payload length; NULL is a counted no-op returning NULL.
+ * @return Borrowed view valid until next update, or NULL for invalid input or index.
+ */
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_payload( struct rocketnet_client_transport_t * client_transport, int payload_index, int * payload_bytes );
 
 // a NULL client_transport, payload_data or payload_bytes is a counted no-op that returns 0.
+/**
+ * @brief Returns parallel views of payloads from the last client update.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op returning zero.
+ * @param payload_data Receives array of payload pointers; NULL is a counted no-op returning zero.
+ * @param payload_bytes Receives parallel lengths in bytes; NULL is a counted no-op returning zero.
+ * @return Payload count; arrays are borrowed and valid until next update.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_payloads( struct rocketnet_client_transport_t * client_transport, uint8_t * const ** payload_data, const int ** payload_bytes );
 
 // the client's acquire/commit send family: the same shape, layout and
@@ -780,21 +1022,58 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_payloads( struct rocketnet_
 // it is the simple form, not a fill-phase participant.
 
 // a NULL client_transport or context is a counted no-op that returns NULL.
+/**
+ * @brief Reserves a client send frame and returns its writable payload start.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op returning NULL.
+ * @param request_bytes Requested capacity in bytes, from 1 through configured maximum.
+ * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
+ * @return Writable payload pointer, or NULL when reservation fails.
+ */
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context );
 
 // Validates an active packet lease and returns its payload view. NULL/zero on
 // stale, consumed, modified or wrong-owner context. The view expires at finish,
 // abort, update, flush or destroy; callers must join before those operations.
 // a NULL transport, context or capacity is a counted no-op that returns NULL.
+/**
+ * @brief Validates a client packet lease and returns its writable view.
+ *
+ * @param transport Client transport that created the lease; NULL is a counted no-op.
+ * @param context Unmodified active lease from start_packet; NULL is a counted no-op.
+ * @param capacity Receives capacity in bytes; NULL is a counted no-op.
+ * @return Borrowed payload pointer, or NULL for invalid lease; view expires at finish, abort, update, flush, or destroy.
+ */
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_packet_payload( struct rocketnet_client_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
 // a NULL client_transport or context is a counted no-op that returns 0.
+/**
+ * @brief Seals and stages bytes written into a client packet lease.
+ *
+ * @param client_transport Client transport that created the lease; NULL is a counted no-op.
+ * @param context Active, unmodified lease; this call consumes it.
+ * @param payload_bytes Initialized byte count, from 1 through reported capacity.
+ * @return Sealed wire size, or zero when refused or dropped.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_finish_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
 // a NULL client_transport or context is a counted no-op.
+/**
+ * @brief Releases an unused client packet lease.
+ *
+ * @param client_transport Client transport that created the lease; NULL is a counted no-op.
+ * @param context Active, unmodified lease to release; NULL is a counted no-op.
+ * @return No value. Invalid or stale leases are refused and counted.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_abort_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
 // a NULL client_transport is a counted no-op.
+/**
+ * @brief Flushes client packets staged since the previous flush.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op.
+ * @return No value. Call on the main thread after fill threads join.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packets( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport is a counted no-op that returns 0.
@@ -805,6 +1084,12 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_state( struct rocketnet_cli
 // list. any performance claim attaches to what this returns.
 
 // a NULL client_transport is a counted no-op that returns NULL.
+/**
+ * @brief Returns the client driver granted at creation.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op returning NULL.
+ * @return Transport-owned granted driver name, valid until destroy, or NULL.
+ */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_client_transport_driver( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport is a counted no-op that returns 0.
@@ -854,14 +1139,24 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_stats( struct rocketnet_cl
 // deferral.
 
 // a NULL client_transport or packet_ids is a counted no-op that returns 0.
+/**
+ * @brief Returns packet ids acknowledged by the last client update.
+ *
+ * @param client_transport Client transport; NULL is a counted no-op returning zero.
+ * @param packet_ids Receives the transport-owned array; NULL is a counted no-op returning zero.
+ * @return Number of ids; array remains valid until next update.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_acked_packets( struct rocketnet_client_transport_t * client_transport, const uint64_t ** packet_ids );
 
 // -----------------------------------------
 //                                  server
 // -----------------------------------------
 
+/** @brief Server transport state while its receive and update work is active. */
 #define ROCKETNET_SERVER_TRANSPORT_RUNNING                    0
+/** @brief Server transport state while shutdown is in progress. */
 #define ROCKETNET_SERVER_TRANSPORT_STOPPING                   1
+/** @brief Server transport state after shutdown completes. */
 #define ROCKETNET_SERVER_TRANSPORT_STOPPED                    2
 
 struct rocketnet_server_transport_t;
@@ -878,8 +1173,11 @@ struct rocketnet_address_t;
 // is about admission, not session policing. The callback runs on the receive
 // thread and must be fast and thread-safe.
 
+/** @brief Admission callback result that allows an unmapped source packet to proceed. */
 #define ROCKETNET_SERVER_ADMISSION_ADMIT 0
+/** @brief Admission callback result that drops an unmapped source packet. */
 #define ROCKETNET_SERVER_ADMISSION_DROP  1
+/** @brief Filters packets from sources without an encryption mapping. @param context Application context supplied at registration. @param from Borrowed source address, valid during the callback. @param packet_data Borrowed packet bytes, valid during the callback. @param packet_bytes Packet length in bytes. @return ROCKETNET_SERVER_ADMISSION_ADMIT or ROCKETNET_SERVER_ADMISSION_DROP. Runs on the receive thread and must be fast and thread-safe; mapped sources bypass it. */
 typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives
@@ -949,7 +1247,9 @@ struct rocketnet_server_transport_config_t
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config );
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
+/** @brief Size in bytes of server transport config revision 1. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Current known server transport config size, in bytes. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1
 
 // the defaults for a caller whose struct is config_bytes long, one of the
@@ -984,6 +1284,7 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const
 // the library cannot know and does not count. Same config and driver rules as
 // required_memory: NULL config means defaults; false (and a zeroed estimate)
 // means no plan. A NULL estimate is a counted misuse that returns false.
+/** @brief Maximum number of explanatory exclusions in a host-memory estimate. */
 #define ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS 8
 
 struct rocketnet_host_memory_estimate_t
@@ -1064,6 +1365,12 @@ ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet
 // the same grant and why every earlier candidate refused.
 
 // a NULL server_transport is a counted no-op that returns NULL.
+/**
+ * @brief Returns the server driver granted at creation.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning NULL.
+ * @return Transport-owned granted driver name, valid until destroy, or NULL.
+ */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_server_transport_driver( struct rocketnet_server_transport_t * server_transport );
 
 // the commit barrier for host processes that must never commit an XDP data
@@ -1071,6 +1378,11 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_server_transport_driver( struct roc
 // refuses before its first act; the non-mutating pre-flight stays
 // reachable. a no-op on platforms without the xdp driver.
 
+/**
+ * @brief Prevents XDP drivers from committing a data plane in this process.
+ *
+ * @return No value. Install before XDP server creation; XDP create refuses before commit while preflight remains available.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_forbid_xdp_commit( void );
 
 // a NULL server_transport is a counted no-op.
@@ -1100,9 +1412,24 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_set_admission_callback( st
 //     }
 
 // a NULL server_transport is a counted no-op that returns 0.
+/**
+ * @brief Returns the number of payloads delivered by the last server update.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning zero.
+ * @return Payload count; batch remains valid until next update.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_num_payloads( struct rocketnet_server_transport_t * server_transport );
 
 // a NULL server_transport, client_index or payload_bytes is a counted no-op that returns NULL.
+/**
+ * @brief Returns one payload delivered by the last server update.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning NULL.
+ * @param payload_index Zero-based index in the latest batch.
+ * @param client_index Receives associated slot index; NULL is a counted no-op returning NULL.
+ * @param payload_bytes Receives payload length; NULL is a counted no-op returning NULL.
+ * @return Borrowed view valid until next update, or NULL for invalid input or index.
+ */
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_t * server_transport, int payload_index, int * client_index, int * payload_bytes );
 
 // The whole receive batch as parallel arrays in one call, valid until the
@@ -1110,6 +1437,15 @@ ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_payload( struct rocke
 // bindings and tight loops. Returns the number of payloads.
 
 // a NULL server_transport, client_index, payload_data or payload_bytes is a counted no-op that returns 0.
+/**
+ * @brief Returns parallel views of payloads delivered by the last server update.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning zero.
+ * @param client_index Receives slot indices parallel to payload arrays.
+ * @param payload_data Receives pointers to payload bytes.
+ * @param payload_bytes Receives lengths in bytes.
+ * @return Payload count; arrays are borrowed and valid until next update.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * server_transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
 
 // The connection id of each payload in the batch, parallel to the client
@@ -1119,6 +1455,13 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // and reassigned later in the same update. Returns the number of payloads.
 
 // a NULL server_transport or connection_id is a counted no-op that returns 0.
+/**
+ * @brief Returns connection ids parallel to the last server payload batch.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning zero.
+ * @param connection_id Receives parallel id array; NULL is a counted no-op returning zero.
+ * @return Number of ids; array is valid until next update.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
 // -----------------------------------------
@@ -1190,35 +1533,95 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payload_connection_ids( str
 // 16384-byte maximum payload that ceiling is 14. USAGE.md carries the
 // worked arithmetic.
 
+/** @brief Describes a reserved packet payload lease.
+ *
+ * The transport fills this output structure at start_packet. Treat its fields
+ * as read-only and pass the same, unmodified object to packet_payload, finish
+ * or abort. Its frame and payload view are borrowed and expire when the lease
+ * is consumed or the transport is updated, flushed or destroyed.
+ */
 struct rocketnet_packet_context_t
 {
+    /** @brief Reserved frame, borrowed for the active lease. */
     uint8_t * frame;
+    /** @brief Byte offset from frame to the payload start. */
     int payload_index;
+    /** @brief Writable payload capacity in bytes. */
     int payload_capacity;
+    /** @brief Opaque id used to match this payload with an ACK. */
     uint64_t packet_id;
+    /** @brief Session sequence reserved for the first wire packet. */
     uint64_t sequence;
+    /** @brief Server slot index for a server lease; -1 for a client lease. */
     int client_index;
 };
 
 // a NULL server_transport or context is a counted no-op that returns NULL.
+/**
+ * @brief Reserves a send frame for one connected server client.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning NULL.
+ * @param client_index Connected client slot index.
+ * @param request_bytes Requested capacity in bytes, from 1 through configured maximum.
+ * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
+ * @return Writable payload pointer, or NULL when slot or reservation is invalid. Fill calls may run concurrently between update and the following flush.
+ */
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
 
 // Validates an active packet lease and returns its payload view. NULL/zero on
 // stale, consumed, modified or wrong-owner context. The view expires at finish,
 // abort, update, flush or destroy; callers must join before those operations.
 // a NULL transport, context or capacity is a counted no-op that returns NULL.
+/**
+ * @brief Validates a server packet lease and returns its writable view.
+ *
+ * @param transport Server transport that created the lease; NULL is a counted no-op.
+ * @param context Unmodified active lease from start_packet; NULL is a counted no-op.
+ * @param capacity Receives capacity in bytes; NULL is a counted no-op.
+ * @return Borrowed payload pointer, or NULL for invalid lease; view expires at finish, abort, update, flush, or destroy.
+ */
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_packet_payload( struct rocketnet_server_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
 // a NULL server_transport or context is a counted no-op that returns 0.
+/**
+ * @brief Seals and stages bytes written into a server packet lease.
+ *
+ * @param server_transport Server transport that created the lease; NULL is a counted no-op.
+ * @param context Active, unmodified lease; this call consumes it.
+ * @param payload_bytes Initialized byte count, from 1 through reported capacity.
+ * @return Sealed wire size, or zero when refused or dropped.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
 // a NULL server_transport or context is a counted no-op.
+/**
+ * @brief Releases an unused server packet lease.
+ *
+ * @param server_transport Server transport that created the lease; NULL is a counted no-op.
+ * @param context Active, unmodified lease to release; NULL is a counted no-op.
+ * @return No value. Invalid or stale leases are refused and counted.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context );
 
 // a NULL server_transport is a counted no-op.
+/**
+ * @brief Flushes server packets staged since the previous flush.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op.
+ * @return No value. Call on main thread after fill threads join.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport );
 
 // a NULL server_transport or payload_data is a counted no-op.
+/**
+ * @brief Copies and stages one payload for a connected server client.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op.
+ * @param client_index Connected client slot index.
+ * @param payload_data Payload bytes to copy; NULL is a counted no-op.
+ * @param payload_bytes Length in bytes, from 1 through configured maximum.
+ * @return No value. Flush staged packets with send_packets.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
 
 // Disconnects one connected client deliberately: the redundant disconnect
@@ -1257,6 +1660,12 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_trans
 // the buffers it copies payloads into
 
 // a NULL server_transport is a counted no-op that returns 0.
+/**
+ * @brief Returns the configured server payload limit.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning zero.
+ * @return Maximum send and reassembly payload size in bytes, or zero for NULL.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transport_t * server_transport );
 
 // The server's whole-socket rates: packets and bandwidth per second, both
@@ -1321,6 +1730,14 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_client_stats( struct rocke
 // -- ROCKETNET_COUNTER_ACKED_BATCH_FULL counts each deferral.
 
 // a NULL server_transport, client_index or packet_ids is a counted no-op that returns 0.
+/**
+ * @brief Returns packet ids acknowledged by the last server update.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning zero.
+ * @param client_index Receives parallel slot indices; NULL is a counted no-op returning zero.
+ * @param packet_ids Receives opaque packet ids; NULL is a counted no-op returning zero.
+ * @return Number of ids; both arrays are valid until next update. Overflow is deferred and counted by ROCKETNET_COUNTER_ACKED_BATCH_FULL.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids );
 
 // The connection id of each acked packet id, parallel to the client index
@@ -1329,6 +1746,13 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_acked_packets( struct rocke
 // of acked packet ids.
 
 // a NULL server_transport or connection_id is a counted no-op that returns 0.
+/**
+ * @brief Returns connection ids parallel to the last acknowledged packet batch.
+ *
+ * @param server_transport Server transport; NULL is a counted no-op returning zero.
+ * @param connection_id Receives parallel id array; NULL is a counted no-op returning zero.
+ * @return Number of ids; array is valid until next update.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
 // -----------------------------------------
@@ -1345,19 +1769,51 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_acked_connection_ids( struc
 // platform refuses it the primitive degrades to plain absolute sleep --
 // never an unprivileged spin -- and the stats say so.
 
+/** @brief Holds state for one frame synchronizer.
+ *
+ * The type is opaque. Create it with rocketnet_frame_sync_create, use it from
+ * its owning loop thread, and release it with rocketnet_frame_sync_destroy.
+ */
 struct rocketnet_frame_sync_t;
 
+/**
+ * @brief Creates a real-time frame synchronizer.
+ *
+ * @param context Allocator context; NULL uses the default context.
+ * @param frame_rate Finite frames per second, greater than zero and no more than 1000.
+ * @return Caller-owned synchronizer, or NULL if RocketNet is not initialized, the rate is invalid, allocation fails, or the platform timer cannot be created.
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate );
 
 // As rocketnet_frame_sync_create, with the section-2.1 code written to *status
 // on every return path when status is not NULL (F1 INVALID_ARGUMENT,
 // F2 OUT_OF_MEMORY, F3 TIMER_CREATE_FAILED). A failure logs one error line.
+/**
+ * @brief Creates a frame synchronizer and reports its error status.
+ *
+ * @param context Allocator context; NULL uses the default context.
+ * @param frame_rate Finite frames per second, greater than zero and no more than 1000.
+ * @param status Receives ROCKETNET_STATUS_OK or the specific refusal code; NULL omits status reporting.
+ * @return Caller-owned synchronizer, or NULL on refusal. Status receives ROCKETNET_STATUS_OK, NOT_INITIALIZED, INVALID_ARGUMENT, OUT_OF_MEMORY, or TIMER_CREATE_FAILED if the platform timer cannot be created.
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, double frame_rate, int * status );
 
 // a NULL frame_sync is a counted no-op.
+/**
+ * @brief Releases a frame synchronizer.
+ *
+ * @param frame_sync Synchronizer to release; NULL is a counted no-op.
+ * @return No value. Stop using the object before destruction.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync );
 
 // a NULL frame_sync is a counted no-op.
+/**
+ * @brief Waits until the next frame deadline.
+ *
+ * @param frame_sync Synchronizer; NULL is a counted no-op.
+ * @return No value. Call once per loop iteration from its owning thread.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync );
 
 struct rocketnet_frame_sync_stats_t
@@ -1609,48 +2065,75 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_print_connection_sizing( const 
 // value, every failure is a positive code, and the numbering is append-only.
 // A published value and meaning never change; a new code appends immediately
 // before ROCKETNET_NUM_STATUS_CODES.
+/** @brief Stable status values returned by extended lifecycle and creation calls. @details OK is success; positive values describe failures. Existing numeric values are append-only. */
 enum rocketnet_status_t
 {
+    /** @brief Operation succeeds. */
     ROCKETNET_STATUS_OK                                 = 0,
 
     // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_allocator)
+    /** @brief Initialization is already complete or transitioning. */
     ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,
+    /** @brief The operation requires an initialized library. */
     ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,
+    /** @brief Termination or allocator replacement is refused while SDK allocations remain. */
     ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,
+    /** @brief Platform initialization fails; correct the platform setup before retrying. */
     ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,
+    /** @brief Cryptography initialization fails; initialization does not complete. */
     ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,
 
     // caller arguments and configuration (client, server, frame_sync, message)
+    /** @brief A required argument or argument combination is invalid. */
     ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,
+    /** @brief An environment override is malformed or invalid. */
     ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,
+    /** @brief A configuration value lies outside its supported range. */
     ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,
+    /** @brief The configured memory budget cannot satisfy the requested plan. */
     ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,
+    /** @brief Required key material is absent. */
     ROCKETNET_STATUS_MISSING_KEYS                       = 10,
+    /** @brief The configured protocol identifier does not match the expected value. */
     ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,
+    /** @brief Development key material is refused in a release build. */
     ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,
+    /** @brief An address cannot be parsed or used. */
     ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,
+    /** @brief The requested driver list is malformed or contains no usable candidate. */
     ROCKETNET_STATUS_INVALID_DRIVER_LIST                = 14,
 
     // client connect token pre-send checks (rocketnet_client_protocol_connect)
+    /** @brief A connect token fails client-side pre-send validation. */
     ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,
+    /** @brief The connect token has expired. Obtain a fresh token before connecting. */
     ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,
 
     // driver ladder and OS resources
+    /** @brief The selected driver cannot bind the requested zero port. */
     ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED       = 17,
+    /** @brief Every candidate in the driver fallback ladder fails. */
     ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED            = 18,
+    /** @brief An allocation required by the operation fails. */
     ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,
+    /** @brief The platform cannot create a required mutex. */
     ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,
+    /** @brief The platform cannot create a required thread. */
     ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
+    /** @brief The platform cannot create a required timer. */
     ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,
 
+    /** @brief Sentinel and total number of status codes; not an operation result. */
     ROCKETNET_NUM_STATUS_CODES                          = 23
 };
 
 // The count includes OK. Allocation-free; callable before init.
+/** @brief Returns the total number of status codes, including OK. @return Count of defined values; allocation-free and safe before init. */
 ROCKETNET_EXPORT_FUNC int rocketnet_num_status_codes( void );
 
 // The identifier without the ROCKETNET_STATUS_ prefix for 0 .. count - 1, and
 // NULL (without asserting) for an out-of-range value. Allocation-free.
+/** @brief Returns the stable symbolic name of a status code. @param status Status integer to look up. @return Static name without the ROCKETNET_STATUS_ prefix, or NULL when status is negative or greater than the last defined code. Safe before init; returned storage is process-lifetime. */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_status_string( int status );
 
 // -----------------------------------------
@@ -1672,12 +2155,14 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       
 //              and side counters)
 //   path_loss  moves only when the path loses or reorders packets
 //   arrival    a RECEIVED counter: a packet of the type arrived
+/** @brief Classifies counters by the change expected on clean and lossy paths. */
 enum
 {
     ROCKETNET_COUNTER_CLASS_REFUSAL = 0,
     ROCKETNET_COUNTER_CLASS_EXPECTED,
     ROCKETNET_COUNTER_CLASS_PATH_LOSS,
     ROCKETNET_COUNTER_CLASS_ARRIVAL,
+    /** @brief Sentinel and number of counter classifications. */
     ROCKETNET_NUM_COUNTER_CLASSES
 };
 
@@ -1752,13 +2237,16 @@ ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_c
 // 1000 bit/s), per connection: 0 at create means the default.
 
 #ifndef ROCKETNET_DEFAULT_CLIENT_SEND_KBPS
+/** @brief Default client send budget in decimal kilobits per second per connection. */
 #define ROCKETNET_DEFAULT_CLIENT_SEND_KBPS                  1000
 #endif
 #ifndef ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS
+/** @brief Default server send budget in decimal kilobits per second for each client. */
 #define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000
 #endif
 
 #define ROCKETNET_MESSAGE_OK                                0
+/** @brief Update result indicating that a received message view remains unreleased. */
 #define ROCKETNET_ERROR_MESSAGE_NOT_RELEASED                -1
 
 struct rocketnet_message_client_t;
@@ -1798,6 +2286,12 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_client_state( struct rocketnet_messa
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_update( struct rocketnet_message_client_t * client, double time );
 
 // a NULL client is a counted no-op.
+/**
+ * @brief Flushes packets staged through a message client.
+ *
+ * @param client Message client whose transport is flushed.
+ * @return No value; delegates to the underlying transport.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_send_packets( struct rocketnet_message_client_t * client );
 
 // a NULL client is a counted no-op that returns NULL.
@@ -1862,6 +2356,12 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_message_se
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time );
 
 // a NULL server is a counted no-op.
+/**
+ * @brief Flushes packets staged through a message server.
+ *
+ * @param server Message server whose transport is flushed.
+ * @return No value; delegates to the underlying transport.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server );
 
 // a NULL server is a counted no-op that returns NULL.
