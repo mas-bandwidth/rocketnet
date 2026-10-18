@@ -554,11 +554,239 @@ placement against decryption, the optional kernel prefilter.
 <a id="t15"></a>
 ## t15. Acknowledgement
 
-Status: pending
+A sender MUST place an acknowledgement block carrying its current receive
+state at the start of every session packet's sealed plaintext. An
+acknowledgement block reports received session sequences; it does not report handshake sequences or make a
+claim about any sequence below its last range.
 
-Scope: the ack block opening every session packet, its encoding, elicitation,
-the standalone ack, processing and the delivery notification RN-2 relies on.
+<a id="t15.1"></a>
+### t15.1. Acknowledgement block
 
+The block is encoded in the fields below. Range entry index i starts at zero.
+
+```
+      0                   1                   2                   3
+      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |             largest received (bytes 0-3)                     |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     | count | first range length (bytes 5-6) | first gap byte       |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     | first gap byte | first range entry's length (bytes 9-10) | next gap ...|
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---:|---:|---|---|---|
+| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence successfully opened from the peer | Any u32; zero denotes no opened session packet only after reconstruction |
+| range count | 4 | 1 | u8 | Number of gap-and-received-range entries following the first range | Zero through [t15.2 Block limit](#t15.2) (range count maximum) |
+| first range length | 5 | 2 | u16 | Length of the contiguous received run ending at largest received | Zero exactly when reconstructed largest received is zero; otherwise nonzero and no greater than largest received |
+| gap | 7 + 4i | 2 | u16 | Number of unreceived sequences below the preceding received run, for entry i | Nonzero |
+| range length | 9 + 4i | 2 | u16 | Length of the received run below entry i's gap | Nonzero |
+
+The block length is the [t3 Constants and registries](#t3) (ack block minimum row) plus each declared range entry's gap and range-length fields. Bytes after that length belong to the packet type's
+data, when present. The range count maximum is pinned below.
+
+A sender MUST construct ranges from the opened session-sequence state it
+maintains for the peer. The first range ends at largest received, inclusive.
+Each later entry, in order from newest to oldest, describes a nonzero gap and
+then a nonzero received run below the preceding run. The block is silent below
+its last received run. A sender MUST NOT name a sequence that it did not open.
+
+The largest received field is the low 32 bits of the highest opened 64-bit
+session sequence. A receiver MUST reconstruct it as the nonnegative 64-bit value
+with those low 32 bits that is nearest to its own highest sent session sequence;
+the higher value wins an equidistant tie. The receiver MUST evaluate every
+validity rule on that reconstructed value.
+
+A receiver MUST reject the block when any of these conditions holds:
+
+1. The opened plaintext does not contain the minimum block, or its declared
+   range entries do not fit before the packet type's data.
+2. Reconstructed largest received is zero and either first range length or
+   range count is nonzero; or reconstructed largest received is nonzero and
+   first range length is zero.
+3. First range length exceeds reconstructed largest received.
+4. Any gap or range length is zero.
+5. The sum of first range length and every gap and range length exceeds
+   reconstructed largest received, so the lowest described sequence would be
+   below sequence one.
+
+A valid block describes only its named runs. A sequence below the last run is
+unspoken, not reported as lost. When a block is malformed, a receiver MUST NOT
+apply its acknowledgements, examine the packet type data, refresh connection
+activity or add acknowledgement debt. The packet's sequence remains replay
+marked as specified by [t14 Replay protection](#t14).
+
+<a id="t15.2"></a>
+### t15.2. Block limit
+
+| Name | Value | Unit | Meaning |
+|---|---:|---|---|
+| range count maximum | 255 | entries | Maximum number of gap-and-received-range entries in one block |
+
+<a id="t15.3"></a>
+### t15.3. Building and processing
+
+A sender MUST build a block from the single session replay state defined in
+[t14 Replay protection](#t14), shared by all opened session packet types. It
+MUST list the newest received run first and may include older
+runs while its range-count and packet-capacity limits permit. When capacity
+omits entries, it MUST drop the oldest entries first and MUST NOT emit a
+trailing gap without a received run. Every session packet MUST have room for
+the [t3 Constants and registries](#t3) (ack block minimum row). For payload and fragment packets, the sender
+reserves room for their type data before choosing the block's range count.
+
+After a valid block is opened, a receiver MUST process its named session
+sequences in sent-packet history. It MUST silently ignore sequences below its
+retained sent-history window. For a named sequence within that window which it
+never sent, it MUST apply no acknowledgment effect and count that sequence in
+ACK_UNKNOWN_SEQUENCE. A receiver MUST bound this processing by its retained
+history, not by the number of sequence values asserted by the block. A block
+is the sender's assertion about its receive state; the receiver cannot verify
+that assertion and MUST process an in-window sent sequence as acknowledged.
+
+<a id="t15.4"></a>
+### t15.4. Elicitation and standalone acknowledgement
+
+All opened session packet types contribute to the receive state represented
+by a block. Acknowledgement debt is the number of accepted eliciting packets
+received since a session packet last carried a block. A receiver MUST add debt
+for each accepted connection keep-alive, connection payload, connection
+disconnect or connection payload fragment packet listed in [t3 Constants and registries](#t3).
+A connection ack packet listed there does not elicit an acknowledgement. A
+connection ack packet is opened, replay-marked and processed for its block like
+any other session packet, but MUST NOT add acknowledgement debt. This rule
+prevents acknowledgements from eliciting acknowledgements.
+
+An endpoint SHOULD send a standalone connection ack packet when its
+acknowledgement debt reaches the [t3 Constants and registries](#t3) (ack debt
+threshold row), and MAY send one sooner when fresh delivery information is
+useful. A sender MUST clear the debt when it sends any session packet that
+carries a block. A standalone acknowledgement contains the block and no
+packet-type data. It is an optimization for timely delivery notification;
+correctness does not depend on sending it.
+
+<a id="t15.5"></a>
+### t15.5. Round-trip sampling
+
+When a valid block newly acknowledges a sent sequence, the sender MUST take
+one round-trip sample for that sequence: receive time minus its recorded send
+time. It MUST NOT sample that sequence again from a later block. A negative
+elapsed value produces no sample. The sample measures local elapsed time and
+does not subtract peer processing or acknowledgement aggregation delay.
+The reported RTT MUST be the minimum strictly positive retained first-ack
+sample, in milliseconds. If no strictly positive first-ack sample is retained,
+the reported RTT MUST be zero.
+
+<a id="t15.6"></a>
+### t15.6. Vectors
+
+The all-zero block represents a fresh connection:
+
+```vector t15.fresh
+input: largest received = 0; range count = 0; first range length = 0
+00 00 00 00 00 00 00
+```
+
+One contiguous received run through sequence 1000:
+
+```vector t15.fully-received
+input: largest received = 1000; range count = 0; first range length = 1000
+e8 03 00 00 00 e8 03
+```
+
+A missing sequence separates two received runs:
+
+```vector t15.one-loss
+input: largest received = 1000; first range length = 10; gap = 1; range length = 90
+e8 03 00 00 01 0a 00 01 00 5a 00
+```
+
+Two loss events exercise the full largest-received field:
+
+```vector t15.two-losses
+input: largest received = 70000; first range length = 100; ranges = (gap 3, length 500), (gap 1000, length 2000)
+70 11 01 00 02 64 00 03 00 f4 01 e8 03 d0 07
+```
+
+A genuine sequence whose low 32 bits are zero is not the fresh-connection
+block:
+
+```vector t15.sequence-wrap
+input: highest sent = 0xfffffff0; reconstructed largest received = 0x100000000; first range length = 16
+00 00 00 00 00 10 00
+```
+
+The declared geometry is truncated before its range entry is complete:
+
+```vector t15.invalid-short
+input: six zero bytes; the minimum block does not fit
+00 00 00 00 00 00
+```
+
+The range count declares an entry that does not fit in the opened plaintext:
+
+```vector t15.invalid-geometry
+input: largest received = 100; declared range count = 1; opened plaintext ends after 10 bytes
+64 00 00 00 01 01 00 01 00 01
+```
+
+A nonzero largest received cannot have a zero first range:
+
+```vector t15.invalid-zero-first
+input: largest received = 100; first range length = 0
+64 00 00 00 00 00 00
+```
+
+A zero largest received cannot have a nonzero first range:
+
+```vector t15.invalid-fresh-first
+input: largest received = 0; first range length = 1
+00 00 00 00 00 01 00
+```
+
+A fresh block cannot declare a range entry:
+
+```vector t15.invalid-fresh-range
+input: largest received = 0; range count = 1; first range length = 0; gap = 1; range length = 1
+00 00 00 00 01 00 00 01 00 01 00
+```
+
+The first range cannot exceed the reconstructed largest received:
+
+```vector t15.invalid-first-too-long
+input: largest received = 10; first range length = 11
+0a 00 00 00 00 0b 00
+```
+
+A gap cannot be empty:
+
+```vector t15.invalid-zero-gap
+input: largest received = 100; first range length = 10; gap = 0; range length = 5
+64 00 00 00 01 0a 00 00 00 05 00
+```
+
+A received range cannot be empty:
+
+```vector t15.invalid-zero-length
+input: largest received = 100; first range length = 10; gap = 5; range length = 0
+64 00 00 00 01 0a 00 05 00 00 00
+```
+
+The range walk cannot describe a sequence below one:
+
+```vector t15.invalid-walk
+input: largest received = 100; first range length = 10; gap = 5; range length = 86
+64 00 00 00 01 0a 00 05 00 56 00
+```
+
+When block capacity keeps only the newest range, the older range is omitted:
+
+```vector t15.truncated-oldest
+input: replay state received 1-5, 7-8 and 10-11; block capacity = 11 bytes
+0b 00 00 00 01 02 00 01 00 02 00
+```
 <a id="t16"></a>
 ## t16. Fragmentation and reassembly
 
@@ -1219,6 +1447,21 @@ It is generated; the bytes are in the sections.
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
+| [t15 Acknowledgement](#t15) | `t15.fresh` |
+| [t15 Acknowledgement](#t15) | `t15.fully-received` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-first-too-long` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-first` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-range` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-geometry` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-short` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-walk` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-zero-first` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-zero-gap` |
+| [t15 Acknowledgement](#t15) | `t15.invalid-zero-length` |
+| [t15 Acknowledgement](#t15) | `t15.one-loss` |
+| [t15 Acknowledgement](#t15) | `t15.sequence-wrap` |
+| [t15 Acknowledgement](#t15) | `t15.truncated-oldest` |
+| [t15 Acknowledgement](#t15) | `t15.two-losses` |
 | [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
 | [t17 Timing and defaults](#t17) | `t17.timing-defaults` |
 | [t18 Error handling and counters](#t18) | `t18.counter-registry` |
