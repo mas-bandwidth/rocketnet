@@ -363,12 +363,110 @@ f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
 <a id="t4"></a>
 ## t4. Wire encoding primitives
 
-Status: pending
+1. A sender MUST write the packet sequence in the `sequence` field of
+   [t3 Constants and registries](#t3) as the low half of the 64-bit sequence,
+   least-significant byte first. A sender MUST NOT emit a packet whose
+   sequence is zero.
+2. A receiver MUST reconstruct the 64-bit sequence from that field before any
+   replay check or AEAD open. Let `expected` be the highest sequence the
+   receiver has successfully opened in that direction and key phase, plus
+   one; when nothing has been opened, `expected` is one. Among all 64-bit
+   values whose low half equals the wire field, the receiver MUST take the
+   value nearest to `expected`, and on an exact tie it MUST take the larger.
+3. A receiver MUST ignore a packet whose reconstructed sequence is zero.
+   Zero is never a valid sequence and is never sent.
+4. An address on the wire is one family byte, the address bytes and the port,
+   packed with no padding. A sender MUST write family `1` with the four IPv4
+   octets in order, or family `2` with the eight IPv6 groups as sixteen-bit
+   values, each group little-endian, and MUST NOT write any other family. The
+   port is a sixteen-bit value, little-endian.
 
-Scope: integer encodings by type name; the 4-byte wire sequence and its
-reconstruction to 64 bits against the highest opened sequence, with the tie
-rule; sequence zero never valid; address encoding (family flag, IPv4 four
-octets then port, IPv6 eight groups then port, all little-endian).
+The sequence field of a sealed packet:
+
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                    sequence, low half (u32)                   |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| sequence | 0 | 4 | u32 | low half of the packet sequence | any; a reconstructed value of zero is ignored |
+
+The address encoding:
+
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |    family     |                                               |
+      +-+-+-+-+-+-+-+-+                                               +
+      |                    address (4 or 16 bytes)                    |
+      +                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                               |             port              |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| family | 0 | 1 | u8 | address family | `1` (IPv4), `2` (IPv6) |
+| address | 1 | 4 or 16 | bytes[4] or bytes[16] | four IPv4 octets in order, or eight IPv6 groups little-endian | 4 bytes for family `1`, 16 for family `2` |
+| port | 5 or 17 | 2 | u16 | UDP port | any |
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| address family IPv4 | `1` | number | family byte of an IPv4 address |
+| address family IPv6 | `2` | number | family byte of an IPv6 address |
+| encoded IPv4 address | `7` | bytes | family byte, four address octets, port |
+| encoded IPv6 address | `19` | bytes | family byte, eight address groups, port |
+
+The sequence is reconstructed at the start of a key phase:
+
+```vector t4.sequence-start
+input: highest opened sequence 0, wire field 1
+01 00 00 00 00 00 00 00
+```
+
+In steady state:
+
+```vector t4.sequence-steady
+input: highest opened sequence 999, wire field 1000
+e8 03 00 00 00 00 00 00
+```
+
+At an exact tie of half the field's range in each direction, the larger wins:
+
+```vector t4.sequence-tie
+input: highest opened sequence 0x17fffffff, wire field 0
+00 00 00 00 02 00 00 00
+```
+
+Across the field's wrap:
+
+```vector t4.sequence-wrap
+input: highest opened sequence 0xffffffff, wire field 0
+00 00 00 00 01 00 00 00
+```
+
+A wire field of zero with nothing opened reconstructs to zero and is ignored:
+
+```vector t4.sequence-zero
+input: highest opened sequence 0, wire field 0
+00 00 00 00 00 00 00 00
+```
+
+An IPv4 address, 198.51.100.7 port 56789:
+
+```vector t4.address-ipv4
+input: address 198.51.100.7, port 56789
+01 c6 33 64 07 d5 dd
+```
+
+An IPv6 address, 2001:db8::7 port 56789:
+
+```vector t4.address-ipv6
+input: address 2001:db8::7, port 56789
+02 01 20 b8 0d 00 00 00 00 00 00 00 00 00 00 07
+00 d5 dd
+```
 
 <a id="t5"></a>
 ## t5. Prefilter header
@@ -464,10 +562,166 @@ the standalone ack, processing and the delivery notification RN-2 relies on.
 <a id="t16"></a>
 ## t16. Fragmentation and reassembly
 
-Status: pending
+A payload larger than one type 5 packet's payload capacity is split into
+fragments, each carried in its own sealed session packet, and reassembled per
+connection by payload id. A payload that fits one packet is never a fragment.
 
-Scope: the fragment header, fragment count limits, reassembly slots,
-staleness and abandonment; vectors.
+<a id="t16.1"></a>
+### t16.1. Sending
+
+1. A sender MUST send a payload whose size is at most the payload capacity
+   row of [t3 Constants and registries](#t3) as a type 5 packet
+   ([t8 Packet formats](#t8)). A sender MUST split a payload larger than that
+   capacity into fragments carried in type 9 packets. The fragments per
+   payload maximum row of [t3 Constants and registries](#t3) bounds the
+   fragment count.
+2. A sender MUST assign each fragmented payload a payload id, per direction:
+   an unsigned 32-bit counter that starts at 1, increments by 1 for each
+   fragmented payload, and wraps to 1 instead of zero. A sender MUST NOT
+   assign zero.
+3. A sender MUST use the smallest fragment count of two or more that carries
+   the payload with no fragment longer than the fragment stride row of
+   [t3 Constants and registries](#t3). The stride is the payload size divided
+   by that count, rounded up; every fragment except the last MUST be exactly
+   the stride long, and the last MUST carry the remainder, which is between 1
+   and the stride.
+4. A sender MUST transmit each fragment in its own sealed type 9 packet with
+   its own sequence, and MUST NOT retain a fragment for resending. A lost
+   fragment loses the whole payload.
+
+<a id="t16.2"></a>
+### t16.2. Receiving
+
+Reassembly is per connection, keyed by payload id in a configured number of
+reassembly slots, the num_reassembly_slots field of
+[t2.3 Configuration surface](#t2.3); the slot of a payload id is that id
+modulo the slot count.
+
+A receiver MUST accept a fragment only on a connected slot; a fragment that
+arrives in any other state is dropped and counted before it reaches
+reassembly ([t10 Receive processing](#t10),
+[t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)).
+
+A receiver MUST apply the following checks in order and refuse the fragment
+at the first that fails, incrementing the counter named in its row. A refused
+fragment leaves its slot unchanged, except that a refusal at check 7 for a
+staged final, or at check 8, clears the slot when the slot holds this payload
+id.
+
+| # | Check | Counter |
+|---|---|---|
+| 1 | the type data is shorter than the fragment header plus one byte, or longer than the fragment header plus the received fragment stride maximum row of [t3 Constants and registries](#t3) | size mismatch |
+| 2 | the payload id is zero | zero payload id |
+| 3 | the stale test of the table below refuses the payload id | stale |
+| 4 | the fragment count is one | count invalid |
+| 5 | the fragment index is not less than the fragment count | index out of range |
+| 6 | the fragment count differs from the count pinned by this payload id | count mismatch |
+| 7 | a non-final fragment is not the pinned stride; a final fragment is larger than the pinned stride; or a staged final is larger than the stride the first non-final fragment pins | size mismatch |
+| 8 | the reconstructed payload size, the stride times one less than the fragment count plus the known final size, where an absent final contributes one byte, exceeds the configured maximum payload | payload too large |
+| 9 | the fragment index is already received for this payload id | duplicate index |
+
+The first fragment of a payload id pins its count, and the first non-final
+fragment pins its stride. The final fragment MAY arrive before the stride is
+pinned; a receiver MUST stage it and apply check 7 to it when the first
+non-final fragment pins the stride. When every fragment of a payload id is
+present, the receiver MUST deliver the assembled payload once, at the moment
+it completes, and clear the slot. The assembled payload is the first count
+minus one fragments of stride bytes each, followed by the final fragment. A
+receiver MUST NOT keep a completed payload id beyond the newest completed
+payload id that the stale test uses, so a repeated fragment of a completed
+payload id starts a new reassembly.
+
+The stale test uses two references.
+
+| Reference | Guard | Outcome |
+|---|---|---|
+| the connection's newest completed payload id | the payload id differs from it by more than the reassembly reach row of the table below in either direction, compared as unsigned 32-bit differences | refuse, count stale |
+| the payload id of the slot's occupant | the payload id is a different id not more than the reassembly behind row of the table below behind the occupant, compared as an unsigned 32-bit difference | refuse, count stale |
+| the payload id of the slot's occupant | any other different id | accept the fragment; count the occupant abandoned if it is incomplete; the slot then holds the new payload id |
+
+Only a completed payload advances the newest completed payload id.
+
+| Name | Value | Unit |
+|---|---|---|
+| reassembly reach | `1073741824` | payload ids |
+| reassembly behind | `256` | payload ids |
+
+A reassembly slot MUST own one buffer of the configured maximum payload plus
+one staging buffer of the received fragment stride maximum row of
+[t3 Constants and registries](#t3), allocated once when the connection is
+created, and MUST NOT grow, resize or share either. A connection MUST own one
+newest completed payload id. A completed payload is copied out once at
+completion.
+
+<a id="t16.3"></a>
+### t16.3. Fragment header
+
+The fragment header lies inside the seal after the acknowledgement block of
+[t15 Acknowledgement](#t15). The packet type distinguishes a fragment from an
+unfragmented payload, and the type is part of the associated data
+([t9 Packet protection](#t9)).
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                       payload id (u32)                        |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   | fragment index | fragment count - 1 |      fragment data ...
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| payload id | 0 | 4 | u32 | identifies the fragmented payload, per direction | any nonzero value |
+| fragment index | 4 | 1 | u8 | index of this fragment | less than the fragment count |
+| fragment count minus 1 | 5 | 1 | u8 | one less than the fragment count | at least 1 |
+
+The fragment header is the fragment header row of
+[t3 Constants and registries](#t3), the fragment count is between 2 and the
+fragments per payload maximum row of [t3 Constants and registries](#t3), and
+the stride MUST NOT exceed the fragment stride row of
+[t3 Constants and registries](#t3). A receiver MUST refuse a fragment longer
+than the received fragment stride maximum row of
+[t3 Constants and registries](#t3), as check 1 of the receiving table states.
+
+<a id="t16.4"></a>
+### t16.4. Slot states
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| empty | a fragment passes every check | — | place its bytes; pin the count and, for a non-final fragment, the stride | partial |
+| partial | a fragment of the same payload id passes every check | — | place its bytes | partial |
+| partial | the fragment that completes the payload passes every check | every fragment is present | deliver the assembled payload, clear the slot | empty |
+| partial | a fragment of a different payload id passes every check | the stale test accepts the payload id | count the occupant abandoned if it is incomplete, clear the slot, start the new payload | partial |
+| partial | any check fails | — | refuse; leave the slot as the receiving rule states | partial |
+
+<a id="t16.5"></a>
+### t16.5. Vectors
+
+The vector is a reassembly trace on one connection with three slots, a
+2000-byte maximum payload and a delivered arena of four payloads. Each
+fragment line names the payload id, the fragment count, the fragment index
+and the fragment bytes. The twelve bytes of the vector are the reassembly
+counters in counter-table order, one byte each: zero payload id, stale, count
+invalid, index out of range, count mismatch, size mismatch, payload too large,
+duplicate index, accepted, reassembled, abandoned, batch full.
+
+```vector t16.reassembly-trace
+set: 1 connection, 3 reassembly slots, 2000-byte maximum payload, 4-capacity delivered arena
+frag: payload 7 count 3, fragment 2 (final) first, five 0x41 bytes
+frag: payload 7 count 3, fragment 0, eight 0x42 bytes
+frag: payload 7 count 3, fragment 1, eight 0x43 bytes
+frag: payload 9 count 3, fragment 0, eight 0x44 bytes
+frag: payload 9 count 3, fragment 0 again, eight 0x45 bytes
+frag: payload 10 count 4, fragment 0, eight 0x46 bytes
+frag: payload 10 count 3, fragment 1, eight 0x47 bytes
+frag: payload 16 count 2, fragment 0, eight 0x48 bytes
+00 00 00 00 01 00 00 01 06 01 01 00
+```
+
+The trace stages the final fragment of payload 7 before its stride is known,
+completes payload 7, refuses a repeated fragment of payload 9, refuses a
+changed count for payload 10, and abandons incomplete payload 10 when payload
+16 claims its slot.
 
 <a id="t17"></a>
 ## t17. Timing and defaults
@@ -513,18 +767,91 @@ It is generated; the bytes are in the sections.
 | Section | Vector |
 |---|---|
 | [t3 Constants and registries](#t3) | `t3.token-identifier` |
+| [t4 Wire encoding primitives](#t4) | `t4.address-ipv4` |
+| [t4 Wire encoding primitives](#t4) | `t4.address-ipv6` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-start` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-steady` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
+| [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02
 
-Status: pending
+This appendix lists, as facts, the differences of RN-1 from netcode 1.02 in
+the bytes on the wire and in the decisions a receiver makes. It states no
+requirements; each difference is specified by the section named in its row.
 
-Scope: a list of facts, one per difference on the wire or in processing.
+| Area | netcode 1.02 | RN-1 |
+|---|---|---|
+| Backend trust | The backend and every server share a secret that authenticates connect tokens. | The backend holds an Ed25519 signing keypair and every server holds its public key; a server holds no secret shared with the backend ([t2.2 Key inventory](#t2.2)). |
+| Token authenticity | A connect token carries an AEAD authenticator computed under the shared secret. | The token carries an Ed25519 signature over its signed connect data, and its private block is sealed to the server's X25519 public key ([t6 Connect token](#t6)). |
+| Token scope | A token names a list of candidate servers. | A token names one server at one IPv4 address and one IPv6 address, each optional ([t2 Architecture and key inventory](#t2)). |
+| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the source address whose connection response first opened under it, and admits one live connection ([t12 Handshake: server](#t12)). |
+| Packet keys | The session keys minted into the token are the packet keys. | The token keys key a derivation only; each attempt derives separate handshake and session keys from a client salt, a server session nonce and an ephemeral X25519 exchange ([t7 Key schedule](#t7)). |
+| Forward secrecy | Recovering a token recovers the traffic sealed with its keys. | Recovering a token after a connection has ended does not recover that connection's traffic ([t7 Key schedule](#t7)). |
+| IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
+| Packet prefix | No prefilter header precedes a packet. | Every packet begins with the prefilter header ([t5 Prefilter header](#t5)). |
+| Payload to an unconfirmed client | A keep-alive prefixes every payload until the client is confirmed. | Session keys exist from the challenge, so payloads are delivered from that point with no prefix ([t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)). |
+| Fragmentation | No fragment packet type. | The fragment packet type carries a fragment, with reassembly slots and an abandonment rule ([t16 Fragmentation and reassembly](#t16)). |
+| A zero timeout | A timeout of zero is accepted. | A timeout outside the field's valid range is refused, and zero is outside it ([t2.3 Configuration surface](#t2.3)). |
 
 <a id="tc"></a>
 ## tc. Appendix C (informative): implementation notes
 
-Status: pending
+This appendix is informative. It records implementation choices that the wire
+format does not require; a conforming implementation may choose otherwise.
+Each note points to the section whose rule it serves.
 
-Scope: informative notes for implementers; no requirements.
+### Transport selection
+
+An implementation offers a set of transports for one endpoint role on one
+platform, and `auto` expands to its documented order for that role and
+platform. An explicit list is tried in order, nothing is appended or
+reordered, and a list of one name is a pin that refuses rather than falls.
+The endpoint reports the transport that carries it and logs each earlier
+candidate's skip or refusal. A transport never changes a byte on the wire, so
+transport selection is a deployment and diagnosis surface rather than a
+protocol one. See [t2.4 Transport selection](#t2.4).
+
+### Kernel prefilter and XDP
+
+A Linux server may place the prefilter and an early replay check in an XDP
+program so that traffic the connection layer would refuse is dropped before
+it is queued to userspace. The kernel path may perform any prefix of the
+receive checks; it rejects no more and no less than the full sequence, and the
+userspace path still performs the checks on what survives. Traffic the kernel
+does not see is not counted there, so the transport imports the kernel
+counters beside its own. See [t10 Receive processing](#t10) and
+[t14 Replay protection](#t14).
+
+### Check placement
+
+Every check this standard specifies is defined by what it rejects and in what
+order, never by where it runs. A transport may perform any prefix of the
+sequence as early as it can, including in a kernel program, and a transport
+without such a path performs the same checks in userspace. Pushing work down
+reduces the volume that reaches userspace rather than removing the check from
+it, which keeps one implementation of the logic rather than one per transport.
+See [t10 Receive processing](#t10).
+
+### Configuration surface
+
+Each configuration field is declared once with its type, default and valid
+range, and the environment variable name derives from the field name. The
+precedence is default, then configuration struct, then environment; every
+override is logged with the value it displaced, and an out-of-range or
+unparsable value refuses the create rather than being clamped or corrected.
+The message layer's fields follow the same surface in the section that owns
+each one. See [t2.3 Configuration surface](#t2.3).
+
+### Counters per execution context
+
+A multithreaded implementation keeps a counter block per execution context,
+padded and aligned so that no two contexts share a cache line, and sums the
+blocks at readout. In a kernel dataplane the context is a CPU; in userspace
+it is a thread. Counters are monotonic and never reset, so a rate is derived
+by differencing two snapshots and a zero still means that the event never
+happened. See [t18 Error handling and counters](#t18).

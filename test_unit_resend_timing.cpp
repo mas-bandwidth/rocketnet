@@ -278,13 +278,17 @@ static void resend_timing_witness_replays()
 REGISTER_UNIT_TEST( resend_timing_witness_replays );
 
 // message_config_abi_size_is_unchanged: the ABI canary. The resend schedule's
-// interval and RTT scale are constants, so the public message config keeps
-// the layout ABI1 callers allocate: 15 int fields, as at BASE. A field added
-// to ROCKETNET_MESSAGE_CONFIG_TABLE grows this and fails here first.
+// interval and RTT scale are constants, so they add no field: revision 1's 15
+// int fields keep their layout as the prefix ABI1 callers allocate, and the
+// struct is revision 2 (the two R6 send budget fields, docs/ABI-EVOLUTION.md
+// 4). A field added to ROCKETNET_MESSAGE_CONFIG_TABLE without a new revision
+// grows this and fails here first.
 static void message_config_abi_size_is_unchanged()
 {
-    check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES );
+    check( ROCKETNET_MESSAGE_CONFIG_BYTES_1 == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES );
     check( offsetof( rocketnet_message_config_t, reliable_timeout_ms ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES - sizeof( int ) );
+    check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_BYTES_2 );
+    check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES + 2 * sizeof( int ) );
 }
 
 REGISTER_UNIT_TEST( message_config_abi_size_is_unchanged );

@@ -1,0 +1,5 @@
+# The rows of RN-2 m12 (MESSAGES.md): document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+#include "rocketnet.h"
+#include "rocketnet_message.h"
+code-0 single-record data maximum	ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES	1411

@@ -567,7 +567,15 @@
     /* (sdk/rocketnet_wire.h): a session packet behind the replay map's */ \
     /* high-water window, surfaced by rocketnet_counters_apply_prefilter. */ \
     /* appended: indices are the contract. */ \
-    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE )
+    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE ) \
+    \
+    /* Client received a connection challenge or connection denied packet */ \
+    /* whose wire length was not ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES */ \
+    /* or ROCKETNET_CONNECTION_DENIED_WIRE_BYTES: refused before the state */ \
+    /* gate and before any AEAD open (STANDARD.md, Reading packets). */ \
+    /* appended: indices are the contract. */ \
+    X( CLIENT_CHALLENGE_WRONG_SIZE, REFUSAL, CLIENT_CHALLENGE_RECEIVED ) \
+    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED )
 
 enum
 {
