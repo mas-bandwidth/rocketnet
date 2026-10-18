@@ -68,15 +68,16 @@ struct {
 
 // The kernel replay map: one entry per live source address and port, the
 // highest sequence userspace has opened for it. Only userspace writes it,
-// once per server update, and that writer and the pin are not built yet;
-// this program only looks entries up (tla/RNXdpReplay.tla,
-// KernelNeverWrites). Unpinned and unwritten, every lookup misses.
+// once per server update, and this program only looks entries up
+// (tla/RNXdpReplay.tla, KernelNeverWrites). Pinned by name so the server
+// socket opens this instance's own map and is its only writer.
 
 struct {
     __uint( type, BPF_MAP_TYPE_HASH );
     __type( key, struct rocketnet_server_xdp_replay_key_t );
     __type( value, struct rocketnet_server_xdp_replay_value_t );
     __uint( max_entries, ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
+    __uint( pinning, LIBBPF_PIN_BY_NAME );
 } server_xdp_replay_map SEC(".maps");
 
 static void server_xdp_count( __u32 counter )

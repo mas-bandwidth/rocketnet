@@ -113,6 +113,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_message.cpp
     sdk/rocketnet_message_client.cpp
     sdk/rocketnet_message_server.cpp
+    sdk/rocketnet_endpoint.cpp
     sdk/rocketnet_slots.cpp
     sdk/rocketnet_channel.cpp
     sdk/rocketnet_channel_reliable.cpp
@@ -312,6 +313,13 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
+    # The endpoint's clock intercept (test_unit_endpoint.cpp): on Linux the
+    # linker sends every call to the library's clock, rocketnet_platform_time,
+    # from any object file of the test binary, to the test's counting wrapper.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(test PRIVATE "-Wl,--wrap=rocketnet_platform_time")
+        set_property( SOURCE test_unit_endpoint.cpp APPEND PROPERTY COMPILE_DEFINITIONS ROCKETNET_TEST_CLOCK_WRAP=1 )
+    endif()
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
         rocketnet_use_sodium(test)
