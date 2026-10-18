@@ -288,6 +288,12 @@ jobs:
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
+      - name: Memory plans echo the allocator observation on macOS
+        if: runner.os == 'macOS' && contains(matrix.leg, 'a')
+        run: |
+          ./bin/transport_memory 1 1416 1 portable 1 || true
+          ./bin/transport_memory 1 1416 1 msgx 1 || true
+
       - name: Memory plans against allocator observations
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_memory.py ./bin/transport_memory
