@@ -246,8 +246,8 @@ jobs:
         if: contains(matrix.leg, 'b')
         timeout-minutes: 20
         env:
-          ROCKETNET_SERVER_DRIVER: portable
-          ROCKETNET_CLIENT_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           set -o pipefail
           ./bin/functional | tee functional-pinned.log
@@ -473,7 +473,7 @@ jobs:
         timeout-minutes: 20
         shell: bash
         env:
-          ROCKETNET_SERVER_DRIVER: iocp
+          ROCKETNET_SERVER_TRANSPORT: iocp
         run: |
           set -o pipefail
           ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
