@@ -622,11 +622,13 @@ unreliable item dropped.
 Channels are per-connection streams. Their scheduling does not affect the
 wire representation.
 
-1. A message connection MUST number its channels from zero through one less
-   than its configured num_channels. A sender MUST select a channel from that
-   range for every message send, and a message endpoint MUST refuse a send
-   with a channel outside it. The configured count MUST NOT exceed the row
-   num channels maximum.
+1. An implementation MUST set its build-specific maximum channel count to a
+   value from 1 through 65,536, inclusive. The default build-specific maximum
+   MUST be 32. A connection MUST set num_channels from 1 through its
+   implementation build-specific maximum. For every message send, a sender
+   MUST select a channel from zero through one less than that connection's
+   num_channels, and a message endpoint MUST refuse a send with a channel
+   outside that range.
 2. A record with code 1, 3 or 4 MUST carry the channel field in
    [m3 Record format](#m3). Receipt types use their base codes from
    [m1.3 Reliability types](#m1.3): type 7 uses code 3 and carries a channel;
@@ -662,7 +664,8 @@ WIDE   |      channel, little-endian   |
 | Name | Value | Units | Meaning |
 |---|---:|---|---|
 | channel wide boundary | `256` | channels | first channel encoded as WIDE |
-| num channels maximum | `32` | channels | default compile-time maximum runtime channel count |
+| default maximum channel count | `32` | channels | SDK default for the build-specific maximum |
+| maximum allowed build-specific channel count | `65,536` | channels | largest build-specific maximum permitted |
 
 ```vector m10.narrow-channel
 record: RELIABLE_ORDERED, channel 3, number 5, ring 0, ordering 0, data "hi"
@@ -671,6 +674,7 @@ record: RELIABLE_ORDERED, channel 3, number 5, ring 0, ordering 0, data "hi"
 
 ```vector m10.wide-channel
 record: RELIABLE_ORDERED, channel 300 (WIDE), number 5, ring 0, ordering 0, data "hi"
+configuration: build-specific maximum at least 301; num_channels 301
 13 02 00 05 00 00 00 00 00 00 00 2c 01 68 69 01
 ```
 

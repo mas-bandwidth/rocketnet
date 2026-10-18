@@ -2,4 +2,5 @@
 # Format and rules: standard/STYLE.md section 10.
 #include "rocketnet.h"
 channel wide boundary	UINT8_MAX + 1	256
-num channels maximum	ROCKETNET_MAX_CHANNELS	32
+default maximum channel count	ROCKETNET_MAX_CHANNELS	32
+maximum allowed build-specific channel count	UINT16_MAX + 1	65536
