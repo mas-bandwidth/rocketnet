@@ -65,7 +65,7 @@
 #   big-endian              the suite on real big-endian bytes (s390x), the
 #                           only leg that can see an endianness break before
 #                           a customer does
-#   conformance             STANDARD.md against the implementation
+#   conformance             STANDARD.md and standard/ against the implementation
 #   platform-selftests      soak_sim's instruments and the bench harnesses'
 #                           abort paths, each against its own negative
 #                           control -- once per OS, on the Release build,
@@ -968,6 +968,14 @@ jobs:
 
       - name: Verify STANDARD.md against the implementation
         run: python3 tools/conformance/check_standard.py
+
+      # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
+      # standard/STYLE.md, every pinned constant against the compiler, every
+      # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
+      # the cross-references and the normative language. Pending sections are
+      # listed, not failed. One compile; well under ten seconds.
+      - name: Verify the RocketNet standard against the implementation
+        run: python3 tools/conformance/check_rn_standard.py
 
   # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
   # story or leaves the threads to luck; this is the only leg that watches the
