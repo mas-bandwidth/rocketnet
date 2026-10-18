@@ -875,6 +875,8 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
         {
             client_transport->stats_frames[stats_index].packets_sent++;
             client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+            client_transport->client_stats.packets_sent++;
+            client_transport->client_stats.bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
         }
     }
     client_transport->stats_counted = committed;
@@ -1052,6 +1054,8 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     {
         client_transport->stats_frames[stats_index].packets_received++;
         client_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->client_stats.packets_received++;
+        client_transport->client_stats.bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
         // only the I/O thread writes verdicts; the BASE receive thread's
         // records are raw
@@ -1088,6 +1092,8 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     {
         client_transport->stats_frames[stats_index].packets_sent++;
         client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->client_stats.packets_sent++;
+        client_transport->client_stats.bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
         client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address, packet, packet_bytes );
     }
@@ -1459,6 +1465,8 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
 
             client_transport->stats_frames[stats_index].packets_sent++;
             client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+            client_transport->client_stats.packets_sent++;
+            client_transport->client_stats.bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
             client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address,
                                                    ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
@@ -1638,6 +1646,8 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     {
         client_transport->stats_frames[stats_index].packets_sent++;
         client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( burst_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->client_stats.packets_sent++;
+        client_transport->client_stats.bytes_sent += (uint64_t) ( burst_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
         client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address,
                                                burst + i * ROCKETNET_SEND_BUDGET,
@@ -1696,6 +1706,10 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     stats->packets_received_per_second = client_transport->client_stats.packets_received_per_second;
     stats->bandwidth_sent_kbps = client_transport->client_stats.bandwidth_sent_kbps;
     stats->bandwidth_received_kbps = client_transport->client_stats.bandwidth_received_kbps;
+    stats->packets_sent = client_transport->client_stats.packets_sent;
+    stats->packets_received = client_transport->client_stats.packets_received;
+    stats->bytes_sent = client_transport->client_stats.bytes_sent;
+    stats->bytes_received = client_transport->client_stats.bytes_received;
 }
 
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport )
