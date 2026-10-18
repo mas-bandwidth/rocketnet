@@ -450,6 +450,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED]++;
 
+    // STANDARD.md Reading packets: the per-type size check runs before the state gate.
     if ( packet_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
     {
         rocketnet_spam( "client ignored challenge. wrong size" );
@@ -576,6 +577,7 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     counters[ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED]++;
 
+    // STANDARD.md Reading packets: the per-type size check runs before the state gate.
     if ( packet_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
     {
         rocketnet_spam( "client ignored denied. wrong size" );
