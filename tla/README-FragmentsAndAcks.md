@@ -546,16 +546,16 @@ interleaved fill threads on the sender (each fragment's ring slot is its own
 
 *Server (MEDIUM).* The server has no per-client drain. It drains one global array of
 `ROCKETNET_RECEIVE_PACKETS_PER_CLIENT × ROCKETNET_MAX_CLIENTS = 16 × 1000 = 16,000`
-packets per update. The historical example below used
-64 clients and 8 slots: 1,152 fragments drained, 576 completions, and a former
-connections-times-slots delivered capacity of 512. That was not the current
-default sizing. Defaults are 1000 clients and 8 slots; the drain-aware bound is
-`(16,000 + min(16,000, 1000 × 8)) / 2 = 12,000` completions per update, as
-computed by `rocketnet_server_reassembly_delivered_capacity`. The 64-client test
-fixture computes its capacity from this same bound. The old pool description and overflow conclusion
-above are historical; they do not describe the current implementation. A model of
-one connection cannot show cross-connection carried-over payloads, so retain that
-distinction when extending the model.
+packets per update (`sdk/rocketnet_constants.h:63`,
+`sdk/rocketnet_server_socket_linux.cpp:1946`), while the delivered pool is
+`max_clients × num_reassembly_slots` (`sdk/rocketnet_server_transport.cpp:851-852`), 64 × 8
+= 512 at the defaults (`sdk/rocketnet.h:842`). So it overflows with no carried-over
+payloads at all: 64 clients each completing 9 two-fragment payloads in one update is
+1,152 fragments drained, 576 reassembled, 64 `BATCH_FULL`. The comment at
+`sdk/rocketnet_server_transport.cpp:842-849` makes the same false claim as
+`fragment.h` ("completions cap at eight per client at the defaults"). `drain / 2 + num_slots` would not fix the server; the pool has to follow the drain (16,000 / 2) or
+the drain the pool. A model of one connection cannot see this: the overflow is across
+connections, in a pool the model's receiver does not share. The fix is a code card.
 
 ### Model errors found and fixed on the way
 

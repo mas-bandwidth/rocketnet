@@ -7,12 +7,10 @@
 // payload is copied out of its slot into the reassembly's delivered arena,
 // so the slot is reusable at once and one client completes more payloads in
 // one update than it holds slots. The server's delivered capacity therefore
-// has to cover what one update's drain can complete. The historical 64-client,
-// 8-slot example produced 576 completions against the former 512-entry
-// connections-times-slots arena. Current defaults are 1000 clients and 8
-// slots; drain-aware sizing gives that geometry a 12,000-completion bound.
-// The fixture below intentionally models 64 clients and computes its current
-// capacity from the drain-aware formula.
+// has to cover what one update's drain can complete, not connections x
+// slots: 64 clients each completing nine two-fragment payloads in one
+// update is 576 completions against the 512 that connections x slots
+// sizes at the defaults.
 //
 // Every case runs 64 client protocols and the server protocol in memory,
 // the packets carried by the in-memory network simulator with no loss,

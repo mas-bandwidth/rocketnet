@@ -1089,9 +1089,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
     // per-client share, and a slot clears at completion, so one client
     // completes more payloads in an update than it has slots. half the
     // drain plus the payloads begun in an earlier update (at most
-    // connections x slots) bounds the completions; at the server defaults
-    // (1000 clients, 8 slots, 16,000 drained packets), the bound is 12,000.
-    // At that capacity BATCH_FULL stays zero under any load the drain delivers
+    // connections x slots) bounds the completions, and at that capacity
+    // BATCH_FULL stays zero under any load the drain delivers
     // (rocketnet_server_reassembly_delivered_capacity; finding D2 of
     // tla/README-FragmentsAndAcks.md). its bytes are what one update can
     // complete -- the drained fragments plus the payloads half-held in

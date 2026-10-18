@@ -135,9 +135,8 @@ struct rocketnet_reassembly_counters_t
 // most ( N + min( N, connections x slots ) ) / 2 payloads, and at that
 // capacity BATCH_FULL is zero under any load the drain delivers. The
 // server sizes its set there from its configuration and its drain
-// (rocketnet_server_reassembly_delivered_capacity); at the defaults of
-// 1000 clients and 8 slots, that bound is 12,000 completions. A set sized
-// below the bound counts BATCH_FULL for each completion past it.
+// (rocketnet_server_reassembly_delivered_capacity); a set sized below the
+// bound counts BATCH_FULL for each completion past it.
 // The delivered arena packs completions by bytes at a 16-byte stride, so
 // its size is a byte bound beside the count bound, not capacity x max
 // payload: the bytes one update completes are the fragments it drains plus
