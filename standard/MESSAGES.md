@@ -153,10 +153,98 @@ depth that [m1.4 What RN-2 requires of RN-1](#m1.4) requires.
 <a id="m6"></a>
 ## m6. Delivery: unreliable codes 0 and 1
 
-Status: pending
+<a id="m6.1"></a>
+### m6.1. Rule
 
-Scope: at-most-once delivery for code 0; sequenced delivery for code 1 that
-never goes backwards on its channel.
+A sender chooses unreliable or unreliable sequenced in [m1.3 Reliability types](#m1.3); the wire code and the record's fields are in [m3 Record format](#m3). The rules below state what the receiver delivers, holds, drops and refuses.
+
+1. A sender MUST send an unreliable message as code 0 and an unreliable sequenced message as code 1. A code 0 send larger than one record can carry MUST be sent under code 2, its reliable twin, and a code 1 send larger than one record can carry MUST be sent under code 4, its reliable twin. A receiver MUST deliver a promoted message under the code it arrives as.
+2. A code 0 record and a code 2 record carry no channel field. A receiver MUST deliver a code 0 record, a code 2 record, and the message of application type 5 or 6 that travels as code 0 or 2, on channel 0. A code 1 record MUST be delivered on the channel its record names.
+3. A receiver MUST deliver a code 0 record at most once by appending the record's bytes to the update's delivery list. It MUST NOT take a reliable number, keep a received state, retransmit the record, or acknowledge it at the message layer.
+4. The per-update unreliable delivery allowance is the connection's `unreliable_deliveries` configuration field. When the update has already delivered that many code 0 records, a receiver MUST drop each further code 0 record, MUST count the drop as `MESSAGE_UNRELIABLE_DELIVERY_FULL`, and MUST NOT treat the drop as a violation.
+5. A receiver MUST keep, for each channel, an ordered read index and a sequencing watermark. A code 1 record is in its epoch when its ordering index equals the read index. A record in its epoch whose sequencing index is at or after the watermark MUST be delivered, and the receiver MUST then set the watermark to one past that sequencing index modulo the counter modulus.
+6. A code 1 record in its epoch whose sequencing index is before the watermark MUST be dropped and counted `MESSAGE_SEQUENCED_STALE`. A code 1 record whose ordering index is behind the read index, when the difference lies in the upper half of the counter modulus, MUST be dropped and counted `MESSAGE_SEQUENCED_STALE`.
+7. A code 1 record ahead of its epoch by less than the window MUST be held as the channel's newest held message. A receiver MUST keep at most one held code 1 message per channel, in one slot of the connection's `sequenced_holds` configuration field. A newer held message, ordered by ordering index and then by sequencing index, MUST replace the held message, and the replaced message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A candidate that is not newer than the held message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A record larger than one hold slot, or a record with no free hold slot, MUST be dropped and counted `MESSAGE_SEQUENCED_HOLD_FULL`.
+8. When an ordered message is delivered on a channel, the receiver MUST set the channel's read index to one past that ordering index and MUST reset the channel's watermark to zero. The receiver MUST then deliver the channel's held message when its ordering index is the read index and its sequencing index is at or after the watermark, and MUST clear the hold.
+9. A code 1 record ahead of the read index by at least the window MUST be refused as a violation and counted `MESSAGE_ORDERING_AHEAD`. A violation ends the connection.
+10. A sender MUST take a code 1 record's ordering index from the channel's ordered write index and its sequencing index from the channel's sequencing write index, and MUST increment the sequencing write index. An ordered send MUST take the ordered write index as its ordering index, MUST increment the ordered write index, and MUST reset the sequencing write index to zero.
+11. A sender that promotes a send under rule 1 MUST make the promotion visible to the application as a named outcome or counter. The promotion is never silent.
+
+<a id="m6.2"></a>
+### m6.2. Constants
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| sequenced hold data bytes | `1416` | bytes | the data capacity of one code 1 hold slot |
+| default sequenced holds | `16` | slots | the default number of hold slots in a connection |
+| default unreliable deliveries | `256` | messages | the default per-update code 0 delivery allowance |
+| counter modulus | `16777216` | values | the modulus of the ordering and sequencing indexes |
+
+<a id="m6.3"></a>
+### m6.3. Delivery states
+
+The rows are the code 1 record's outcome on one channel. An event a row does not name leaves the state unchanged.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| current | code 1 record | ordering equals read index and sequencing at or after watermark | deliver, watermark becomes one past sequencing | current |
+| current | code 1 record | ordering equals read index and sequencing before watermark | drop, count `MESSAGE_SEQUENCED_STALE` | current |
+| current | code 1 record | ordering ahead by less than the window | hold as newest | held |
+| held | code 1 record | ordering ahead of the read index and newer than the held message | supersede the held message, count `MESSAGE_SEQUENCED_SUPERSEDED` | held |
+| held | code 1 record | ordering ahead of the read index and not newer than the held message | drop, count `MESSAGE_SEQUENCED_SUPERSEDED` | held |
+| held | code 1 record | ordering behind the read index | drop, count `MESSAGE_SEQUENCED_STALE` | held |
+| held | code 1 record | ordering equals read index | deliver if sequencing at or after watermark, else drop as stale | current |
+| held | ordered delivery | read index reaches the held ordering index | deliver the held message, reset watermark, clear the hold | current |
+| any | code 1 record | ordering ahead by at least the window | violation, count `MESSAGE_ORDERING_AHEAD` | ended |
+| any | code 1 record | no free hold slot or larger than one hold slot | drop, count `MESSAGE_SEQUENCED_HOLD_FULL` | unchanged |
+
+<a id="m6.4"></a>
+### m6.4. Vectors
+
+Each vector is one delivery trace. Its input lines name the configuration and one record per step, in order. The bytes are the step outcomes in that same order: one outcome byte, then a count byte, then that many delivered entries. An entry is the delivery's channel (u8), code (u8), length (u16, little-endian) and data bytes. The outcome bytes are `0x00` delivered, `0x01` held, `0x02` stale, `0x03` dropped by the unreliable delivery allowance, `0x04` dropped by the sequenced hold pool, and `0x05` violation.
+
+```vector m6.code0-delivery-trace
+config: unreliable_deliveries 2
+step 1: code 0 channel 0 data 6f 6e 65
+step 2: code 0 channel 0 data 74 77 6f
+step 3: code 0 channel 0 data 74 68 72 65 65
+step 4: code 0 channel 0 data 66 6f 75 72
+00 01 00 00 03 00 6f 6e 65 00 01 00 00 03 00 74
+77 6f 03 00 03 00
+```
+
+```vector m6.code1-sequenced-trace
+config: defaults
+step 1: code 1 channel 0 ordering 0 sequencing 0 data 61
+step 2: code 1 channel 0 ordering 0 sequencing 1 data 62
+step 3: code 1 channel 0 ordering 0 sequencing 0 data 63
+step 4: code 1 channel 0 ordering 1 sequencing 0 data 64
+step 5: code 1 channel 0 ordering 1 sequencing 1 data 65
+step 6: code 1 channel 0 ordering 1 sequencing 0 data 66
+step 7: code 3 channel 0 ordering 0 data 6f
+step 8: code 1 channel 0 ordering 1 sequencing 0 data 67
+step 9: code 1 channel 0 ordering 1 sequencing 2 data 68
+step 10: code 1 channel 0 ordering 2 sequencing 0 data 69
+step 11: code 3 channel 0 ordering 1 data 70
+step 12: code 1 channel 0 ordering 2 sequencing 0 data 6a
+step 13: code 1 channel 0 ordering 2 sequencing 1 data 6b
+step 14: code 1 channel 0 ordering 1026 sequencing 0 data 78
+00 01 00 01 01 00 61 00 01 00 01 01 00 62 02 00
+01 00 01 00 02 00 00 02 00 03 01 00 6f 00 01 01
+00 65 02 00 00 01 00 01 01 00 68 01 00 00 02 00
+03 01 00 70 00 01 01 00 69 02 00 00 01 00 01 01
+00 6b 05 00
+```
+
+```vector m6.code1-hold-full-trace
+config: sequenced_holds 1
+step 1: code 1 channel 0 ordering 1 sequencing 0 data 78
+step 2: code 1 channel 1 ordering 1 sequencing 0 data 79
+step 3: code 1 channel 0 ordering 1 sequencing 1 data 7a
+step 4: code 3 channel 0 ordering 0 data 6f
+01 00 04 00 01 00 00 02 00 03 01 00 6f 00 01 01
+00 7a
+```
 
 <a id="m7"></a>
 ## m7. Delivery: reliable codes 2, 3 and 4
@@ -228,5 +316,9 @@ This appendix indexes every vector of RN-2 by the section that defines it.
 It is generated; the bytes are in the sections.
 
 <!-- vector-index:begin -->
-No vectors yet.
+| Section | Vector |
+|---|---|
+| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code0-delivery-trace` |
+| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code1-hold-full-trace` |
+| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code1-sequenced-trace` |
 <!-- vector-index:end -->
