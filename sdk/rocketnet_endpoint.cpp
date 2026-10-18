@@ -152,6 +152,9 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         // One packet's record lives in a payload no larger than both the
         // transport's cap and the message tier's one-packet payload.
         const int record_capacity = transport_max < ROCKETNET_MAX_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PAYLOAD_BYTES;
+        // Keep the reservation's transport cap so finish applies the rule to
+        // the actual byte count, even when the caller finishes short.
+        endpoint->max_payload_bytes = transport_max;
         // The configured maximum and the u16 record length stay refusal
         // boundaries. A send too big for one packet's record is promoted to
         // its reliable twin, as RakNet's ReliabilityLayer does.
@@ -239,13 +242,18 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
             serial = 1;
     }
 
-    // A promoted unreliable send was reserved on the reliable path; a type 5
-    // reservation finished at or below the single-record limit stays public
-    // code 5 (the short-finish case below).
+    // Start reserves for its requested capacity; finish decides promotion
+    // from the actual byte count and can downgrade a short reservation.
     const bool reserved_reliable = endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE;
-    const bool promoted = reserved_reliable &&
-        ( endpoint->pending_type == ROCKETNET_UNRELIABLE || endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
-          ( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && (uint32_t) bytes > endpoint->unreliable_limit ) );
+    const int transport_max = endpoint->max_payload_bytes > 0 ? endpoint->max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
+    const int record_capacity = transport_max < ROCKETNET_MAX_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PAYLOAD_BYTES;
+    const bool actual_over_record = endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ?
+        bytes + 3 + 3 + 3 + ( ( reserved_reliable ? endpoint->ordered.channels.pending_channel : endpoint->region->send_descriptors[endpoint->pending_descriptor].channel ) >= 256 ? 2 : 1 ) + 1 > record_capacity :
+        (uint32_t) bytes > endpoint->unreliable_limit;
+    const bool unreliable_source = endpoint->pending_type == ROCKETNET_UNRELIABLE ||
+        endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
+        endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+    const bool promoted = reserved_reliable && unreliable_source && actual_over_record;
     if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) || promoted )
     {
         const uint32_t d = endpoint->ordered.channels.pending;
@@ -273,9 +281,13 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         {
             // A caller may reserve a block and finish fewer bytes. Move the
             // same region descriptor to the single-packet route without a copy.
-            rocketnet_assert( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT );
+            rocketnet_assert( endpoint->pending_type == ROCKETNET_UNRELIABLE ||
+                              endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
+                              endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT );
+            const uint32_t channel = endpoint->ordered.channels.pending_channel;
             endpoint->ordered.channels.pending = RN_DESCRIPTOR_NONE;
-            descriptor->reliability = ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+            descriptor->channel = (uint16_t) channel;
+            descriptor->reliability = (uint8_t) endpoint->pending_type;
             descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
             descriptor->fragments = 1;
         }
