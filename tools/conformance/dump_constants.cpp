@@ -24,6 +24,7 @@
 #include "rocketnet_history.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_server_protocol.h"
+#include "rocketnet_encryption_map.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_xdp_limits.h"
 
@@ -219,6 +220,7 @@ int main()
 
     print_real( "DEFAULT_SEND_RATE", ROCKETNET_DEFAULT_SEND_RATE );
     print_real( "DEFAULT_HANDSHAKE_DEADLINE_SECONDS", ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS );
+    print_real( "HALF_OPEN_IDLE_TIMEOUT_SECONDS", ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS );
     print_int( "DEFAULT_COOKIE_LIFETIME_SECONDS", ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS );
     print_int( "DEFAULT_COOKIE_ROTATION_SECONDS", ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS );
     print_int( "DEFAULT_MAX_TOKEN_LIFETIME_SECONDS", ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS );

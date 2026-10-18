@@ -229,7 +229,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         int existing = rocketnet_encryption_map_find( server->encryption_map, from );
         if ( existing != -1 )
         {
-            const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, existing );
+            struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, existing );
             if ( mapping->client_index != -1 )
             {
                 rocketnet_debug( "server ignored connection request. a client is already connected from this address" );
@@ -242,6 +242,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_MAPPING_SALT_MISMATCH]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
+            mapping->last_receive_time = current_time;     // STANDARD.md _Half-open state_: traffic refreshes the idle deadline
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
@@ -1321,11 +1322,18 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
         if ( !mapping->established )
         {
+            // STANDARD.md _Half-open state_: the earlier of the idle and handshake deadlines removes the mapping.
             if ( current_time >= mapping->handshake_deadline )
             {
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
                 rocketnet_encryption_map_remove( server->encryption_map, iterator );
                 counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED]++;
+            }
+            else if ( current_time >= mapping->last_receive_time + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS )
+            {
+                rocketnet_debug( "server removed encryption mapping. half-open idle timeout" );
+                rocketnet_encryption_map_remove( server->encryption_map, iterator );
+                counters[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
             }
             continue;
         }
