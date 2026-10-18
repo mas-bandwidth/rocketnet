@@ -1,55 +1,43 @@
-# Connect-token readers: CBMC results
+# Connect-token readers: ESBMC 8.5 results
 
-The benchmark has `cbmc 5.95.1 (cbmc-5.95.1)` and `goto-cc`; the measured
-version is recorded here rather than the 6.6.0 the card expected. No CBMC 6.x
-is installed on this bench, so the proofs are verified with the available
-5.95.1. `make -C proofs/cbmc proofs-connect_token` was re-run at this exact
-head and each of the seven harnesses below printed `VERIFICATION SUCCESSFUL`
-with no unwinding or property failure; the 8291 properties pass at the full
-bounds. Flags come
-from `proofs/cbmc/Makefile`
-(`--bounds-check --pointer-check --signed-overflow-check --unsigned-overflow-check --div-by-zero-check --unwinding-assertions`), plus
-`--unwind 1`, `--object-bits 12`, `-DNDEBUG`, `-I$(SDK)` and
-`-I$(SDK)/../sodium`.
+The nightly target includes the actual `sdk/rocketnet_connect_token.cpp` through
+`proof_connect_token.cpp`. The shared `../esbmc_shim.h` models the CBMC-style
+assume/assert/extent/nondeterministic-write calls. Libsodium calls are modeled
+at their documented buffer lengths; libsodium itself is not verified. Each
+input array is exactly its documented size: token 768 bytes, signed data 576
+bytes, private data 384 bytes, signature 64 bytes, and key 32 bytes.
 
-The reader is `sdk/rocketnet_connect_token.cpp`, included by
-`proof_connect_token.c`; no sdk code is copied. Each token, signed block and
-private block is a stack object of exactly its wire size, so a read one past
-the documented block is an out-of-bounds failure, not slack. libsodium is
-modeled, not proved: each model checks its own reads with `__CPROVER_r_ok` and
-its own writes with `__CPROVER_w_ok` at the documented lengths, writes nondet
-bytes, and returns a nondet success or failure. The `crypto_box_seal_open`
-model also asserts that the reader passes
-`ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK` and `ROCKETNET_SEALED_BLOCK_BYTES` inside
-the 576-byte signed block, and that it writes `ROCKETNET_PRIVATE_BLOCK_BYTES`.
+The target uses `--std c++17 --z3 --overflow-check` with ESBMC's default
+pointer, bounds and divide-by-zero checks, `-DROCKETNET_ESBMC -DNDEBUG`,
+a 30-minute wall timeout and 8 GiB address-space cap per harness. The
+field-copy paths use unwind 577, 433, and 257 respectively to cover ESBMC's
+byte-copy library model; the verifier and consistency paths use 1, the
+identifier hash-output model 17, and the private-block open model 385 to
+cover the shim's nondeterministic byte-write loop.
 
-| harness | properties | passed | bound proved | unwind |
-| --- | ---: | ---: | --- | ---: |
-| `harness_read_connect_token` | 1253 | 1253 | token exactly `ROCKETNET_CONNECT_TOKEN_BYTES` (768) symbolic bytes; fields read at 0, 576, 640 and 672, last byte read at 703, no read past 768 | 1 |
-| `harness_read_signed_connect_data` | 1253 | 1253 | signed block exactly `ROCKETNET_SIGNED_CONNECT_DATA_BYTES` (576) symbolic bytes; every field at its documented offset, the sealed block ends at 89 + 432 = 521 < 576 | 1 |
-| `harness_read_connect_token_private` | 1253 | 1253 | private block exactly `ROCKETNET_PRIVATE_BLOCK_BYTES` (384) symbolic bytes; every field at its documented offset, the last user-data byte at 343 < 384 | 1 |
-| `harness_verify_signed_connect_data` | 1093 | 1093 | signed block 576, signature 64 and backend public key 32 symbolic bytes; the model reads exactly those lengths | 1 |
-| `harness_open_connect_token_private` | 1253 | 1253 | signed block exactly 576 symbolic bytes; sealed block at offset 89 for 432 bytes (ends at 521), private block write 384 bytes | 1 |
-| `harness_private_consistent` | 1093 | 1093 | every private field symbolic and the whole 576-byte signed block symbolic; protocol id at 4 and expire at 20 read inside the block | 1 |
-| `harness_connect_token_identifier` | 1093 | 1093 | signed block exactly 576 symbolic bytes, identifier write 16 bytes | 1 |
+| Harness | Bound | Unwind | Proved | Refuted | Timed out | Other/unproved |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `harness_read_connect_token` | 768-byte symbolic token | 577 | 25/25 | 0 | 0 | 0 |
+| `harness_read_signed_connect_data` | 576-byte symbolic signed block | 433 | 88/88 | 0 | 0 | 0 |
+| `harness_read_connect_token_private` | 384-byte symbolic private block | 257 | 61/61 | 0 | 0 | 0 |
+| `harness_verify_signed_connect_data` | 576-byte signed block, 64-byte signature, 32-byte key | 1 | 12/12 | 0 | 0 | 0 |
+| `harness_open_connect_token_private` | 576-byte signed block, 432-byte sealed block, 384-byte output | 385 | 57/57 | 0 | 0 | 0 |
+| `harness_private_consistent` | symbolic private fields and 576-byte signed block | 1 | 36/36 | 0 | 0 | 0 |
+| `harness_connect_token_identifier` | 576-byte signed block, 16-byte identifier output | 17 | 10/10 | 0 | 0 | 0 |
 
-All 8291 properties pass; there is no failed or unproved property. The full
-bounds were proved directly; no reduced bound was needed. The target runs in
-about ten seconds on one bench core. The whole `make -C proofs/cbmc` (the
-per-commit `all` set) does not include this target and is unchanged.
+All seven ESBMC 8.5.0 runs ended `VERIFICATION SUCCESSFUL` at the full listed
+array bounds: 289/289 checked properties passed, with zero refuted, timed out,
+or otherwise unproved. Raw output is saved in the allocated Linux gate job's
+`evidence/harness_*.log`; the make summary is `evidence/make-connect-token-r3.log`.
+Each run used one CPU at nice 19; the target applied `timeout 1800s` and
+`prlimit --as=8589934592` separately to each ESBMC invocation. No reduced
+buffer bound was used.
 
-Notes and scope:
+The existing per-commit `make -C proofs/cbmc` target also exited 0 on this
+tree. It ran its original CBMC leaves only, including the declared expected
+`replay-far` counterexample; the new reader remains nightly-only.
 
-- The models cover only the libsodium calls the included unit references:
-  `crypto_box_seal_open`, `crypto_sign_verify_detached`, `crypto_generichash`,
-  and the writer-only `crypto_box_seal`, `crypto_scalarmult_base`,
-  `crypto_generichash_init`, `crypto_generichash_update`,
-  `crypto_generichash_final`, `crypto_box_easy`, `crypto_sign_detached` and
-  `sodium_memzero`. The writer models keep the unit linkable; no writer harness
-  is part of this claim.
-- libsodium itself is outside the claim and is not proved.
-- `harness_private_consistent` starts with an uninitialized
-  `struct rocketnet_connect_token_private_t`, so every private field is
-  symbolic; its assertion relates the result to the private protocol id and
-  expire and the signed fields at `ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID` and
-  `ROCKETNET_SIGNED_OFFSET_EXPIRE`.
+The first trial with unwind 1 failed only an unwinding assertion in ESBMC's
+byte-copy model (`/esbmc-vfs/libc/library/string.c:284`), not in RocketNet.
+Raising that harness to 577 discharged it. The carried prior-attempt CBMC
+5.95.1 results remain historical and are not counted as ESBMC evidence.

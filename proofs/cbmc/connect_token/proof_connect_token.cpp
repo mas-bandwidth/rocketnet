@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    CBMC proofs of the connect-token readers.
+    ESBMC nightly proofs of the connect-token readers.
 
     The reader is sdk/rocketnet_connect_token.cpp, included below; no sdk code
     is copied. The token is exactly ROCKETNET_CONNECT_TOKEN_BYTES symbolic
@@ -12,25 +12,27 @@
     past any documented block is an out-of-bounds failure and not slack.
 
     libsodium is not proved. Each call a reader makes is a model in this
-    harness that checks its own buffer arguments with __CPROVER_r_ok /
-    __CPROVER_w_ok at the lengths libsodium documents, writes nondet bytes,
+    harness that checks its own buffer arguments through the shared ESBMC
+    shim at the lengths libsodium documents, writes nondet bytes,
     and returns a nondet success or failure. crypto_box_seal_open checks that
     it reads ROCKETNET_SEALED_BLOCK_BYTES at
     ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK inside the signed data and writes
     ROCKETNET_PRIVATE_BLOCK_BYTES.
 
-    Flags: --bounds-check --pointer-check --signed-overflow-check
-           --unsigned-overflow-check --div-by-zero-check
-           --unwinding-assertions
-    Unwinding: 1. Every reader is a fixed sequence of field reads with no
-    loop; the libsodium models below touch fixed-size buffers. memcmp is
-    modeled by CBMC and bounded by its argument.
+    Flags: --std c++17 --z3 --overflow-check, with ESBMC's default bounds,
+           pointer and divide-by-zero checks. The proof target bounds each
+           solver run to 30 minutes and 8 GiB of address space.
+    Unwinding: per harness. The byte-copy library model needs one iteration
+    beyond the longest field copy (576, 432, or 256 bytes); the identifier
+    hash and private-block output models need 17 and 385 respectively for
+    the shared shim's nondeterministic byte-write loops.
 */
 
 #define thread_local
 
 #include <stdlib.h>
 
+#include "../esbmc_shim.h"
 #include "rocketnet_connect_token.cpp"
 
 #ifndef __CPROVER__
