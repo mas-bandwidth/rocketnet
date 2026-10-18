@@ -480,6 +480,23 @@ if(ROCKETNET_BUILD_TOOLS)
     target_link_libraries(lease_cost PRIVATE Threads::Threads)
     rocketnet_use_sodium(soak_sim)
     rocketnet_use_sodium(keygen)
+    # The corpus replay drivers: fuzz/replay_main.cpp provides the main the
+    # libFuzzer runtime would provide, reading each named file whole and
+    # calling the harness's LLVMFuzzerTestOneInput once, so the committed
+    # corpora replay on platforms with no libFuzzer runtime. Built against
+    # the development library with the same includes as the NDEBUG fuzz
+    # build in ci.yml.
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured)
+        add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
+        target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEVELOPMENT=1)
+        target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)
+        target_include_directories(fuzz_replay_${harness} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/sodium"
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test")
+        rocketnet_use_sodium(fuzz_replay_${harness})
+        target_link_libraries(fuzz_replay_${harness} PRIVATE rocketnet_dev Threads::Threads)
+    endforeach()
 endif()
 
 install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
