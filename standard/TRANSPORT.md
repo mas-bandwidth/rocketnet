@@ -556,7 +556,7 @@ protocol one. See [t2.4 Transport selection](#t2.4).
 
 ### Kernel prefilter and XDP
 
-A Linux server may place a prefilter and a source-address whitelist in an XDP
+A Linux server may place the prefilter and an early replay check in an XDP
 program so that traffic the connection layer would refuse is dropped before
 it is queued to userspace. The kernel path may perform any prefix of the
 receive checks; it rejects no more and no less than the full sequence, and the
