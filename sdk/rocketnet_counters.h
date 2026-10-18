@@ -208,7 +208,7 @@
     X( CLIENT_DENIED_ZERO_SEQUENCE, REFUSAL, CLIENT_DENIED_RECEIVED ) \
     X( CLIENT_DENIED_DID_NOT_OPEN, REFUSAL, CLIENT_DENIED_RECEIVED ) \
     /* REFUSAL: the server denied the connection. The server denies only for */ \
-    /* NO_SLOTS or ADMITTED_SET_FULL, so a clean run reads 0. */ \
+    /* NO_SLOTS, so a clean run reads 0. */ \
     X( CLIENT_DENIED_ACCEPTED, REFUSAL, CLIENT_DENIED_RECEIVED ) \
     X( CLIENT_KEEP_ALIVE_RECEIVED, ARRIVAL, NONE ) \
     /* EXPECTED: the session-end race, from the client's side. The client */ \
@@ -544,11 +544,11 @@
     X( XDP_KERNEL_DROPPED_WRONG_EPOCH, REFUSAL, NONE ) \
     X( XDP_KERNEL_PASSED_IPV6_EXTENSION, EXPECTED, NONE ) \
     \
-    /* A connection response that opened for a token already in the */ \
-    /* admitted-token set: the token is bound at response open, so two */ \
-    /* addresses can each hold a mapping for one token, and the second to */ \
-    /* respond is refused (STANDARD.md, Processing Connection Response */ \
-    /* Packets). appended: indices are the contract. */ \
+    /* A connection response that opened for a token a connected client */ \
+    /* holds now: the token is bound at response open, so two addresses */ \
+    /* can each hold a mapping for one token, and the second to respond */ \
+    /* while the first is connected is refused (STANDARD.md, Processing */ \
+    /* Connection Response Packets). appended: indices are the contract. */ \
     X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     \
     /* A client hand-off deferred because the other send ring is still */ \

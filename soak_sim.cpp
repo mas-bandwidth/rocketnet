@@ -428,13 +428,6 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
-    server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, 256 );
-    if ( !server.admitted_token_set )
-    {
-        printf( "soak_sim: failed to create the admitted token set\n" );
-        rocketnet_term();
-        return 1;
-    }
     server.client_slots = rocketnet_client_slots_create( NULL, 16 );
     if ( !server.client_slots )
     {
@@ -863,7 +856,6 @@ int main( int argc, char ** argv )
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
-    rocketnet_admitted_token_set_destroy( server.admitted_token_set );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_reassembly_set_destroy( server.reassembly );
     rocketnet_network_simulator_destroy( simulator );

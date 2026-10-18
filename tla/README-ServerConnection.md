@@ -356,6 +356,15 @@ and fixed on the way.
    response ladder, between the client-id bullet (S:2817) and the slot bullet (S:2818): "If
    this token's identifier is in the admitted-token set, ignore it."
 
+   **Superseded 2026-10-18.** The admitted-token set is removed from the code
+   (`docs/SESSION.md` 1.6): the rule is now one token, one live connection, and a
+   token whose connection has closed may connect again inside its short expiry, by the
+   owner's ruling. This module still models the set; the code now matches
+   `AdmittedHeld = FALSE` with the set never full, under which `OneConnectionPerToken`
+   (a lifetime count) is no longer the code's rule. `tla/RNSecurityTables.tla` carries
+   the rule as `OneTokenOneLiveConnection` and `ChurnNeverDenied`; re-stating this
+   module's invariant to match is owed to a later card.
+
 ### Model errors, fixed
 
 9. **The salt keyed on the attempt number.** The first draft's key pair was

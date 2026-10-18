@@ -84,12 +84,11 @@ static void rocketnet_rotation_server_setup( struct rocketnet_rotation_server_t 
     server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
-    server->admitted_token_set = rocketnet_admitted_token_set_create( NULL, 16 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
     server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &test->counters;
-    rocketnet_unit_check( server->encryption_map && server->used_token_history && server->admitted_token_set &&
+    rocketnet_unit_check( server->encryption_map && server->used_token_history &&
                           server->client_slots && server->acks && server->reassembly );
     rocketnet_reassembly_set_begin_update( server->reassembly );
 
@@ -103,7 +102,6 @@ static void rocketnet_rotation_server_teardown( struct rocketnet_rotation_server
     rocketnet_counters_assert_conserved( &test->counters );
     rocketnet_encryption_map_destroy( test->server.encryption_map );
     rocketnet_used_token_history_destroy( test->server.used_token_history );
-    rocketnet_admitted_token_set_destroy( test->server.admitted_token_set );
     rocketnet_client_slots_destroy( test->server.client_slots );
     rocketnet_server_acks_destroy( test->server.acks );
     rocketnet_reassembly_set_destroy( test->server.reassembly );

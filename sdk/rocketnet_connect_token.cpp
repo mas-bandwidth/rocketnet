@@ -281,7 +281,7 @@ int rocketnet_write_dev_connect_token( const char * server_address_string,
     signed_fields.version = ROCKETNET_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = current_timestamp;
-    signed_fields.expire_timestamp = current_timestamp + 300;
+    signed_fields.expire_timestamp = current_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;
     signed_fields.timeout_seconds = 10;
     memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, 32 );
 

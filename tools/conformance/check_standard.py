@@ -525,12 +525,6 @@ def main():
         if implemented is not None:
             compare("used-token history ratio", ints(cell)[0], implemented)
 
-    cell = row("Admitted-token set")
-    if cell is not None:
-        implemented = require("SIZING_ADMITTED_TOKEN_SET_RATIO")
-        if implemented is not None:
-            compare("admitted-token set ratio", ints(cell)[0], implemented)
-
     # The mapping-table rule is prose, not a glance row: "Size the mapping
     # table far above the slot count." The implemented side is the ratio
     # macro the create path multiplies max_clients by.

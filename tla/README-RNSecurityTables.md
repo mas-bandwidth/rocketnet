@@ -27,14 +27,17 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   then a free slot, then an expired slot, then — in the code — the
   oldest entry, live or not (`rocketnet_token_table_select_slot` with
   `evict_oldest = 1`, reached from `rocketnet_used_token_history_record`).
-- **The admitted set.** Per token: absent, or admitted with an expiry.
-  The response rung checks the client id, then refuses a token already
-  in the set (`CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`: with the
-  binding at the response, two addresses can each hold a mapping for one
-  token), then the slots, then adds;
-  the add succeeds when the token is already present, and at capacity
-  with nothing expired it refuses, never evicting a live entry
-  (`rocketnet_admitted_token_set_add`, `select_slot(..., 0)`).
+- **The token rung.** The code has no admitted-token set (removed
+  2026-10-18, `docs/SESSION.md` 1.6). A token a connected client holds
+  now is refused at the request and at the response
+  (`rocketnet_server_token_connected`;
+  `CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED` and
+  `CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`: with the binding at the
+  response, two addresses can each hold a mapping for one token). The
+  response rung checks the token, then the client id, then the slots.
+  `HoldUntilExpire = TRUE` is the code before: an admitted set of
+  `AdmittedCap` entries, each held until its token expired, never evicted;
+  the model keeps it as the reversed witness for `ChurnNeverDenied`.
 - **The cookie gate and rotation.** A mapping is created only under a
   cookie of a live generation: the current key, or the previous one
   while `clock < prevUntil` (`sdk/rocketnet_server_protocol.cpp:377`,
@@ -56,8 +59,13 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
 
 ## Invariants
 
-- **`OneConnectionPerToken`**: a token admits at most one connection
-  while unexpired (the ghost count of admissions never passes one).
+- **`OneTokenOneLiveConnection`** (the headline rule, TokenUsedOnce as the
+  server enforces it): no two client slots hold one token at once. A
+  token whose connection has closed may connect again inside its short
+  expiry; that is the accepted residual risk.
+- **`ChurnNeverDenied`**: a fresh, unexpired, never-admitted token whose
+  client id holds no slot, at a server with a free slot, is never refused
+  or denied at the response (ghost `churnDenied`).
 - **`BoundOnlyToOpener`**: every history entry was written by a response
   that opened under its token, from the address it binds; a request
   never binds.
@@ -108,7 +116,9 @@ guarded by its two reversed witnesses.
 
 | Invariant / Property | Trace | Code | Hand verification |
 |---|---|---|---|
-| `OneConnectionPerToken` | 6 states (`RefuseAdmittedAtResponse = FALSE`; 11 states before the binding moved) | `sdk/rocketnet_token_tables.cpp`, `rocketnet_admitted_token_set_add` (find returns success when present); response rung in `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_process_connection_response`) | `A` and `B` each request the shared token `th` (nothing binds at a request now, where before a history flush had to evict the first binding); `A`'s response admits, `A` disconnects, `B`'s response finds the client id free and the add succeeds because the entry is present, so the token admits a second connection. Closed in the code on 2026-10-17 by the admitted-set refusal on the response rung, pinned by `test_request_path_state_refusals`. |
+| `ChurnNeverDenied` | 9 states (`HoldUntilExpire = TRUE`) | the admitted-token set at the base before 2026-10-18: `rocketnet_admitted_token_set_create( context, max_clients * 2 )` and `rocketnet_admitted_token_set_add` refusing when full of unexpired entries, then `CONNECTION_RESPONSE_ADMITTED_SET_FULL` in `rocketnet_server_process_connection_response` | `A` connects `th`, `B` connects `te`, `B` disconnects: the slot is free but the set holds two unexpired entries at capacity two, so `A`'s response for the fresh `tf` is denied. The code reproduced exactly this: `server_admits_sequential_fresh_tokens_past_twice_max_clients` at the base printed `cycle 3 of 5 not admitted: client state -1, CONNECTION_RESPONSE_ADMITTED_SET_FULL 1`. Fixed by removing the set. |
+| `OneTokenOneLiveConnection` | 5 states (`RefuseAdmittedAtResponse = FALSE`, `CheckCidAtResponse = FALSE`) | the token rung and the client-id rung of `rocketnet_server_process_connection_response` | `A` and `B` each request the shared token `th`; `A`'s response admits; with both rungs off, `B`'s response is admitted while `A` is connected, so two slots hold `th`. Either rung alone refuses it in the code (one token carries one client id). |
+| `OneConnectionPerToken` (retired 2026-10-18) | 6 states (`RefuseAdmittedAtResponse = FALSE`; 11 states before the binding moved) | `sdk/rocketnet_token_tables.cpp`, `rocketnet_admitted_token_set_add` (find returns success when present); response rung in `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_process_connection_response`) | `A` and `B` each request the shared token `th` (nothing binds at a request now, where before a history flush had to evict the first binding); `A`'s response admits, `A` disconnects, `B`'s response finds the client id free and the add succeeds because the entry is present, so the token admits a second connection. Closed in the code on 2026-10-17 by the admitted-set refusal on the response rung, pinned by `test_request_path_state_refusals`. |
 | `BoundOnlyToOpener` | 2 states (`BindAtRequest = TRUE`) | `rocketnet_used_token_history_record` called from `rocketnet_server_process_opened_request` at the base before 2026-10-17 | `A`'s request for `th` writes the history entry before any response has opened: the request path recorded the source address after the admitted-set check and before the challenge. The code now records in `rocketnet_server_process_connection_response`, after the open. |
 | `NoBindToNonHolder` | 2 states (`BindAtRequest = TRUE`, `BindAtRequestAttacker.cfg`) | the same record at the request; the history check at the top of the request path | `B`, which does not hold `tf`, replays `tf` and the request binds `tf` to `B`; `A`'s own request for `tf` is then refused as `TOKEN_ALREADY_USED` for the token's lifetime. `test_token_bound_at_response_open` reproduced exactly this at the base (its first check, `TOKEN_ALREADY_USED == 0`, failed) and passes with the binding at the response. |
 | `ExpiredNeverAdmitted` | 5 states | request rung expiry check in `rocketnet_server_protocol_process_connection_request`; no expiry check in `rocketnet_server_process_connection_response` | A token presented before expiry whose response arrives after expiry is admitted: the request path refuses an expired token at its top, the response path checks only the client id, the slots and the admitted set. Bounded by the handshake deadline. |
@@ -131,17 +141,18 @@ Each reversed witness has a committed configuration registered in
 
 | Configuration suffix after `MCRNSecurityTables` | Reversed switch | Expected failure |
 |---|---|---|
-| `NoRefuseAdmitted.cfg` | `RefuseAdmittedAtResponse = FALSE` | `SafetyInvariants` (`OneConnectionPerToken`) |
+| `NoRefuseAdmitted.cfg` | `RefuseAdmittedAtResponse = FALSE`, `CheckCidAtResponse = FALSE` | `SafetyInvariants` (`OneTokenOneLiveConnection`) |
+| `HoldUntilExpire.cfg` | `HoldUntilExpire = TRUE` | `SafetyInvariants` (`ChurnNeverDenied`) |
 | `BindAtRequest.cfg` | `BindAtRequest = TRUE` | `SafetyInvariants` (`BoundOnlyToOpener`) |
 | `BindAtRequestAttacker.cfg` | `BindAtRequest = TRUE` | `NoBindToNonHolder` |
 | `AdmitExpired.cfg` | `AdmitExpiredAtResponse = TRUE` | `SafetyInvariants` (`ExpiredNeverAdmitted`) |
 | `EvictLiveHistory.cfg` | `EvictLiveHistory = TRUE` | `SafetyInvariants` (`NoLiveHistoryEviction`) |
-| `DeniedConsumesToken.cfg` | `DeniedConsumesToken = TRUE` | `DeniedTokenStaysUsable` |
+| `DeniedConsumesToken.cfg` | `DeniedConsumesToken = TRUE` (with `HoldUntilExpire = TRUE`: only a set entry can be consumed) | `DeniedTokenStaysUsable` |
 | `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `SafetyInvariants` (`TypeOK` verify bound) |
 | `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
 | `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
 
-Refresh all ten cases through the pinned `tlacheck` runner and merge with
+Refresh all eleven cases through the pinned `tlacheck` runner and merge with
 `--keep tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
 one row per configuration; earlier seven-column records remain in
 `RUNS-HISTORY.tsv`.
@@ -160,9 +171,10 @@ The small instance:
 | `VerifyBudget` | 2 per update |
 | `HandshakeDeadline` | 4 ticks |
 
-The fixed-code run generates 2,609,659 states and finds 606,181
-distinct states (1,145,905 and 279,674 before the binding moved: with
-nothing bound at a request, both addresses hold mappings for more tokens), with no error: the invariants hold and
+The fixed-code run generates 6,995,921 states and finds 1,468,297
+distinct states (2,609,659 and 606,181 while the admitted set held each
+token to expiry: a token may now connect again after its connection
+closes), with no error: the invariants hold and
 `DeniedTokenStaysUsable`, `RotationWindow`,
 `PreviousBoundedToOnePeriod` and `InFlightCookieSurvivesRotation` hold
 as properties.

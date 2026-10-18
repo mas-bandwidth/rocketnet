@@ -192,6 +192,12 @@ readable").
 
 ### F9
 
+Superseded 2026-10-18: the admitted-token set is removed (`docs/SESSION.md` 1.6). A token a
+connected client holds now is refused at the request and the response
+(`rocketnet_server_token_connected`), and a token whose connection has closed may connect
+again inside its expiry; `tla/RNSecurityTables.tla` carries `OneTokenOneLiveConnection` and
+`ChurnNeverDenied`. The finding below is the record of the set as it was.
+
 `rocketnet_admitted_token_set_add` returns 1 when the identifier is already present
 (`token_tables.cpp:277-278`). Two Half mappings carrying one token would therefore both
 be admitted by the set. That needs two addresses passing the used-token history, which

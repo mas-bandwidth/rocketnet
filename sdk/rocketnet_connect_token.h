@@ -161,6 +161,15 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 
 #define ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788ULL
 
+// A development token lives 30 seconds from its create timestamp, as a
+// netcode.io token does by default: a connect token is meant to be used
+// once, soon after it is minted, and the short expiry is what bounds reuse
+// of a token whose connection has closed (docs/SESSION.md, Token reuse). A
+// production backend sets its own expiry in the signed fields; 30 seconds is
+// the recommended value.
+
+#define ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS 30
+
 // Mints a development connect token for a server at this address, signed
 // with the published development backend key and sealed to the published
 // development server key. What a real backend does with real keys, done

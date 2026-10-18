@@ -11,7 +11,7 @@
 #include <string.h>
 #include <limits.h>
 
-// Both tables share one structure, laid out data-oriented: parallel fixed
+// The table's structure, laid out data-oriented: parallel fixed
 // arrays allocated once at create, chained hashing with index links and a
 // free list, and a hot/cold split -- the identifiers walked by find sit in
 // their own array; addresses, timestamps and ordering are cold and touched
@@ -253,46 +253,4 @@ void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t 
     rocketnet_assert( index != -1 );
 
     rocketnet_token_table_insert( table, index, token_identifier, address, expire_timestamp );
-}
-
-// the admitted-token set
-
-struct rocketnet_admitted_token_set_t * rocketnet_admitted_token_set_create( void * context, int capacity )
-{
-    return (struct rocketnet_admitted_token_set_t*) rocketnet_token_table_create( context, capacity );
-}
-
-void rocketnet_admitted_token_set_destroy( struct rocketnet_admitted_token_set_t * set )
-{
-    rocketnet_token_table_destroy( (struct rocketnet_token_table_t*) set );
-}
-
-int rocketnet_admitted_token_set_contains( const struct rocketnet_admitted_token_set_t * set,
-                                           const uint8_t * token_identifier,
-                                           uint64_t current_timestamp )
-{
-    const struct rocketnet_token_table_t * table = (const struct rocketnet_token_table_t*) set;
-    return rocketnet_token_table_find( table, token_identifier, current_timestamp ) != -1;
-}
-
-int rocketnet_admitted_token_set_add( struct rocketnet_admitted_token_set_t * set,
-                                      const uint8_t * token_identifier,
-                                      uint64_t expire_timestamp,
-                                      uint64_t current_timestamp )
-{
-    struct rocketnet_token_table_t * table = (struct rocketnet_token_table_t*) set;
-
-    if ( rocketnet_token_table_find( table, token_identifier, current_timestamp ) != -1 )
-        return 1;
-
-    // an unexpired entry is never evicted: at capacity with nothing expired,
-    // refuse, and the caller fails closed
-
-    int index = rocketnet_token_table_select_slot( table, current_timestamp, 0 );
-    if ( index == -1 )
-        return 0;
-
-    rocketnet_token_table_insert( table, index, token_identifier, NULL, expire_timestamp );
-
-    return 1;
 }

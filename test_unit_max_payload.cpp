@@ -105,12 +105,11 @@ static void max_payload_pair_setup( struct max_payload_pair_t * pair )
     server->handshake_deadline_seconds = 5.0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
-    server->admitted_token_set = rocketnet_admitted_token_set_create( NULL, 16 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
     server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &pair->server_counters;
-    check( server->encryption_map && server->used_token_history && server->admitted_token_set &&
+    check( server->encryption_map && server->used_token_history &&
            server->client_slots && server->acks && server->reassembly );
     rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
@@ -154,7 +153,6 @@ static void max_payload_pair_teardown( struct max_payload_pair_t * pair )
     rocketnet_reassembly_set_destroy( pair->client.reassembly );
     rocketnet_encryption_map_destroy( pair->server.encryption_map );
     rocketnet_used_token_history_destroy( pair->server.used_token_history );
-    rocketnet_admitted_token_set_destroy( pair->server.admitted_token_set );
     rocketnet_client_slots_destroy( pair->server.client_slots );
     rocketnet_server_acks_destroy( pair->server.acks );
     rocketnet_reassembly_set_destroy( pair->server.reassembly );
