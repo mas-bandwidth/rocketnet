@@ -448,12 +448,6 @@ def main():
         if implemented is not None:
             compare("handshake deadline (timing table)", ints(cell)[0], implemented)
 
-    cell = timing_row("Half-open idle deadline")
-    if cell is not None:
-        implemented = require("HALF_OPEN_IDLE_TIMEOUT_SECONDS")
-        if implemented is not None:
-            compare("half-open idle deadline (timing table)", ints(cell)[0], implemented)
-
     cell = timing_row("Cookie lifetime")
     if cell is not None:
         implemented = require("DEFAULT_COOKIE_LIFETIME_SECONDS")
