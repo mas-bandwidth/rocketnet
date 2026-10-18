@@ -129,6 +129,8 @@ bool rocketnet_server_driver_open( const rocketnet_server_driver_operations_t * 
     const bool staged = ( ops->flags & ROCKETNET_DRIVER_STAGED ) != 0;
     if ( staged ? !( ops->start_packet && ops->finish_packet && ops->abort_packet && ops->flush && ops->receive )
                 : !( ops->send_batch && ops->receive_batch ) ) return false;
+    if ( ( ops->replay_forget || ops->replay_mark || ops->replay_commit ) &&
+         !( ops->replay_forget && ops->replay_mark && ops->replay_commit ) ) return false;
     // Refused attempts must not constrain the next candidate's port.
     rocketnet_address_t attempt = *bind;
     void * instance = ops->create( context, config, &attempt );

@@ -53,6 +53,13 @@ A flush means submission, not necessarily completion or reusable storage. IOCP
 keeps operation buffers until completion retirement. The backend owns that
 decision; it must never hand a still-owned frame to another producer.
 
+An optional kernel replay capability protects session packets from replay on a
+kernel dataplane. A driver with it implements `replay_forget`,
+`replay_mark` and `replay_commit` together, all three or none; the transport
+calls them on the main thread once per update, after packet processing, and
+nothing else writes the driver's replay map. XDP is the only built-in backend
+that reports it.
+
 ## UDP coalescing
 
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
@@ -189,6 +196,11 @@ The kernel filter's counters surface on the transport counter surface as
 per-CPU totals each time `rocketnet_server_transport_counters` is read. Only a
 driver with a kernel prefilter fills them; a driver with none leaves them
 zero.
+
+The replay map is read-only to the kernel: it drops a session packet 16 or
+more behind the high-water the userspace window sets, and never writes the
+map. The transport marks each connected client after every update, and the
+userspace window stays 4096.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which

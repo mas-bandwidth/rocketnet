@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "rocketnet.h"
+#include "rocketnet_address.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,13 @@
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "extension check failed: %s, line %d\n", #x, __LINE__); exit(1); } } while (0)
 extern int external_test_creates;
 extern int external_test_destroys;
+extern int external_test_replay_forgets;
+extern int external_test_replay_marks;
+extern uint32_t external_test_replay_max_high_water;
+extern rocketnet_address_t external_test_replay_last_address;
+extern rocketnet_address_t external_test_replay_forgotten_address;
+extern bool external_test_replay_has_address;
+extern bool external_test_replay_has_forgotten;
 
 int main()
 {
@@ -59,6 +67,17 @@ int main()
         rocketnet_sleep(0.001);
     }
     CHECK(echoed);
+    CHECK(external_test_replay_has_address);
+    CHECK(external_test_replay_max_high_water > 0);
+    rocketnet_client_transport_disconnect(client);
+    deadline = rocketnet_time() + 5.0;
+    while (!external_test_replay_has_forgotten && rocketnet_time() < deadline)
+    {
+        rocketnet_server_transport_update(server, rocketnet_time());
+        rocketnet_sleep(0.001);
+    }
+    CHECK(external_test_replay_has_forgotten);
+    CHECK(rocketnet_address_equal(&external_test_replay_forgotten_address, &external_test_replay_last_address));
     rocketnet_client_transport_destroy(client);
     rocketnet_server_transport_stop(server);
     deadline = rocketnet_time() + 5.0;
