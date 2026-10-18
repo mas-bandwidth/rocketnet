@@ -246,7 +246,6 @@ jobs:
         if: contains(matrix.leg, 'b')
         timeout-minutes: 20
         env:
-          ROCKETNET_DRIVER: portable
           ROCKETNET_SERVER_DRIVER: portable
           ROCKETNET_CLIENT_DRIVER: portable
         run: |

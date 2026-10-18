@@ -3083,20 +3083,17 @@ void rocketnet_test_config_precedence()
 // the #107 law: the kernel grants the port and the token is minted for
 // what was granted, so no other process on the box can race this test.
 
-static bool rocketnet_test_skip_for_driver_env_pin( const char * test_name )
+static bool rocketnet_test_skip_for_driver_env_pin( const char * test_name, const char * pin_name, const char * expected_driver )
 {
-    const char * server_pin = rocketnet_platform_getenv( "ROCKETNET_SERVER_DRIVER" );
-    const char * client_pin = rocketnet_platform_getenv( "ROCKETNET_CLIENT_DRIVER" );
-    const bool has_server_pin = ( server_pin != NULL && server_pin[0] != '\0' );
-    const bool has_client_pin = ( client_pin != NULL && client_pin[0] != '\0' );
-    if ( !has_server_pin && !has_client_pin )
+    const char * pin = rocketnet_platform_getenv( pin_name );
+    if ( pin == NULL || pin[0] == '\0' || ( expected_driver && strcmp( pin, expected_driver ) == 0 ) )
         return false;
-    if ( has_server_pin && has_client_pin )
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED whole-suite driver pin active: ROCKETNET_SERVER_DRIVER=%s ROCKETNET_CLIENT_DRIVER=%s]", test_name, server_pin, client_pin );
-    else if ( has_server_pin )
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED whole-suite driver pin active: ROCKETNET_SERVER_DRIVER=%s]", test_name, server_pin );
+
+    // A whole-suite pin skips only a selection check it contradicts.
+    if ( expected_driver )
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED whole-suite driver pin: %s=%s contradicts expected %s]", test_name, pin_name, pin, expected_driver );
     else
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED whole-suite driver pin active: ROCKETNET_CLIENT_DRIVER=%s]", test_name, client_pin );
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED whole-suite driver pin: %s=%s overrides auto selection]", test_name, pin_name, pin );
     return true;
 }
 
@@ -3188,7 +3185,7 @@ static void rocketnet_test_driver_pin_exchange( const char * driver_list, const 
 
 void rocketnet_test_server_driver_pin_portable()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_portable" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_portable", "ROCKETNET_SERVER_DRIVER", "portable" ) )
         return;
 
     // the portable rung carries traffic on every platform -- the floor
@@ -3423,7 +3420,7 @@ void driver_env_pin_is_honoured()
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 void rocketnet_test_server_driver_pin_iocp()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_iocp" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_iocp", "ROCKETNET_SERVER_DRIVER", "iocp" ) )
         return;
 
     rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
@@ -3431,7 +3428,7 @@ void rocketnet_test_server_driver_pin_iocp()
 
 void rocketnet_test_server_driver_pin_rio()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_rio" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_rio", "ROCKETNET_SERVER_DRIVER", "rio" ) )
         return;
 
     rocketnet_test_driver_pin_exchange( "rio", "rio" );
@@ -4005,7 +4002,7 @@ void rocketnet_test_server_iocp_uso_wire()
 
 void rocketnet_test_server_port_zero_driver()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_port_zero_driver" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_port_zero_driver", "ROCKETNET_SERVER_DRIVER", NULL ) )
         return;
 
     struct rocketnet_test_env_guard_t driver_guard;
@@ -4144,7 +4141,7 @@ void rocketnet_test_server_port_zero_driver()
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 void rocketnet_test_server_driver_pin_gso()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_gso" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_gso", "ROCKETNET_SERVER_DRIVER", "gso" ) )
         return;
 
     rocketnet_test_driver_pin_exchange( "gso", "gso" );
@@ -4171,7 +4168,7 @@ void rocketnet_test_server_driver_pin_gso()
 
 void rocketnet_test_server_driver_pin_io_uring()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_io_uring" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_io_uring", "ROCKETNET_SERVER_DRIVER", "io_uring" ) )
         return;
 
     // a build without liburing has an io_uring row with no backend: the row
@@ -4213,7 +4210,7 @@ void rocketnet_test_server_driver_pin_io_uring()
 
 void rocketnet_test_server_driver_pin_xdp()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_xdp" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_xdp", "ROCKETNET_SERVER_DRIVER", "xdp" ) )
         return;
 
     // the pre-flight is called DIRECTLY here, as it also is in
@@ -4255,7 +4252,7 @@ void rocketnet_test_server_driver_pin_xdp()
 
 void rocketnet_test_server_driver_ladder_fall()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_ladder_fall" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_ladder_fall", "ROCKETNET_SERVER_DRIVER", "gso" ) )
         return;
 
     // THE FALL, proven to actually happen where it can be proven without
@@ -4307,7 +4304,7 @@ void rocketnet_test_server_driver_ladder_fall()
 
 void rocketnet_test_server_driver_pin_msgx()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_msgx" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_server_driver_pin_msgx", "ROCKETNET_SERVER_DRIVER", "msgx" ) )
         return;
 
     rocketnet_test_driver_pin_exchange( "msgx", "msgx" );
@@ -4315,7 +4312,7 @@ void rocketnet_test_server_driver_pin_msgx()
 
 void rocketnet_test_driver_pump_alias()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_driver_pump_alias" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_driver_pump_alias", "ROCKETNET_SERVER_DRIVER", NULL ) )
         return;
 
     // ROCKETNET_PUMP=portable keeps its exact pre-#106 meaning -- the
@@ -4355,7 +4352,7 @@ void rocketnet_test_driver_pump_alias()
 
 void rocketnet_test_driver_all_skipped_uses_auto()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_driver_all_skipped_uses_auto" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_driver_all_skipped_uses_auto", "ROCKETNET_SERVER_DRIVER", NULL ) )
         return;
 
     // a list whose every name is a platform- or endpoint-skip names no
@@ -4473,7 +4470,7 @@ void rocketnet_test_config_env_aliases()
 
 void rocketnet_test_client_driver()
 {
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_client_driver" ) )
+    if ( rocketnet_test_skip_for_driver_env_pin( "test_client_driver", "ROCKETNET_CLIENT_DRIVER", NULL ) )
         return;
 
     struct rocketnet_test_env_guard_t driver_guard;
