@@ -261,11 +261,13 @@ void rocketnet_test_client_disconnect_reports_state_change()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
-void rocketnet_test_client_io_linux_handoff_round_trip()
+// the hand-off round trip on one client driver; name is the case's name for
+// its report line
+static void rocketnet_test_client_io_handoff_round_trip( const char * driver, const char * name )
 {
-    // docs/CLIENT-IO.md Per-platform cards, rocketnet-client-io-linux: the
-    // portable client on a platform with the wake runs the I/O thread, so the
-    // main thread never walks the send ring. A deferred hand-off loses
+    // docs/CLIENT-IO.md Per-platform cards: a client driver on a platform
+    // with the wake runs the I/O thread, so the main thread never walks the
+    // send ring. A deferred hand-off loses
     // nothing: the committed slots stay in the Filling ring and leave with the
     // next hand-off (RNClientIo HandOff and Defer), so every payload arrives.
 
@@ -284,7 +286,7 @@ void rocketnet_test_client_io_linux_handoff_round_trip()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    strcpy( client_config.driver, "portable" );
+    snprintf( client_config.driver, sizeof(client_config.driver), "%s", driver );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -419,8 +421,8 @@ void rocketnet_test_client_io_linux_handoff_round_trip()
     // nothing, so the count is reported and every payload above still arrived
     const uint64_t deferred = rocketnet_counter_value( rocketnet_client_transport_counters( client ),
         ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
-    printf( "client_io_linux_handoff_round_trip frames=%d packets_per_frame=%d received=%d/%d deferred=%llu\n",
-        FRAMES, PACKETS_PER_FRAME, received, TOTAL, (unsigned long long) deferred );
+    printf( "%s frames=%d packets_per_frame=%d received=%d/%d deferred=%llu\n",
+        name, FRAMES, PACKETS_PER_FRAME, received, TOTAL, (unsigned long long) deferred );
 
     // disconnect, then destroy while a ring is handed off: the disconnect
     // burst is committed to the Filling ring and handed off (or handed off by
@@ -441,6 +443,21 @@ void rocketnet_test_client_io_linux_handoff_round_trip()
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
+void rocketnet_test_client_io_linux_handoff_round_trip()
+{
+    rocketnet_test_client_io_handoff_round_trip( "portable", "client_io_linux_handoff_round_trip" );
+}
+
+void rocketnet_test_client_io_windows_handoff_round_trip()
+{
+    // docs/CLIENT-IO.md Per-platform cards, rocketnet-client-io-windows: on
+    // Windows the portable client has the event wake (WSAEventSelect FD_READ
+    // and a manual-reset event), so it runs the I/O thread (RNClientIo
+    // HandOff, Defer, IoSend, IoReceive, IoWait); the same round trip as the
+    // Linux case, every payload byte-exact and none lost to a deferral.
+    rocketnet_test_client_io_handoff_round_trip( "portable", "client_io_windows_handoff_round_trip" );
 }
 
 static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * server, int completion_capacity )
@@ -5738,6 +5755,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_a
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_handoff_round_trip, "client_io_linux_handoff_round_trip", "linux only: the portable client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -5975,6 +5993,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "platform_wake_windows_wakes_and_reads", rocketnet_test_platform_wake_windows_wakes_and_reads },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "platform_wake_windows_wakes_and_reads", rocketnet_functional_skip_platform_wake_windows_wakes_and_reads },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "client_io_windows_handoff_round_trip", rocketnet_test_client_io_windows_handoff_round_trip },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "client_io_windows_handoff_round_trip", rocketnet_functional_skip_client_io_windows_handoff_round_trip },
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
