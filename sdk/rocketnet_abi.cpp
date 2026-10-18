@@ -17,6 +17,7 @@ static const abi_field_t client_transport_config_fields[] =
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE(INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD)
     FIELD(state_change_callback)
+    FIELD(time_callback)
 };
 #undef ABI_TYPE
 
