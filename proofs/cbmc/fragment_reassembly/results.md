@@ -1,90 +1,224 @@
 # rocketnet-cbmc-fragment-reassembly
 
-This card proves the fragment readers on the real sdk code
-(`sdk/rocketnet_fragment.cpp`, included, never copied). Three harnesses live in
-`proof_fragment_reassembly.c`:
+These proofs check the fragment readers on the real sdk code
+(`sdk/rocketnet_fragment.cpp`, included, never copied). The three harnesses
+are in `proof_fragment_reassembly.c`. Run them with
+`make -C proofs/cbmc proofs-fragment_reassembly`, which is on the nightly
+list through `proof.mk`.
 
-- `harness_header_and_plan` — `rocketnet_read_fragment_header` and
-  `rocketnet_fragment_plan`, every payload up to the fragment cap.
-- `harness_process_fragment` — `rocketnet_reassembly_process_fragment` from the
-  real `.cpp`, symbolic `type_data_bytes`, symbolic fragment index/count bytes,
-  symbolic `max_payload_bytes`; claims no write outside the slot's payload
-  region, the refusals, and a completed payload's span inside the arena.
-- `harness_memory_sizing` — `rocketnet_reassembly_memory_required` / `_allowed`
-  and their `_delivered` forms, no unsigned overflow on any documented argument.
+## Checker
 
-## Result
+The checker is ESBMC 8.5.0, building the harness as C++17. CBMC (5.95.1 and
+6.6.0) cannot parse the reassembly translation unit in either language
+mode:
 
-No harness verified, on CBMC 6.6.0 as on 5.95.1. Every harness includes
-`sdk/rocketnet_fragment.cpp`, which is C++, and CBMC parses it in neither
-language mode:
+- `sdk/rocketnet_memory.h` uses `<initializer_list>`, a reference
+  parameter, and a range-based for.
+- `sdk/rocketnet_fragment.cpp:89` has a comparison chain that the CBMC C++
+  parser rejects.
+- `sdk/rocketnet_wire.h` has `__builtin_offsetof` static_asserts.
 
-- As C (the `.c` harness, the mode the other proofs use): `sdk/rocketnet_memory.h:5`
-  includes `<initializer_list>` (fatal: no such file in C mode),
-  `sdk/rocketnet_memory.h:21` takes `uint64_t & total` by reference,
-  `sdk/rocketnet_memory.h:34` is a range-based for, and
-  `sdk/rocketnet_fragment.cpp:93` and `:95` name `rocketnet_reassembly_set_t`
-  and `rocketnet_reassembly_slot_t` without `struct`.
-- As C++ (`goto-cc -x c++ -std=c++11`, with the libstdc++ initializer_list
-  header bypassed): the CBMC C++ parser rejects the range-based for at
-  `sdk/rocketnet_memory.h:34` (`parse error before 'v : x )'`, reproduced on a
-  three-line file); it fails on the real comparison chain at
-  `sdk/rocketnet_fragment.cpp:89`, after preprocessing
-  `num_connections < 1 || num_slots < 1 || num_slots > 256 ||
-  max_payload_bytes < 1416 || max_payload_bytes > ( ... ) || ...`, with
-  `parse error before '|| max_payload_bytes < 1416'` (a short chain of
-  literals parses; the line as written does not); and the `static_assert`
-  lines in `sdk/rocketnet_wire.h:150-151` and `:181-182` that use
-  `__builtin_offsetof` do not parse. With line 89 parenthesized in a scratch
-  copy (never committed), line 90 and then `sdk/rocketnet_fragment.cpp:170`
-  fail the same way, so the pattern runs through the file.
+ESBMC's clang front end parses all of it, with no sdk change.
 
-This is a checker front-end limit, not a defect at BASE: g++ compiles the same
-file. The message reader proof works because `sdk/rocketnet_message.cpp` does
-not include `rocketnet_memory.h`.
+`esbmc_cprover.h` maps the harness's `__CPROVER_assert` and
+`__CPROVER_assume` onto ESBMC, and `proof.mk` passes it with
+`--include-file`. ESBMC treats every undefined `nondet_` function as
+nondeterministic. `proof.mk` compiles the `.c` harness through a one-line
+C++ wrapper, because ESBMC picks the language from the file extension.
 
-Gate output on the bench (CBMC 6.6.0):
+ESBMC checks by default: array bounds, pointer validity and dereference,
+division by zero, and the unwinding assertions. The flags add
+`--overflow-check` (signed arithmetic) and `--ub-shift-check`.
+`harness_memory_sizing` also adds `--unsigned-overflow-check`.
 
-    make -C proofs/cbmc proofs-fragment_reassembly
-    ../../sdk/rocketnet_memory.h:5:10: fatal error: initializer_list: No such file or directory
-    PARSING ERROR
-    harness_header_and_plan FAILED (exit 6)
+The other harnesses do not use the unsigned check. The reader's stale test
+depends on unsigned wraparound (`payload_id - reference`, the rollover past
+0xFFFFFFFF), and in C++ that wraparound is defined behaviour. Also,
+ESBMC's unsigned check flags `rocketnet_read_uint32`'s `<< 24`
+(`sdk/rocketnet_read_write.h:87`), which is defined for `uint32_t`. Every
+other check in CBMC_FLAGS has an ESBMC counterpart in the list above.
 
-| harness | properties passed | bound | result |
-|---|---|---|---|
-| harness_header_and_plan | 0 of 0 (not reached) | none run | parse error, sdk/rocketnet_memory.h:5 |
-| harness_process_fragment | 0 of 0 (not reached) | none run | parse error, sdk/rocketnet_memory.h:5 |
-| harness_memory_sizing | 0 of 0 (not reached) | none run | parse error, sdk/rocketnet_memory.h:5 |
+## Models (outside the reader)
+
+- **memcpy.** Every `memcpy` (in the reader and in the inline helpers it
+  calls) is `proof_memcpy`. It makes a bounds-checked write of the
+  destination's first and last byte from the source's first and last
+  byte. Objects are contiguous, so both ends inside one object means the
+  whole span is inside it. The checker's bounds checks fire when either
+  end is outside its object.
+  - The bytes between the ends are not modelled. No property depends on
+    payload bytes, only on where they go.
+  - The model is needed because the completion copy runs up to a whole
+    payload (361,728 bytes at the full bound), and ESBMC's library memcpy
+    is a byte loop that cannot unroll that far.
+- **memset.** `memset` is ESBMC's library loop, unwound 64 times. The
+  reader only clears 56-byte slot records with it.
+- **Logging.** `rocketnet_error` and `rocketnet_spam` are no-ops.
+- **libsodium.** The reader makes no libsodium call.
+- **Allocator.** `rocketnet_malloc` is not reached: the harness lays out
+  the set exactly as `rocketnet_reassembly_set_create_delivered` does
+  (slot records, then the per-connection reference, in one object), and
+  places the arena and the delivered mirror in their own objects.
+
+## Results
+
+The gate ran on a 16-core Linux bench, with ESBMC 8.5.0 and Bitwuzla 0.9.0
+(Z3 4.13.3 for the header harness).
+
+| harness | properties | unwind | bound proved | time |
+|---|---|---|---|---|
+| harness_header_and_plan | 65 of 65 | 16 | full: every 6-byte header, every `int` payload size | 7 s |
+| harness_process_fragment | 518 of 518 | 33, memset 64 | fragments at the full bound, `max_payload_bytes` 1..40 | 30 s |
+| harness_memory_sizing | 52 of 52 | 16 | every argument the transports pass | 5 s |
+
+No property failed in any harness. No defect was found at BASE.
+
+### harness_header_and_plan
+
+**Header.** For every 6-byte header (symbolic bytes), the payload id is
+the first four bytes, little-endian. The fragment index is the fifth byte,
+and the count is the sixth byte plus one. No read leaves the 6-byte
+object.
+
+**Plan.** For every `int` payload size:
+
+- A plan exists exactly when the size is above
+  `ROCKETNET_MAX_PAYLOAD_BYTES` and at most
+  `ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES`.
+- The count is in 2..256.
+- The stride is in 1..`ROCKETNET_MAX_FRAGMENT_BYTES`, and every stride
+  fits the receiver's staging (`ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES`).
+- The final fragment is 1..stride bytes.
+- No signed overflow or division by zero occurs on any input.
+
+### harness_process_fragment
+
+One connection and one slot. Inputs:
+
+- The fragment is an object of exactly `type_data_bytes` symbolic bytes,
+  with `type_data_bytes` symbolic in 0..1440: from empty to one byte past
+  the largest the reader accepts (6 + 1433). Every payload id, index byte
+  and count byte is symbolic.
+- `max_payload_bytes` is symbolic in 1..40.
+- The slot's arena is `max_payload_bytes + 1433` bytes, as create sizes
+  it.
+- The delivered mirror is a symbolic size, from one payload up to its
+  ceiling, with a symbolic part already used and up to 64 completions
+  already delivered.
+- The slot before the call is any reachable state, not only an empty one.
+  `slot_ok` defines what is reachable: the count, stride, final size, staged
+  final and received bitmap agree with each other and with the payload
+  maximum. The harness assumes it before the call and asserts it after, so
+  the invariant is checked inductively for one call.
+- The stale rule's reference is symbolic.
+
+Proved, beyond the memory and arithmetic checks:
+
+- No write leaves the slot's arena, the staging buffer, or the delivered
+  mirror. No read leaves the fragment object.
+- An illegal size, zero id, count of one, or index out of range is refused,
+  and leaves the slot unchanged.
+- Every refusal leaves the slot unchanged or clears it. A refusal completes
+  nothing and leaves the stale rule's reference unchanged.
+- `accepted` counts exactly the acceptances.
+- An accepted, uncompleted fragment holds the slot under its own id and
+  count, and has its index bit set. Its placement,
+  `stride x index + bytes` (or `stride x (count - 1) + bytes` for the
+  final), is inside the payload maximum. A final that arrives first waits
+  in staging and fits it.
+- Only the last missing fragment completes a payload. Completion clears
+  the slot, and moves the reference only to the completed id.
+- A delivered completion's span is inside the delivered mirror, and its
+  size is 1..`max_payload_bytes`. A completion that does not fit counts
+  `batch_full` and packs nothing.
+
+`PROOF_SLOT_CASE` 1..5 splits the same harness by slot state and arriving
+fragment, for smaller runs. Case 0, the default, is all of them.
+
+### harness_memory_sizing
+
+The functions checked are `rocketnet_reassembly_memory_required`,
+`_required_delivered`, `_allowed` and `_allowed_delivered`. Inputs:
+
+- `num_connections` up to `ROCKETNET_MAX_CLIENTS`. The server passes its
+  client count, and the client passes one.
+- `delivered_capacity` up to `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`.
+  Both delivered-capacity functions return at most their drain, and the
+  client's drain is smaller.
+- The delivered byte bound up to that capacity times the aligned largest
+  payload, which is the most `rocketnet_server_reassembly_delivered_bytes`
+  returns.
+- Every `int` slot count and payload size, valid or not, and every
+  negative or zero argument.
+
+Proved:
+
+- No unsigned or signed overflow occurs in any sizing sum or product.
+- Invalid geometry, and a delivered bound below one payload, return 0 and
+  are refused.
+- A nonzero requirement fits `size_t`, and covers the slot arenas and the
+  delivered mirror.
+- `allowed` holds exactly when the requirement is nonzero and inside
+  `ROCKETNET_REASSEMBLY_MEMORY_MIB`.
+
+### Reversed witnesses (scratch, not committed)
+
+- With the harness's arena one byte short of create's sizing, the staging
+  write fails the bounds check in `proof_memcpy`
+  (`array bounds violated: heap object`).
+- With a scratch copy of `sdk/rocketnet_fragment.cpp` whose final-size check
+  allows one byte past the stride (line 443), the harness fails
+  "the slot stays in a reachable state".
+
+## Not proved: the full bounds
+
+`make -C proofs/cbmc proofs-fragment_reassembly-full` runs the full bounds.
+It is not on the nightly list.
+
+- **harness_process_fragment at `max_payload_bytes` up to
+  `ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES` (361,728).** Not proved. The
+  deployed range starts at `ROCKETNET_MAX_PAYLOAD_BYTES` (1416), so no
+  deployed payload maximum is inside the proved bound. What limits the run
+  is the payload maximum, not the fragment size: fragments at the full
+  1433 bytes prove in under a minute at `max_payload_bytes` up to 24.
+  Measured on a 64-core bench:
+  - Bitwuzla, no memory limit: grew to 76 GB, killed after 415 s.
+  - Bitwuzla, 14-16 GB limit: out of memory at every bound from 48 up. At
+    48: 163 s. At 64: 134 s. At windows 1416..1448: 271 s, and
+    361696..361728: 160 s.
+  - Z3, no memory limit: no verdict within the 30-minute limit.
+  - Bitwuzla at 40: PROVED (146 s on that bench), the bound `proof.mk`
+    uses.
+  - Split by slot state at bound 64: an empty slot proves (45 s), an
+    occupied slot with no stride proves (86 s), and the fixed-stride cases
+    run out of memory.
+- **harness_memory_sizing with every argument unconstrained**
+  (`PROOF_SIZING_FULL`: any `int` connection count and capacity, any
+  `uint64_t` byte bound). Not proved.
+  - Bitwuzla: out of memory under a 40 GB limit in 27 s.
+  - Z3: no verdict after 18 and 20 minutes on two runs, stopped.
+  - A capacity of 65,536 (past every transport caller): out of memory
+    under 40 GB in 27 s.
+  - The proved range covers every caller in the sdk; the gap is values no
+    transport passes.
 
 ## Supersedes `proof_fragment_bounds.c`
 
-The new harness supersedes `proof_fragment_bounds.c` (which copies the reassembly
-function). The copy's divergences from the real function:
+This harness supersedes `proof_fragment_bounds.c`, which copies the
+reassembly function. The copy is still in `all` (per-commit CI) and is
+unchanged. Its divergences from the real function:
 
-- stale check: the copy refuses an unsigned
+- **Stale check.** The copy refuses when unsigned
   `payload_id - slot->payload_id > ROCKETNET_MAX_FRAGMENTS`
-  (proofs/cbmc/proof_fragment_bounds.c:154-160); the real code keeps a
-  `uint32_t` newest-completed reference
-  (`sdk/rocketnet_fragment.cpp:378`) and applies a reach-window test
-  (lines 380-385) and a behind test against `ROCKETNET_REASSEMBLY_BEHIND`
-  (lines 387-393).
-- delivery: the copy writes delivered bytes at
-  `delivered + num_delivered * max_payload_bytes` (line 348); the real code
-  packs at a 16-byte stride (`ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED`, lines
-  577-584) and enforces the byte bound.
-- the copy has no `delivered_bytes` field and no batch-full byte bound.
-
-## Not done
-
-All three harnesses. A run on the real code needs one of: the sdk readers made
-parseable by CBMC (parenthesized comparison chains in
-`sdk/rocketnet_fragment.cpp`, an index loop at `sdk/rocketnet_memory.h:34`, and
-the C++-only parts of `rocketnet_memory.h` kept out of the reassembly
-translation unit), which is an sdk change outside this card; or a checker with
-a full C++ front end, which is not installed.
-
-## Bounds used
-
-None (no verification ran). Intended run bounds: header/plan at the full
-fragmented-payload cap; process at a bounded `PROOF_TYPE_BUF`/`PROOF_MAX_PAYLOAD`
-with the gap to the full bounds recorded here once it runs.
+  (`proofs/cbmc/proof_fragment_bounds.c:159-160`). The real code keeps a
+  `uint32_t` newest-completed reference per connection
+  (`sdk/rocketnet_fragment.cpp:378`), applies a reach test against it
+  (line 380), and a behind test against `ROCKETNET_REASSEMBLY_BEHIND`
+  (line 388).
+- **Delivery.** The copy writes delivered bytes at
+  `delivered + num_delivered * max_payload_bytes`
+  (`proof_fragment_bounds.c:347`). The real code packs at a 16-byte stride
+  (`ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED`, lines 577-582) and enforces
+  the byte bound `delivered_bytes`.
+- **Fields.** The copy has no `delivered_bytes` field and no
+  `newest_completed` reference.
