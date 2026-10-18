@@ -307,6 +307,7 @@ section, and this table exists so an implementer never hunts for a number.
 | Redundant disconnects | 10 | _Timing_ |
 | Cookie key | 32 bytes | _Keys_ |
 | Replay buffer | explicit packet-count memory budget, at least 4096 | _Replay window sizing_ |
+| Replay buffer maximum | 32768 | _Replay window sizing_ |
 | Kernel replay prefilter | optional; read-only high-water, drops 16 or more behind | _Replay window sizing_ |
 | Used-token history | >= 8 entries per slot | _Processing Connection Requests_ |
 
@@ -1609,9 +1610,9 @@ the RFCs require it regardless, and it is four lines.
 
 **Replay and delivery history are explicit memory budgets in sequence numbers,
 never frame-rate, send-rate or ACK-rate contracts.** A replay window MUST hold
-at least 4096 sequences. Implementations MUST document their retained depth and
-provide a way to choose a larger memory budget. The application does not need
-to declare a packets-per-second rate, and an implementation MUST NOT throttle
+at least 4096 sequences and MUST NOT hold more than 32768. Implementations MUST
+document their retained depth. The application does not need to declare a
+packets-per-second rate, and an implementation MUST NOT throttle
  application sends to preserve an assumed time span of history.
 
 An implementation MAY drop session packets before decryption in a kernel
@@ -1619,7 +1620,8 @@ prefilter that holds, per peer address, a high-water sequence written only by
 userspace after a packet opens and never by the prefilter itself; such a
 prefilter drops a packet 16 or more sequences behind that high-water in
 RocketNet (ROCKETNET_XDP_REPLAY_WINDOW). It is sized separately from the replay
-window, which keeps its own rule (at least 4096). Like an undersized window it
+window, which keeps its own rule (at least 4096 and at most 32768). Like an
+undersized window it
 may discard old legitimate packets earlier, and it never accepts a replay,
 because it only ever drops.
 
@@ -2257,6 +2259,14 @@ half range (2^23). For numbers the reference is the lowest number not yet
 received. For ordering it is the channel's next ordering index. For sequencing
 it is the channel's sequencing watermark. Every live value lies within `W` (at
 most 2^20) of its reference, so the half range never aliases.
+
+A stale reliable copy can be opened after its number was acknowledged, so two
+transport preconditions bound how far behind the reference it can be. First,
+the replay window depth MUST NOT exceed 32768 sequences (_Replay window
+sizing_). Second, transport sequences MUST rise in packet write order: a packet
+written later carries a higher sequence than every packet written before it on
+the same connection. The message tier relies on both, and the half range never
+aliases only while they hold.
 
 ### Known-answer vectors
 
