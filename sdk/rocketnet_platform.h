@@ -133,6 +133,8 @@ ROCKETNET_EXPORT_FUNC void rocketnet_platform_server_thread_priority( struct roc
 
 // ----------------------------------------------------------------
 
+struct rocketnet_platform_mutex_t;
+
 ROCKETNET_EXPORT_FUNC bool rocketnet_platform_mutex_create( struct rocketnet_platform_mutex_t * mutex );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_platform_mutex_destroy( struct rocketnet_platform_mutex_t * mutex );
