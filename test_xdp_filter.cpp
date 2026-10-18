@@ -23,9 +23,9 @@
 // it with the server's bind config (sdk/rocketnet_xdp_socket_config.h), sees
 // the zero-copy bind refused (veth has no zero-copy support) and the copy bind
 // succeed, reads the bound mode back, and removes the pair. Outside a guest the
-// case fails without creating anything, so no host interface is touched.
+// case skips with its reason and creates nothing, so no host interface is touched.
 //
-// -v prints the last line of the verifier's log for the load. Exit 0: every case passed. Exit 1: a case failed. Exit 2: the object did
+// -v prints the last line of the verifier's log for the load. Exit 0: every case passed or skipped with its reason. Exit 1: a case failed. Exit 2: the object did
 // not load (the verifier log tail is printed) or the process lacks privilege.
 
 #include "rocketnet_wire.h"
@@ -921,6 +921,7 @@ static bool replay_key_layout_matches_header( filter_t * filter )
 // The AF_XDP bind on a veth pair the case owns, inside the virtme-ng guest only.
 
 static const char * zc_veth = "rnxsk0";
+static const char * case_skip_reason = NULL;
 static const char * zc_veth_peer = "rnxsk1";
 
 static bool inside_virtme_guest()
@@ -1070,8 +1071,8 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
 {
     if ( !inside_virtme_guest() )
     {
-        printf( "  not inside a virtme-ng guest: this case creates a veth pair and runs only in the VM\n" );
-        return false;
+        case_skip_reason = "not inside a virtme-ng guest: this case creates a veth pair and runs only in the VM";
+        return true;
     }
 
     char command[256];
@@ -1151,9 +1152,17 @@ int main( int argc, char ** argv )
     }
 
     int failed = 0;
+    int skipped = 0;
     for ( int i = 0; i < (int) ( sizeof(cases) / sizeof(cases[0]) ); i++ )
     {
+        case_skip_reason = NULL;
         const bool ok = cases[i].function( &filter );
+        if ( ok && case_skip_reason )
+        {
+            printf( "%s: skipped (%s)\n", cases[i].name, case_skip_reason );
+            skipped++;
+            continue;
+        }
         printf( "%s: %s\n", cases[i].name, ok ? "ok" : "FAILED" );
         if ( !ok )
             failed++;
@@ -1167,6 +1176,10 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    printf( "test_xdp_filter: %d cases passed\n", (int) ( sizeof(cases) / sizeof(cases[0]) ) );
+    const int total = (int) ( sizeof(cases) / sizeof(cases[0]) );
+    if ( skipped )
+        printf( "test_xdp_filter: %d cases passed, %d skipped\n", total - skipped, skipped );
+    else
+        printf( "test_xdp_filter: %d cases passed\n", total );
     return 0;
 }
