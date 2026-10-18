@@ -42,6 +42,7 @@
 #include "rocketnet_pending_frames.h"
 #include "rocketnet_send_handoff.h"
 #include "rocketnet_xdp_limits.h"
+#include "rocketnet_xdp_replay_marks.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_free_list.h"
 
@@ -180,10 +181,13 @@ struct rocketnet_server_socket_t
     char pin_root[160];                 // this INSTANCE's own bpffs directory, named by a random token with its identity metadata encoded: created by this create, adopted never
     bool pin_root_created;              // set only when this instance's mkdir succeeded -- destroy removes nothing it did not make
     int num_pinned;                     // the pin paths recorded BY CONSTRUCTION at mkdir (their names are deterministic) -- destroy unlinks exactly these
-    char pinned_paths[3][200];
+    char pinned_paths[4][200];
     int config_map_fd;
     int socket_map_fd;
     int stats_map_fd;
+    int replay_map_fd;
+    struct rocketnet_xdp_replay_marks_t * replay_marks;     // pending forgets and marks, this socket owns it
+    uint64_t replay_commit_failures;
 
     std::atomic<uint64_t> packet_id{0};
 
@@ -1085,6 +1089,15 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     server_socket->context = context;
 
+    server_socket->replay_marks = (struct rocketnet_xdp_replay_marks_t*) rocketnet_malloc( context, sizeof(struct rocketnet_xdp_replay_marks_t) );
+    if ( !server_socket->replay_marks )
+    {
+        rocketnet_error( "server could not allocate the replay marks buffer" );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+    rocketnet_xdp_replay_marks_reset( server_socket->replay_marks );
+
     // find the network interface that matches the public address -- the
     // same read-only lookup the pre-flight just passed
 
@@ -1157,7 +1170,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // the root is created by THIS create's own mkdir and never adopted
     // (an existing path -- astronomically unlikely under a random token --
     // refuses loudly rather than letting LIBBPF_PIN_BY_NAME resurrect
-    // someone else's state). the three pin paths under it are recorded BY
+    // someone else's state). the four pin paths under it are recorded BY
     // CONSTRUCTION here, at mkdir, since their names are deterministic:
     // every failure path from here on unlinks exactly the recorded paths
     // and removes the root, so no create outcome -- grant, refusal, or
@@ -1223,12 +1236,12 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // the pins recorded by construction, at the moment the root exists
 
     {
-        static const char * pinned_map_names[3] = { "server_xdp_config_map", "server_xdp_socket_map", "server_xdp_stats_map" };
-        for ( int i = 0; i < 3; i++ )
+        static const char * pinned_map_names[4] = { "server_xdp_config_map", "server_xdp_socket_map", "server_xdp_stats_map", "server_xdp_replay_map" };
+        for ( int i = 0; i < 4; i++ )
         {
             snprintf( server_socket->pinned_paths[i], sizeof(server_socket->pinned_paths[0]), "%s/%s", server_socket->pin_root, pinned_map_names[i] );
         }
-        server_socket->num_pinned = 3;
+        server_socket->num_pinned = 4;
     }
 
     // Build the server_xdp program in a PRIVATE directory.
@@ -1379,6 +1392,14 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( server_socket->stats_map_fd <= 0 )
     {
         rocketnet_error( "server could not get stats map: %s", strerror(errno) );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    server_socket->replay_map_fd = bpf_obj_get( server_socket->pinned_paths[3] );
+    if ( server_socket->replay_map_fd <= 0 )
+    {
+        rocketnet_error( "server could not get replay map: %s", strerror(errno) );
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
@@ -1627,6 +1648,10 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
         close( server_socket->socket_map_fd );
     if ( server_socket->stats_map_fd > 0 )
         close( server_socket->stats_map_fd );
+    if ( server_socket->replay_map_fd > 0 )
+        close( server_socket->replay_map_fd );
+
+    rocketnet_free( server_socket->context, server_socket->replay_marks );
 
     // this instance's bpffs state goes with it: the paths recorded by
     // construction at mkdir -- so EVERY create outcome that reaches
@@ -1855,6 +1880,106 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 }
 
 
+#ifndef ENOTSUPP
+#define ENOTSUPP 524
+#endif
+
+// The replay high-water writer. Main thread only, like the rest of the server
+// update path. Forget and mark append to the socket's pending buffer; commit
+// applies them to the pinned map and resets the buffer, failures counted and
+// named by call, never by key.
+
+void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address )
+{
+    rocketnet_assert( server_socket );
+    rocketnet_assert( address );
+    rocketnet_assert( server_socket->replay_marks );
+    rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
+}
+
+void rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water )
+{
+    rocketnet_assert( server_socket );
+    rocketnet_assert( address );
+    rocketnet_assert( server_socket->replay_marks );
+    rocketnet_xdp_replay_marks_mark( server_socket->replay_marks, address, high_water );
+}
+
+static void rocketnet_server_socket_replay_commit_failed( struct rocketnet_server_socket_t * server_socket, const char * call )
+{
+    server_socket->replay_commit_failures++;
+    rocketnet_debug( "replay commit: %s failed (%s)", call, strerror( errno ) );
+}
+
+void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    rocketnet_assert( server_socket->replay_marks );
+
+    struct rocketnet_xdp_replay_marks_t * marks = server_socket->replay_marks;
+
+    // tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
+    // in one commit; this is the only writer of the kernel map.
+
+    if ( marks->forget_count > 0 )
+    {
+        struct bpf_map_batch_opts opts;
+        memset( &opts, 0, sizeof(opts) );
+        opts.sz = sizeof(opts);
+        __u32 count = marks->forget_count;
+        if ( bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) != 0 )
+        {
+            // a missing key is not a failure; an older kernel refuses the
+            // batch call, so walk the forgets one syscall at a time
+
+            if ( errno == ENOENT || errno == EINVAL || errno == ENOTSUPP )
+            {
+                for ( uint32_t i = 0; i < marks->forget_count; i++ )
+                {
+                    if ( bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
+                        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
+                }
+            }
+            else
+            {
+                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_batch" );
+            }
+        }
+    }
+
+    if ( marks->mark_count > 0 )
+    {
+        struct bpf_map_batch_opts opts;
+        memset( &opts, 0, sizeof(opts) );
+        opts.sz = sizeof(opts);
+        opts.elem_flags = BPF_ANY;
+        __u32 count = marks->mark_count;
+        if ( bpf_map_update_batch( server_socket->replay_map_fd, marks->mark_keys, marks->mark_values, &count, &opts ) != 0 )
+        {
+            if ( errno == EINVAL || errno == ENOTSUPP )
+            {
+                for ( uint32_t i = 0; i < marks->mark_count; i++ )
+                {
+                    if ( bpf_map_update_elem( server_socket->replay_map_fd, &marks->mark_keys[i], &marks->mark_values[i], BPF_ANY ) != 0 )
+                        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
+                }
+            }
+            else
+            {
+                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_batch" );
+            }
+        }
+    }
+
+    rocketnet_xdp_replay_marks_reset( marks );
+}
+
+uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    return server_socket->replay_commit_failures;
+}
+
 #if defined(ROCKETNET_XDP_TESTS)
 // Exercise the native staging entry points without creating kernel resources.
 bool rocketnet_server_socket_test_inactive_generation()
@@ -1921,6 +2046,52 @@ bool rocketnet_server_socket_test_inactive_generation()
     server->~rocketnet_server_socket_t();
     rocketnet_free(NULL, socket_storage);
     rocketnet_free(NULL, server_storage);
+    return valid;
+}
+
+// Exercise the replay writer's pending buffer and its commit failure path
+// without a map or a kernel resource: replay_map_fd -1 refuses every syscall.
+bool rocketnet_server_socket_test_replay_marks()
+{
+    void * server_storage = rocketnet_malloc(NULL, sizeof(rocketnet_server_socket_t));
+    if (!server_storage)
+        return false;
+    auto * server = new (server_storage) rocketnet_server_socket_t();
+    server->replay_marks = (struct rocketnet_xdp_replay_marks_t*) rocketnet_malloc(NULL, sizeof(struct rocketnet_xdp_replay_marks_t));
+    if (!server->replay_marks)
+    {
+        server->~rocketnet_server_socket_t();
+        rocketnet_free(NULL, server_storage);
+        return false;
+    }
+    rocketnet_xdp_replay_marks_reset(server->replay_marks);
+    server->replay_map_fd = -1;
+
+    rocketnet_address_t a = {};
+    a.type = ROCKETNET_ADDRESS_IPV4;
+    a.data.ipv4[0] = 198;
+    a.data.ipv4[1] = 51;
+    a.data.ipv4[2] = 100;
+    a.data.ipv4[3] = 7;
+    a.port = 50000;
+    rocketnet_address_t b = a;
+    b.port = 50001;
+
+    rocketnet_server_socket_replay_forget(server, &a);
+    rocketnet_server_socket_replay_mark(server, &a, 41);
+    rocketnet_server_socket_replay_mark(server, &b, 7);
+
+    bool valid = server->replay_marks->forget_count == 1;
+    valid &= server->replay_marks->mark_count == 2;
+    const uint64_t failures_before = rocketnet_server_socket_replay_commit_failures(server);
+
+    rocketnet_server_socket_replay_commit(server);
+
+    valid &= server->replay_marks->forget_count == 0;
+    valid &= server->replay_marks->mark_count == 0;
+    valid &= rocketnet_server_socket_replay_commit_failures(server) > failures_before;
+
+    rocketnet_server_socket_destroy(server);
     return valid;
 }
 #endif
