@@ -512,19 +512,19 @@ ROCKETNET_EXPORT_FUNC void rocketnet_set_log_callback( rocketnet_log_callback_t 
  * levels are passed to the sink, and the default sink labels them "???".
  * @param level A log level, normally 0 through 5.
  * @param format NUL-terminated printf format; NULL is a counted no-op.
- * @param ... Values matching the conversion specifiers in format.
+ * The remaining arguments must match the conversion specifiers in format.
  */
 ROCKETNET_EXPORT_FUNC void rocketnet_printf( int level, const char * format, ... );
 
-/** @brief Emits a message at ROCKETNET_LOG_LEVEL_INFO. @param format Printf format; NULL is a counted no-op. @param ... Values matching format. */
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_INFO. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_info( const char * format, ... );
-/** @brief Emits a message at ROCKETNET_LOG_LEVEL_WARN. @param format Printf format; NULL is a counted no-op. @param ... Values matching format. */
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_WARN. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_warn( const char * format, ... );
-/** @brief Emits a message at ROCKETNET_LOG_LEVEL_ERROR. @param format Printf format; NULL is a counted no-op. @param ... Values matching format. */
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_ERROR. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_error( const char * format, ... );
-/** @brief Emits a message at ROCKETNET_LOG_LEVEL_DEBUG. @param format Printf format; NULL is a counted no-op. @param ... Values matching format. */
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_DEBUG. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_debug( const char * format, ... );
-/** @brief Emits a message at ROCKETNET_LOG_LEVEL_SPAM. @param format Printf format; NULL is a counted no-op. @param ... Values matching format. */
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_SPAM. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
 
 // ------------------------------------------
