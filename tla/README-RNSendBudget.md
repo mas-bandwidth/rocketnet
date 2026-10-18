@@ -30,7 +30,15 @@ records in `tla/RUNS.tsv`.
   one waits, no lower class spends the bucket this update. An unreliable item
   that does not fit the bytes left to its class is dropped and counted.
 - **Defaults.** 1000 kbps for the client, 10000 kbps for each server client
-  slot; settable at create and at runtime, from 1 kbps to 10000000 kbps.
+  slot; configuration fields in the message config, overridable at create and
+  at runtime. A capped budget is 1 kbps to 10000000 kbps.
+- **Uncapped.** A value of 0 or lower, at create or to `set_send_kbps`,
+  disables that connection's budget: it sends every item, nothing is dropped
+  or waits by the budget, and `NeverOverspend` claims nothing about it. A
+  positive value caps it again with a fresh full bucket; a value above the
+  maximum is refused and changes nothing. Disabling the budget is not
+  recommended: without one there is no defined behaviour when a sender
+  outruns its path or its peer.
 
 ## What the module covers
 
@@ -45,6 +53,8 @@ State:
 | `nextRel`, `inflight`, `acked` | reliable arrivals, ids whose carrying packet is in flight, ids the transport acked |
 | `losses`, `drops` | transport losses so far (bounded), unreliable drops counted |
 | `orderBad`, `dropBad` | ghosts: a class sent while a higher class waited; an unreliable drop that fit |
+| `uncapped` | TRUE when the budget does not apply to this connection |
+| `uncapBad` | ghost: an uncapped connection dropped or waited by the budget |
 
 Actions:
 
@@ -55,6 +65,7 @@ Actions:
 | `Send` | `rocketnet_send_budget_admit` returning SEND (`can_send`, then `spend`) | the next class's head fits: spent and written |
 | `Drop` | `admit` returning DROP | the next class is unreliable and its head does not fit: dropped, counted |
 | `EndUpdate` | `admit` returning WAIT | nothing more fits: every queue empty, or a reliable head waits; unreliable items behind it are dropped, counted |
+| `SetKbps(k)` | `rn_endpoint_set_send_kbps` | 0 or lower uncaps (no bucket, no drops or waits); a positive value up to `MaxKbps` caps it, a fresh full bucket when it was uncapped; above the maximum is refused, unchanged |
 | `Ack(r)` | the transport's packet ack (R1) | the packet that carried `r` was acked |
 | `Lose(r)` | the transport's loss | that packet was lost: `r` queues again as a retransmit |
 
@@ -68,6 +79,8 @@ Properties:
   does not fit the bytes its class may spend (none while a reliable item
   waits).
 - `ClassOrder`: no class is sent while a class ahead of it is queued.
+- `UncappedNeverDropsOrWaits`: an uncapped connection never drops an item or
+  ends a send phase with work queued by the budget.
 - `TypeOK`.
 - LIVE `EveryReliableEventuallySent`: with a positive rate and finite reliable
   arrivals, every reliable id that arrives is eventually acked. Fairness: weak
@@ -83,9 +96,11 @@ Properties:
   covers uneven spacing and stalls (time passing while the writer does not run).
 - All reliable items have one size and all unreliable items another. The code
   checks each item on its own size; the tests drive mixed sizes.
-- The runtime rate change is not modelled; `set_kbps` refills at the old rate up
-  to the change and the new one after it, and the unit test
-  `runtime_change_takes_effect_next_window` checks that.
+- The runtime rate change is modelled as `SetKbps(kb)`: uncapping and capping
+  transition as the code does. Changing one capped rate to another positive
+  rate keeps the bucket in the model (the code refills at the old rate and
+  caps at the new depth); the unit test
+  `runtime_change_takes_effect_next_window` checks that arithmetic.
 - The admit-at-bound-then-settle step (`rocketnet_send_budget_max_wire_bytes`,
   `rocketnet_send_budget_settle`) is not modelled: settling only returns bytes
   the sealed packet did not use, so what was sent never exceeds what was spent.
@@ -94,7 +109,8 @@ Properties:
 
 `W = 2`, `Rate = 1` (so `Budget = 2`), `Depth = 2 = MaxPkt`, `RelSize = 2`
 (larger than one tick's refill, so a reliable item can be starved),
-`UnrelSize = 1`, `UPerTick = 2`, `MaxRel = 2`, `MaxLoss = 1`.
+`UnrelSize = 1`, `UPerTick = 2`, `MaxRel = 2`, `MaxLoss = 1`, `MaxKbps = 2`
+(so `SetKbps` ranges over 0, 1, 2 and the refused 3).
 
 ## Reversed witnesses
 

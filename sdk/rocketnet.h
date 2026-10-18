@@ -1544,6 +1544,16 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // WIRE must be identical on both ends; CONFIG verifies them (layer 7).
 // Validation applies the ranges here and the cross rules of section 14, and
 // refuses, never clamps.
+//
+// client_send_kbps and server_send_kbps are R6's per-direction send budget,
+// plain configuration and not wire state: the client uses client_send_kbps
+// for its one connection, the server uses server_send_kbps for every client
+// slot (a reused slot starts at it). A value of 0 or lower disables that
+// direction's budget for the connection, and doing so is NOT RECOMMENDED
+// (RFC 2119): without a budget there is no defined behaviour when a sender
+// outruns its path or its peer. Above ROCKETNET_SEND_BUDGET_MAX_KBPS is
+// refused by validation. The defaults are the owner's: 1000 kbps client to
+// server, 10000 kbps server to each client.
 
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
@@ -1560,7 +1570,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( rto_initial_ms,            100,     10, 60000,                  0 )                                         \
     INT_FIELD( rto_min_ms,                 10,      1, 60000,                  0 )                                         \
     INT_FIELD( rto_max_ms,                250,     10, 60000,                  0 )                                         \
-    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )
+    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
+    INT_FIELD( client_send_kbps,         1000, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )   /* R6, 0 or lower uncapped */ \
+    INT_FIELD( server_send_kbps,        10000, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )   /* R6, per client slot */
 
 struct rocketnet_message_config_t
 {
@@ -1572,7 +1584,8 @@ ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_me
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( int ) )
-#define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1
+#define ROCKETNET_MESSAGE_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, server_send_kbps ) + sizeof( int ), sizeof( int ) )
+#define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1, ROCKETNET_MESSAGE_CONFIG_BYTES_2
 
 // the defaults for a caller whose struct is config_bytes long, one of the
 // known sizes above. 1 written; 0 refused, nothing written. a NULL config is a
@@ -1749,13 +1762,21 @@ ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_c
 // past the update.
 //
 // Budgets are kilobits per second of the transport's wire bytes (1 kbps =
-// 1000 bit/s), per connection: 0 at create means the default.
+// 1000 bit/s), per connection. At create a send_kbps argument of 0 takes the
+// config field (client_send_kbps or server_send_kbps), a positive value
+// overrides it for that create, and a value above
+// ROCKETNET_SEND_BUDGET_MAX_KBPS is refused.
 
+// the defaults of the two config fields above, not limits: the fields are the
+// configuration and these name their defaults for callers that still use them
 #ifndef ROCKETNET_DEFAULT_CLIENT_SEND_KBPS
 #define ROCKETNET_DEFAULT_CLIENT_SEND_KBPS                  1000
 #endif
 #ifndef ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS
 #define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000
+#endif
+#ifndef ROCKETNET_SEND_BUDGET_MAX_KBPS
+#define ROCKETNET_SEND_BUDGET_MAX_KBPS                      10000000    // 10 Gbit/s per connection
 #endif
 
 #define ROCKETNET_MESSAGE_OK                                0
@@ -1770,6 +1791,8 @@ struct rocketnet_message_server_t;
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config );
 
 // a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
+// send_kbps 0 takes client_send_kbps from the message config; a positive value overrides it
+// for this create; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused.
 // create reads no clock: the connect attempt starts at the first update, at whatever time the game passes it, and every time comes in through update.
 ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_client_create( void * context, const uint8_t * connect_token,
                                                                                          const struct rocketnet_client_transport_config_t * transport_config,
@@ -1779,7 +1802,8 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_clie
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is
 // refused with a log line and returns NULL before any other check. a NULL config
-// is its defaults, whatever its size says.
+// is its defaults, whatever its size says. send_kbps means as in rocketnet_message_client_create:
+// 0 takes client_send_kbps, a positive value overrides it for this create.
 ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void * context, const uint8_t * connect_token,
                                                                                                const struct rocketnet_client_transport_config_t * transport_config, size_t transport_config_bytes,
                                                                                                const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
@@ -1823,8 +1847,12 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_client_receipts( struct rocketnet_me
 // a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data );
 
-// 1 when the budget took the new rate, from now on. a NULL client is a counted no-op that returns 0.
-ROCKETNET_EXPORT_FUNC int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, uint32_t kbps );
+// 1 when the budget took the new rate, from now on. kbps 0 or lower uncaps
+// this connection; a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps
+// it; above the maximum returns 0, unchanged. Disabling the budget is NOT
+// RECOMMENDED (RFC 2119): without one there is no defined behaviour when a
+// sender outruns its path or its peer. a NULL client is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, int32_t kbps );
 
 // ROCKETNET_MESSAGE_ERROR_* the client ended its connection with, NONE while it has not. a NULL client is a counted no-op that returns NONE.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_disconnect_reason( struct rocketnet_message_client_t * client );
@@ -1838,6 +1866,8 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_message_clie
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
 
 // a NULL address is a counted no-op that returns NULL. NULL configs are the defaults.
+// per_client_send_kbps 0 takes server_send_kbps from the message config; a positive value
+// overrides it for every slot this create makes; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused.
 ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_server_create( void * context, const char * address,
                                                                                          const struct rocketnet_server_transport_config_t * transport_config,
                                                                                          const struct rocketnet_message_config_t * message_config,
@@ -1846,7 +1876,8 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_serv
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is
 // refused with a log line and returns NULL before any other check. a NULL config
-// is its defaults, whatever its size says.
+// is its defaults, whatever its size says. per_client_send_kbps means as in
+// rocketnet_message_server_create: 0 takes server_send_kbps, a positive value overrides it.
 ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void * context, const char * address,
                                                                                                const struct rocketnet_server_transport_config_t * transport_config, size_t transport_config_bytes,
                                                                                                const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
@@ -1893,8 +1924,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receipts( struct rocketnet_me
 // a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_release( struct rocketnet_message_server_t * server, int client_index, const uint8_t * data );
 
-// a NULL server is a counted no-op that returns 0.
-ROCKETNET_EXPORT_FUNC int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, uint32_t kbps );
+// As rocketnet_message_client_set_send_kbps for one connected client slot:
+// 0 or lower uncaps that slot, a positive value up to the maximum caps it,
+// above the maximum returns 0 unchanged. Disabling the budget is NOT
+// RECOMMENDED (RFC 2119). a NULL server is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, int32_t kbps );
 
 // ROCKETNET_MESSAGE_ERROR_* the slot's last connection ended with, until the slot's next connection. a NULL server is a counted no-op that returns NONE.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_disconnect_reason( struct rocketnet_message_server_t * server, int client_index );

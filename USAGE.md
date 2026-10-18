@@ -319,10 +319,13 @@ before the next update. `start` returning NULL for a connected client with a val
 channel and size means its memory was exhausted: that connection has ended
 with `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`, readable from
 `rocketnet_message_*_disconnect_reason`. An unreliable message arrives on
-channel 0 and is at most 1411 bytes. Each connection's send budget is in
-kbps, 0 at create meaning 1000 for the client and 10000 per server slot,
-and `rocketnet_message_*_set_send_kbps` changes it at runtime. The design is
-docs/CHANNELS.md, section 11.5 for what is built.
+channel 0 and is at most 1411 bytes. Each connection's send bandwidth
+budget is in kbps, configured by the message config's `client_send_kbps`
+(default 1000) and `server_send_kbps` (default 10000 per server slot). At
+create, 0 takes that field and a positive value overrides it; a value of 0 or
+lower disables the budget, which is not recommended. `rocketnet_message_*_set_send_kbps`
+changes it at runtime under the same rule. The design is docs/CHANNELS.md,
+section 11.5 for what is built.
 
 ## Connection quality
 

@@ -148,7 +148,7 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
-                                                       uint32_t default_kbps, double time )
+                                                       int32_t default_kbps, double time )
 {
     rocketnet_message_config_t defaults;
     if ( !config )
@@ -157,9 +157,15 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         config = &defaults;
     }
 
+    // R6 (docs/CHANNELS.md 11.5): a create argument of 0 takes the message
+    // config's field; a positive value overrides it for this create; 0 or
+    // lower in the config field itself disables that direction's budget.
+    if ( default_kbps == 0 )
+        default_kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
+
     rn_message_object_layout_t layout;
     const bool laid_out = link && rn_message_object_layout( config, num_connections, &layout );
-    const bool budget_valid = rocketnet_send_budget_kbps_valid( default_kbps ) && rocketnet_send_budget_time_valid( time );
+    const bool budget_valid = ( default_kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) default_kbps ) ) && rocketnet_send_budget_time_valid( time );
     const bool memory_valid = !memory || ( laid_out && memory_bytes >= layout.total && ( (uintptr_t) memory % ROCKETNET_ALLOCATION_ALIGNMENT ) == 0 );
 
     if ( !laid_out || !budget_valid || !memory_valid )
@@ -167,7 +173,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         if ( !laid_out )
             rocketnet_error( "message object create refused: a refused message config or connection count" );
         else if ( !budget_valid )
-            rocketnet_error( "message object create refused: send budget %u kbps or time is outside its range", default_kbps );
+            rocketnet_error( "message object create refused: send budget %d kbps or time is outside its range", (int) default_kbps );
         else
             rocketnet_error( "message object create refused: the memory block is short or not %d-aligned", ROCKETNET_ALLOCATION_ALIGNMENT );
         if ( link && link->destroy )
@@ -658,11 +664,11 @@ void rn_message_object_release( struct rn_message_object_t * object, int index, 
     rocketnet_api_misuse_record();
 }
 
-bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, uint32_t kbps )
+bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps )
 {
     if ( index < 0 || index >= object->num_connections )
         return false;
-    return rocketnet_send_budget_set_kbps( &object->connections[index].budget, kbps, object->time );
+    return rn_endpoint_set_send_kbps( &object->connections[index], kbps, object->time );
 }
 
 int rn_message_object_disconnect_reason( const struct rn_message_object_t * object, int index )
@@ -793,11 +799,32 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
     if ( !rocketnet_api_null_guard( address ) )
         return NULL;
 
-    const uint32_t kbps = per_client_send_kbps != 0 ? per_client_send_kbps : ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS;
+    // R6 (docs/CHANNELS.md 11.5): 0 takes server_send_kbps from the message
+    // config; a positive value overrides it for every slot this create makes.
+    // The create argument is uint32_t, so refuse above the maximum before
+    // narrowing: a value in [2^31, 2^32) must not wrap negative and become
+    // uncapped.
+    if ( per_client_send_kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
+    {
+        rocketnet_error( "message server create refused: send budget above maximum" );
+        return NULL;
+    }
+    int32_t kbps = (int32_t) per_client_send_kbps;
+    if ( kbps == 0 )
+    {
+        rocketnet_message_config_t defaults;
+        const rocketnet_message_config_t * resolved = message_config;
+        if ( !resolved )
+        {
+            rocketnet_message_default_config( &defaults );
+            resolved = &defaults;
+        }
+        kbps = resolved->server_send_kbps;
+    }
     const int max_clients = rn_message_server_max_clients( transport_config );
 
     // refuse before the transport opens a socket
-    if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !rocketnet_send_budget_kbps_valid( kbps ) )
+    if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
     {
         rocketnet_error( "message server create refused: message config, client count or send budget" );
         return NULL;
@@ -921,7 +948,7 @@ void rocketnet_message_server_release( struct rocketnet_message_server_t * serve
     rn_message_object_release( &server->object, client_index, data );
 }
 
-int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, uint32_t kbps )
+int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, int32_t kbps )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
