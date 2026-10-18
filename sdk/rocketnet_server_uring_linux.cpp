@@ -186,14 +186,7 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
         if ( to.type != ROCKETNET_ADDRESS_IPV4 )
             return 0;
 
-        struct sockaddr_in * addr = (struct sockaddr_in*) out;
-        memset( addr, 0, sizeof(struct sockaddr_in) );
-        addr->sin_family = AF_INET;
-        addr->sin_addr.s_addr = ( ( (uint32_t) to.data.ipv4[0] ) )       |
-                                ( ( (uint32_t) to.data.ipv4[1] ) << 8 )  |
-                                ( ( (uint32_t) to.data.ipv4[2] ) << 16 ) |
-                                ( ( (uint32_t) to.data.ipv4[3] ) << 24 );
-        addr->sin_port = rocketnet_platform_htons( to.port );
+        rocketnet_platform_address_to_sockaddr_in( &to, (struct sockaddr_in*) out );
         return sizeof(struct sockaddr_in);
     }
 }
