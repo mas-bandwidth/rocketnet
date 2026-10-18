@@ -1549,7 +1549,7 @@ struct rocketnet_message_receipt_t
     /** @brief Identify the send whose outcome is reported. */
     uint32_t serial;
     /** @brief State whether the peer transport acknowledged or missed it. */
-    uint32_t status;
+    uint32_t status;            // ROCKETNET_RECEIPT_ACKED or ROCKETNET_RECEIPT_LOSS
 };
 
 // Why a message connection ended, the reason its DISCONNECTED event carries
