@@ -12,7 +12,11 @@ at `sprint/rocketnet-proof` `20d8b35`; `client.c`, `server.c`, `soak.c`,
 `server_xdp/server_xdp.c` and `sdk/rocketnet.h` are byte-identical at
 `8ddc93ec1771`, so the same lines hold there. The owner's rulings of
 2026-10-18 sit on top of the card that asked for this document. Where the two
-differ, the rulings win, and section 15 lists each difference.
+differ, the rulings win, and section 15 lists each difference. The base tip
+this design lands on, `962e3a4`, has since raised the `max_clients` default
+to 1,000 (`rocketnet-max-clients-defaults-to-1000`, the same line 923) and
+added a Windows server driver row to `sdk/rocketnet_drivers.inc`; no other
+cited line moves.
 
 The run's lifecycle is modelled in `tla/RNLiveFleetRun.tla` (section 13).
 
@@ -522,10 +526,11 @@ the server. The library allocates nothing after create (`docs/CHANNELS.md`
 FAIL, named with its curve.
 
 **max_clients.** The library constant `ROCKETNET_MAX_CLIENTS` is 1,000
-(`sdk/rocketnet.h:44`), but the config table's `max_clients` default is 64
-(`sdk/rocketnet.h:923`). `server.c` sets 256 (`server.c:42`) and `soak.c`
-sets 16 (`soak.c:105`). Another card is changing the default, so the run
-never relies on it. It passes `--max-clients 1000`, and the server prints
+(`sdk/rocketnet.h:44`). At `20d8b35` the config table's `max_clients`
+default is 64 (`sdk/rocketnet.h:923`); at the base tip `962e3a4` another card
+has made it 1,000. `server.c` sets 256 (`server.c:42`), which overrides
+either default, and `soak.c` sets 16 (`soak.c:105`). The run never relies on
+a default. It passes `--max-clients 1000`, and the server prints
 the value it created with. With about ten clients, every reconnect finds a
 free slot even while the server is still timing out the old one.
 
@@ -927,9 +932,11 @@ mode and the orchestration script.
    the verify-only pre-flight. The design follows the ruling. The run card
    should confirm it was meant to supersede the 2026-10-16 rule for this run
    only.
-2. **max_clients.** The constant is 1,000 (`sdk/rocketnet.h:44`), but the
-   table default is 64 (`sdk/rocketnet.h:923`), and `server.c` sets 256
-   (`server.c:42`). The run sets 1,000 explicitly and changes no default.
+2. **max_clients.** The constant is 1,000 (`sdk/rocketnet.h:44`). The table
+   default was 64 (`sdk/rocketnet.h:923` at `20d8b35`) and is 1,000 at the
+   base tip `962e3a4`. But `server.c` sets 256 (`server.c:42`), so the
+   example server never gets the default either way. The run sets 1,000
+   explicitly with `--max-clients` and changes no default.
 3. **Stale comments about enabled types.** `sdk/rocketnet.h:1708-1716` lists
    five enabled types, and `docs/CHANNELS.md` 7.5 says {0, 3}. The code
    enables all eight (`sdk/rocketnet_channel.h:59`,
