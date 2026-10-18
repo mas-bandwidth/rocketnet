@@ -2274,7 +2274,7 @@ RECORDS, the two records above in one packet:
 RECORDS, fragment 1 of 3 of a RELIABLE_ORDERED block, number 9, ring 72, ordering 7, channel 300 (WIDE):
                                              1b 80 04 09 00 00 48 00 07 00 00 2c 01 01 00 02 00 <1152 data bytes> 01
 CONFIG, defaults, number 0:
-                                             22 1c 00 00 00 00 01 01 09 00 20 00 00 00 00 04 00 00
+                                             22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04 00 00
                                              00 00 04 00 00 00 04 00 80 04 00 00 00 00 00 00 01
 ```
 
@@ -2282,7 +2282,7 @@ The block vector, field by field: flags `0x1b` (code 3, BLOCK, WIDE); length
 `0x0480`, 1152; number 9; ring 72, so its data starts at `72 × 16 = 1152`,
 fragment 1 of a block based at 0; ordering 7; channel 300 as `2c 01`; fragment
 1; fragments − 1, 2. The CONFIG vector: flags `0x22` (code 2 with CONTROL);
-length 28; number 0; kind 1, version 1; enabled `0x09` (types 0 and 3); 32
+length 28; number 0; kind 1, version 1; enabled `0xFF` (all eight types); 32
 channels, `W` 1024, `B` 262144, max 262144, F 1152. The reference implementation
 regenerates every vector from its codec and compares it byte for byte
 (`test_channels_message_record_vectors`).
