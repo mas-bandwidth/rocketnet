@@ -46,6 +46,12 @@ other check in CBMC_FLAGS has an ESBMC counterpart in the list above.
   byte. Objects are contiguous, so both ends inside one object means the
   whole span is inside it. The checker's bounds checks fire when either
   end is outside its object.
+  - A span that touches the slot arena must also lie wholly inside one of
+    its two regions: the payload (`max_payload_bytes` from the start) or
+    the staging buffer after it (asserted for destination and source). The
+    object bounds alone would let a placement run from the payload into
+    staging.
+  - Overlap between source and destination is not checked.
   - The bytes between the ends are not modelled. No property depends on
     payload bytes, only on where they go.
   - The model is needed because the completion copy runs up to a whole
@@ -54,6 +60,11 @@ other check in CBMC_FLAGS has an ESBMC counterpart in the list above.
 - **memset.** `memset` is ESBMC's library loop, unwound 64 times. The
   reader only clears 56-byte slot records with it.
 - **Logging.** `rocketnet_error` and `rocketnet_spam` are no-ops.
+- **sdk assertions.** The build leaves `NDEBUG` unset and maps
+  `rocketnet_assert` onto a checked property, so every `rocketnet_assert`
+  the reader reaches (the plan's four postconditions,
+  `sdk/rocketnet_fragment.cpp:62-65`, and the completion's,
+  `:567-572`) is proved with the rest.
 - **libsodium.** The reader makes no libsodium call.
 - **Allocator.** `rocketnet_malloc` is not reached: the harness lays out
   the set exactly as `rocketnet_reassembly_set_create_delivered` does
@@ -67,9 +78,9 @@ The gate ran on a 16-core Linux bench, with ESBMC 8.5.0 and Bitwuzla 0.9.0
 
 | harness | properties | unwind | bound proved | time |
 |---|---|---|---|---|
-| harness_header_and_plan | 65 of 65 | 16 | full: every 6-byte header, every `int` payload size | 7 s |
-| harness_process_fragment | 518 of 518 | 33, memset 64 | fragments at the full bound, `max_payload_bytes` 1..40 | 30 s |
-| harness_memory_sizing | 52 of 52 | 16 | every argument the transports pass | 5 s |
+| harness_header_and_plan | 81 of 81 | 16 | full: every 6-byte header, every `int` payload size | 17 s |
+| harness_process_fragment | 562 of 562 | 33, memset 64 | fragments at the full bound; `max_payload_bytes` 1..40 only, below every deployed maximum (at least 1416); one connection, one slot | 31 s |
+| harness_memory_sizing | 50 of 50 | 16 | every argument the transports pass, not every `int` | 6 s |
 
 No property failed in any harness. No defect was found at BASE.
 
@@ -105,11 +116,12 @@ One connection and one slot. Inputs:
 - The delivered mirror is a symbolic size, from one payload up to its
   ceiling, with a symbolic part already used and up to 64 completions
   already delivered.
-- The slot before the call is any reachable state, not only an empty one.
-  `slot_ok` defines what is reachable: the count, stride, final size, staged
-  final and received bitmap agree with each other and with the payload
-  maximum. The harness assumes it before the call and asserts it after, so
-  the invariant is checked inductively for one call.
+- The slot before the call is any state `slot_ok` admits, not only an
+  empty one. `slot_ok` is a superset of the reachable states: the count,
+  stride, final size, staged final and received bitmap agree with each
+  other and with the payload maximum (it also admits an occupied slot with
+  no fragment held). The harness assumes it before the call and asserts it
+  after, so the invariant is checked inductively for one call.
 - The stale rule's reference is symbolic.
 
 Proved, beyond the memory and arithmetic checks:
@@ -118,6 +130,11 @@ Proved, beyond the memory and arithmetic checks:
   mirror. No read leaves the fragment object.
 - An illegal size, zero id, count of one, or index out of range is refused,
   and leaves the slot unchanged.
+- Each other check refuses: an id beyond reach of the newest completed,
+  and an id 1..256 behind the occupant (both counted stale), a count that
+  differs from the pinned count, a non-final fragment off the stride, a
+  final over the stride, and an index already held.
+- A refusal fires exactly one refusal counter; an acceptance fires none.
 - Every refusal leaves the slot unchanged or clears it. A refusal completes
   nothing and leaves the stale rule's reference unchanged.
 - `accepted` counts exactly the acceptances.
@@ -125,7 +142,8 @@ Proved, beyond the memory and arithmetic checks:
   count, and has its index bit set. Its placement,
   `stride x index + bytes` (or `stride x (count - 1) + bytes` for the
   final), is inside the payload maximum. A final that arrives first waits
-  in staging and fits it.
+  in staging. Every copy, including the staged final's placement and the
+  completing fragment's, stays inside its region (the memcpy model).
 - Only the last missing fragment completes a payload. Completion clears
   the slot, and moves the reference only to the completed id.
 - A delivered completion's span is inside the delivered mirror, and its
@@ -156,8 +174,7 @@ Proved:
 - No unsigned or signed overflow occurs in any sizing sum or product.
 - Invalid geometry, and a delivered bound below one payload, return 0 and
   are refused.
-- A nonzero requirement fits `size_t`, and covers the slot arenas and the
-  delivered mirror.
+- A nonzero requirement covers the slot arenas and the delivered mirror.
 - `allowed` holds exactly when the requirement is nonzero and inside
   `ROCKETNET_REASSEMBLY_MEMORY_MIB`.
 
@@ -173,7 +190,9 @@ Proved:
 ## Not proved: the full bounds
 
 `make -C proofs/cbmc proofs-fragment_reassembly-full` runs the full bounds.
-It is not on the nightly list.
+It is not on the nightly list. Every full-bound run below stopped at the
+solver's memory, or at the 30-minute limit, without a verdict; the proved
+bounds are the largest that finished inside a 16 GB address-space limit.
 
 - **harness_process_fragment at `max_payload_bytes` up to
   `ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES` (361,728).** Not proved. The
@@ -191,7 +210,11 @@ It is not on the nightly list.
     uses.
   - Split by slot state at bound 64: an empty slot proves (45 s), an
     occupied slot with no stride proves (86 s), and the fixed-stride cases
-    run out of memory.
+    run out of memory. These runs predate the region and refusal
+    assertions.
+- **Other slots and connections.** One connection and one slot only: the
+  slot and arena index arithmetic for other slots and connections
+  (`sdk/rocketnet_fragment.cpp:343-344`) is not exercised.
 - **harness_memory_sizing with every argument unconstrained**
   (`PROOF_SIZING_FULL`: any `int` connection count and capacity, any
   `uint64_t` byte bound). Not proved.
@@ -217,7 +240,7 @@ unchanged. Its divergences from the real function:
   (line 388).
 - **Delivery.** The copy writes delivered bytes at
   `delivered + num_delivered * max_payload_bytes`
-  (`proof_fragment_bounds.c:347`). The real code packs at a 16-byte stride
+  (`proof_fragment_bounds.c:348-349`). The real code packs at a 16-byte stride
   (`ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED`, lines 577-582) and enforces
   the byte bound `delivered_bytes`.
 - **Fields.** The copy has no `delivered_bytes` field and no
