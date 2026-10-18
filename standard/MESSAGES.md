@@ -200,10 +200,188 @@ channels, FIFO within a channel, and the packet writer's order.
 <a id="m11"></a>
 ## m11. CONFIG control record
 
-Status: pending
+Each endpoint MUST send exactly one CONFIG record for each connection and MUST
+NOT send another. It MUST send the CONFIG record before any other reliable
+record of that connection, and it resends the CONFIG record until the
+connection layer acknowledges it ([m7 Delivery: reliable codes 2, 3 and 4](#m7)).
+An endpoint MUST start its CONFIG wait at the first update at which its
+connection layer reports the connection established.
 
-Scope: the one CONFIG record each endpoint sends, its 28-byte body, the
-fields compared, mismatch handling; the defaults of the wire fields; vectors.
+An endpoint MUST end the connection with `RELIABLE_TIMEOUT` when an update is
+at or after the start of the CONFIG wait plus the reliable timeout
+([m9 Acknowledgement mapping, resend and send budget](#m9)) and it has not
+accepted the peer's CONFIG.
+
+An endpoint MUST accept a CONFIG record only when its body is 28 bytes, its
+kind is 1, and, when its version is 1, both reserved fields are zero. An
+endpoint MUST refuse every other CONFIG record as `MESSAGE_BAD_CONTROL`. An
+endpoint MUST read a body whose version it does not know and MUST compare it,
+such a body is a CONFIG mismatch and never `MESSAGE_BAD_CONTROL`.
+
+An endpoint MUST compare the `version`, `enabled`, `num_channels`,
+`window_messages`, `receive_ring_bytes`, `max_message_bytes` and
+`fragment_bytes` fields of the body with its own values. An endpoint MUST end
+the connection with `CONFIG_MISMATCH` when any compared field differs. An
+endpoint MAY receive message records before the peer's CONFIG and MUST
+process them against its own configuration.
+
+### m11.1. Wire layout
+
+The CONFIG record is a code 2 record with the CONTROL flag set, inside a
+payload of the RECORDS form. Its record header carries the connection's first
+reliable number. The payload is 35 bytes:
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     flags     |            length             |    number     |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|    number     |     kind      |   version     |    enabled    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     zero      |                  num_channels                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                  window_messages                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                  receive_ring_bytes                           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                  max_message_bytes                            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                  fragment_bytes                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                  zero                         |     form      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| flags | 0 | 1 | u8 | the record's code and flags | `0x22` |
+| length | 1 | 2 | u16 | the body length | `28` |
+| number | 3 | 3 | u24 | the connection's first reliable number | the first reliable number |
+| kind | 6 | 1 | u8 | the record kind | `1` |
+| version | 7 | 1 | u8 | the body version | `1` |
+| enabled | 8 | 1 | u8 | bit r set: reliability r may be sent by the application | a mask of enabled reliabilities |
+| reserved byte | 9 | 1 | zero[1] | reserved | `0` |
+| num_channels | 10 | 4 | u32 | the count of channels | the sender's configured count |
+| window_messages | 14 | 4 | u32 | the reliable window W | the sender's configured window |
+| receive_ring_bytes | 18 | 4 | u32 | the receive ring B | the sender's configured ring size |
+| max_message_bytes | 22 | 4 | u32 | the largest message | the sender's configured maximum |
+| fragment_bytes | 26 | 4 | u32 | the block stride F | `1152` |
+| reserved tail | 30 | 4 | zero[4] | reserved | `0` |
+| form | 34 | 1 | u8 | the payload form | `1` |
+
+### m11.2. Constants and defaults
+
+The library's default configuration is the one below. Every field of the body
+except the reserved fields is compared, so an implementation MUST use the
+same defaults or the two ends end the connection with `CONFIG_MISMATCH`.
+
+| Name | Value | Unit |
+|---|---|---|
+| flags | `0x22` | none |
+| body size | `28` | bytes |
+| kind | `1` | none |
+| version | `1` | none |
+| enabled default | `0xFF` | mask |
+| num channels default | `32` | channels |
+| window messages default | `1024` | messages |
+| receive ring bytes default | `262144` | bytes |
+| max message bytes default | `262144` | bytes |
+| fragment bytes | `1152` | bytes |
+| form | `1` | none |
+
+`enabled` with bit r set permits the application to send reliability r; the
+default mask sets every one of the eight reliabilities
+([m1.3 Reliability types](#m1.3)).
+
+### m11.3. States
+
+An endpoint has one CONFIG state per connection.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| Waiting | CONFIG body accepted | every compared field is equal | the CONFIG wait ends | Verified |
+| Waiting | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
+| Waiting | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL`; the violation ends the connection | none |
+| Waiting | update | at or after the start of the CONFIG wait plus the reliable timeout | end the connection with `RELIABLE_TIMEOUT` | none |
+| Verified | CONFIG body accepted | every compared field is equal | no change | Verified |
+| Verified | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
+| Verified | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL`; the violation ends the connection | none |
+
+An event that a state does not list is ignored in that state.
+
+### m11.4. Vectors
+
+Each vector is the full payload, before the connection layer seals it. An
+implementation MUST reproduce each one from the CONFIG record and MUST parse
+each one back to the same record and body. The first vector is the CONFIG
+record at the library's defaults, with number 0. Each later vector is the
+defaults with exactly one field changed; a receiver at the defaults MUST
+accept the first vector and MUST end the connection with `CONFIG_MISMATCH`
+for each of the others.
+
+```vector m11.config-defaults
+config: library defaults
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.version-mismatch
+field: version
+value: 2
+22 1c 00 00 00 00 01 02 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.enabled-mismatch
+field: enabled
+value: 0x01
+22 1c 00 00 00 00 01 01 01 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.num-channels-mismatch
+field: num_channels
+value: 16
+22 1c 00 00 00 00 01 01 ff 00 10 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.window-messages-mismatch
+field: window_messages
+value: 512
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 02
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.receive-ring-bytes-mismatch
+field: receive_ring_bytes
+value: 131072
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 02 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.max-message-bytes-mismatch
+field: max_message_bytes
+value: 131072
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 02 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.fragment-bytes-mismatch
+field: fragment_bytes
+value: 1024
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 00 04 00 00 00 00
+00 00 01
+```
 
 <a id="m12"></a>
 ## m12. Receipts
@@ -228,5 +406,14 @@ This appendix indexes every vector of RN-2 by the section that defines it.
 It is generated; the bytes are in the sections.
 
 <!-- vector-index:begin -->
-No vectors yet.
+| Section | Vector |
+|---|---|
+| [m11 CONFIG control record](#m11) | `m11.config-defaults` |
+| [m11 CONFIG control record](#m11) | `m11.enabled-mismatch` |
+| [m11 CONFIG control record](#m11) | `m11.fragment-bytes-mismatch` |
+| [m11 CONFIG control record](#m11) | `m11.max-message-bytes-mismatch` |
+| [m11 CONFIG control record](#m11) | `m11.num-channels-mismatch` |
+| [m11 CONFIG control record](#m11) | `m11.receive-ring-bytes-mismatch` |
+| [m11 CONFIG control record](#m11) | `m11.version-mismatch` |
+| [m11 CONFIG control record](#m11) | `m11.window-messages-mismatch` |
 <!-- vector-index:end -->
