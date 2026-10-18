@@ -363,12 +363,110 @@ f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
 <a id="t4"></a>
 ## t4. Wire encoding primitives
 
-Status: pending
+1. A sender MUST write the packet sequence in the `sequence` field of
+   [t3 Constants and registries](#t3) as the low half of the 64-bit sequence,
+   least-significant byte first. A sender MUST NOT emit a packet whose
+   sequence is zero.
+2. A receiver MUST reconstruct the 64-bit sequence from that field before any
+   replay check or AEAD open. Let `expected` be the highest sequence the
+   receiver has successfully opened in that direction and key phase, plus
+   one; when nothing has been opened, `expected` is one. Among all 64-bit
+   values whose low half equals the wire field, the receiver MUST take the
+   value nearest to `expected`, and on an exact tie it MUST take the larger.
+3. A receiver MUST ignore a packet whose reconstructed sequence is zero.
+   Zero is never a valid sequence and is never sent.
+4. An address on the wire is one family byte, the address bytes and the port,
+   packed with no padding. A sender MUST write family `1` with the four IPv4
+   octets in order, or family `2` with the eight IPv6 groups as sixteen-bit
+   values, each group little-endian, and MUST NOT write any other family. The
+   port is a sixteen-bit value, little-endian.
 
-Scope: integer encodings by type name; the 4-byte wire sequence and its
-reconstruction to 64 bits against the highest opened sequence, with the tie
-rule; sequence zero never valid; address encoding (family flag, IPv4 four
-octets then port, IPv6 eight groups then port, all little-endian).
+The sequence field of a sealed packet:
+
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                    sequence, low half (u32)                   |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| sequence | 0 | 4 | u32 | low half of the packet sequence | any; a reconstructed value of zero is ignored |
+
+The address encoding:
+
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |    family     |                                               |
+      +-+-+-+-+-+-+-+-+                                               +
+      |                    address (4 or 16 bytes)                    |
+      +                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                               |             port              |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| family | 0 | 1 | u8 | address family | `1` (IPv4), `2` (IPv6) |
+| address | 1 | 4 or 16 | bytes[4] or bytes[16] | four IPv4 octets in order, or eight IPv6 groups little-endian | 4 bytes for family `1`, 16 for family `2` |
+| port | 5 or 17 | 2 | u16 | UDP port | any |
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| address family IPv4 | `1` | number | family byte of an IPv4 address |
+| address family IPv6 | `2` | number | family byte of an IPv6 address |
+| encoded IPv4 address | `7` | bytes | family byte, four address octets, port |
+| encoded IPv6 address | `19` | bytes | family byte, eight address groups, port |
+
+The sequence is reconstructed at the start of a key phase:
+
+```vector t4.sequence-start
+input: highest opened sequence 0, wire field 1
+01 00 00 00 00 00 00 00
+```
+
+In steady state:
+
+```vector t4.sequence-steady
+input: highest opened sequence 999, wire field 1000
+e8 03 00 00 00 00 00 00
+```
+
+At an exact tie of half the field's range in each direction, the larger wins:
+
+```vector t4.sequence-tie
+input: highest opened sequence 0x17fffffff, wire field 0
+00 00 00 00 02 00 00 00
+```
+
+Across the field's wrap:
+
+```vector t4.sequence-wrap
+input: highest opened sequence 0xffffffff, wire field 0
+00 00 00 00 01 00 00 00
+```
+
+A wire field of zero with nothing opened reconstructs to zero and is ignored:
+
+```vector t4.sequence-zero
+input: highest opened sequence 0, wire field 0
+00 00 00 00 00 00 00 00
+```
+
+An IPv4 address, 198.51.100.7 port 56789:
+
+```vector t4.address-ipv4
+input: address 198.51.100.7, port 56789
+01 c6 33 64 07 d5 dd
+```
+
+An IPv6 address, 2001:db8::7 port 56789:
+
+```vector t4.address-ipv6
+input: address 2001:db8::7, port 56789
+02 01 20 b8 0d 00 00 00 00 00 00 00 00 00 00 07
+00 d5 dd
+```
 
 <a id="t5"></a>
 ## t5. Prefilter header
@@ -513,6 +611,13 @@ It is generated; the bytes are in the sections.
 | Section | Vector |
 |---|---|
 | [t3 Constants and registries](#t3) | `t3.token-identifier` |
+| [t4 Wire encoding primitives](#t4) | `t4.address-ipv4` |
+| [t4 Wire encoding primitives](#t4) | `t4.address-ipv6` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-start` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-steady` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
