@@ -54,6 +54,10 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
     // any packets already written keep their order.
     if ( state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
     {
+        // tla/RNClientIoDecrypt.tla RetireKeys: an I/O thread's open copy is
+        // retired before this end's own keys are zeroed
+        if ( client->retire_keys )
+            client->retire_keys( client->keys_context );
         sodium_memzero( &client->keys, sizeof(client->keys) );
         sodium_memzero( &client->token, sizeof(client->token) );
         sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
@@ -530,6 +534,12 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     memcpy( client->session_nonce, session_nonce, ROCKETNET_SESSION_NONCE_BYTES );
     sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
 
+    // tla/RNClientIoDecrypt.tla PublishKeys: an I/O thread's open copy is
+    // published here, before the connection response below is handed off
+
+    if ( client->publish_keys )
+        client->publish_keys( client->keys_context, client );
+
     if ( sequence > client->replay_handshake.highest_opened )
         client->replay_handshake.highest_opened = sequence;
     client->last_receive_time = current_time;
@@ -675,6 +685,18 @@ typedef int ( * rocketnet_client_type_data_validator_t )( struct rocketnet_clien
 // offset into opened lands in out_type_data_offset and its length is
 // returned; -1 means refused, the reason counted.
 
+static int rocketnet_client_session_after_open( struct rocketnet_client_protocol_t * client,
+                                                uint8_t packet_type,
+                                                const struct rocketnet_client_session_counters_t * type_counters,
+                                                int expected_type_data_bytes,
+                                                int packet_bytes,
+                                                uint64_t sequence,
+                                                double current_time,
+                                                uint8_t * opened,
+                                                int opened_bytes,
+                                                int * out_type_data_offset,
+                                                rocketnet_client_type_data_validator_t type_data_validator );
+
 // tla/ClientConnection.tla ClientRecvSession
 static int rocketnet_client_open_session_packet( struct rocketnet_client_protocol_t * client,
                                                  uint8_t packet_type,
@@ -748,6 +770,30 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
 
     rocketnet_replay_advance( &client->replay_session, sequence );
 
+    return rocketnet_client_session_after_open( client, packet_type, type_counters, expected_type_data_bytes,
+                                                packet_bytes, sequence, current_time, opened, opened_bytes,
+                                                out_type_data_offset, type_data_validator );
+}
+
+// The part of the session path after the open and the replay advance, shared
+// by rocketnet_client_open_session_packet and the I/O-opened record of
+// rocketnet_client_consume_session_record: the ack block, the type's size and
+// own check, then the commit.
+
+static int rocketnet_client_session_after_open( struct rocketnet_client_protocol_t * client,
+                                                uint8_t packet_type,
+                                                const struct rocketnet_client_session_counters_t * type_counters,
+                                                int expected_type_data_bytes,
+                                                int packet_bytes,
+                                                uint64_t sequence,
+                                                double current_time,
+                                                uint8_t * opened,
+                                                int opened_bytes,
+                                                int * out_type_data_offset,
+                                                rocketnet_client_type_data_validator_t type_data_validator )
+{
+    uint64_t * counters = client->counters->values;
+
     // the ack block at the front of the opened data, validated on the
     // reconstructed 64-bit largest against this end's own highest sent
     // session sequence: a malformed block refuses the whole packet, and
@@ -816,6 +862,119 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
     return type_data_bytes;
 }
 
+// tla/RNClientIoDecrypt.tla UpdateConsume: one record the I/O thread worked,
+// in its arrival position, on the main thread. The same rungs in the same
+// order as rocketnet_client_open_session_packet, each counted with today's
+// counter: the wire floor, the state check, then the I/O thread's verdict. An
+// opened record is reconstructed again from replay_session (a disagreement
+// with the record is counted as did not open, with no integrity failure),
+// checked against replay_session and advanced on it, then takes the shared
+// path after the open with the plaintext the I/O thread wrote behind the wire
+// header. A did-not-open verdict runs the integrity failure here, in order.
+
+static int rocketnet_client_consume_session_record( struct rocketnet_client_protocol_t * client,
+                                                    uint8_t packet_type,
+                                                    const struct rocketnet_client_session_counters_t * type_counters,
+                                                    int min_wire_bytes,
+                                                    int expected_type_data_bytes,
+                                                    const uint8_t * packet_data,
+                                                    int packet_bytes,
+                                                    double current_time,
+                                                    uint8_t * opened,
+                                                    int * out_type_data_offset,
+                                                    rocketnet_client_type_data_validator_t type_data_validator )
+{
+    uint64_t * counters = client->counters->values;
+
+    counters[type_counters->received]++;
+
+    if ( packet_bytes < min_wire_bytes || client->record_verdict == ROCKETNET_CLIENT_IO_VERDICT_WRONG_SIZE )
+    {
+        rocketnet_spam( "client ignored session packet. below the type's wire floor" );
+        counters[type_counters->wrong_size]++;
+        return -1;
+    }
+
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE &&
+         client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        rocketnet_spam( "client ignored session packet. wrong state" );
+        counters[type_counters->wrong_state]++;
+        return -1;
+    }
+
+    switch ( client->record_verdict )
+    {
+        case ROCKETNET_CLIENT_IO_VERDICT_ZERO_SEQUENCE:
+            rocketnet_spam( "client ignored session packet. zero sequence" );
+            counters[type_counters->zero_sequence]++;
+            return -1;
+        case ROCKETNET_CLIENT_IO_VERDICT_ALREADY_RECEIVED:
+            rocketnet_spam( "client ignored session packet. already received" );
+            counters[type_counters->already_received]++;
+            return -1;
+        case ROCKETNET_CLIENT_IO_VERDICT_DID_NOT_OPEN:
+            rocketnet_spam( "client ignored session packet. did not open" );
+            counters[type_counters->did_not_open]++;
+            rocketnet_client_integrity_failure( client );
+            return -1;
+        case ROCKETNET_CLIENT_IO_VERDICT_OPENED:
+            break;
+        default:
+            rocketnet_assert( 0 );
+            return -1;
+    }
+
+    const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
+    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), client->replay_session.highest_opened );
+    if ( sequence != client->record_sequence )
+    {
+        rocketnet_spam( "client ignored session packet. sequence disagrees with the I/O thread" );
+        counters[type_counters->did_not_open]++;
+        return -1;
+    }
+
+    if ( rocketnet_replay_already_received( &client->replay_session, sequence ) )
+    {
+        rocketnet_spam( "client ignored session packet. already received" );
+        counters[type_counters->already_received]++;
+        return -1;
+    }
+
+    const int opened_bytes = packet_bytes - ROCKETNET_PACKET_OVERHEAD_BYTES;
+    memcpy( opened, packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES, (size_t) opened_bytes );
+
+    rocketnet_replay_advance( &client->replay_session, sequence );
+
+    return rocketnet_client_session_after_open( client, packet_type, type_counters, expected_type_data_bytes,
+                                                packet_bytes, sequence, current_time, opened, opened_bytes,
+                                                out_type_data_offset, type_data_validator );
+}
+
+// The session entry every session type calls: a record the I/O thread worked
+// is consumed, anything else takes rocketnet_client_open_session_packet.
+
+static int rocketnet_client_session_entry( struct rocketnet_client_protocol_t * client,
+                                           uint8_t packet_type,
+                                           const struct rocketnet_client_session_counters_t * type_counters,
+                                           int min_wire_bytes,
+                                           int expected_type_data_bytes,
+                                           const uint8_t * packet_data,
+                                           int packet_bytes,
+                                           double current_time,
+                                           uint8_t * opened,
+                                           int * out_type_data_offset,
+                                           rocketnet_client_type_data_validator_t type_data_validator )
+{
+    if ( client->record_verdict != ROCKETNET_CLIENT_IO_VERDICT_RAW )
+        return rocketnet_client_consume_session_record( client, packet_type, type_counters, min_wire_bytes,
+                                                        expected_type_data_bytes, packet_data, packet_bytes,
+                                                        current_time, opened, out_type_data_offset, type_data_validator );
+    return rocketnet_client_open_session_packet( client, packet_type, type_counters, min_wire_bytes,
+                                                 expected_type_data_bytes, packet_data, packet_bytes,
+                                                 current_time, opened, out_type_data_offset, type_data_validator );
+}
+
 // The keep-alive's eight type bytes name the client index and the slot
 // count. Checked here, as the open's type-data validator, so a keep-alive
 // whose index or count is invalid is refused before the open commits:
@@ -857,7 +1016,7 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
-    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+    int type_data_bytes = rocketnet_client_session_entry( client, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES, 8,
                                                                 packet_data, packet_bytes,
@@ -905,7 +1064,7 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
-    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+    int type_data_bytes = rocketnet_client_session_entry( client, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES, -1,
                                                                 packet_data, packet_bytes,
@@ -939,7 +1098,7 @@ static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * cl
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
-    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_ACK_PACKET,
+    int type_data_bytes = rocketnet_client_session_entry( client, ROCKETNET_CONNECTION_ACK_PACKET,
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES, 0,
                                                                 packet_data, packet_bytes,
@@ -981,7 +1140,7 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
-    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
+    int type_data_bytes = rocketnet_client_session_entry( client, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES,
                                                                 -( ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ),
@@ -1033,7 +1192,7 @@ static int rocketnet_client_process_disconnect( struct rocketnet_client_protocol
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
-    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
+    int type_data_bytes = rocketnet_client_session_entry( client, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES, 0,
                                                                 packet_data, packet_bytes,
@@ -1143,6 +1302,32 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 // the same phase contract as the server's: update on the main thread,
 // start and seal from any game thread strictly between updates, the only
 // shared words a sequence add and a timestamp store.
+
+// tla/RNClientIoDecrypt.tla UpdateConsume
+int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t * client,
+                                              const uint8_t * packet_data,
+                                              int packet_bytes,
+                                              uint8_t verdict,
+                                              uint64_t sequence,
+                                              double current_time,
+                                              uint8_t * out_payload,
+                                              int out_payload_capacity,
+                                              int * out_payload_bytes )
+{
+    rocketnet_assert( client );
+
+    if ( verdict == ROCKETNET_CLIENT_IO_VERDICT_RAW )
+        return rocketnet_client_protocol_process_packet( client, packet_data, packet_bytes, current_time,
+                                                         out_payload, out_payload_capacity, out_payload_bytes );
+
+    client->record_verdict = verdict;
+    client->record_sequence = sequence;
+    const int result = rocketnet_client_protocol_process_packet( client, packet_data, packet_bytes, current_time,
+                                                                 out_payload, out_payload_capacity, out_payload_bytes );
+    client->record_verdict = ROCKETNET_CLIENT_IO_VERDICT_RAW;
+    client->record_sequence = 0;
+    return result;
+}
 
 int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t * client, uint64_t * sequence )
 {

@@ -23,15 +23,13 @@
 #include "rocketnet_read_write.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_keys.h"
+#include "rocketnet_wire.h"
+#include "rocketnet_client_protocol.h"
 
-// The repository's secret-wipe helper for the I/O's open-copy keys: a
-// volatile memset that the compiler cannot elide (docs/CLIENT-IO-DECRYPT.md
-// IoDropKeys).
-inline void rocketnet_client_io_secret_wipe( void * p, size_t n )
-{
-    volatile uint8_t * v = (volatile uint8_t *) p;
-    while ( n-- ) *v++ = 0;
-}
+// The secret wipe of the I/O thread's open copy: sodium_memzero, the
+// repository's helper, behind a function of sdk/rocketnet_client_transport.cpp
+// so the header needs no sodium include.
+void rocketnet_client_io_wipe( void * data, size_t bytes );
 
 // The client I/O step of docs/CLIENT-IO.md _The I/O step_ and _The wake_, and
 // the RNClientIo actions it names. The thread loop is one call per iteration;
@@ -53,20 +51,11 @@ struct rocketnet_client_io_ring_view_t
 // the receive thread fills one buffer while update processes the other --
 // the IO, carried over whole
 
-// The per-datagram verdict and reconstructed session sequence the I/O thread
-// records when it opens a session packet (docs/CLIENT-IO-DECRYPT.md). A raw
-// verdict means the packet was not opened by the I/O thread; the main thread
-// then processes it through the BASE path.
-enum
-{
-    ROCKETNET_CLIENT_IO_VERDICT_RAW = 0,
-    ROCKETNET_CLIENT_IO_VERDICT_OPENED = 1,
-    ROCKETNET_CLIENT_IO_VERDICT_ALREADY_RECEIVED = 2,
-    ROCKETNET_CLIENT_IO_VERDICT_DID_NOT_OPEN = 3,
-    ROCKETNET_CLIENT_IO_VERDICT_ZERO_SEQUENCE = 4,
-    ROCKETNET_CLIENT_IO_VERDICT_WRONG_SIZE = 5,
-    ROCKETNET_CLIENT_IO_VERDICT_PREFILTER = 6,
-};
+// Each record carries the I/O thread's verdict (ROCKETNET_CLIENT_IO_VERDICT_*,
+// sdk/rocketnet_client_protocol.h) and, when opened, the reconstructed 64-bit
+// session sequence (docs/CLIENT-IO-DECRYPT.md, If decrypt moves). An opened
+// record keeps its wire header and its wire byte count; the plaintext replaces
+// the ciphertext behind the header.
 
 struct rocketnet_client_receive_buffer_t
 {
@@ -83,11 +72,13 @@ struct rocketnet_client_receive_buffer_t
 // The I/O thread's open block (docs/CLIENT-IO-DECRYPT.md): an I/O-owned copy
 // of the session open key, protocol id, connection salt and filter value, an
 // open epoch (0 none, odd live generation, a retired value), and the I/O
-// thread's own replay window. The main thread writes the copy then stores the
-// epoch with release (PublishKeys); to retire it stores retired with seq_cst
-// before zeroing its own keys. The I/O thread loads the epoch with acquire at
-// the top of each drain (IoTakeKeys / IoDropKeys) and never reads client->keys.
+// thread's own replay window (tla/RNClientIoDecrypt.tla epoch, ioKeys, ioWin).
+// The main thread writes the copy then stores the epoch with release
+// (PublishKeys); to retire it stores retired with seq_cst before zeroing its
+// own keys (RetireKeys). The I/O thread loads the epoch with acquire at the top
+// of each drain (IoTakeKeys, IoDropKeys) and never reads client->keys.
 #define ROCKETNET_CLIENT_IO_EPOCH_NONE     0
+#define ROCKETNET_CLIENT_IO_EPOCH_LIVE     1u            // the one live generation of a transport's one attempt
 #define ROCKETNET_CLIENT_IO_EPOCH_RETIRED  0xFFFFFFFFu
 
 struct rocketnet_client_io_open_t
@@ -148,116 +139,133 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
 }
 
-// RNClientIoDecrypt PublishKeys; main thread. Writes the I/O-owned open copy
-// then stores the epoch with release. The next I/O drain takes the copy.
+// tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
+// derives the session keys. Writes the I/O-owned open copy, then stores the
+// live epoch with release; the I/O thread takes the copy at the top of its next
+// drain. One attempt per transport: a publish once the epoch has left none is
+// refused, so the main thread never writes the copy while the I/O thread may
+// read it.
 inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const uint8_t * session_server_to_client,
     uint64_t protocol_id, const uint8_t * connection_salt, const uint8_t * filter_value )
 {
+    if ( io->open.epoch.load( std::memory_order_relaxed ) != ROCKETNET_CLIENT_IO_EPOCH_NONE )
+        return;
     memcpy( io->open.session_server_to_client, session_server_to_client, ROCKETNET_KEY_BYTES );
     io->open.protocol_id = protocol_id;
     memcpy( io->open.connection_salt, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     memcpy( io->open.filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
-    memset( &io->open.replay, 0, sizeof( io->open.replay ) );
-    uint32_t epoch = io->open.epoch.load( std::memory_order_relaxed );
-    if ( epoch == ROCKETNET_CLIENT_IO_EPOCH_NONE || epoch == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
-        epoch = 1;
-    else
-        epoch = ( epoch + 2 ) & 0x7FFFFFFFu;    // next odd live generation
-    if ( epoch == 0 ) epoch = 1;
-    io->open.epoch.store( epoch, std::memory_order_release );
+    io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_LIVE, std::memory_order_release );
 }
 
-// RNClientIoDecrypt RetireKeys; main thread. Stores retired with seq_cst,
-// then zeroes its own keys.
+// tla/RNClientIoDecrypt.tla RetireKeys; main thread, at the integrity limit,
+// disconnect and destroy, before the main thread zeroes its own keys. Stores
+// retired with seq_cst and wakes the I/O thread, so a blocked I/O thread reads
+// the epoch and drops its copy (README-RNClientIoDecrypt.md, Findings). The
+// copy is the I/O thread's to zero; the main thread never writes it here.
 inline void rocketnet_client_io_retire_keys( rocketnet_client_io_t * io )
 {
+    if ( io->open.epoch.load( std::memory_order_relaxed ) == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
+        return;
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_RETIRED, std::memory_order_seq_cst );
-    rocketnet_client_io_secret_wipe( io->open.session_server_to_client, sizeof( io->open.session_server_to_client ) );
-    rocketnet_client_io_secret_wipe( io->open.connection_salt, sizeof( io->open.connection_salt ) );
-    rocketnet_client_io_secret_wipe( io->open.filter_value, sizeof( io->open.filter_value ) );
+    io->driver->operations->wake( io->driver->instance );
 }
 
-// RNClientIoDecrypt IoTakeKeys / IoDropKeys; I/O thread, at the top of each
-// drain. A new live value takes the copy and resets the window; retired
-// zeroes the copy and opens nothing after.
+// tla/RNClientIoDecrypt.tla IoDropKeys; I/O thread. Zeroes the copy and the
+// window; nothing opens after.
+inline void rocketnet_client_io_drop_keys( rocketnet_client_io_t * io )
+{
+    rocketnet_client_io_wipe( io->open.session_server_to_client, sizeof( io->open.session_server_to_client ) );
+    io->open.protocol_id = 0;
+    rocketnet_client_io_wipe( io->open.connection_salt, sizeof( io->open.connection_salt ) );
+    rocketnet_client_io_wipe( io->open.filter_value, sizeof( io->open.filter_value ) );
+    memset( &io->open.replay, 0, sizeof( io->open.replay ) );
+}
+
+// tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys and IoKeepKeys; I/O thread,
+// at the top of each drain. One acquire load of the epoch: a new live value
+// takes the copy and resets the I/O thread's window (IoTakeKeys), retired
+// zeroes the copy (IoDropKeys), no change keeps it (IoKeepKeys).
 inline void rocketnet_client_io_take_keys( rocketnet_client_io_t * io )
 {
     const uint32_t epoch = io->open.epoch.load( std::memory_order_acquire );
     if ( epoch == io->open.loaded_epoch )
         return;
-    if ( epoch == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
-    {
-        rocketnet_client_io_secret_wipe( io->open.session_server_to_client, sizeof( io->open.session_server_to_client ) );
-        io->open.protocol_id = 0;
-        rocketnet_client_io_secret_wipe( io->open.connection_salt, sizeof( io->open.connection_salt ) );
-        rocketnet_client_io_secret_wipe( io->open.filter_value, sizeof( io->open.filter_value ) );
-        memset( &io->open.replay, 0, sizeof( io->open.replay ) );
-        io->open.loaded_epoch = epoch;
-        return;
-    }
-    if ( epoch == ROCKETNET_CLIENT_IO_EPOCH_NONE )
-    {
-        io->open.loaded_epoch = epoch;
-        return;
-    }
-    memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = epoch;
+    if ( epoch == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
+        rocketnet_client_io_drop_keys( io );
+    else if ( epoch != ROCKETNET_CLIENT_IO_EPOCH_NONE )
+        memset( &io->open.replay, 0, sizeof( io->open.replay ) );
 }
 
-// RNClientIoDecrypt IoCheck then IoOpen; I/O thread, per session datagram
-// while the copy is live. The cheap rungs run first (prefilter, size floor,
-// zero sequence), then the I/O window's already_received, then the open. On
-// success the plaintext replaces the ciphertext in place and the window
-// advances; the verdict and reconstructed sequence are recorded. Returns the
-// record's new byte count (the opened length, or the wire length when not
-// opened).
-inline int rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, uint8_t * packet_data,
+// The wire floor of a session type, the per-type size check the main thread
+// runs first (sdk/rocketnet_wire.h); 0 for a type that is not a session type.
+inline int rocketnet_client_io_session_floor( int type )
+{
+    switch ( type )
+    {
+        case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET:    return ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_PAYLOAD_PACKET:       return ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_DISCONNECT_PACKET:    return ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_ACK_PACKET:           return ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:      return ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES;
+        default:                                        return 0;
+    }
+}
+
+// tla/RNClientIoDecrypt.tla IoCheck then IoOpen; I/O thread, per datagram,
+// before IoPublish. A datagram that is not a session packet, or any datagram
+// while the copy is not live, passes with the raw verdict. Otherwise IoCheck
+// runs the cheap rungs that need no protocol state (the prefilter, the type's
+// wire floor, the zero sequence) and the I/O thread's own window's
+// rocketnet_replay_already_received last; then IoOpen runs
+// rocketnet_open_sealed_packet with the copy and, on success,
+// rocketnet_replay_advance on the I/O thread's own window, and the plaintext
+// replaces the ciphertext behind the wire header. The wire byte count is kept.
+// The I/O thread writes no counter.
+inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, uint8_t * packet_data,
     int packet_bytes, uint8_t * out_verdict, uint64_t * out_sequence )
 {
     *out_verdict = ROCKETNET_CLIENT_IO_VERDICT_RAW;
     *out_sequence = 0;
     if ( io->open.loaded_epoch == ROCKETNET_CLIENT_IO_EPOCH_NONE ||
          io->open.loaded_epoch == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
-        return packet_bytes;
+        return;
     const int type = rocketnet_prefilter_check( packet_data, packet_bytes, io->open.filter_value );
-    const bool session = type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET ||
-                         type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
-                         type == ROCKETNET_CONNECTION_DISCONNECT_PACKET ||
-                         type == ROCKETNET_CONNECTION_ACK_PACKET ||
-                         type == ROCKETNET_CONNECTION_FRAGMENT_PACKET;
-    if ( !session )
-        return packet_bytes;
-    if ( packet_bytes < ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES )
+    const int floor = rocketnet_client_io_session_floor( type );
+    if ( floor == 0 )
+        return;
+    if ( packet_bytes < floor )
     {
         *out_verdict = ROCKETNET_CLIENT_IO_VERDICT_WRONG_SIZE;
-        return packet_bytes;
+        return;
     }
     const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
     const uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), io->open.replay.highest_opened );
     if ( sequence == 0 )
     {
         *out_verdict = ROCKETNET_CLIENT_IO_VERDICT_ZERO_SEQUENCE;
-        return packet_bytes;
+        return;
     }
     if ( rocketnet_replay_already_received( &io->open.replay, sequence ) )
     {
         *out_verdict = ROCKETNET_CLIENT_IO_VERDICT_ALREADY_RECEIVED;
-        return packet_bytes;
+        return;
     }
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
-    const int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, sizeof( opened ), packet_data, packet_bytes,
+    const int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet_data, packet_bytes,
         (uint8_t) type, sequence, io->open.protocol_id, io->open.connection_salt, NULL,
         io->open.session_server_to_client );
     if ( opened_bytes < 0 )
     {
         *out_verdict = ROCKETNET_CLIENT_IO_VERDICT_DID_NOT_OPEN;
-        return packet_bytes;
+        return;
     }
-    memcpy( packet_data, opened, (size_t) opened_bytes );
+    rocketnet_assert( opened_bytes == packet_bytes - ROCKETNET_PACKET_OVERHEAD_BYTES );
+    memcpy( packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES, opened, (size_t) opened_bytes );
+    rocketnet_client_io_wipe( opened, (size_t) opened_bytes );
     rocketnet_replay_advance( &io->open.replay, sequence );
     *out_verdict = ROCKETNET_CLIENT_IO_VERDICT_OPENED;
     *out_sequence = sequence;
-    return opened_bytes;
 }
 
 // RNClientIo Stop; main thread. Stores quit, then wakes the I/O thread
@@ -363,7 +371,10 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // is sent first (the send phase above); when nothing is in flight the
     // thread exits at once: no receive, no publish, no wait.
     if ( quitting && !rocketnet_client_send_rings_in_flight( &io->rings ) )
+    {
+        rocketnet_client_io_drop_keys( io );    // destroy retires; the copy dies with the thread
         return ROCKETNET_CLIENT_IO_EXITED;
+    }
 
     // 2. RNClientIo IoReceive: drain into the buffer the handshake gives the
     // I/O thread. A received datagram is worked even when the size prefilter
@@ -371,8 +382,9 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     rocketnet_client_receive_handshake_t * handshake = &io->receive;
     rocketnet_client_receive_buffer_t * buffer = io->buffer[handshake->fill];
 
-    // RNClientIoDecrypt IoTakeKeys: load the open epoch at the top of the
-    // drain and take or drop the copy accordingly.
+    // tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys, IoKeepKeys: the epoch
+    // is read once at the top of the drain, after the send phase, so the
+    // connection response leaves only after the copy is taken.
     rocketnet_client_io_take_keys( io );
 
     while ( io->fill_slots < ROCKETNET_NUM_CLIENT_PACKETS )
@@ -399,10 +411,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 buffer->receive_time[index] = now;
                 buffer->packet_data[index] = buffer->data + (size_t) ( io->fill_slots + i ) * ROCKETNET_FRAME_SIZE;
                 buffer->packet_bytes[index] = (size_t) packet_bytes[i];
-                buffer->verdict[index] = ROCKETNET_CLIENT_IO_VERDICT_RAW;
-                buffer->sequence[index] = 0;
-                buffer->packet_bytes[index] = (size_t) rocketnet_client_io_decrypt_datagram( io, buffer->packet_data[index],
-                    (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
+                rocketnet_client_io_decrypt_datagram( io, buffer->packet_data[index], (int) buffer->packet_bytes[index],
+                    &buffer->verdict[index], &buffer->sequence[index] );
                 buffer->num_packets++;
             }
             io->fill_slots += got;
@@ -425,10 +435,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 buffer->receive_time[index] = now;
                 buffer->packet_data[index] = packet_data;
                 buffer->packet_bytes[index] = (size_t) bytes;
-                buffer->verdict[index] = ROCKETNET_CLIENT_IO_VERDICT_RAW;
-                buffer->sequence[index] = 0;
-                buffer->packet_bytes[index] = (size_t) rocketnet_client_io_decrypt_datagram( io, buffer->packet_data[index],
-                    (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
+                rocketnet_client_io_decrypt_datagram( io, buffer->packet_data[index], (int) buffer->packet_bytes[index],
+                    &buffer->verdict[index], &buffer->sequence[index] );
                 buffer->num_packets++;
             }
             io->fill_slots++;
