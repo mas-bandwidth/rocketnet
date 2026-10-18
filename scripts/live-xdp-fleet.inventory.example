@@ -1,0 +1,39 @@
+# live-xdp-fleet.inventory.example -- placeholder hosts only.
+#
+# One row per machine, whitespace separated, in this order:
+#
+#   label  ssh-name  role  shape  site  path  cap-kbps  nic  address  queues
+#
+#   label     the bench label on every result line; never a hostname
+#   ssh-name  the name ssh uses, from the coordinator's machine
+#   role      server or client
+#   shape     linux, windows-interop or macos (the bench's build and start shape)
+#   site      studio or datacenter (RULINGS (d): the path that sets the cap)
+#   path      lan or internet; this run is the internet path
+#   cap-kbps  the client's total cap, both directions combined (RULINGS (b),(d)):
+#             1000 for a studio-site client, 100000 for a datacenter client.
+#             The server row carries its own site's maximum and is not a
+#             client cap.
+#   nic       the server row's public NIC; "-" on a client row
+#   address   the server row's public IPv4 and UDP port; "-" on a client row
+#   queues    the server row's XDP queue count; "-" on a client row
+#
+# The real inventory lives outside the repository and is named by
+# ROCKETNET_LIVE_INVENTORY. Replace every .invalid name before a run.
+#
+# The example is the owner's shape (section 6 of docs/LIVE-XDP.md): seven
+# studio-site clients at 1 Mbit/s total and two datacenter clients at
+# 100 Mbit/s total, which is about 0.54 GB across the studio uplink and
+# about 16.07 GB in all, inside the 1 GB and 20 GB bounds of RULINGS (d).
+
+# label            ssh-name                    role    shape            site        path      cap-kbps  nic   address           queues
+test-server      test-server.invalid         server  linux            datacenter  internet  100000    eth0  192.0.2.10:40000  8
+studio-linux-1   studio-linux-1.invalid      client  linux            studio      internet  1000      -     -                 -
+studio-linux-2   studio-linux-2.invalid      client  linux            studio      internet  1000      -     -                 -
+studio-win-1     studio-win-1.invalid        client  windows-interop  studio      internet  1000      -     -                 -
+studio-win-2     studio-win-2.invalid        client  windows-interop  studio      internet  1000      -     -                 -
+studio-macos-1   studio-macos-1.invalid      client  macos            studio      internet  1000      -     -                 -
+studio-macos-2   studio-macos-2.invalid      client  macos            studio      internet  1000      -     -                 -
+studio-linux-3   studio-linux-3.invalid      client  linux            studio      internet  1000      -     -                 -
+dc-linux-1       dc-linux-1.invalid          client  linux            datacenter  internet  100000    -     -                 -
+dc-linux-2       dc-linux-2.invalid          client  linux            datacenter  internet  100000    -     -                 -
