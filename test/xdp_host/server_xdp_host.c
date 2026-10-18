@@ -51,13 +51,18 @@ static struct rocketnet_server_xdp_replay_value_t * server_xdp_host_replay_find(
     return NULL;
 }
 
-// bpf_map_lookup_elem on the filter's two arrays of one: key 0 is the one
-// element and any other key is out of range, NULL, as array_map_lookup_elem
-// in kernel/bpf/arraymap.c returns for an index at or past max_entries. The
-// stats map is per-CPU in the kernel; the host is one CPU.
+// bpf_map_lookup_elem tests the map first. On the replay hash map the key is
+// the 20-byte source key and the result is its entry or NULL, as
+// htab_map_lookup_elem in kernel/bpf/hashtab.c returns. On the filter's two
+// arrays of one: key 0 is the one element and any other key is out of range,
+// NULL, as array_map_lookup_elem in kernel/bpf/arraymap.c returns for an
+// index at or past max_entries. The stats map is per-CPU in the kernel; the
+// host is one CPU.
 
 static void * bpf_map_lookup_elem( void * map, const void * key )
 {
+    if ( map == (void*) &server_xdp_replay_map )
+        return (void*) server_xdp_host_replay_find( key );
     const __u32 index = *(const __u32*) key;
     if ( index != 0 )
         return NULL;

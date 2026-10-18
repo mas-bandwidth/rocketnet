@@ -557,7 +557,13 @@
     /* stay in the Filling ring and leave with the next hand-off. EXPECTED: */ \
     /* deferral is the common case, not an overload signal. appended: */ \
     /* indices are the contract. */ \
-    X( CLIENT_SEND_DEFERRED, EXPECTED, NONE )
+    X( CLIENT_SEND_DEFERRED, EXPECTED, NONE ) \
+    \
+    /* The kernel prefilter counter ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED */ \
+    /* (sdk/rocketnet_wire.h): a session packet behind the replay map's */ \
+    /* high-water window, surfaced by rocketnet_counters_apply_prefilter. */ \
+    /* appended: indices are the contract. */ \
+    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE )
 
 enum
 {

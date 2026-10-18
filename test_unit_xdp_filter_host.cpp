@@ -11,7 +11,8 @@
 // with the verifier and the real helpers.
 //
 // Every frame is written byte by byte in this file (Ethernet, then IPv4 or
-// IPv6, then UDP, then the 6-byte prefilter header and a zero body), never
+// IPv6, then UDP, then the 6-byte prefilter header, the 4-byte little-endian
+// sequence and a zero body), never
 // from the filter's own code. The cases are data-driven: one row per frame
 // (bytes, receive queue, wanted verdict, wanted counter), so the kernel tier
 // can replay the same rows and any disagreement names a shim defect or a
@@ -35,6 +36,9 @@
 #if ROCKETNET_XDP_FILTER_HOST
 
 #include "test/xdp_host/server_xdp_host.h"
+#include "sdk/rocketnet.h"
+#include "sdk/rocketnet_address.h"
+#include "sdk/rocketnet_xdp_replay_marks.h"
 
 // The XDP verdicts, from the kernel's uapi enum xdp_action.
 
@@ -63,8 +67,11 @@ static const uint16_t xdp_host_server_port = 40000;
 static const uint8_t xdp_host_filter_value[4] = { 0xb7, 0x59, 0x01, 0x00 };
 
 // The frame a row sends. Everything not named takes the default: a payload
-// packet (type 5) of 100 UDP payload bytes, epoch 0 and the test filter
-// value, from the client to the configured server address and port.
+// packet (type 5) of 100 UDP payload bytes, epoch 0, the test filter value
+// and sequence 0, from the client's port 50000 to the configured server
+// address and port.
+
+static const uint16_t xdp_host_client_port = 50000;
 
 struct xdp_host_frame_t
 {
@@ -78,6 +85,8 @@ struct xdp_host_frame_t
     uint8_t packet_type = 5;
     uint8_t epoch = 0;
     uint8_t filter[4] = { 0xb7, 0x59, 0x01, 0x00 };
+    uint32_t sequence = 0;                  // the 4 little-endian bytes after the prefilter header
+    uint16_t source_port = xdp_host_client_port;
     int truncate_to = -1;                   // >= 0: cut the frame to this many bytes
 };
 
@@ -147,17 +156,20 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
 
     // RFC 768: source port, destination port, length, checksum (zero)
 
-    xdp_host_put16( out, 50000 );
+    xdp_host_put16( out, f.source_port );
     xdp_host_put16( out, f.port );
     xdp_host_put16( out, (uint16_t) udp_bytes );
     xdp_host_put16( out, 0x0000 );
 
-    // the prefilter header (type, epoch, filter value), then a zero body;
-    // a payload shorter than the header carries only its first bytes
+    // the prefilter header (type, epoch, filter value), the sequence little
+    // endian, then a zero body; a payload shorter than the header carries
+    // only its first bytes
 
-    const uint8_t prefilter[6] = { f.packet_type, f.epoch, f.filter[0], f.filter[1], f.filter[2], f.filter[3] };
+    const uint8_t prefilter[10] = { f.packet_type, f.epoch, f.filter[0], f.filter[1], f.filter[2], f.filter[3],
+                                    (uint8_t) ( f.sequence & 0xff ), (uint8_t) ( ( f.sequence >> 8 ) & 0xff ),
+                                    (uint8_t) ( ( f.sequence >> 16 ) & 0xff ), (uint8_t) ( ( f.sequence >> 24 ) & 0xff ) };
     for ( int i = 0; i < f.payload_bytes; i++ )
-        out.push_back( i < 6 ? prefilter[i] : 0x00 );
+        out.push_back( i < 10 ? prefilter[i] : 0x00 );
 
     if ( f.truncate_to >= 0 && (size_t) f.truncate_to < out.size() )
         out.resize( (size_t) f.truncate_to );
@@ -190,8 +202,34 @@ static void xdp_host_apply_config( const xdp_host_config_t & c )
     rocketnet_xdp_host_set_config_lookup_fails( c.lookup_fails ? 1 : 0 );
 }
 
+// The replay map key of the client's address in a family, at a source port,
+// built by the same function the transport's marks use.
+
+static struct rocketnet_server_xdp_replay_key_t xdp_host_client_key( int family, uint16_t port )
+{
+    struct rocketnet_address_t address;
+    memset( &address, 0, sizeof(address) );
+    if ( family == 4 )
+    {
+        address.type = ROCKETNET_ADDRESS_IPV4;
+        memcpy( address.data.ipv4, xdp_host_client_ipv4, 4 );
+    }
+    else
+    {
+        address.type = ROCKETNET_ADDRESS_IPV6;
+        for ( int i = 0; i < 8; i++ )
+            address.data.ipv6[i] = (uint16_t) ( ( xdp_host_client_ipv6[i * 2] << 8 ) | xdp_host_client_ipv6[i * 2 + 1] );
+    }
+    address.port = port;
+    struct rocketnet_server_xdp_replay_key_t key;
+    rocketnet_xdp_replay_key_from_address( &address, &key );
+    return key;
+}
+
 // One row: a frame, the receive queue it arrives on, the socket slot that
-// is populated (-1: none), the configuration, and what must happen.
+// is populated (-1: none), the configuration, the replay map entry for the
+// client's address and port 50000 in the frame's family (none unless
+// replay_entry), and what must happen.
 
 struct xdp_host_row_t
 {
@@ -200,6 +238,8 @@ struct xdp_host_row_t
     uint32_t queue = 0;
     int populated_slot = 0;
     xdp_host_config_t config;
+    bool replay_entry = false;
+    uint32_t replay_high_water = 0;
     int want_verdict = XDP_HOST_REDIRECT;
     int want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
 };
@@ -226,6 +266,11 @@ static void xdp_host_run_row( const xdp_host_row_t & row )
     xdp_host_apply_config( row.config );
     if ( row.populated_slot >= 0 )
         rocketnet_xdp_host_set_socket_slot( (uint32_t) row.populated_slot, 1 );
+    if ( row.replay_entry )
+    {
+        const struct rocketnet_server_xdp_replay_key_t key = xdp_host_client_key( row.frame.family, xdp_host_client_port );
+        rocketnet_xdp_host_set_replay_entry( &key, row.replay_high_water );
+    }
 
     const std::vector<uint8_t> bytes = xdp_host_frame_bytes( row.frame );
     const int verdict = rocketnet_xdp_host_run( bytes.data(), (int) bytes.size(), row.queue );
@@ -922,6 +967,145 @@ static void xdp_host_type_and_size_sweep_matches_the_standard()
 }
 
 // ---------------------------------------------------------------------------
+// replay: the read-only high-water map (tla/RNXdpReplay.tla, KernelFilter).
+// With an entry for the source address and port, a session packet whose
+// sequence is ROCKETNET_XDP_REPLAY_WINDOW (16) or more behind the high-water
+// drops; inside the window or ahead it goes on; handshake types and sources
+// with no entry are not checked.
+
+static xdp_host_row_t xdp_host_replay_row( const char * label, int family, uint8_t type, uint32_t sequence, uint32_t high_water )
+{
+    xdp_host_row_t row = xdp_host_row( label, family );
+    row.frame.packet_type = type;
+    row.frame.sequence = sequence;
+    if ( type == ROCKETNET_CONNECTION_REQUEST_PACKET )
+        row.frame.payload_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
+    else if ( type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+        row.frame.payload_bytes = ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES;
+    row.replay_entry = true;
+    row.replay_high_water = high_water;
+    return row;
+}
+
+static void xdp_host_replay_rows( int family, std::vector<xdp_host_row_t> & rows )
+{
+    const int replayed = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED );
+
+    rows.push_back( xdp_host_expect( xdp_host_replay_row( "payload 16 behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100 ),
+                                     XDP_HOST_DROP, replayed ) );
+    rows.push_back( xdp_host_replay_row( "payload 15 behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 85, 100 ) );
+    rows.push_back( xdp_host_replay_row( "payload at the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 100, 100 ) );
+    rows.push_back( xdp_host_replay_row( "payload one ahead of the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 101, 100 ) );
+
+    const struct { uint8_t type; const char * label; } session[] =
+    {
+        { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, "keep-alive 16 behind the high-water" },
+        { ROCKETNET_CONNECTION_ACK_PACKET, "ack 16 behind the high-water" },
+        { ROCKETNET_CONNECTION_DISCONNECT_PACKET, "disconnect 16 behind the high-water" },
+        { ROCKETNET_CONNECTION_FRAGMENT_PACKET, "fragment 16 behind the high-water" },
+    };
+    for ( size_t i = 0; i < sizeof(session) / sizeof(session[0]); i++ )
+        rows.push_back( xdp_host_expect( xdp_host_replay_row( session[i].label, family, session[i].type, 84, 100 ),
+                                         XDP_HOST_DROP, replayed ) );
+
+    // the handshake types are not checked
+    rows.push_back( xdp_host_replay_row( "connection request at 84 is not checked", family, ROCKETNET_CONNECTION_REQUEST_PACKET, 84, 100 ) );
+    rows.push_back( xdp_host_replay_row( "connection response at 84 is not checked", family, ROCKETNET_CONNECTION_RESPONSE_PACKET, 84, 100 ) );
+
+    // another source port has no entry
+    xdp_host_row_t other = xdp_host_replay_row( "another source port has no entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100 );
+    other.frame.source_port = xdp_host_client_port + 1;
+    rows.push_back( other );
+
+    // no entry at all
+    xdp_host_row_t none = xdp_host_replay_row( "no replay entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100 );
+    none.replay_entry = false;
+    rows.push_back( none );
+
+    // the wrap: the difference is modulo 2^32, read as signed
+    rows.push_back( xdp_host_expect( xdp_host_replay_row( "high-water 5, sequence 0xfffffff0 is behind across the wrap", family,
+                                                          ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0xfffffff0u, 5 ),
+                                     XDP_HOST_DROP, replayed ) );
+    rows.push_back( xdp_host_replay_row( "high-water 0xfffffff0, sequence 5 is ahead across the wrap", family,
+                                         ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5, 0xfffffff0u ) );
+}
+
+static void xdp_host_replay_drops_behind_the_window()
+{
+    std::vector<xdp_host_row_t> rows;
+    xdp_host_replay_rows( 4, rows );
+    xdp_host_replay_rows( 6, rows );
+    xdp_host_run_rows( rows );
+}
+
+// The program never writes the map: one entry at high-water 100, then a
+// forged payload far ahead and a hundred more session packets through the
+// same state, each asserting its verdict and that exactly its counter moved
+// by one, and the entry still reads 100 with no other entry made.
+
+static void xdp_host_replay_never_writes_the_map()
+{
+    const int families[2] = { 4, 6 };
+    const uint8_t session[5] = { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                 ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET,
+                                 ROCKETNET_CONNECTION_FRAGMENT_PACKET };
+    for ( int f = 0; f < 2; f++ )
+    {
+        rocketnet_xdp_host_reset();
+        xdp_host_apply_config( xdp_host_config_t() );
+        rocketnet_xdp_host_set_socket_slot( 0, 1 );
+        const struct rocketnet_server_xdp_replay_key_t key = xdp_host_client_key( families[f], xdp_host_client_port );
+        rocketnet_xdp_host_set_replay_entry( &key, 100 );
+
+        for ( int i = -1; i < 100; i++ )
+        {
+            xdp_host_frame_t frame;
+            frame.family = families[f];
+            frame.packet_type = i < 0 ? ROCKETNET_CONNECTION_PAYLOAD_PACKET : session[i % 5];
+            frame.sequence = i < 0 ? 0x7fffffffu : (uint32_t) ( i * 3 );
+            const bool behind = (int32_t) ( 100u - frame.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
+            const int want_verdict = behind ? XDP_HOST_DROP : XDP_HOST_REDIRECT;
+            const int want_counter = behind ? XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED )
+                                            : XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+
+            uint64_t before[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
+            for ( int c = 0; c < ROCKETNET_SERVER_XDP_NUM_COUNTERS; c++ )
+                before[c] = rocketnet_xdp_host_counter( c );
+
+            const std::vector<uint8_t> bytes = xdp_host_frame_bytes( frame );
+            const int verdict = rocketnet_xdp_host_run( bytes.data(), (int) bytes.size(), 0 );
+
+            bool ok = verdict == want_verdict;
+            for ( int c = 0; c < ROCKETNET_SERVER_XDP_NUM_COUNTERS; c++ )
+                ok = ok && rocketnet_xdp_host_counter( c ) - before[c] == ( c == want_counter ? 1u : 0u );
+            if ( !ok )
+            {
+                printf( "xdp_host replay never writes: family %d, row %d, type %d, sequence 0x%08x: verdict %s (%d), want %s (%d)\n",
+                        families[f], i, frame.packet_type, frame.sequence, xdp_host_verdict_name( verdict ), verdict,
+                        xdp_host_verdict_name( want_verdict ), want_verdict );
+                fflush( stdout );
+            }
+            rocketnet_unit_check( ok );
+
+            uint32_t high_water = 0;
+            rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key, &high_water ) == 1 );
+            rocketnet_unit_check( high_water == 100 );
+        }
+
+        // 1 forged redirect, then rows 0..28 (sequence 0..84) drop and rows
+        // 29..99 (sequence 87..297) redirect
+        rocketnet_unit_check( rocketnet_xdp_host_counter( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED ) == 29 );
+        rocketnet_unit_check( rocketnet_xdp_host_counter( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED ) == 72 );
+
+        uint32_t high_water = 0;
+        rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key, &high_water ) == 1 );
+        rocketnet_unit_check( high_water == 100 );
+        const struct rocketnet_server_xdp_replay_key_t other = xdp_host_client_key( families[f], xdp_host_client_port + 1 );
+        rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &other, &high_water ) == 0 );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // every counter has a case: each ROCKETNET_SERVER_XDP_COUNTER_* that
 // sdk/rocketnet_wire.h defines (other than the count) must appear in this
 // file as a row's XDP_HOST_COUNTS(...), so a new counter cannot land without
@@ -1016,6 +1200,8 @@ XDP_HOST_SKIPPED( xdp_host_wrong_filter_drops )
 XDP_HOST_SKIPPED( xdp_host_invalid_type_drops )
 XDP_HOST_SKIPPED( xdp_host_type_and_size_sweep_matches_the_standard )
 XDP_HOST_SKIPPED( xdp_host_every_counter_has_a_case )
+XDP_HOST_SKIPPED( xdp_host_replay_drops_behind_the_window )
+XDP_HOST_SKIPPED( xdp_host_replay_never_writes_the_map )
 
 #endif // #if ROCKETNET_XDP_FILTER_HOST
 
@@ -1040,3 +1226,5 @@ REGISTER_UNIT_TEST( xdp_host_wrong_filter_drops );
 REGISTER_UNIT_TEST( xdp_host_invalid_type_drops );
 REGISTER_UNIT_TEST( xdp_host_type_and_size_sweep_matches_the_standard );
 REGISTER_UNIT_TEST( xdp_host_every_counter_has_a_case );
+REGISTER_UNIT_TEST( xdp_host_replay_drops_behind_the_window );
+REGISTER_UNIT_TEST( xdp_host_replay_never_writes_the_map );

@@ -66,6 +66,19 @@ struct {
     __uint( pinning, LIBBPF_PIN_BY_NAME );
 } server_xdp_stats_map SEC(".maps");
 
+// The kernel replay map: one entry per live source address and port, the
+// highest sequence userspace has opened for it. Userspace writes it once per
+// server update and nothing else does; this program only looks entries up
+// (tla/RNXdpReplay.tla, KernelNeverWrites). Not pinned: until userspace pins
+// and writes it, every lookup misses.
+
+struct {
+    __uint( type, BPF_MAP_TYPE_HASH );
+    __type( key, struct rocketnet_server_xdp_replay_key_t );
+    __type( value, struct rocketnet_server_xdp_replay_value_t );
+    __uint( max_entries, ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
+} server_xdp_replay_map SEC(".maps");
+
 static void server_xdp_count( __u32 counter )
 {
     int key = 0;
@@ -101,10 +114,13 @@ static __always_inline int server_xdp_is_ipv6_extension( __u8 next_header )
 // Everything after the IP header is one function for both families, so the
 // two cannot drift apart. The caller has parsed its IP header, checked that
 // the UDP header fits, and compared the destination address against the
-// configuration; this takes the UDP header and that address result.
+// configuration; this takes the UDP header, that address result, and the
+// source address (4 bytes for family 4, 16 for family 6, network order) for
+// the replay lookup.
 
 static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * udp, void * data_end,
-                                           const struct rocketnet_server_xdp_config_t * config, int address_match )
+                                           const struct rocketnet_server_xdp_config_t * config, int address_match,
+                                           __u8 family, const void * source_address )
 {
     if ( udp->dest != config->public_port || !address_match )
     {
@@ -164,6 +180,51 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         return XDP_DROP;
     }
 
+    // replay: a session packet from a source with a replay map entry is
+    // dropped when its sequence is ROCKETNET_XDP_REPLAY_WINDOW or more behind
+    // the entry's high-water (tla/RNXdpReplay.tla, KernelFilter). The
+    // difference is taken modulo 2^32 and read as signed, so a sequence ahead
+    // of the high-water passes across the wrap. The handshake types carry no
+    // sequence here and are not checked. The map is only looked up, never
+    // written: a forged sequence far ahead passes to userspace, fails the
+    // AEAD open there, and moves nothing.
+
+    if ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET ||
+         packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET    ||
+         packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET ||
+         packet_type == ROCKETNET_CONNECTION_ACK_PACKET        ||
+         packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET )
+    {
+        struct rocketnet_server_xdp_replay_key_t key;
+        __builtin_memset( &key, 0, sizeof(key) );
+        key.family = family;
+        key.port = udp->source;
+        if ( family == 4 )
+            __builtin_memcpy( key.address, source_address, 4 );
+        else
+            __builtin_memcpy( key.address, source_address, 16 );
+
+        const struct rocketnet_server_xdp_replay_value_t * entry = (const struct rocketnet_server_xdp_replay_value_t*) bpf_map_lookup_elem( &server_xdp_replay_map, &key );
+        if ( entry )
+        {
+            // the 32-bit sequence, little endian, right after the prefilter
+            // header: inside the ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES bound
+            // proven above
+
+            const __u32 sequence = ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES] )             |
+                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 1] << 8 )    |
+                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 2] << 16 )   |
+                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 3] << 24 );
+
+            if ( (int32_t) ( entry->high_water - sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW )
+            {
+                debug_printf( "replayed: behind the high-water window" );
+                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED );
+                return XDP_DROP;
+            }
+        }
+    }
+
     // bpf_redirect_map returns XDP_REDIRECT when the queue's socket is in
     // the map. When it is not, it returns the low two bits of the flags as
     // the action: BPF_F_INGRESS is 1, which is XDP_DROP. It never returns 0.
@@ -214,7 +275,7 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
                     const int address_match = config->public_address == 0 || ip->daddr == config->public_address;
 
-                    return server_xdp_udp( ctx, udp, data_end, config, address_match );
+                    return server_xdp_udp( ctx, udp, data_end, config, address_match, 4, &ip->saddr );
                 }
             }
         }
@@ -252,7 +313,7 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                                                 ip6->daddr.in6_u.u6_addr32[2] == want[2] &&
                                                 ip6->daddr.in6_u.u6_addr32[3] == want[3] );
 
-                    return server_xdp_udp( ctx, udp, data_end, config, address_match );
+                    return server_xdp_udp( ctx, udp, data_end, config, address_match, 6, &ip6->saddr );
                 }
             }
             else if ( server_xdp_is_ipv6_extension( ip6->nexthdr ) )
