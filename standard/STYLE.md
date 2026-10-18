@@ -25,9 +25,9 @@ One word for one thing, everywhere:
 
 | Word | Means | Never |
 |---|---|---|
-| transport | one selectable packet carrier below the connection layer, chosen by name: `xdp`, `gso`, `msgx`, `portable`, `iocp` | driver, backend |
+| transport | one selectable packet carrier below the connection layer, chosen by name: `xdp`, `gso`, `msgx`, `portable`, `iocp` | driver |
 | `transport` (config field) | the ordered candidate list of transports for one endpoint; environment `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` | driver, transport list |
-| client, server | the two endpoints of a connection, by wire role; each is configured by one config struct | peer, host |
+| client, server | the two endpoints of a connection, by wire role; each is configured by one config struct | host |
 | connection layer | what RN-1 specifies | transport tier |
 | message layer | what RN-2 specifies | channels tier |
 | maximum packet size | the largest UDP payload a sender emits (RN-1, bytes) | send budget |
@@ -211,7 +211,7 @@ repository root:
 
 The hex is the same bytes, with or without spaces, and may be split across
 adjacent string literals. A twin counts only outside comments, in a file that
-calls `rn_standard_vectors_walk`. The test case regenerates the bytes from the inputs
+calls `rn_standard_vectors_walk`. The test regenerates the bytes from the inputs
 through the implementation and compares them (`test_unit_standard.h`). The
 checker fails a vector present in a document and in no test file, a twin in
 a test file and in no document, and any byte that differs between the two.

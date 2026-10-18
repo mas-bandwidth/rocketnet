@@ -50,7 +50,7 @@ RN-1 does not specify:
 | server | the endpoint that accepts connections. It holds a key exchange keypair and the backend's public key. |
 | client | the endpoint that initiates a connection with a connect token. |
 | endpoint | a client or a server. |
-| transport | a selectable packet backend of an implementation (for example `xdp`, `gso`, `msgx`, `portable`), chosen by name in the endpoint's configuration. |
+| transport | a selectable packet carrier of an implementation (for example `xdp`, `gso`, `msgx`, `portable`), chosen by name in the endpoint's configuration. |
 | connect token | the fixed-size credential a backend gives a client ([t6 Connect token](#t6)). |
 | slot | one of a server's connection places, indexed from 0 below `max_clients`. |
 | connection | one client's session with one server, from the request that creates its mapping to its end. |
