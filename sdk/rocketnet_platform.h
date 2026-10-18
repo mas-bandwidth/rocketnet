@@ -117,7 +117,9 @@ ROCKETNET_EXPORT_FUNC uint16_t rocketnet_platform_htons( uint16_t in );
  * @brief Copies an IPv4 address into a system socket address.
  *
  * @param address Source IPv4 address; must be non-NULL and have IPv4 type.
- * @param out Caller-owned destination structure; must be non-NULL.
+ * Its address bytes are already in network order and its port is in host order.
+ * @param out Caller-owned destination structure; must be non-NULL. The port is
+ * converted to network byte order.
  * @return None. The destination remains owned by the caller.
  */
 void rocketnet_platform_address_to_sockaddr_in( const struct rocketnet_address_t * address, struct sockaddr_in * out );
@@ -126,7 +128,8 @@ void rocketnet_platform_address_to_sockaddr_in( const struct rocketnet_address_t
  * @brief Copies a system IPv4 socket address into a RocketNet address.
  *
  * @param in Source socket address; must be non-NULL.
- * @param address Caller-owned destination; must be non-NULL.
+ * @param address Caller-owned destination; must be non-NULL. Address bytes
+ * remain in network order and the port is converted to host byte order.
  * @return None. The destination remains owned by the caller.
  */
 void rocketnet_platform_sockaddr_in_to_address( const struct sockaddr_in * in, struct rocketnet_address_t * address );
@@ -136,24 +139,29 @@ void rocketnet_platform_sockaddr_in_to_address( const struct sockaddr_in * in, s
  *
  * @param address_string NUL-terminated address text; must be non-NULL.
  * @param address_out Caller-owned output word; must be non-NULL and is written
- * only when parsing succeeds.
+ * only when parsing succeeds. Its four in-memory bytes are in network order.
  * @return true for a valid IPv4 address; false when the text is invalid.
  */
 ROCKETNET_EXPORT_FUNC bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out );
 
 /**
- * @brief Parses an IPv6 address into eight host-order 16-bit groups.
+ * @brief Parses an IPv6 address into its 16 network-order bytes.
  *
+ * The bytes are written through eight 16-bit words as storage; the numeric
+ * word values are not host-order address groups. Convert each word with
+ * rocketnet_platform_ntohs before using it as a RocketNet IPv6 group.
  * @param address_string NUL-terminated IPv6 text; must be non-NULL.
- * @param address_out Caller-owned eight-element output array; must be non-NULL.
+ * @param address_out Caller-owned storage for eight 16-bit words; must be
+ * non-NULL.
  * @return true for a valid IPv6 address; false when parsing fails.
  */
 ROCKETNET_EXPORT_FUNC bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * address_out );
 
 /**
- * @brief Formats eight IPv6 address groups as text.
+ * @brief Formats 16 network-order IPv6 bytes as text.
  *
- * @param address Eight host-order 16-bit groups; must be non-NULL.
+ * @param address Caller-owned storage containing eight words with the same
+ * network-order byte layout produced by inet_pton6; must be non-NULL.
  * @param address_string Caller-owned output buffer; must be non-NULL.
  * @param address_string_size Buffer capacity in bytes, including space for the
  * terminator; must be large enough for an IPv6 string.
@@ -268,36 +276,24 @@ ROCKETNET_EXPORT_FUNC void rocketnet_platform_socket_send_packet( struct rocketn
  * @param from Caller-owned output address; must be non-NULL.
  * @param packet_data Caller-owned output buffer; must be non-NULL.
  * @param max_packet_size Buffer capacity in bytes; must be positive.
- * @return Received byte count, or zero when no usable packet is available.
- * Oversized datagrams are discarded; receive errors do not have a separate
+ * @return Received datagram length in bytes, or zero when no usable packet is
+ * available. If the datagram exceeds max_packet_size, only its prefix fits in
+ * packet_data and the returned value exceeds the capacity (Windows can report
+ * max_packet_size + 1 as an oversize marker). Treat that value as an oversize
+ * signal and do not read beyond the buffer. Receive errors have no separate
  * status code.
  */
 ROCKETNET_EXPORT_FUNC int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, void * packet_data, int max_packet_size );
 
 // ----------------------------------------------------------------
 
-// The batch pump seam (#100, per #81's matrix): move a batch of packets in
-// as few syscalls as the platform allows. Every platform implements these --
-// the portable implementation loops the per-packet calls above, so the
-// baseline doctrine holds and a call site never carries an #ifdef -- and a
-// platform with batch syscalls overrides them behind the same signatures.
-// Whether a faster path is live is decided inside the platform layer at
-// socket create (runtime probe, environment override ROCKETNET_PUMP=portable),
-// and degradation at any point is invisible above this seam.
-//
-// send_packets sends every entry; per-packet failures are dropped exactly as
-// the per-packet call drops them (UDP semantics, counted by the layer above
-// through its own accounting). receive_packets drains up to max_packets into
-// caller storage -- from[i], packet_bytes[i], and the packet bytes at
-// packet_data + i * packet_stride -- and returns the number received; zero
-// means drained. packet_stride is the caller's slot size and the per-packet
-// receive ceiling.
-
 /**
  * @brief Describes one datagram in a batch send.
  *
  * The pointed-to address and packet bytes remain caller-owned and must stay
- * valid until socket_send_packets returns.
+ * valid until socket_send_packets returns. The platform may use a native batch
+ * path or loop over single-packet sends; socket_pump reports the live path,
+ * including a fallback after a native path degrades.
  */
 struct rocketnet_platform_send_t
 {
@@ -329,8 +325,10 @@ ROCKETNET_EXPORT_FUNC void rocketnet_platform_socket_send_packets( struct rocket
  * @param socket Live socket; must be non-NULL.
  * @param from Output array of max_packets source addresses.
  * @param packet_data Output storage with packet_stride bytes per slot.
- * @param packet_stride Slot size and maximum datagram size in bytes; positive.
- * @param packet_bytes Output array of max_packets received lengths.
+ * @param packet_stride Slot size and maximum stored prefix in bytes; positive.
+ * @param packet_bytes Output array of max_packets datagram lengths. A length
+ * may exceed packet_stride when a datagram is oversized; only its prefix is
+ * stored in the corresponding packet_data slot.
  * @param max_packets Capacity of all output arrays; positive.
  * @return Number of received datagrams, from zero through max_packets. A
  * returned zero means no usable datagram was received.
@@ -363,7 +361,9 @@ void rocketnet_platform_socket_send_packets_mmsg( struct rocketnet_platform_sock
 /**
  * @brief Receives a batch with Linux recvmmsg on the caller's I/O thread.
  *
- * This internal Linux entry point follows socket_receive_packets layout.
+ * This internal Linux entry point follows socket_receive_packets layout;
+ * packet_bytes can exceed packet_stride for an oversized datagram, whose slot
+ * contains only the copied prefix.
  * @param socket Live socket.
  * @param from Output source-address array.
  * @param packet_data Output storage with packet_stride bytes per slot.
