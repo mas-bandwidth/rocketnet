@@ -26,6 +26,7 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 #include "test/wycheproof.h"
+#include "test/resource_file.h"
 
 // Match the header to the sodium implementation linked into the SDK.
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
@@ -312,7 +313,7 @@ static std::string ctv_path()
 static int ctv_read_file( const std::string & path, std::string & out )
 {
     out.clear();
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( !file )
         return 0;
     char buffer[4096];
@@ -428,13 +429,15 @@ static void vectors_regenerate_byte_identical()
     int existed = ctv_read_file( path, existing );
 
     std::string temp = path + ".tmp";
-    FILE * file = fopen( temp.c_str(), "wb" );
+    FILE * file = rocketnet_test_fopen( temp, "wb" );
     rocketnet_unit_check( file != NULL );
     rocketnet_unit_check( fwrite( generated.data(), 1, generated.size(), file ) == generated.size() );
     rocketnet_unit_check( fclose( file ) == 0 );
 #if defined(_WIN32)
     // The Windows CRT rename refuses to replace an existing destination.
-    rocketnet_unit_check( MoveFileExA( temp.c_str(), path.c_str(),
+    const std::wstring wide_temp = rocketnet_test_wide_path( temp );
+    const std::wstring wide_path = rocketnet_test_wide_path( path );
+    rocketnet_unit_check( MoveFileExW( wide_temp.c_str(), wide_path.c_str(),
                                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) != 0 );
 #else
     rocketnet_unit_check( rename( temp.c_str(), path.c_str() ) == 0 );

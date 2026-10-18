@@ -16,6 +16,7 @@
 // directory walk, no network, no clock).
 
 #include "test_unit_registry.h"
+#include "test/resource_file.h"
 
 #include "rocketnet.h"
 #include "rocketnet_counters.h"
@@ -441,7 +442,7 @@ static std::vector<std::string> counters_split_list( const char * list )
 static bool counters_read_file( const std::string & relative_path, std::string & contents )
 {
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( !file )
         return false;
     char buffer[65536];

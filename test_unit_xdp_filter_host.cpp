@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "test/resource_file.h"
 
 #include "sdk/rocketnet_wire.h"
 #include "sdk/rocketnet_xdp_limits.h"
@@ -1115,7 +1116,7 @@ static std::string xdp_host_read_file( const char * relative )
 {
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative;
     std::string text;
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( file == NULL )
     {
         printf( "xdp_host_every_counter_has_a_case: cannot read %s\n", path.c_str() );
