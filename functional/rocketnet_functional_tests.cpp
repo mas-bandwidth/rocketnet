@@ -3072,6 +3072,7 @@ void rocketnet_test_server_driver_pin_iocp()
 void rocketnet_test_server_rio_probe()
 {
     rocketnet_check( rocketnet_server_rio_available() );
+    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
 
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
@@ -3124,6 +3125,9 @@ void rocketnet_test_server_rio_probe()
     rio = rocketnet_server_rio_create( NULL, &bind_address );
     rocketnet_check( rio );
     rocketnet_server_rio_destroy( rio );
+
+    // every destroy, the refused stages' included, drained before it freed
+    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
 // every size the wire allows, each packet tagged by its index in its first
@@ -3275,7 +3279,9 @@ void rocketnet_test_server_rio_wire_ipv4()
     rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
 
     rocketnet_platform_socket_destroy( peer );
+    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
     rocketnet_server_rio_destroy( rio );
+    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
 // the iocp driver's USO/URO tier against a plain UDP peer on loopback: the

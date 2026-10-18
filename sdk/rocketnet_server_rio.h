@@ -27,8 +27,8 @@
 // model action cite it.
 //
 // The driver is built only on Windows (Windows 10 1709 or later for
-// RIOSendEx and RIOReceiveEx). Elsewhere create returns NULL and
-// rocketnet_server_rio_available() is false.
+// RIOSendEx and RIOReceiveEx). Elsewhere the module is not compiled: only
+// rocketnet_server_rio_available() is defined, and it is false.
 
 #define ROCKETNET_RIO_SEND_QUEUE_SIZE 16384
 #define ROCKETNET_RIO_RECEIVES 4096
@@ -77,6 +77,10 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
+// regions destroy has leaked, process wide: a destroy whose drain did not
+// account for every posted request by its deadline leaks the registered
+// region rather than free it under the kernel. Zero when every destroy drained.
+uint64_t rocketnet_server_rio_leaked_regions();
 
 #if defined(_WIN32)
 bool rocketnet_server_rio_available();

@@ -31,6 +31,10 @@
 #define ROCKETNET_RIO_SEND_FRAMES ( 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE )
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256
 #define ROCKETNET_RIO_DRAIN_SECONDS 5.0
+#define ROCKETNET_RIO_SWITCH_SECONDS 1.0
+
+// regions destroy could not drain and so leaked rather than freed
+static std::atomic<uint64_t> rocketnet_rio_leaked_regions{0};
 
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
 static_assert( ROCKETNET_RIO_RECEIVES <= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS, "a whole bank fits the process view" );
@@ -61,6 +65,11 @@ struct rocketnet_server_rio_t
     RIO_RQ request_queue = RIO_INVALID_RQ;
 
     std::atomic<bool> stopping{false};
+    // the model's sending: true from Post until SwitchPhase; the fill phase
+    // is closed to fill threads while it holds
+    std::atomic<bool> switch_owed{false};
+    // deferred sends posted and not yet committed
+    bool uncommitted = false;
 
     // send: the model's fill, next, outstanding and the slot bytes. fill and
     // next are read by fill threads, which run only while the main thread is
@@ -155,6 +164,21 @@ static const SOCKADDR_INET * rocketnet_rio_receive_address( rocketnet_server_rio
     return (const SOCKADDR_INET*) ( rio->region + rocketnet_rio_receive_address_offset( &rio->layout, slice ) );
 }
 
+// one RIO_MSG_COMMIT_ONLY when deferred sends are uncommitted; a refused
+// commit leaves them uncommitted for the next try
+static void rocketnet_rio_commit( rocketnet_server_rio_t * rio )
+{
+    if ( !rio->uncommitted )
+        return;
+    if ( !rio->rio.RIOSendEx( rio->request_queue, NULL, 0, NULL, NULL, NULL, NULL, RIO_MSG_COMMIT_ONLY, NULL ) )
+    {
+        rocketnet_warn( "rio driver: send commit refused (Winsock %d); retried", WSAGetLastError() );
+        return;
+    }
+    rio->uncommitted = false;
+    rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_COMMITS );
+}
+
 // the send frame index of a frame pointer: a pointer that is not the root of
 // a send frame lands out of range or off a root and returns -1, a lost
 // packet, never an out-of-bounds write
@@ -169,7 +193,15 @@ static int rocketnet_rio_frame_index( rocketnet_server_rio_t * rio, const uint8_
     const uint64_t stride = rocketnet_rio_element_stride( rio->layout.frame_bytes );
     if ( offset % stride != 0 || offset / stride >= (uint64_t) ROCKETNET_RIO_SEND_FRAMES )
         return -1;
-    return (int) ( offset / stride );
+    // only a reserved slot of the open fill phase: a stale frame of a phase
+    // the kernel owns is refused, never rewritten under a posted send
+    const int index = (int) ( offset / stride );
+    const int phase = rio->fill.load( std::memory_order_relaxed );
+    const int slot = index - phase * ROCKETNET_RIO_SEND_QUEUE_SIZE;
+    if ( rio->switch_owed.load( std::memory_order_relaxed ) || slot < 0 || slot >= ROCKETNET_RIO_SEND_QUEUE_SIZE ||
+         slot >= rio->next[phase].load( std::memory_order_relaxed ) )
+        return -1;
+    return index;
 }
 
 // posts one receive slice with its address slot (create, and the re-post
@@ -307,8 +339,16 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
         rocketnet_free( context, rio );
     }
     else
+    {
+        rocketnet_rio_leaked_regions.fetch_add( 1, std::memory_order_relaxed );
         rocketnet_error( "rio driver: %d sends and %d receives still posted after close; the registered region is leaked, not freed under the kernel",
                          rio->outstanding[0] + rio->outstanding[1], rio->posted_receives );
+    }
+}
+
+uint64_t rocketnet_server_rio_leaked_regions()
+{
+    return rocketnet_rio_leaked_regions.load( std::memory_order_relaxed );
 }
 
 uint64_t rocketnet_server_rio_allocation_bytes()
@@ -435,6 +475,11 @@ failed:
 uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( rio->stopping.load( std::memory_order_acquire ) ) return NULL;
+    if ( rio->switch_owed.load( std::memory_order_acquire ) )
+    {
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FULL );
+        return NULL;
+    }
     const int phase = rio->fill.load( std::memory_order_relaxed );
     const int slot = rio->next[phase].fetch_add( 1, std::memory_order_relaxed );
     // the lower bound too: a caller that stages forever without a flush
@@ -477,70 +522,84 @@ void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio, uint64_t p
 }
 
 // send_packets, fill threads joined: DequeueSend, then Post, then
-// SwitchPhase (RNRioDriver).
+// SwitchPhase (RNRioDriver). A switch the other phase has not drained for
+// by ROCKETNET_RIO_SWITCH_SECONDS is owed: the fill phase stays closed to
+// fill threads (start_packet counts SEND_FULL), nothing is posted, and the
+// next send_packets resumes the wait. The model's sending flag is
+// switch_owed.
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
 {
     // RNRioDriver DequeueSend: retire completed slots of either phase
     rocketnet_rio_dequeue_send( rio );
 
-    // RNRioDriver Post: every finished slot of the fill phase by RIOSendEx
-    // with RIO_MSG_DEFER, then one RIO_MSG_COMMIT_ONLY, and the phase's
-    // outstanding count recorded. Between post and completion the kernel
-    // owns the slot's frame and its address slot.
     const int phase = rio->fill.load( std::memory_order_relaxed );
-    int count = rio->next[phase].load( std::memory_order_relaxed );
-    if ( count < 0 || count > ROCKETNET_RIO_SEND_QUEUE_SIZE ) count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
-    const bool stopping = rio->stopping.load( std::memory_order_acquire );
-    int posted = 0;
-    for ( int slot = 0; slot < count; ++slot )
+    if ( !rio->switch_owed.load( std::memory_order_relaxed ) )
     {
-        const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
-        const int bytes = rio->slot_bytes[index];
-        if ( bytes <= 0 || stopping )
+        // RNRioDriver Post: every finished slot of the fill phase by
+        // RIOSendEx with RIO_MSG_DEFER, then one RIO_MSG_COMMIT_ONLY, and the
+        // phase's outstanding count recorded. Between post and completion the
+        // kernel owns the slot's frame and its address slot.
+        int count = rio->next[phase].load( std::memory_order_relaxed );
+        if ( count < 0 || count > ROCKETNET_RIO_SEND_QUEUE_SIZE ) count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
+        const bool stopping = rio->stopping.load( std::memory_order_acquire );
+        int posted = 0;
+        for ( int slot = 0; slot < count; ++slot )
         {
-            rio->slot_bytes[index] = 0;
-            continue;
+            const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
+            const int bytes = rio->slot_bytes[index];
+            if ( bytes <= 0 || stopping )
+            {
+                rio->slot_bytes[index] = 0;
+                continue;
+            }
+            RIO_BUF data;
+            data.BufferId = rio->buffer_id;
+            data.Offset = (ULONG) ( rocketnet_rio_send_frame_offset( &rio->layout, index ) + ROCKETNET_FRAME_WIRE_OFFSET );
+            data.Length = (ULONG) bytes;
+            RIO_BUF address;
+            address.BufferId = rio->buffer_id;
+            address.Offset = (ULONG) rocketnet_rio_send_address_offset( &rio->layout, index );
+            address.Length = sizeof(SOCKADDR_INET);
+            if ( rio->rio.RIOSendEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, RIO_MSG_DEFER,
+                                     (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, phase, (uint32_t) slot ) ) )
+                posted++;
+            else
+            {
+                // an unsuccessful post has no completion: the slot is free again
+                rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED );
+                rio->slot_bytes[index] = 0;
+            }
         }
-        RIO_BUF data;
-        data.BufferId = rio->buffer_id;
-        data.Offset = (ULONG) ( rocketnet_rio_send_frame_offset( &rio->layout, index ) + ROCKETNET_FRAME_WIRE_OFFSET );
-        data.Length = (ULONG) bytes;
-        RIO_BUF address;
-        address.BufferId = rio->buffer_id;
-        address.Offset = (ULONG) rocketnet_rio_send_address_offset( &rio->layout, index );
-        address.Length = sizeof(SOCKADDR_INET);
-        if ( rio->rio.RIOSendEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, RIO_MSG_DEFER,
-                                 (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, phase, (uint32_t) slot ) ) )
-            posted++;
-        else
-        {
-            // an unsuccessful post has no completion: the slot is free again
-            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED );
-            rio->slot_bytes[index] = 0;
-        }
+        rio->outstanding[phase] += posted;
+        if ( posted > 0 )
+            rio->uncommitted = true;
+        rio->switch_owed.store( true, std::memory_order_relaxed );
     }
-    if ( posted > 0 )
-    {
-        if ( !rio->rio.RIOSendEx( rio->request_queue, NULL, 0, NULL, NULL, NULL, NULL, RIO_MSG_COMMIT_ONLY, NULL ) )
-            rocketnet_warn( "rio driver: send commit refused (Winsock %d); the deferred sends go out with the next commit", WSAGetLastError() );
-        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_COMMITS );
-    }
-    rio->outstanding[phase] += posted;
+    rocketnet_rio_commit( rio );
 
     // RNRioDriver SwitchPhase: the other phase opens to fill threads only
     // when its outstanding count is zero; poll the send completion queue
     // until it is, each poll that finds nothing counting SEND_WAITS
     const int other = 1 - phase;
+    const double deadline = rocketnet_platform_time() + ROCKETNET_RIO_SWITCH_SECONDS;
     while ( rio->outstanding[other] > 0 )
     {
         if ( rocketnet_rio_dequeue_send( rio ) == 0 )
         {
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_WAITS );
+            if ( rocketnet_platform_time() > deadline )
+            {
+                rocketnet_error( "rio driver: %d sends of phase %d still outstanding; the switch is owed and the fill phase stays closed",
+                                 rio->outstanding[other], other );
+                return;
+            }
+            rocketnet_rio_commit( rio );
             YieldProcessor();
         }
     }
     rio->next[other].store( 0, std::memory_order_relaxed );
-    rio->fill.store( other, std::memory_order_release );
+    rio->fill.store( other, std::memory_order_relaxed );
+    rio->switch_owed.store( false, std::memory_order_release );
 }
 
 // RNRioDriver DequeueReceive for one completion: a failed status counts
@@ -557,16 +616,19 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         return;
     }
     rio->posted_receives--;
-    if ( result->Status != 0 )
+    if ( result->Status == WSAEMSGSIZE )
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE );     // past the slice: oversize
+    else if ( result->Status != 0 )
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
     else
     {
         const int bytes = (int) result->BytesTransferred;
         rocketnet_address_t from;
         rocketnet_rio_bank_t * bank = &rio->banks[rio->fill_bank];
-        if ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING ||
-             !rocketnet_rio_address_read( rocketnet_rio_receive_address( rio, slice ), &from ) )
+        if ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE );
+        else if ( !rocketnet_rio_address_read( rocketnet_rio_receive_address( rio, slice ), &from ) )
+            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
         else if ( bank->num_packets >= ROCKETNET_RIO_RECEIVES )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW );
         else
@@ -578,7 +640,8 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED );
         }
     }
-    if ( rio->stopping.load( std::memory_order_acquire ) || !rocketnet_rio_post_receive( rio, slice ) )
+    // after stop nothing is re-posted and nothing is counted
+    if ( !rio->stopping.load( std::memory_order_acquire ) && !rocketnet_rio_post_receive( rio, slice ) )
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED );
 }
 
