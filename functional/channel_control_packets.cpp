@@ -149,7 +149,8 @@ void control_denied_when_server_full()
     // a connected client as the server sees one: a live, established
     // encryption mapping at its own address, assigned the slot the way the
     // connect path assigns it, with no timeout so it holds the slot for the
-    // whole case. a connected slot always has a live mapping behind it.
+    // whole case, as the connect path gives every slot it assigns a live
+    // mapping behind it.
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 9, sizeof(user_data) );
     for ( int i = 0; i < 4; i++ )
