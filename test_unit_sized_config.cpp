@@ -287,5 +287,16 @@ static void sized_config_refuses_unknown_size()
     rocketnet_assert_function( saved_assert );
 }
 
+static void server_default_config_max_clients_is_1000()
+{
+    struct rocketnet_server_transport_config_t unsized, sized;
+    rocketnet_server_transport_default_config( &unsized );
+    memset( &sized, 0xA5, sizeof( sized ) );
+    check( rocketnet_server_transport_default_config_sized( &sized, sizeof( sized ) ) == 1 );
+    check( unsized.max_clients == 1000 );
+    check( sized.max_clients == 1000 );
+}
+
 REGISTER_UNIT_TEST( sized_config_accepts_every_known_size );
 REGISTER_UNIT_TEST( sized_config_refuses_unknown_size );
+REGISTER_UNIT_TEST( server_default_config_max_clients_is_1000 );
