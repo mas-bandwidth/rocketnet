@@ -407,15 +407,34 @@ void harness_process_fragment( void )
 
 /* ---------------- harness: memory sizing, no unsigned overflow ---------------- */
 
+/* PROOF_SIZING_FULL leaves every argument unconstrained: every value the
+   int and uint64 types carry. Without it the arguments range over what the
+   transports can pass: up to PROOF_SIZING_MAX_CONNECTIONS connections
+   (ROCKETNET_MAX_CLIENTS by default; the client passes one), up to
+   PROOF_SIZING_MAX_CAPACITY completions, a delivered byte bound up to that
+   capacity at the aligned largest payload, and every slot count and
+   payload size, documented or not. */
+
+#ifndef PROOF_SIZING_MAX_CONNECTIONS
+#define PROOF_SIZING_MAX_CONNECTIONS ROCKETNET_MAX_CLIENTS
+#endif
+
+#ifndef PROOF_SIZING_MAX_CAPACITY
+#define PROOF_SIZING_MAX_CAPACITY 65536
+#endif
+
 void harness_memory_sizing( void )
 {
-    /* every argument is unconstrained: the documented arguments and every
-       other value the int and uint64 types can carry */
     const int num_connections = nondet_int();
     const int num_slots = nondet_int();
     const int max_payload = nondet_int();
     const int delivered_capacity = nondet_int();
     const uint64_t bytes = nondet_uint64();
+#ifndef PROOF_SIZING_FULL
+    __CPROVER_assume( num_connections <= PROOF_SIZING_MAX_CONNECTIONS );
+    __CPROVER_assume( delivered_capacity <= PROOF_SIZING_MAX_CAPACITY );
+    __CPROVER_assume( bytes <= (uint64_t) PROOF_SIZING_MAX_CAPACITY * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ) );
+#endif
 
     const uint64_t required = rocketnet_reassembly_memory_required( num_connections, num_slots, max_payload, delivered_capacity );
     const uint64_t required_d = rocketnet_reassembly_memory_required_delivered( num_connections, num_slots, max_payload, delivered_capacity, bytes );
