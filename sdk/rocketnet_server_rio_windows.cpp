@@ -89,6 +89,25 @@ struct rocketnet_server_rio_t
     rocketnet_server_socket_process_packets_t process;
 };
 
+#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
+
+// This table exists only in the isolated unit-test driver copy. The receive
+// path substitutes only dequeue and receive repost; production builds call
+// the RIO function table directly with no test branch.
+typedef ULONG (WINAPI *rocketnet_rio_test_dequeue_fn)( RIO_CQ, PRIORESULT, ULONG );
+typedef BOOL (WINAPI *rocketnet_rio_test_receive_fn)( RIO_RQ, PRIO_BUF, ULONG, PRIO_BUF, PRIO_BUF,
+                                                      PRIO_BUF, PRIO_BUF, DWORD, PVOID );
+
+struct rocketnet_rio_test_function_table_t
+{
+    rocketnet_rio_test_dequeue_fn dequeue;
+    rocketnet_rio_test_receive_fn receive;
+};
+
+static const rocketnet_rio_test_function_table_t * rocketnet_rio_test_functions = NULL;
+
+#endif // defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
+
 static void rocketnet_rio_count( rocketnet_server_rio_t * rio, int counter, uint64_t amount = 1 )
 {
     rio->counters[counter].fetch_add( amount, std::memory_order_relaxed );
@@ -216,6 +235,15 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     address.BufferId = rio->buffer_id;
     address.Offset = (ULONG) rocketnet_rio_receive_address_offset( &rio->layout, slice );
     address.Length = sizeof(SOCKADDR_INET);
+#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
+    if ( rocketnet_rio_test_functions )
+    {
+        if ( !rocketnet_rio_test_functions->receive( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
+                (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
+            return false;
+    }
+    else
+#endif
     if ( !rio->rio.RIOReceiveEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
                                  (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
         return false;
@@ -652,7 +680,13 @@ void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
     for ( ;; )
     {
         RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
+#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
+        const ULONG count = rocketnet_rio_test_functions
+            ? rocketnet_rio_test_functions->dequeue( rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH )
+            : rio->rio.RIODequeueCompletion( rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
+#else
         const ULONG count = rio->rio.RIODequeueCompletion( rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
+#endif
         if ( count == RIO_CORRUPT_CQ )
         {
             rocketnet_error( "rio driver: receive completion queue corrupt" );
@@ -677,6 +711,118 @@ void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
         rio->process.packet_data[i] = exposed->data[i];
     }
 }
+
+#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
+
+struct rocketnet_rio_overflow_test_state_t
+{
+    const RIORESULT * completions;
+    ULONG num_completions;
+    ULONG next_completion;
+    int repost_calls;
+};
+
+static rocketnet_rio_overflow_test_state_t * rocketnet_rio_overflow_test_state = NULL;
+
+static ULONG WINAPI rocketnet_rio_overflow_test_dequeue( RIO_CQ cq, PRIORESULT results, ULONG max_results )
+{
+    if ( !rocketnet_rio_overflow_test_state || cq != (RIO_CQ) (uintptr_t) 1 )
+        return RIO_CORRUPT_CQ;
+    const ULONG remaining = rocketnet_rio_overflow_test_state->num_completions -
+                            rocketnet_rio_overflow_test_state->next_completion;
+    const ULONG count = remaining < max_results ? remaining : max_results;
+    if ( count )
+    {
+        memcpy( results, rocketnet_rio_overflow_test_state->completions +
+                rocketnet_rio_overflow_test_state->next_completion, count * sizeof(RIORESULT) );
+        rocketnet_rio_overflow_test_state->next_completion += count;
+    }
+    return count;
+}
+
+static BOOL WINAPI rocketnet_rio_overflow_test_receive( RIO_RQ, PRIO_BUF, ULONG, PRIO_BUF, PRIO_BUF,
+                                                         PRIO_BUF, PRIO_BUF, DWORD, PVOID )
+{
+    if ( !rocketnet_rio_overflow_test_state )
+        return FALSE;
+    rocketnet_rio_overflow_test_state->repost_calls++;
+    return TRUE;
+}
+
+// A test-only fixture drives the production receive_packets loop with a full
+// bank plus one completion, then a short dequeue. It creates no socket and
+// leaves the callback table unset outside this call.
+bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
+                                                  int * repost_calls, int * pending_receives )
+{
+    if ( !counters || !packet_counts || !repost_calls || !pending_receives )
+        return false;
+
+    rocketnet_server_rio_t rio;
+    if ( !rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES,
+            ROCKETNET_FRAME_STRIDE, ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof(SOCKADDR_INET),
+            4096, &rio.layout ) )
+        return false;
+
+    rio.region = (uint8_t*) calloc( 1, (size_t) rio.layout.total_bytes );
+    rio.banks = (rocketnet_rio_bank_t*) calloc( 2, sizeof(rocketnet_rio_bank_t) );
+    RIORESULT * completions = (RIORESULT*) calloc( ROCKETNET_RIO_RECEIVES + 1, sizeof(RIORESULT) );
+    if ( !rio.region || !rio.banks || !completions )
+    {
+        free( completions );
+        free( rio.banks );
+        free( rio.region );
+        return false;
+    }
+
+    for ( int i = 0; i < ROCKETNET_RIO_RECEIVES; ++i )
+    {
+        SOCKADDR_INET * address = (SOCKADDR_INET*) ( rio.region +
+            rocketnet_rio_receive_address_offset( &rio.layout, i ) );
+        address->Ipv4.sin_family = AF_INET;
+        address->Ipv4.sin_port = htons( 40000 );
+        address->Ipv4.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    }
+    for ( int i = 0; i <= ROCKETNET_RIO_RECEIVES; ++i )
+    {
+        completions[i].Status = 0;
+        completions[i].BytesTransferred = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+        completions[i].RequestContext = (ULONGLONG) rocketnet_rio_context(
+            ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) ( i % ROCKETNET_RIO_RECEIVES ) );
+    }
+
+    rio.receive_cq = (RIO_CQ) (uintptr_t) 1;
+    rio.posted_receives = ROCKETNET_RIO_RECEIVES;
+    rocketnet_rio_overflow_test_state_t state = { completions, ROCKETNET_RIO_RECEIVES + 1, 0, 0 };
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_overflow_test_dequeue,
+        rocketnet_rio_overflow_test_receive
+    };
+    rocketnet_rio_overflow_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+
+    rocketnet_server_rio_receive_packets( &rio );
+    packet_counts[0] = rio.process.num_packets;
+    for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
+        counters[i] = rio.counters[i].load( std::memory_order_relaxed );
+
+    // The injected source now returns a zero-length (short) dequeue.
+    rocketnet_server_rio_receive_packets( &rio );
+    packet_counts[1] = rio.process.num_packets;
+    for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
+        counters[ROCKETNET_RIO_NUM_COUNTERS + i] = rio.counters[i].load( std::memory_order_relaxed );
+    *repost_calls = state.repost_calls;
+    *pending_receives = rio.posted_receives;
+
+    rocketnet_rio_test_functions = NULL;
+    rocketnet_rio_overflow_test_state = NULL;
+    free( completions );
+    free( rio.banks );
+    free( rio.region );
+    return true;
+}
+
+#endif // defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
 
 // RNRioDriver TransportReads: the views of the exposed bank
 rocketnet_server_socket_process_packets_t * rocketnet_server_rio_process_packets( rocketnet_server_rio_t * rio )
