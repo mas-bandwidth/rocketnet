@@ -144,11 +144,152 @@ up, each naming one violation; duplicates.
 <a id="m5"></a>
 ## m5. Message numbering and the reliable window
 
-Status: pending
+The message layer gives a number to each reliable record it sends and to no
+other record. A number is a 24-bit counter that wraps. The receiver recovers
+the 64-bit value of the counter from the wire value against a reference. This
+section states the sender's numbering, the two bounds on it, the receiver's
+reconstruction and window check, and the connection layer preconditions that
+make the reconstruction unambiguous.
 
-Scope: 24-bit numbers, sequencing and ordering indexes; reconstruction by
-signed half range; the window; the no-alias bound from the replay window
-depth that [m1.4 What RN-2 requires of RN-1](#m1.4) requires.
+### m5.1. Sender numbering
+
+1. A sender MUST assign the next number to a reliable record only when it
+   first writes that record into a packet, and MUST NOT assign a number when
+   the application queues the message. A record of code 0 or 1 MUST NOT take
+   a number.
+2. A sender MUST assign consecutive numbers, one per record, in the order it
+   writes the records. A block MUST take one consecutive number for each of
+   its fragments at the moment its first fragment is written.
+3. Let `next` be the next number the sender assigns, `U` the lowest number it
+   has not yet seen acknowledged, and `U'` the window base: `U` when no
+   unacknowledged block contains `U`, and the first number of the lowest such
+   block otherwise. A sender MUST number a record with number `n` only while
+   `n < U' + W`, where `W` is the connection's `window_messages` field and
+   the row `window messages default` below gives its default.
+4. A holdable record is a record with code 3, code 4, or a block. For a
+   holdable record a sender MUST place the record in the receive ring of `B`
+   bytes, where `B` is the connection's `receive_ring_bytes` field, at the
+   ring span `[p, p + len16)`. `len16` is the record's length rounded up to a
+   multiple of the row `ring unit`. `p` is `ring_next` when the span does not
+   cross a multiple of `B`; otherwise `p` is the next multiple of `B`, and the
+   bytes between `ring_next` and `p` are padding. The sender MUST admit the
+   span only when `p + len16 - floor <= B`, where `floor` is the ring start of
+   `U'` when `U' < next` and `p` otherwise. A block MUST reserve the span of
+   all its fragments at once. A code 2 record that is not a block MUST take a
+   number and no ring bytes.
+5. When a record cannot be numbered under the count bound or the byte bound,
+   a sender MUST NOT number new reliable records until an acknowledgement
+   moves `U'`. It MAY keep resending unacknowledged records and MAY keep
+   writing unreliable records. A sender MUST count the first refusal of a
+   stall in `MESSAGE_WINDOW_STALL` and MUST NOT count further refusals until
+   numbering succeeds or `U'` moves.
+6. A sender MUST keep every number it sends inside `[U', U' + W)` and every
+   holdable span inside `B`. A receiver MUST police both claims as the checks
+   of [m4 Receiver checks](#m4) describe.
+
+### m5.2. Receiver reconstruction and window check
+
+For each reliable record, in wire order, the receiver reconstructs the 64-bit
+number `n` from the wire value `w` and its reference `R`, the lowest number it
+has not yet received:
+
+```
+d     = ( w - ( R mod 2^24 ) ) mod 2^24
+delta = d          when d < 2^23
+delta = d - 2^24   otherwise
+n     = R + delta
+```
+
+7. A receiver MUST use the half range exactly as stated: a difference at or
+   above the row `half range` is negative. A receiver MUST reconstruct against
+   the current `R` for each record.
+8. A receiver MUST apply these outcomes in this order:
+   1. When `delta < 0`, the record is a duplicate: the receiver MUST drop it,
+      MUST count `MESSAGE_DUPLICATE`, and MUST NOT treat it as a violation.
+   2. When `delta >= W` or `R + delta` exceeds the largest `u64`, the record is
+      a violation and the receiver MUST refuse the connection with
+      `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
+   3. When the descriptor at `n mod W` is live for a number other than `n`, the
+      record is a violation and the receiver MUST refuse the connection with
+      `MESSAGE_SLOT_COLLISION`.
+   4. Otherwise the record is accepted: the receiver MUST mark `n` received,
+      and while the number at `R` is marked received, MUST clear that mark and
+      MUST increment `R`.
+9. A duplicate is a normal outcome of a resend and carries no reliable
+   delivery. The receiver MUST NOT report the message to the application a
+   second time.
+
+### m5.3. Precondition on the connection layer
+
+10. The reconstruction is unambiguous only while both of these hold. The
+    connection layer's replay window depth MUST be no larger than the row
+    `replay window depth maximum`. Transport sequences MUST rise in the order
+    in which the message layer writes the packets' payloads.
+11. A stale copy that the replay window still opens is then at most the row
+    `stale copy bound` numbers behind `R`, and that value is below the row
+    `half range`. A receiver MUST refuse a stale copy as a duplicate under
+    rule 8.1 rather than read it as a fresh number.
+
+### m5.4. Constants and configuration
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| first number | `0` | number | the first reliable number of each direction |
+| number bits | `24` | bits | the width of the wire number |
+| number range | `16777216` | numbers | one more than the largest wire number |
+| number mask | `0xFFFFFF` | mask | the 24-bit wire value |
+| half range | `8388608` | numbers | the signed half range of the 24-bit counter |
+| ring unit | `16` | bytes | the unit of the ring offset and of `len16` |
+| fragment bytes | `1152` | bytes | the block stride |
+| window messages default | `1024` | records | the default of `window_messages` |
+| receive ring bytes default | `262144` | bytes | the default of `receive_ring_bytes` |
+| window messages limit | `1048576` | records | the largest valid `window_messages` |
+| replay window depth minimum | `4096` | sequences | the smallest valid connection layer replay depth |
+| replay window depth maximum | `32768` | sequences | the largest valid connection layer replay depth |
+| minimum numbered record | `7` | bytes | a code 2 header and one data byte |
+| numbered records per packet maximum | `202` | records | a payload's capacity divided by the minimum record |
+| block fragments maximum | `911` | records | the largest block that the largest message makes |
+| stale copy bound | `7668421` | numbers | the most a stale copy can lie behind `R` |
+
+### m5.5. Vectors
+
+The bytes of a reconstruction vector are one outcome byte followed, for an
+accepted record only, by the reconstructed number as a `u64` little-endian:
+`0x00` accepted, `0x01` duplicate, `0x02` violation. A conforming
+implementation produces the same outcome and the same number from the same
+inputs.
+
+```vector m5.reconstruct-at-wrap
+reference: 16777215
+wire number: 0
+outcome: accepted
+00 00 00 00 01 00 00 00 00
+```
+
+```vector m5.reconstruct-at-half-range
+reference: 8388608
+wire number: 0
+outcome: duplicate
+01
+```
+
+```vector m5.reconstruct-duplicate
+reference: 100
+wire number: 99
+outcome: duplicate
+01
+```
+
+```vector m5.reconstruct-stale-copy-at-depth
+reference: 7668421
+wire number: 0
+replay window depth maximum: 32768
+window messages limit: 1048576
+numbered records per packet maximum: 202
+block fragments maximum: 911
+outcome: duplicate
+01
+```
 
 <a id="m6"></a>
 ## m6. Delivery: unreliable codes 0 and 1
@@ -328,17 +469,152 @@ single delivery; vectors.
 <a id="m9"></a>
 ## m9. Acknowledgement mapping, resend and send budget
 
-Status: pending
+### m9.1. Acknowledgement mapping
 
-Scope: mapping RN-1 packet acknowledgements to records; resend timing and
-the reliable timeout; the send budget. Decided requirements this section
-states, with their pins: the send budget default is 1000 kilobits per second
-for a client (client to server) and 10000 kilobits per second for a server,
-per client (server to each client); both are configuration fields under
-[RN-1 t2 Architecture and key inventory](TRANSPORT.md#t2); a value of 0 or
-below disables the budget, and disabling it is NOT RECOMMENDED; a reliable
-record that does not fit the budget waits and is never dropped; an
-unreliable record that does not fit is dropped and counted.
+The connection layer reports which of a sender's packets the peer
+acknowledged. The message layer keeps its own reliable numbering, so it MUST
+translate each report into the reliable numbers and receipt serials that
+packet carried.
+
+A sender MUST keep a sent-packet map from the connection layer's sequence of
+each send to the reliable numbers and receipt serials that send carries. Every
+send, a resend included, MUST take a fresh sequence, so an acknowledgement
+names exactly one send. A sender MUST ignore an acknowledgement whose sequence
+the map does not hold.
+
+On an acknowledgement, for each number the packet carried that is still
+unacknowledged, the sender MUST mark the number acknowledged, remove it from
+its resend queue, advance the lowest unacknowledged number, and take one
+round-trip sample equal to the time between the send and the acknowledgement.
+A number that was already acknowledged MUST NOT be acknowledged or sampled a
+second time.
+
+### m9.2. Round-trip estimate and retransmission timeout
+
+The sender MUST estimate the round-trip time with the algorithm of RFC 6298
+over the samples of the acknowledgement mapping. The retransmission timeout
+MUST be
+
+    clamp( srtt x rto_scale_percent / 100 + 2 x rttvar, rto_min_ms, rto_max_ms )
+
+where srtt is the smoothed round-trip time and rttvar is its variation, both
+in seconds. Before the first sample the timeout MUST be rto_initial_ms. The
+timeout MUST NOT back off after a resend: every pass uses the same function of
+the samples, so a record that is never acknowledged is resent at the same
+delay until the reliable timeout ends the connection.
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| `rto_initial_ms` | `100` | ms | the timeout before the first round-trip sample |
+| `rto_min_ms` | `10` | ms | the smallest timeout the estimate may take |
+| `rto_max_ms` | `250` | ms | the largest timeout the estimate may take |
+| `rto_scale_percent` | `125` | percent | the srtt weight in the timeout |
+| `reliable_timeout_ms` | `10000` | ms | how long the oldest unacknowledged number may stand |
+| `resend_interval_ms` | `100` | ms | the cap on the resend delay of a single-packet record |
+| `min_resend_attempts` | `4` | count | the sends that fit before the reliable timeout |
+
+### m9.3. Resend classes and the reliable timeout
+
+A sender MUST keep two resend queues. A single-packet reliable record is in the
+small-record queue; a fragment of a block is in the chunk queue. A number MUST
+be in at most one queue.
+
+The resend delay of a single-packet record MUST be min( rto,
+resend_interval_ms ). The resend delay of a chunk MUST be min( rto,
+reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
+at the first update whose time is at least the number's last send plus its
+resend delay, and MUST NOT resend it before then. A resend MUST use a fresh
+connection layer sequence and MUST move the number to the tail of its queue.
+
+The sender MUST end the connection with ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT
+when the oldest unacknowledged reliable number has stood unacknowledged for
+reliable_timeout_ms or more, measured from its first send. A connection that
+ends with ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT MUST stop resending.
+
+### m9.4. Send budget
+
+Every connection MUST send at most its send budget, a rate in kilobits per
+second where 1 kbps is 1000 bit/s. The bytes counted MUST be the wire bytes of
+each sealed packet: the prefilter header, sequence, acknowledgement block,
+payload and tag, excluding the IP and UDP headers. A budget of K kbps is
+K x 125 bytes per second.
+
+The sender MUST hold the budget in a token bucket. The bucket starts full. It
+refills at the budget rate multiplied by the elapsed time since its last
+refill, and its contents MUST NOT exceed its depth. The depth MUST be the
+larger of 100 ms of the budget and one maximum packet, so that one maximum
+packet always fits an idle bucket and a stalled update releases at most 100 ms
+of budget at once. An update at or before the last refill time MUST NOT add
+tokens and MUST NOT move the refill time backwards.
+
+Within one update the sender MUST offer its items in this order: retransmits
+and ordered progress first, then new reliable records, then unreliable
+records. A reliable item that does not fit MUST wait for a later update and
+MUST NOT be dropped. Once a reliable item waits, every later item in that
+update MUST NOT spend the bucket. An unreliable item that does not fit MUST be
+dropped and counted as MESSAGE_UNRELIABLE_OVER_BUDGET. An item offered after a
+lower-priority class in the same update MUST be counted as an order refusal; a
+reliable item among them waits rather than spending bytes promised to the
+earlier class.
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| `client_default_kbps` | `1000` | kbps | the send budget of a new client connection |
+| `server_default_kbps` | `10000` | kbps | the send budget of a new server connection to one client |
+| `send_kbps_min` | `1` | kbps | the smallest enabled budget |
+| `send_kbps_max` | `10000000` | kbps | the largest budget |
+| `depth_seconds` | `0.1` | s | the bucket's time depth |
+| `maximum_packet_wire_bytes` | `1452` | bytes | one maximum packet, the smallest bucket depth |
+
+The client's budget to the server defaults to client_default_kbps and the
+server's budget to each client defaults to server_default_kbps. A positive
+value outside send_kbps_min to send_kbps_max MUST be refused and MUST leave the
+budget unchanged. A budget of 0 or less disables that direction's budget, so
+the endpoint sends unthrottled; disabling a budget is NOT RECOMMENDED.
+
+A setter MUST refill at the old rate up to its time argument, then apply the
+new rate and depth from that time, keeping the bucket's bytes capped at the new
+depth. The budget change is visible when the setter returns success.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| Open | a reliable item is offered | it fits and no reliable item waits | spend its bytes | Open |
+| Open | a reliable item is offered | it does not fit, or a reliable item waits | keep it for a later update | Waiting |
+| Open | an unreliable item is offered | it fits and no reliable item waits | spend its bytes | Open |
+| Open | an unreliable item is offered | it does not fit, or a reliable item waits | drop it and count it | Open |
+| Waiting | any item is offered | | an unreliable item is dropped and counted; a reliable item waits | Waiting |
+| Waiting | the update ends | | | Open |
+| Any | an item is offered after a lower-priority class | | count the order refusal; a reliable item waits | Waiting |
+
+### m9.5. Vectors
+
+```vector m9.resend-trace
+clock: 1000.0
+trace: short path: a 20 ms sample, resend passes at 0.040, 0.046, 0.090 and 0.091 seconds, reliable timeout checks at 9.999 and 10.000 seconds; long path: a 400 ms sample, resend passes at 0.400, 0.499 and 0.501 seconds
+00 01 00 01 00 01 04 01 00 01
+```
+
+The first seven bytes are the short path's resend counts at its four passes,
+then the timeout checks at 9.999 and 10.000 seconds, then the error value. The
+last three are the long path's resend counts.
+
+```vector m9.budget-trace
+clock: 1000.0
+rate: the client default
+trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, written whole and committed
+00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
+01 01 01 01
+```
+
+The first fourteen bytes are the decision for each offer in order: SEND,
+WAIT, DROP and REFUSED are 0, 1, 2 and 3; the setter's success is 1. They are
+the reliable item, the seven unreliable items that fit, the unreliable item
+that is dropped, the reliable item that waits, the unreliable item behind it
+that is dropped, the refill's reliable item, the setter and the new-rate
+reliable item. The last six bytes are, in order, the setter to 0 returning
+success, a packet request of more than zero, the item written larger than one
+maximum packet, the queue drained, no bytes charged to the budget and no
+unreliable item dropped.
 
 <a id="m10"></a>
 ## m10. Channels and priorities
@@ -381,7 +657,13 @@ It is generated; the bytes are in the sections.
 <!-- vector-index:begin -->
 | Section | Vector |
 |---|---|
+| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-at-half-range` |
+| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-at-wrap` |
+| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-duplicate` |
+| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-stale-copy-at-depth` |
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-loss-reorder` |
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-ordered-hold-drain` |
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-sequenced-hold-drain` |
+| [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.budget-trace` |
+| [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.resend-trace` |
 <!-- vector-index:end -->
