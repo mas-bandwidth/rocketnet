@@ -49,6 +49,15 @@
 // update spends the bucket. An unreliable item that does not fit the bytes
 // left to its class is dropped and counted.
 //
+// The uncapped case. A value of 0 or lower at the message layer means that
+// connection's budget does not apply: the endpoint passes no budget to its
+// packet builders (a NULL budget) and skips the bucket on its large
+// sequenced path, so nothing is dropped or delayed by the budget. Uncapping
+// is NOT RECOMMENDED (RFC 2119): without a budget there is no defined
+// behaviour when a sender outruns its path or its peer. The struct below and
+// its functions keep their rules for a capped connection: a budget of 1 kbps
+// to ROCKETNET_SEND_BUDGET_MAX_KBPS, and 0 is not a valid capped rate.
+//
 // Header only and allocation free: a plain struct the owner embeds in its
 // connection state (owner rule R2).
 
@@ -62,7 +71,9 @@
 #define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000       // server to each client slot
 
 #define ROCKETNET_SEND_BUDGET_MIN_KBPS                      1
+#ifndef ROCKETNET_SEND_BUDGET_MAX_KBPS
 #define ROCKETNET_SEND_BUDGET_MAX_KBPS                      10000000    // 10 Gbit/s per connection
+#endif
 #define ROCKETNET_SEND_BUDGET_DEPTH_SECONDS                 0.1         // the bucket holds 100 ms of budget...
 #define ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES         ROCKETNET_SEND_BUDGET   // ...and never less than one maximum packet
 
@@ -98,8 +109,8 @@ struct rocketnet_send_budget_t
     uint64_t refusals;                      // bad arguments
 };
 
-// a budget is valid from 1 kbps to ROCKETNET_SEND_BUDGET_MAX_KBPS; 0 is refused,
-// never read as "unlimited"
+// a capped budget is valid from 1 kbps to ROCKETNET_SEND_BUDGET_MAX_KBPS; 0 is
+// refused here and means uncapped at the message layer, which holds no bucket
 
 // tla/RNSendBudget.tla Init
 inline bool rocketnet_send_budget_kbps_valid( uint32_t kbps )

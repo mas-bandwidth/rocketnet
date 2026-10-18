@@ -33,8 +33,6 @@
 
 #define check rocketnet_unit_check
 
-// sizeof( rocketnet_message_config_t ) at BASE (ABI1): 15 int fields
-#define ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES 60
 
 static const double resend_timing_start = 1000.0;
 static const double resend_timing_tick = 1.0 / 60.0;
@@ -278,13 +276,14 @@ static void resend_timing_witness_replays()
 REGISTER_UNIT_TEST( resend_timing_witness_replays );
 
 // message_config_abi_size_is_unchanged: the ABI canary. The resend schedule's
-// interval and RTT scale are constants, so the public message config keeps
-// the layout ABI1 callers allocate: 15 int fields, as at BASE. A field added
-// to ROCKETNET_MESSAGE_CONFIG_TABLE grows this and fails here first.
+// interval and RTT scale are constants, so the public message config keeps the
+// revision its header names; revision 2 appends the two send-budget fields
+// after reliable_timeout_ms (docs/ABI-EVOLUTION.md 4).
 static void message_config_abi_size_is_unchanged()
 {
-    check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES );
-    check( offsetof( rocketnet_message_config_t, reliable_timeout_ms ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES - sizeof( int ) );
+    check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_BYTES_2 );
+    check( offsetof( rocketnet_message_config_t, reliable_timeout_ms ) == ROCKETNET_MESSAGE_CONFIG_BYTES_1 - sizeof( int ) );
+    check( offsetof( rocketnet_message_config_t, server_send_kbps ) == ROCKETNET_MESSAGE_CONFIG_BYTES_2 - sizeof( int ) );
 }
 
 REGISTER_UNIT_TEST( message_config_abi_size_is_unchanged );
