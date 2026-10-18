@@ -36,10 +36,6 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
 
-#define ROCKETNET_ADDRESS_NONE                                         0
-#define ROCKETNET_ADDRESS_IPV4                                         1
-#define ROCKETNET_ADDRESS_IPV6                                         2
-
 #define ROCKETNET_CONNECTION_TYPE_UNKNOWN                              0
 #define ROCKETNET_CONNECTION_TYPE_WIRED                                1
 #define ROCKETNET_CONNECTION_TYPE_WIFI                                 2

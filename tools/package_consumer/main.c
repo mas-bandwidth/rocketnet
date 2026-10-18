@@ -8,7 +8,8 @@
 #if !defined(EXPECT_SHARED) && defined(ROCKETNET_SHARED)
 #error Static consumer inherited the DLL import contract
 #endif
-/* The library asserts exactly when this build does: NDEBUG off. */
+/* This consumer builds in the package's configuration, so its NDEBUG is the
+   library's: the library asserts on a NULL query exactly when NDEBUG is off. */
 #ifdef NDEBUG
 #define EXPECTED_NULL_ASSERTIONS 0
 #else
@@ -46,6 +47,10 @@ int main(void)
     CHECK(expected_null_assertions == EXPECTED_NULL_ASSERTIONS);
     CHECK(rocketnet_assert_function_pointer != NULL);
     CHECK(rocketnet_num_counters() > 0);
+    for (int counter = 0; counter < rocketnet_num_counters(); counter++) {
+        CHECK(rocketnet_counter_name(counter) != NULL);
+        CHECK(rocketnet_counter_class(counter) >= 0 && rocketnet_counter_class(counter) < ROCKETNET_NUM_COUNTER_CLASSES);
+    }
     CHECK(rocketnet_init(NULL));
     rocketnet_forbid_xdp_commit();
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_ERROR);

@@ -134,6 +134,7 @@ def check_declarations(raw):
         elif ch == "}":
             depth -= 1
             if depth == 0 and re.match(r"[^{]*\)\s*\{", code[start:i]):
+                report(False, "(c) line %d: a function body: a public header declares, never defines" % line_of(code, start + len(code[start:i]) - len(code[start:i].lstrip())))
                 statements.append((start, code[start:i]))   # a function body ends its statement
                 start = i + 1
         elif ch == ";" and depth == 0:
@@ -150,8 +151,12 @@ def check_declarations(raw):
             continue
         first = offset + len(statement) - len(statement.lstrip())
         number = line_of(code, first)
-        if body.startswith("typedef ") or re.match(r"(struct|enum|union)\b[^(]*\{", body) or re.match(r"(struct|enum|union)\s+\w+$", body):
-            continue                                    # a type: an opaque handle, a struct, an enum, a typedef
+        if body.startswith("typedef ") or re.match(r"(struct|enum|union)\s+\w+$", body):
+            continue                                    # a typedef or an opaque handle
+        if re.match(r"(struct|enum|union)\b[^(]*\{", body):
+            if body[body.rindex("}") + 1:].strip():
+                report(False, "(c) line %d: data declared after a type body: %s" % (number, body[body.rindex("}") + 1:].strip()))
+            continue                                    # a struct or an enum
         if "(" not in body:
             report(False, "(c) line %d: a declaration that is neither a type nor a function: %s" % (number, body[:60]))
             continue
@@ -211,8 +216,17 @@ def system_libraries(build):
     return libraries + ["-lstdc++", "-lm", "-lpthread"]
 
 
+HEADER_ALONE_INCLUDES = {"main.c": {"rocketnet.h", "stdio.h", "string.h", "time.h"}, "main.cpp": {"main.c"}}
+
+
 def self_contained(build, config, compiler_c, compiler_cxx):
     sources = ROOT / "tools" / "header_alone"
+    # the programs include rocketnet.h and standard C headers only
+    for name, allowed in sorted(HEADER_ALONE_INCLUDES.items()):
+        included = re.findall(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', (sources / name).read_text(), flags=re.M)
+        extra = [header for header in included if header not in allowed]
+        report(not extra, "(d) tools/header_alone/%s includes %s" % (name, ", ".join(included)) +
+               ("" if not extra else ": not allowed: " + ", ".join(extra)))
     if sys.platform == "win32":
         library = build / config / "rocketnet_dev.lib"
     else:
@@ -221,19 +235,27 @@ def self_contained(build, config, compiler_c, compiler_cxx):
         report(False, "(d) no prebuilt development static library at %s" % library)
         return
     directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_"))
+    source_directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_source_"))
+    # no include path but the directory: the compiler's environment paths are cleared
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH", "INCLUDE")}
     try:
+        # the sources compile from their own directory, which holds only them,
+        # so a quoted include finds nothing beside the source
+        for name in HEADER_ALONE_INCLUDES:
+            shutil.copy(sources / name, source_directory / name)
         shutil.copy(HEADER, directory / "rocketnet.h")
         shutil.copy(library, directory / library.name)
         contents = sorted(os.listdir(directory))
         report(contents == sorted(["rocketnet.h", library.name]),
                "(d) the directory holds only %s" % ", ".join(contents))
         builds = [
-            ("C99", compiler_c, ["-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror"], sources / "main.c", "header_alone_c"),
-            ("C++11", compiler_cxx, ["-std=c++11", "-pedantic", "-Wall", "-Wextra", "-Werror"], sources / "main.cpp", "header_alone_cpp"),
+            ("C99", compiler_c, ["-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror"], source_directory / "main.c", "header_alone_c"),
+            ("C++11", compiler_cxx, ["-std=c++11", "-pedantic", "-Wall", "-Wextra", "-Werror"], source_directory / "main.cpp", "header_alone_cpp"),
         ]
         for name, compiler, flags, source, program in builds:
             if sys.platform == "win32":
-                command = ["cl", "/nologo", "/W4", "/WX", "/I", str(directory), "/TC" if name == "C99" else "/TP",
+                command = ["cl", "/nologo", "/W4", "/WX", "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory), "/TC" if name == "C99" else "/TP",
                            str(source), str(directory / library.name), "ws2_32.lib", "iphlpapi.lib", "advapi32.lib",
                            "/Fe:" + str(directory / (program + ".exe")), "/Fo:" + str(directory) + "\\"]
                 executable = directory / (program + ".exe")
@@ -241,7 +263,7 @@ def self_contained(build, config, compiler_c, compiler_cxx):
                 executable = directory / program
                 command = [compiler] + flags + ["-I", str(directory), str(source), str(directory / library.name)] + \
                           system_libraries(build) + ["-o", str(executable)]
-            result = subprocess.run(command, capture_output=True, text=True, cwd=directory)
+            result = subprocess.run(command, capture_output=True, text=True, cwd=directory, env=environment)
             if result.returncode != 0:
                 report(False, "(d) %s client and server build against rocketnet.h and %s alone: %s" %
                        (name, library.name, (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]))
@@ -256,6 +278,7 @@ def self_contained(build, config, compiler_c, compiler_cxx):
                 report(False, "(d) %s run did not finish in 60 seconds" % name)
     finally:
         shutil.rmtree(directory, ignore_errors=True)
+        shutil.rmtree(source_directory, ignore_errors=True)
 
 
 def main():

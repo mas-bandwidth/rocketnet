@@ -108,6 +108,10 @@
 
 #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
 
+#define ROCKETNET_ADDRESS_NONE                             0
+#define ROCKETNET_ADDRESS_IPV4                             1
+#define ROCKETNET_ADDRESS_IPV6                             2
+
 #define ROCKETNET_DRIVER_STRING_LENGTH                     64
 
 // rocketnet_malloc's alignment
@@ -286,7 +290,6 @@ struct rocketnet_message_client_t;
 struct rocketnet_message_server_t;
 struct rocketnet_frame_sync_t;
 struct rocketnet_counters_t;            // read through rocketnet_counter_value
-struct rocketnet_address_t;             // an admission callback's packet source
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
 // -----------------------------------------
@@ -690,6 +693,18 @@ ROCKETNET_EXPORT int rocketnet_client_transport_acked_packets( struct rocketnet_
 // bypasses the gate: it has already cleared the connect ladder, and this gate
 // is about admission, not session policing. The callback runs on the receive
 // thread and must be fast and thread-safe.
+
+// The packet source an admission callback reads: type is ROCKETNET_ADDRESS_IPV4
+// or ROCKETNET_ADDRESS_IPV6; an IPv4 address is data.ipv4[0..3] in dotted
+// order (a.b.c.d), an IPv6 address is data.ipv6[0..7], the eight groups in
+// host byte order; port is in host byte order.
+
+struct rocketnet_address_t
+{
+    union { uint32_t ip; uint8_t ipv4[4]; uint16_t ipv6[8]; } data;
+    uint16_t port;
+    uint8_t type;
+};
 
 typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 

@@ -12,15 +12,8 @@
 
 #include <stdint.h>
 
-#ifndef ROCKETNET_ADDRESS_ALREADY_DEFINED
-#define ROCKETNET_ADDRESS_ALREADY_DEFINED
-struct rocketnet_address_t
-{
-    union { uint32_t ip; uint8_t ipv4[4]; uint16_t ipv6[8]; } data;
-    uint16_t port;
-    uint8_t type;
-};
-#endif 
+// struct rocketnet_address_t is public: rocketnet.h defines it, for the
+// admission callback. The functions below are the SDK's own.
 
 #ifdef __cplusplus
 extern "C" {
