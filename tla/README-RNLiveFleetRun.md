@@ -22,8 +22,10 @@ measured records in `tla/RUNS.tsv`.
 - **The orchestrator** (`docs/LIVE-XDP.md` 9 and 12):
   - `ArmDeadman`
   - `LoadServer(h)`, only for `h = TestServer`
-  - `SshCheckPasses` / `SshCheckFails`: a fresh ssh connection inside 10 s
-    of the load, and the listen line.
+  - `SshCheckPasses` / `SshCheckFails`: a fresh ssh connection right after
+    the load. The 10 s bound itself is not modelled; the check's place in
+    the order (after the load, before the listen line) is.
+  - `ListenSeen`: the listen line in the status file.
   - `BeginTeardown`, when a client failed, the server is gone, the dead-man
     timer fired, or every client is done.
   - `StopClients`: only the clients it started; a client never started
@@ -38,8 +40,9 @@ measured records in `tla/RUNS.tsv`.
   - `ServerTimesOut(c)`: a slot is freed T ticks after its connection's last
     packet. This applies to a silent drop, and to a clean disconnect whose
     burst was lost.
-  - `WatchdogFires`: the heartbeat over ssh is stale, or the server died
-    with XDP attached. It kills the server and detaches.
+  - `WatchdogFires`: the orchestrator's heartbeat is stale (ssh down, or the
+    orchestrator dead), or the server died with XDP attached. It kills the
+    server and detaches.
   - `DeadmanFires`
 - **Each client's cycle** (`docs/LIVE-XDP.md` 6):
   - `StartClient`
@@ -54,6 +57,8 @@ measured records in `tla/RUNS.tsv`.
   - `ServerCrash`: the libxdp attachment outlives the process.
   - `ClientCrash(c)`
   - `Interrupted`: the orchestrator exits, and its trap runs teardown.
+  - `OrchestratorDies`: the orchestrator is killed without its trap; no
+    teardown runs and the heartbeat stops.
 - **Time** is a discrete `Tick`. The server's slot timeout, the dead-man
   timer and the watchdog are urgent: `Tick` is disabled while one of them is
   due.
@@ -67,12 +72,12 @@ here is only a count against `max_clients`.
 
 | Name | Kind | Statement |
 |---|---|---|
-| `XdpNeverOrphaned` | invariant | XDP is never attached while the server is gone, or ssh is down, for more than `WatchdogBound` ticks. |
+| `XdpNeverOrphaned` | invariant | XDP is never attached while the server is gone, or the orchestrator's heartbeat is stopped, for more than `WatchdogBound` ticks. |
 | `TeardownDetaches` | invariant | A finished run has no server running and no program attached. |
 | `XdpOnlyUnderDeadman` | invariant | XDP is attached only while the dead-man timer is armed. |
-| `NoClientBeforeListen` | invariant | No client starts before the server has listened. |
-| `NoBenchServer` | invariant | The server never runs on a bench. |
-| `ReconnectAfterTwoTimeouts` | invariant | Every reconnect follows a wait of 2 x T. |
+| `NoClientBeforeListen` | invariant, structural | No client starts before the server has listened. Held by StartClient's guard. |
+| `NoBenchServer` | invariant, structural | The server never runs on a bench. Held by LoadServer's guard. |
+| `ReconnectAfterTwoTimeouts` | invariant, structural | Every reconnect follows a wait of 2 x T. Held by Reconnect's guard; what the wait buys is `ReconnectIntoFreedSlot`. |
 | `ReconnectIntoFreedSlot` | invariant | A client's live connection never shares the server with its previous connection's slot. |
 | `NeverDenied` | invariant | With `max_clients` at least the client count, no connect is denied. |
 | `EndsStoppedAndDetached` | liveness | Every run ends with the server stopped and XDP detached. |
@@ -84,15 +89,15 @@ the control and one for each witness:
 
 | Case | Result | Distinct states | Seconds | Exit |
 |---|---|---:|---:|---:|
-| `MCRNLiveFleetRun.cfg` | PASS, invariants and liveness | 49,121 | 3.1 | 0 |
-| `MCRNLiveFleetRunBrokenXdpLeftAttached.cfg` | `TeardownDetaches` violated, as declared | 66 | 0.7 | 12 |
-| `MCRNLiveFleetRunBrokenServerOrphaned.cfg` | `XdpNeverOrphaned` violated, as declared | 124 | 0.7 | 12 |
+| `MCRNLiveFleetRun.cfg` | PASS, invariants and liveness | 60,111 | see `tla/RUNS.tsv` | 0 |
+| `MCRNLiveFleetRunBrokenXdpLeftAttached.cfg` | `TeardownDetaches` violated, as declared | see `tla/RUNS.tsv` | see `tla/RUNS.tsv` | 12 |
+| `MCRNLiveFleetRunBrokenServerOrphaned.cfg` | `XdpNeverOrphaned` violated, as declared | see `tla/RUNS.tsv` | see `tla/RUNS.tsv` | 12 |
 
 ## The counterexamples, checked by hand against the design
 
-- **`BrokenXdpLeftAttached`**, six states: ArmDeadman, LoadServer,
-  ServerCrash while the server is still starting, BeginTeardown, then Finish
-  with XDP attached. In the code, the detach runs only in
+- **`BrokenXdpLeftAttached`**: ArmDeadman, LoadServer, ServerCrash while
+  the server is still starting, BeginTeardown, then Finish with XDP
+  attached. In the code, the detach runs only in
   `rocketnet_server_socket_destroy`
   (`sdk/rocketnet_server_socket_linux.cpp:1627-1641`), and a crashed server
   never reaches it. The native attach
@@ -103,14 +108,21 @@ the control and one for each witness:
   the witness switch, the timers still stand down only once no program is
   attached, so `XdpOnlyUnderDeadman` holds and the run fails on the declared
   invariant alone.
-- **`BrokenServerOrphaned`**, seven states: ArmDeadman, LoadServer, SshDrop
-  right after the load, then three ticks with XDP attached and nothing to
-  detach it until the dead-man timer, far later. This is the shape of a
-  machine going dark while the session that would tear it down is gone. The
-  watchdog's heartbeat timeout is what bounds it.
+- **`BrokenServerOrphaned`**: ArmDeadman, LoadServer, then the heartbeat
+  stops, by SshDrop right after the load or by OrchestratorDies after the
+  ssh check (TLC with several workers reports either), then three ticks with
+  XDP attached and nothing to detach it until the dead-man timer, far later.
+  This is the shape of a machine going dark while the session that would
+  tear it down is gone. The watchdog's heartbeat timeout is what bounds it.
 
 The first draft's control failed `NoClientBeforeListen` in four states:
 Interrupted straight after ArmDeadman, then StopClients marked the
 never-started clients `done`. That was a modelling error, not a design one.
 Teardown stops only the clients it started, so `StopClients` and `Finish`
 now leave `built` clients alone. The design text already said so.
+
+The cold read of the first version found the orchestrator killed without its
+trap unmodelled (the watchdog then watched only ssh), and the ssh check
+ordered after the listen line where the design puts it before. Both are in
+the model now: `OrchestratorDies` stops the heartbeat, and `SshCheckPasses`
+precedes `ListenSeen`.
