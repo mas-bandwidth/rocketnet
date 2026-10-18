@@ -1,0 +1,6 @@
+# The rows of RN-1 t6 (TRANSPORT.md, Connect token). Section t6 states no
+# new named constant: every number it binds is a row of t3 (version, Ed25519
+# signature, sealed box overhead, connect token, signed connect data, sealed
+# block, private block, user data, token key, token identifier), pinned in
+# transport.tsv and referenced from t6 by name. Field tables and vectors
+# carry no pins.
