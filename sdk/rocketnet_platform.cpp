@@ -717,6 +717,280 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // ---------------------------------------------------
 
+#if defined(__linux__)
+
+// The Linux client's batch send/receive (#client-io-linux-mmsg). The B
+// I/O step sends a handed-off ring whole (RNClientIo IoSend) and drains
+// into the receive buffer (RNClientIo IoReceive); the batch pump seam's
+// portable loop (above) does that one syscall per packet, and these add
+// sendmmsg/recvmmsg so a frame crosses the socket in as few syscalls as
+// the platform allows. The chunk size keeps the stack arrays small and
+// bounded. Address conversion and the per-entry checks mirror the
+// per-packet send_packet/receive_packet, so a packet is sent, dropped or
+// delivered exactly as the portable path would.
+//
+// docs/CLIENT-IO.md The design (the batch seam, the I/O step) and Measured;
+// tla/RNClientIo.tla IoSend and IoReceive.
+
+#define ROCKETNET_MSS_BATCH 64
+
+// fill a sockaddr for one destination, mirroring send_packet's dual-stack
+// conversion. returns the sockaddr length, or 0 for an address the socket
+// cannot carry (logged exactly as the per-packet path logs it).
+
+static socklen_t rocketnet_platform_mmsg_fill_sockaddr( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, sockaddr_storage * storage )
+{
+    rocketnet_address_t to = *input_to;
+
+    if ( socket->ipv6 )
+    {
+        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+        {
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        }
+
+        sockaddr_in6 * socket_address = (sockaddr_in6*) storage;
+        memset( socket_address, 0, sizeof(sockaddr_in6) );
+        socket_address->sin6_family = AF_INET6;
+        for ( int i = 0; i < 8; ++i )
+        {
+            ( (uint16_t*) &socket_address->sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
+        }
+        socket_address->sin6_port = rocketnet_platform_htons( to.port );
+        return sizeof(sockaddr_in6);
+    }
+
+    if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+    {
+        rocketnet_error( "invalid address. could not send packet" );
+        return 0;
+    }
+
+    sockaddr_in * socket_address = (sockaddr_in*) storage;
+    memset( socket_address, 0, sizeof(sockaddr_in) );
+    socket_address->sin_family = AF_INET;
+    socket_address->sin_addr.s_addr = ( ( (uint32_t) to.data.ipv4[0] ) )       |
+                                      ( ( (uint32_t) to.data.ipv4[1] ) << 8 )  |
+                                      ( ( (uint32_t) to.data.ipv4[2] ) << 16 ) |
+                                      ( ( (uint32_t) to.data.ipv4[3] ) << 24 );
+    socket_address->sin_port = rocketnet_platform_htons( to.port );
+    return sizeof(sockaddr_in);
+}
+
+// convert one received sockaddr, mirroring receive_packet's mapped-address
+// normalization. returns false for a family the transport does not speak.
+
+static bool rocketnet_platform_mmsg_read_sockaddr( rocketnet_platform_socket_t * socket, const sockaddr_storage * storage, rocketnet_address_t * from )
+{
+    if ( storage->ss_family == AF_INET6 )
+    {
+        const sockaddr_in6 * addr_ipv6 = (const sockaddr_in6*) storage;
+        from->type = ROCKETNET_ADDRESS_IPV6;
+        for ( int i = 0; i < 8; ++i )
+        {
+            from->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t*) &addr_ipv6->sin6_addr ) [i] );
+        }
+        from->port = rocketnet_platform_ntohs( addr_ipv6->sin6_port );
+        if ( socket->ipv6 && rocketnet_address_is_ipv4_in_ipv6( from ) )
+        {
+            rocketnet_address_convert_ipv6_to_ipv4( from );
+        }
+        return true;
+    }
+
+    if ( storage->ss_family == AF_INET )
+    {
+        const sockaddr_in * addr_ipv4 = (const sockaddr_in*) storage;
+        from->type = ROCKETNET_ADDRESS_IPV4;
+        from->data.ipv4[0] = (uint8_t) ( ( addr_ipv4->sin_addr.s_addr & 0x000000FF ) );
+        from->data.ipv4[1] = (uint8_t) ( ( addr_ipv4->sin_addr.s_addr & 0x0000FF00 ) >> 8 );
+        from->data.ipv4[2] = (uint8_t) ( ( addr_ipv4->sin_addr.s_addr & 0x00FF0000 ) >> 16 );
+        from->data.ipv4[3] = (uint8_t) ( ( addr_ipv4->sin_addr.s_addr & 0xFF000000 ) >> 24 );
+        from->port = rocketnet_platform_ntohs( addr_ipv4->sin_port );
+        return true;
+    }
+
+    return false;
+}
+
+void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * socket, const rocketnet_platform_send_t * sends, int num_packets )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( sends || num_packets == 0 );
+
+    int base = 0;
+    while ( base < num_packets )
+    {
+        // build one chunk. an address the socket cannot carry is skipped
+        // here, already logged by the fill -- the same drop the per-packet
+        // path takes. map[] remembers each chunk entry's index in sends,
+        // so a refused entry can be named when it is dropped.
+
+        sockaddr_storage addresses[ROCKETNET_MSS_BATCH];
+        struct iovec iov[ROCKETNET_MSS_BATCH];
+        struct mmsghdr msg[ROCKETNET_MSS_BATCH];
+        int map[ROCKETNET_MSS_BATCH];
+
+        int count = 0;
+        int scanned = 0;
+        while ( base + scanned < num_packets && count < ROCKETNET_MSS_BATCH )
+        {
+            const rocketnet_platform_send_t * send = &sends[base + scanned];
+            rocketnet_assert( send->to );
+            rocketnet_assert( send->packet_data );
+            rocketnet_assert( send->packet_bytes > 0 );
+
+            socklen_t sockaddr_bytes = rocketnet_platform_mmsg_fill_sockaddr( socket, send->to, &addresses[count] );
+            if ( sockaddr_bytes != 0 )
+            {
+                memset( &msg[count], 0, sizeof(msg[count]) );
+                iov[count].iov_base = (void*) send->packet_data;
+                iov[count].iov_len = (size_t) send->packet_bytes;
+                msg[count].msg_hdr.msg_name = &addresses[count];
+                msg[count].msg_hdr.msg_namelen = sockaddr_bytes;
+                msg[count].msg_hdr.msg_iov = &iov[count];
+                msg[count].msg_hdr.msg_iovlen = 1;
+                map[count] = base + scanned;
+                count++;
+            }
+            scanned++;
+        }
+
+        int sent = 0;
+        while ( sent < count )
+        {
+            errno = 0;
+            int result = sendmmsg( socket->handle, msg + sent, (unsigned int) ( count - sent ), 0 );
+            if ( result > 0 )
+            {
+                sent += result;
+                continue;
+            }
+
+            if ( errno == EINTR )
+                continue;
+
+            // EAGAIN and the ordinary send weather: the socket cannot take
+            // more now. the per-packet send path logs and drops; drop the
+            // unsent tail the same way.
+            if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS )
+            {
+                for ( int i = sent; i < count; i++ )
+                {
+                    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+                    const rocketnet_platform_send_t * send = &sends[map[i]];
+                    rocketnet_address_to_string( send->to, address_string );
+                    rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( errno ) );
+                }
+                sent = count;
+                break;
+            }
+
+            // No message was sent in this call, so the first unsent entry is
+            // the one the kernel refused. Drop it as the per-packet path does,
+            // then retry the remaining entries in order.
+            const int error = errno;
+            char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+            const rocketnet_platform_send_t * send = &sends[map[sent]];
+            rocketnet_address_to_string( send->to, address_string );
+            rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+            sent += 1;
+        }
+
+        base += scanned;
+    }
+}
+
+int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( from );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_stride > 0 );
+    rocketnet_assert( packet_bytes );
+    rocketnet_assert( max_packets > 0 );
+
+    int total = 0;
+
+    while ( total < max_packets )
+    {
+        const int chunk_base = total;
+        int want = max_packets - chunk_base;
+        if ( want > ROCKETNET_MSS_BATCH )
+            want = ROCKETNET_MSS_BATCH;
+
+        sockaddr_storage addresses[ROCKETNET_MSS_BATCH];
+        struct iovec iov[ROCKETNET_MSS_BATCH];
+        struct mmsghdr msg[ROCKETNET_MSS_BATCH];
+        for ( int i = 0; i < want; i++ )
+        {
+            memset( &msg[i], 0, sizeof(msg[i]) );
+            iov[i].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
+            iov[i].iov_len = (size_t) packet_stride;
+            msg[i].msg_hdr.msg_name = &addresses[i];
+            msg[i].msg_hdr.msg_namelen = sizeof(addresses[i]);
+            msg[i].msg_hdr.msg_iov = &iov[i];
+            msg[i].msg_hdr.msg_iovlen = 1;
+        }
+
+        errno = 0;
+        int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT, NULL );
+        if ( result < 0 )
+        {
+            if ( errno == EINTR )
+                continue;
+            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+                return total;
+
+            // outside ordinary weather: stop draining, logged like the
+            // per-packet receive
+            rocketnet_debug( "recvmmsg failed with error %d", errno );
+            return total;
+        }
+
+        if ( result == 0 )
+            return total;
+
+        // walk the chunk in place. a truncated datagram or a family the
+        // transport does not speak (the per-packet path delivers neither)
+        // is compacted out: the next kept message's bytes move down to the
+        // gap. rare by nature and bounded by the chunk.
+
+        int kept = 0;
+        for ( int i = 0; i < result; i++ )
+        {
+            if ( msg[i].msg_hdr.msg_flags & MSG_TRUNC )
+                continue;
+            rocketnet_address_t parsed;
+            if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
+                continue;
+            const int bytes = (int) msg[i].msg_len;
+            if ( bytes <= 0 )
+                continue;
+            const uint8_t * source = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
+            uint8_t * target = packet_data + (size_t) ( chunk_base + kept ) * (size_t) packet_stride;
+            if ( target != source )
+            {
+                memmove( target, source, (size_t) bytes );
+            }
+            from[chunk_base + kept] = parsed;
+            packet_bytes[chunk_base + kept] = bytes;
+            kept++;
+        }
+
+        total += kept;
+
+        if ( result < want )
+            return total;
+    }
+
+    return total;
+}
+
+#endif // #if defined(__linux__)
+
+// ---------------------------------------------------
+
 struct thread_shim_data_t
 {
     void * context;

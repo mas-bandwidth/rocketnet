@@ -105,6 +105,17 @@ ROCKETNET_EXPORT_FUNC int rocketnet_platform_socket_receive_packets( struct rock
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
+// ----------------------------------------------------------------
+
+// The Linux client's batch send/receive (#client-io-linux-mmsg): sendmmsg
+// and recvmmsg on the I/O thread behind the same signatures as the seam
+// above. Internal, no export, defined only where __linux__ is set.
+
+#if defined(__linux__)
+void rocketnet_platform_socket_send_packets_mmsg( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
+int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
+#endif
+
 // The client I/O wake (the design's The wake section): a level-triggered wake
 // beside a socket. wait blocks until the wake is set, the socket is readable
 // (only when readable is true) or timeout_seconds pass, consumes a set wake,
