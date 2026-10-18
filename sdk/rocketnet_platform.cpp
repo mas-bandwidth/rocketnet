@@ -2770,8 +2770,8 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 // time
 
-// Sleep() rounds up to the system timer tick (15.6 ms by default) and the
-// old millisecond cast truncated a sub-millisecond request to Sleep(0), so the
+// Sleep() rounds up to the system timer tick (15.6 ms by default) and a
+// millisecond cast truncates a sub-millisecond request to Sleep(0), so the
 // sleep waits on a per-thread high-resolution waitable timer instead (Windows
 // 10 1803 and later), which keeps the system-wide timer resolution untouched.
 // Where that timer cannot be created, the fallback raises the timer to 1 ms
