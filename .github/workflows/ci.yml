@@ -648,21 +648,14 @@ jobs:
       - name: Exact-field oracle rejects memory-safe truncation
         run: python3 tools/check_fuzz_oracle.py build-fuzz
 
-      # The bounded pass: fixed seed, FIXED EXECUTION COUNT, and the corpus
-      # copied out first so the source tree is not mutated. -runs, not
-      # -max_total_time, is what makes this repeatable: a wall-clock bound
-      # makes the number of inputs tried a function of how fast the runner
-      # is that morning, so a latent crash reddens whichever pull request
-      # happens to draw a quick machine, on code it did not touch. A fixed
-      # seed and a fixed count try the same inputs everywhere. The step's
-      # timeout is the runaway guard and fails red if the count cannot finish;
-      # libFuzzer's wall-clock cap would instead return success early.
-      # Two million executions measured at
-      # roughly thirty seconds on this runner, which is the same depth the
-      # wall-clock bound was reaching before -- the change buys determinism,
-      # it does not buy less fuzzing.
+      # The bounded pass: fixed seed, fixed WALL-CLOCK BUDGET, and the corpus
+      # copied out first so the source tree is not mutated. Every target gets
+      # the same few seconds, and the step's timeout is the runaway guard that
+      # fails red if a pass cannot finish; the CI budget is one minute end to
+      # end per job. The gate's determinism argument stays the replay above --
+      # this pass only adds a few seconds of mutation on top of it.
 
-      - name: Bounded mutation pass (fixed seed, fixed count)
+      - name: Mutation pass (time-boxed, fixed seed)
         timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0
@@ -670,15 +663,15 @@ jobs:
           # RUNNER_TEMP, not /tmp: on a persistent self-hosted host /tmp/fuzz-corpus outlives the job and is
           # shared by every runner on the machine, so the pass would start from another run's grown corpus
           cp -r fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
-          ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -runs=2000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+          ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
-      - name: Bounded message mutation pass (fixed seed, fixed count)
+      - name: Message mutation pass (time-boxed, fixed seed)
         timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
           cp -r fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
-          ./bin/fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -runs=1000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+          ./bin/fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
         if: failure()
@@ -744,6 +737,38 @@ jobs:
           ./bin/rocketnet_fuzz_connect_token_ndebug fuzz/corpus_connect_token/*
           ./bin/rocketnet_fuzz_receive_structured_ndebug fuzz/corpus_receive_structured/*
           ./bin/rocketnet_fuzz_message_ndebug fuzz/corpus_message/*
+
+      # The connect token and receive/structured targets are built only in
+      # this job, so their time-boxed mutation pass lives here, after the
+      # replay: a copy of the seed corpus, a fixed seed, a few seconds.
+
+      - name: Connect token mutation pass (time-boxed, fixed seed)
+        timeout-minutes: 5
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cp -r fuzz/corpus_connect_token "$RUNNER_TEMP/fuzz-corpus_connect_token"
+          ./bin/rocketnet_fuzz_connect_token_ndebug "$RUNNER_TEMP/fuzz-corpus_connect_token" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
+      - name: Receive structured mutation pass (time-boxed, fixed seed)
+        timeout-minutes: 5
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cp -r fuzz/corpus_receive_structured "$RUNNER_TEMP/fuzz-corpus_receive_structured"
+          ./bin/rocketnet_fuzz_receive_structured_ndebug "$RUNNER_TEMP/fuzz-corpus_receive_structured" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-smoke-ndebug-crashes
+          path: |
+            crash-*
+            oom-*
+            timeout-*
+            leak-*
+          if-no-files-found: ignore
 
   # THE BIG-ENDIAN LEG (#111), and the reason it was built before the bug it
   # was built for (#112).

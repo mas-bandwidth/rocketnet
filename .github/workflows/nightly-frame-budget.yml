@@ -1,0 +1,98 @@
+# Nightly client per-frame main-thread budget gate.
+#
+# Runs client_main_thread_cost at P=32 (2000 measured frames, 3 runs) and gates
+# the median total_us_p99 <= 100 us on the dedicated quiet Linux runner
+# ([self-hosted, Linux, X64, rocketnet-quiet]).
+#
+# Shared hosted runners (macos-15 with msgx and windows-2025 with portable) run
+# the same script with --report-only so their per-frame latency numbers are
+# recorded every night without flaking the gate on noisy multi-tenant hosts.
+#
+# Hosted minutes budget:
+#   - linux-frame-budget:   0 hosted minutes (self-hosted rocketnet-quiet)
+#   - macos-frame-budget:   timeout-minutes: 10 (~1-2 min/night actual)
+#   - windows-frame-budget: timeout-minutes: 10 (~2 min/night actual)
+
+name: Nightly Client Frame Budget
+
+on:
+  schedule:
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-frame-budget-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-frame-budget:
+    name: frame budget (${{ matrix.ref }} / linux-quiet portable)
+    runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [main, sprint/rocketnet-proof]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Configure and build client_main_thread_cost (Release)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target client_main_thread_cost --parallel
+
+      - name: Enforce P=32 frame budget (portable)
+        run: |
+          python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --driver portable
+
+  macos-frame-budget:
+    name: frame budget (${{ matrix.ref }} / macos-15 msgx report-only)
+    runs-on: macos-15
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [main, sprint/rocketnet-proof]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Configure and build client_main_thread_cost (Release)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target client_main_thread_cost --parallel
+
+      - name: Report P=32 frame budget (msgx, report-only)
+        run: |
+          python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --driver msgx --report-only
+
+  windows-frame-budget:
+    name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
+    runs-on: windows-2025
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [main, sprint/rocketnet-proof]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build client_main_thread_cost (Release)
+        run: cmake --build build --config Release --target client_main_thread_cost --parallel
+
+      - name: Report P=32 frame budget (portable, report-only)
+        run: python tools/check_frame_budget.py --bin ./bin/Release/client_main_thread_cost.exe --driver portable --report-only
