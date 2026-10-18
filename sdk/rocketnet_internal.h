@@ -436,10 +436,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( rto_initial_ms,            100,     10, 60000,                  0 )                                         \
     INT_FIELD( rto_min_ms,                 10,      1, 60000,                  0 )                                         \
     INT_FIELD( rto_max_ms,                250,     10, 60000,                  0 )                                         \
-    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )
+    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
+    INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 ) \
+    INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )
 
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( int ) )
-#define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1
+#define ROCKETNET_MESSAGE_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, server_send_kbps ) + sizeof( int ), sizeof( int ) )
+#define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1, ROCKETNET_MESSAGE_CONFIG_BYTES_2
 
 // The public config structs in rocketnet.h are written out field by field;
 // the tables above are the declarations the parse, the validation, the env
