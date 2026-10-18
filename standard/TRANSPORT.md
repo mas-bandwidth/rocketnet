@@ -562,24 +562,29 @@ a row marked server or client applies only at that end.
     only after the open succeeds.
 12. A receiver MUST open the sealed data with the key for the type and the
     associated data of [t9 Packet protection](#t9). A packet that does not
-    open is `DID_NOT_OPEN`, and this check alone increments the
-    integrity-failure count that
-    [t14 Replay protection](#t14) bounds.
+    open, or whose required handshake plaintext size is not exact, is
+    `DID_NOT_OPEN`; this check alone increments the integrity-failure count
+    that [t14 Replay protection](#t14) bounds.
 13. A server MUST reject a session packet whose mapping has no assigned
     slot as `NOT_CONNECTED`, after the open and before marking the sequence.
 14. For the session types, a receiver MUST mark the sequence received and
     then advance the most recent sequence.
-15. A receiver MUST read the ack block at the front of the opened data as
-    [t15 Acknowledgement](#t15) specifies. A malformed block is
-    `BAD_ACK_BLOCK`; the type data behind it is not examined.
-16. A receiver MUST check the opened size less the ack block against the
-    type. A mismatch is `WRONG_OPENED_SIZE`.
-17. A receiver MUST apply the type's own check on its sized data. Each
-    refusal increments the type's counter for that cause, as
-    [t16 Fragmentation and reassembly](#t16) specifies for fragments.
-18. Only after every check passes does the receiver apply the ack block's
-    delivery information, refresh the connection's receive time, and
-    dispatch the type's action.
+15. For session types, a receiver MUST read and validate the ack block at
+    the front of the opened data as [t15 Acknowledgement](#t15) specifies. A
+    malformed block is `BAD_ACK_BLOCK`; the type data behind it is not
+    examined. Handshake types have no ack block.
+16. For session types, a receiver MUST check the opened size less the ack
+    block against the type. A mismatch is `WRONG_OPENED_SIZE`.
+17. Before applying the ack block, a client MUST validate the index and
+    slot count in a keep-alive. An invalid value is
+    `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+18. After the session checks pass, a receiver MUST apply the ack block's
+    delivery information and refresh the connection's receive time, then
+    perform the type-specific processing. A type-specific refusal increments
+    its counter; a fragment refusal does not undo the ack information or
+    receive-time refresh, as [t16 Fragmentation and reassembly](#t16)
+    specifies. Handshake types follow their type-specific processing after
+    their checks pass.
 
 | Step | Check | Position | Refusal counter |
 |---|---|---|---|
@@ -592,11 +597,12 @@ a row marked server or client applies only at that end.
 | 8 | server mapping | before decryption | `NO_MAPPING` |
 | 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
 | 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
-| 12 | sealed open | decryption | `DID_NOT_OPEN` |
+| 12 | sealed open and required handshake plaintext size | decryption | `DID_NOT_OPEN` |
 | 13 | server slot gate | after decryption, before the replay mark | `NOT_CONNECTED` |
-| 15 | ack block | after decryption | `BAD_ACK_BLOCK` |
-| 16 | opened size | after decryption | `WRONG_OPENED_SIZE` |
-| 17 | type data | after decryption | the type's own counters |
+| 15 | session ack block | after decryption | `BAD_ACK_BLOCK` |
+| 16 | session opened size less the ack block | after decryption | `WRONG_OPENED_SIZE` |
+| 17 | client keep-alive index and slot count | after decryption, before ack application | `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE` |
+| 18 | type-specific processing | after session ack application, or after handshake checks | the type's own counters |
 
 The fixed sizes of the handshake types, the minimum wire sizes of the session
 types, and the response padding are:
