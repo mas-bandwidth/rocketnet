@@ -211,26 +211,19 @@ static void server_transport_create_ex_reports_every_status()
 
     // S12: a port-zero address refused by a non-discovering driver (XDP) is
     // DRIVER_PORT_ZERO_UNSUPPORTED. The xdp row exists only on Linux:
-    // elsewhere the ladder skips "xdp" for the platform and, with nothing
-    // left in the list, falls to this platform's auto order, whose drivers
-    // discover the bound port, so the create succeeds on another driver.
+    // elsewhere the ladder skips "xdp" for the platform and falls to the
+    // auto order (sdk/rocketnet_tests.cpp checks that fall), whose drivers
+    // open a real socket, so off Linux the case is a named skip
     {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
         strcpy( config.driver, "xdp" );
         status = -1;
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED );
 #else
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex(
-            &state, "127.0.0.1:0", &config, 1000.0, &status );
-        check( server != NULL );
-        check( status == ROCKETNET_STATUS_OK );
-        check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) != 0 );
-        check( rocketnet_server_transport_port( server ) != 0 );
-        rocketnet_server_transport_destroy( server );
-        check( state.live == 0 );
+        printf( "server_transport_create_ex_reports_every_status S12 [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
 #endif
     }
 
