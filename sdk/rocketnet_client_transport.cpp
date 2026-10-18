@@ -154,7 +154,19 @@ struct rocketnet_client_transport_t
     struct rocketnet_send_arena_t * send_arena;
     struct rocketnet_reassembly_set_t * reassembly;
 
-    struct rocketnet_client_payload_ring_t payload_ring;
+    // two rings of one layout (docs/CLIENT-IO.md _The hand-off and the two
+    // rings_): game threads fill payload_ring[client_io.rings.fill]. The BASE
+    // path never hands off, so it fills ring 0 only.
+    struct rocketnet_client_payload_ring_t payload_ring[2];
+
+    // the I/O thread design (docs/CLIENT-IO.md): true when the granted
+    // driver has wait and wake; step_driven when no I/O thread runs and the
+    // caller calls rocketnet_client_io_step itself (unit tests)
+    bool io_thread;
+    bool step_driven;
+    rocketnet_client_io_t client_io;
+    uint64_t stats_counted;                             // Filling ring slots already counted into the stats
+    double (*time_callback)( void * context );          // the receive stamp clock, read once at create
 
     struct rocketnet_counters_t counters;
     struct rocketnet_client_protocol_t protocol;
@@ -167,6 +179,34 @@ struct rocketnet_client_transport_t
 };
 
 static void rocketnet_client_thread_function( void * data );
+
+// the ring game threads fill: the one rings.fill names (always ring 0 on the
+// BASE path, which never hands off)
+static inline struct rocketnet_client_payload_ring_t * rocketnet_client_fill_ring( rocketnet_client_transport_t * client_transport )
+{
+    return &client_transport->payload_ring[client_transport->client_io.rings.fill];
+}
+
+// the ring a frame of either ring lives in
+static inline struct rocketnet_client_payload_ring_t * rocketnet_client_frame_ring( rocketnet_client_transport_t * client_transport, const uint8_t * frame )
+{
+    struct rocketnet_client_payload_ring_t * other = &client_transport->payload_ring[1];
+    if ( frame >= other->data && frame < other->data + sizeof( other->data ) )
+        return other;
+    return &client_transport->payload_ring[0];
+}
+
+// NULL time_callback: rocketnet_platform_time as double (*)( void * )
+static double rocketnet_client_platform_time( void * context )
+{
+    (void) context;
+    return rocketnet_platform_time();
+}
+
+bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_operations_t * operations )
+{
+    return operations && operations->wait && operations->wake;
+}
 
 // rocketnet_client_transport_default_config lives in rocketnet_config.cpp,
 // written from the config table so every default is declared exactly once
@@ -235,7 +275,29 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     return rocketnet_client_transport_create_ex( context, connect_token, config, time, NULL );
 }
 
+static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
+    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context );
+
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
+{
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
+    const rocketnet_client_driver_operations_t * operations, void * driver_context )
+{
+    if ( !operations )
+        return NULL;
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, driver_context );
+}
+
+rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_transport_t * client_transport )
+{
+    return client_transport && client_transport->io_thread ? &client_transport->client_io : NULL;
+}
+
+static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
+    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -505,8 +567,12 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * cont
 
         const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
         const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config };
-        if ( rocketnet_client_driver_open( definition && definition->backend ? definition->backend->client : NULL,
-                client_transport->context, &driver_config, &bind_address, &client_transport->io ) )
+        // the step-driven create (unit tests) opens the caller's operations
+        // in place of the candidate's backend
+        const rocketnet_client_driver_operations_t * operations = step_driven_operations ? step_driven_operations :
+            ( definition && definition->backend ? definition->backend->client : NULL );
+        if ( rocketnet_client_driver_open( operations, step_driven_operations ? step_driven_driver_context : client_transport->context,
+                &driver_config, &bind_address, &client_transport->io ) )
             granted_driver = candidate;
 
         if ( granted_driver < 0 )
@@ -558,7 +624,45 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * cont
         return NULL;
     }
 
-    client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_thread_function, client_transport );
+    // the clock (docs/CLIENT-IO.md _The clock_): read once here; NULL means
+    // rocketnet_platform_time
+    client_transport->time_callback = config->time_callback ? config->time_callback : rocketnet_client_platform_time;
+
+    // a driver with wait and wake runs the I/O thread design of
+    // docs/CLIENT-IO.md through rocketnet_client_io_t, modelled by
+    // tla/RNClientIo.tla (every RNClientIo action named here); any other
+    // keeps the BASE path: per-packet sends on the main thread and the
+    // polling receive thread under the mutex
+    client_transport->io_thread = rocketnet_client_transport_uses_io_thread( client_transport->io.operations );
+
+    // the step-driven create (unit tests) runs no thread on either path
+    client_transport->step_driven = step_driven_operations != NULL;
+
+    if ( client_transport->io_thread )
+    {
+        rocketnet_client_io_ring_view_t views[2];
+        for ( int i = 0; i < 2; i++ )
+        {
+            views[i].data = client_transport->payload_ring[i].data;
+            views[i].frame_stride = ROCKETNET_FRAME_STRIDE;
+            views[i].wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
+            views[i].wire_bytes = (const uint8_t *) &client_transport->payload_ring[i].info[0].wire_bytes;
+            views[i].wire_bytes_stride = sizeof( struct rocketnet_client_payload_slot_info_t );
+        }
+        rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
+            { &client_transport->receive_buffer[0], &client_transport->receive_buffer[1] };
+        rocketnet_client_io_init( &client_transport->client_io, &client_transport->io, &views[0], &views[1], buffers,
+                                  client_transport->time_callback, client_transport->context );
+
+        if ( client_transport->step_driven )
+            return client_transport;
+
+        client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io );
+    }
+    else if ( client_transport->step_driven )
+        return client_transport;
+    else
+        client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_thread_function, client_transport );
     if ( !client_transport->thread )
     {
         rocketnet_error( "client could not create thread" );
@@ -577,7 +681,48 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
         return;
     rocketnet_assert( client_transport );
 
-    if ( client_transport->thread )
+    if ( client_transport->io_thread && ( client_transport->thread || client_transport->step_driven ) )
+    {
+        // docs/CLIENT-IO.md _Stop and destroy order_: the last hand-off,
+        // waiting for the other ring to be Sent if it must (only destroy
+        // waits; RNClientIo CommittedEventuallyHandedOff), then Stop, Join,
+        // close and free (FreedOnlyAfterJoin). The step-driven mode runs the
+        // step in place of the sleep and the join.
+        rocketnet_client_io_t * io = &client_transport->client_io;
+        struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
+        uint64_t committed = ring->num_packets;
+        if ( committed > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
+            committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
+        if ( committed > 0 )
+        {
+            const int other = io->rings.fill ^ 1;
+            while ( true )
+            {
+                const int state = io->rings.state[other].load( std::memory_order_acquire );
+                if ( state == ROCKETNET_CLIENT_RING_SENT || state == ROCKETNET_CLIENT_RING_FILLING )
+                    break;
+                if ( client_transport->step_driven )
+                    rocketnet_client_io_step( io, false );
+                else
+                    rocketnet_platform_sleep( 0.0001 );
+            }
+            rocketnet_client_send_rings_reopen( &io->rings, other );
+            const int result = rocketnet_client_io_hand_off( io, committed, &client_transport->protocol.server_address );
+            rocketnet_assert( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+            (void) result;
+        }
+        rocketnet_client_io_stop( io );
+        if ( client_transport->step_driven )
+        {
+            while ( rocketnet_client_io_step( io, false ) != ROCKETNET_CLIENT_IO_EXITED ) {}
+        }
+        else
+        {
+            rocketnet_platform_thread_join( client_transport->thread );
+            rocketnet_platform_thread_destroy( client_transport->thread );
+        }
+    }
+    else if ( client_transport->thread )
     {
         client_transport->quit = true;
         rocketnet_platform_thread_join( client_transport->thread );
@@ -666,6 +811,81 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
             client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL]++;
         }
     }
+}
+
+// RNClientIo HandOff and Defer; main thread, I/O thread path only, with the
+// fills joined. The stats count a slot at the hand-off attempt that first sees
+// it committed (stats_counted keeps a deferred slot from counting twice), not
+// when the I/O thread sends it (docs/CLIENT-IO.md _Reuse only after sent; a hand-off never
+// waits_). The committed slots of the Filling ring are counted into the stats
+// once, then handed to the I/O thread. A ROCKETNET_CLIENT_RINGS_LATE result is
+// the deferred hand-off: it counts CLIENT_SEND_DEFERRED and returns at once,
+// the committed slots staying in the Filling ring, open to the game threads,
+// for the next hand-off from send_packet, send_packets or update. No spin, no
+// yield, no retry; a ring the I/O thread holds is never reused
+// (HandOffNeverWaits, NoReuseBeforeSent).
+
+static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t * client_transport )
+{
+    struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
+
+    uint64_t committed = ring->num_packets;
+    if ( committed > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
+        committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
+
+    const int stats_index = client_transport->current_stats_index;
+
+    for ( uint64_t i = client_transport->stats_counted; i < committed; i++ )
+    {
+        if ( ring->info[i].wire_bytes > 0 )
+        {
+            client_transport->stats_frames[stats_index].packets_sent++;
+            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        }
+    }
+    client_transport->stats_counted = committed;
+
+    if ( committed == 0 )
+        return;
+
+    const int result = rocketnet_client_io_hand_off( &client_transport->client_io, committed, &client_transport->protocol.server_address );
+
+    if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF )
+    {
+        // RNClientIo Reopen ran inside the hand-off: the ring rings.fill now
+        // names is Filling and empty
+        rocketnet_client_fill_ring( client_transport )->num_packets = 0;
+        client_transport->stats_counted = 0;
+    }
+    else if ( result == ROCKETNET_CLIENT_RINGS_LATE )
+    {
+        client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED]++;
+    }
+}
+
+// RNClientIo Write and Commit for a packet the main thread built: the
+// protocol packet of update and the disconnect burst are sealed into a slot of
+// the Filling ring like a payload (docs/CLIENT-IO.md _The protocol packet and
+// disconnect_), and leave with the next hand-off. No driver send on the main
+// thread in the I/O thread path. A full Filling ring drops the packet and
+// counts SEND_RING_FULL, as start_packet refuses a payload.
+
+static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes )
+{
+    rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+
+    struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
+
+    uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
+    if ( slot >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
+    {
+        rocketnet_spam( "client payload ring full. protocol packet dropped" );
+        rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+        return;
+    }
+
+    memcpy( ring->data + slot * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET, packet_data, (size_t) packet_bytes );
+    ring->info[slot].wire_bytes = packet_bytes;
 }
 
 static void rocketnet_client_update_swap_receive_buffers( rocketnet_client_transport_t * client_transport )
@@ -770,9 +990,19 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     client_transport->protocol.num_acked = 0;
 
-    rocketnet_client_update_swap_receive_buffers( client_transport );
+    // RNClientIo Expose (docs/CLIENT-IO.md _The receive path_, update step 1):
+    // a Ready buffer becomes Exposed and is processed exactly as at BASE. The
+    // BASE path swaps under the mutex.
 
-    struct rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[client_transport->receive_buffer_index];
+    struct rocketnet_client_receive_buffer_t * receive_buffer = NULL;
+
+    if ( client_transport->io_thread )
+        receive_buffer = rocketnet_client_io_expose( &client_transport->client_io );
+    else
+    {
+        rocketnet_client_update_swap_receive_buffers( client_transport );
+        receive_buffer = &client_transport->receive_buffer[client_transport->receive_buffer_index];
+    }
 
     client_transport->received_packets.num_packets = 0;
     client_transport->received_packets.receive_index = 0;
@@ -784,7 +1014,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     const int stats_index = client_transport->current_stats_index;
 
-    for ( int i = 0; i < receive_buffer->num_packets; i++ )
+    for ( int i = 0; receive_buffer && i < receive_buffer->num_packets; i++ )
     {
         client_transport->stats_frames[stats_index].packets_received++;
         client_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
@@ -792,14 +1022,30 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         rocketnet_client_process_packet( client_transport, &receive_buffer->from[i], receive_buffer->packet_data[i], (int) receive_buffer->packet_bytes[i], current_time, receive_buffer->receive_time[i] );
     }
 
-    receive_buffer->num_packets = 0;
+    if ( receive_buffer )
+        receive_buffer->num_packets = 0;
 
     // the protocol's scheduled send and its deadlines
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client_transport->protocol, current_time, packet, &packet_bytes );
-    if ( packet_bytes > 0 )
+    if ( client_transport->io_thread )
+    {
+        // the protocol packet is sealed into a slot of the Filling ring
+        // (counted into the stats by the hand-off); then RNClientIo Return
+        // (update step 2: whether or not anything was exposed this frame, the
+        // held buffer goes back Free, and the I/O thread is woken when it owes
+        // a publish), then a hand-off attempt every frame, which retries any
+        // deferred slots and hands off this packet
+        if ( packet_bytes > 0 )
+            rocketnet_client_transport_io_commit_packet( client_transport, packet, packet_bytes );
+
+        rocketnet_client_io_return( &client_transport->client_io );
+
+        rocketnet_client_transport_io_hand_off( client_transport );
+    }
+    else if ( packet_bytes > 0 )
     {
         client_transport->stats_frames[stats_index].packets_sent++;
         client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
@@ -873,7 +1119,8 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         // at or under the wire's capacity: a real wire frame, written in
         // place, sealed in place, zero copies
 
-        struct rocketnet_client_payload_ring_t * ring = &client_transport->payload_ring;
+        // the ring rings.fill names (RNClientIo Write)
+        struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
 
         uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
         if ( slot >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
@@ -934,8 +1181,9 @@ static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_
 
     if ( !rocketnet_send_arena_owns( client_transport->send_arena, context->frame ) )
     {
-        const uint64_t slot = (uint64_t) ( context->frame - client_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
-        client_transport->payload_ring.info[slot].wire_bytes = 0;
+        struct rocketnet_client_payload_ring_t * ring = rocketnet_client_frame_ring( client_transport, context->frame );
+        const uint64_t slot = (uint64_t) ( context->frame - ring->data ) / ROCKETNET_FRAME_STRIDE;
+        ring->info[slot].wire_bytes = 0;
     }
     // an arena slot needs no undo: the flush reclaims the whole arena
 
@@ -987,7 +1235,8 @@ void rocketnet_client_transport_abort_packet( rocketnet_client_transport_t * cli
 
 static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
-    struct rocketnet_client_payload_ring_t * ring = &client_transport->payload_ring;
+    // the ring rings.fill names (RNClientIo Write, Commit)
+    struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
 
     if ( payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES )
     {
@@ -1108,8 +1357,10 @@ static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_
         return 0;
     }
 
-    const uint64_t slot = (uint64_t) ( context->frame - client_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
-    client_transport->payload_ring.info[slot].wire_bytes = wire_bytes;
+    // RNClientIo Commit: sealed in place in the ring the frame lives in
+    struct rocketnet_client_payload_ring_t * ring = rocketnet_client_frame_ring( client_transport, context->frame );
+    const uint64_t slot = (uint64_t) ( context->frame - ring->data ) / ROCKETNET_FRAME_STRIDE;
+    ring->info[slot].wire_bytes = wire_bytes;
     context->frame = NULL;
 
     return wire_bytes;
@@ -1142,7 +1393,17 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
     rocketnet_assert( client_transport );
     client_transport->packet_leases.reset();
 
-    struct rocketnet_client_payload_ring_t * ring = &client_transport->payload_ring;
+    if ( client_transport->io_thread )
+    {
+        // RNClientIo HandOff or Defer: no driver call on the main thread.
+        // The arena resets as at BASE: finish already copied every arena
+        // write into ring slots, so the I/O thread never reads the arena.
+        rocketnet_client_transport_io_hand_off( client_transport );
+        rocketnet_send_arena_reset( client_transport->send_arena );
+        return;
+    }
+
+    struct rocketnet_client_payload_ring_t * ring = &client_transport->payload_ring[0];
 
     uint64_t num_packets = ring->num_packets;
     if ( num_packets > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
@@ -1319,6 +1580,18 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
 
     if ( client_transport->protocol.state != state_before && client_transport->config.state_change_callback )
         client_transport->config.state_change_callback( client_transport->context, state_before, client_transport->protocol.state );
+
+    if ( client_transport->io_thread )
+    {
+        // the burst is sealed into slots of the Filling ring and handed off
+        // like any packet: deferred when the other ring is busy, retried by
+        // the next update, and handed off by destroy at the latest
+        // (docs/CLIENT-IO.md _The protocol packet and disconnect_)
+        for ( int i = 0; i < burst_count; i++ )
+            rocketnet_client_transport_io_commit_packet( client_transport, burst + i * ROCKETNET_SEND_BUDGET, burst_bytes );
+        rocketnet_client_transport_io_hand_off( client_transport );
+        return;
+    }
 
     const int stats_index = client_transport->current_stats_index;
 
