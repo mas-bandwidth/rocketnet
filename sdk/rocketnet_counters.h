@@ -567,7 +567,13 @@
     /* (sdk/rocketnet_wire.h): a session packet behind the replay map's */ \
     /* high-water window, surfaced by rocketnet_counters_apply_prefilter. */ \
     /* appended: indices are the contract. */ \
-    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE )
+    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE ) \
+    \
+    /* A send the driver refused for want of a link-layer destination: the */ \
+    /* xdp driver on a segment with no default route, to an address with no */ \
+    /* learned MAC that answers no received frame (DRIVERS.md, xdp). Never */ \
+    /* sent and never counted as sent. appended: indices are the contract. */ \
+    X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE )
 
 enum
 {

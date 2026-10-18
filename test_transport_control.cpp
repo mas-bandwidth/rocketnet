@@ -54,6 +54,9 @@ struct control_fixture_t
     rocketnet_address_t feed_from[4];
     uint8_t feed_data[4][ROCKETNET_RECEIVE_CEILING];
     int feed_bytes[4];
+    bool unreachable;
+    int accepted[4];
+    int num_accepted;
 };
 
 static void record(control_fixture_t * f, const rocketnet_address_t * to, const uint8_t * packet)
@@ -107,6 +110,7 @@ static int receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, i
 static uint8_t * start_packet(void * p, const rocketnet_address_t * to, uint64_t * id)
 {
     auto * f = (control_fixture_t*)p;
+    if (f->unreachable) { *id = ROCKETNET_DRIVER_PACKET_UNREACHABLE; return NULL; }
     if (f->lease_frames)
     {
         if (f->lease_starts == f->capacity) return NULL;
@@ -124,6 +128,12 @@ static void finish_packet(void * p, uint64_t, uint8_t * frame, int)
     record(f, &f->reserved_to, frame + ROCKETNET_FRAME_WIRE_OFFSET); ++f->used;
 }
 static void abort_packet(void * p, uint64_t, uint8_t *) { ++((control_fixture_t*)p)->aborts; }
+static void peer_accepted(void * p, int view_index)
+{
+    auto * f = (control_fixture_t*)p;
+    CHECK(f->num_accepted < 4);
+    f->accepted[f->num_accepted++] = view_index;
+}
 static void flush(void * p)
 {
     auto * f = (control_fixture_t*)p;
@@ -472,6 +482,62 @@ static void test_entries_carry_connection_id(bool staged)
     printf("test_entries_carry_connection_id staged=%d payloads=%d acked=%d fragmented=1\n", staged, num_payloads, num_acked);
 }
 
+static void test_staged_link_address_hooks()
+{
+    // DRIVERS.md, xdp (the reply-MAC rule), from the transport's side. Fed
+    // one update holding a packet from an unknown address (dropped) and a
+    // payload that opens under client 0's keys (view index 1), the transport
+    // tells the driver about the accepted packet only. Then the driver
+    // refuses every start for want of a link-layer destination: the
+    // transport counts SEND_NO_LINK_ADDRESS, never SEND_RING_FULL, and sends
+    // nothing. Mutation that must bite: drop the peer_accepted call, or the
+    // unreachable test in the start wrapper; a check below goes red. Time
+    // is an argument; the clock starts at 1000.0.
+    auto * f = new control_fixture_t(); f->capacity = 16;
+    rocketnet_server_driver_operations_t operations;
+    auto * server = make_server(f, &operations, 1, true);
+    operations.peer_accepted = peer_accepted;
+    auto * protocol = &server->protocol;
+    const double time = 1000.0;
+    protocol->connection_ids[0] = ++protocol->next_connection_id;
+    auto * mapping = rocketnet_encryption_map_entry(protocol->encryption_map,
+        rocketnet_client_slots_mapping_index(protocol->client_slots, 0));
+    mapping->last_receive_time = time;
+
+    CHECK(rocketnet_address_parse(&f->feed_from[0], "127.0.0.1:3000"));
+    memset(f->feed_data[0], 0x5A, 64);
+    f->feed_bytes[0] = 64;
+
+    rocketnet_replay_protection_t replay;
+    memset(&replay, 0, sizeof(replay));
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 4];
+    const int block = rocketnet_ack_block_build(plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay);
+    CHECK(block > 0);
+    memset(plaintext + block, 0xA0, 4);
+    CHECK(rocketnet_address_parse(&f->feed_from[1], "127.0.0.1:1000"));
+    f->feed_bytes[1] = rocketnet_write_sealed_packet(f->feed_data[1], ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+        protocol->filter_value, 1, NULL, plaintext, block + 4, protocol->protocol_id,
+        mapping->connection_salt, NULL, mapping->keys.session_client_to_server);
+    CHECK(f->feed_bytes[1] > 0);
+    f->feed_count = 2;
+    rocketnet_server_transport_update(server, time + 0.001);
+    CHECK(f->num_accepted == 1 && f->accepted[0] == 1);
+
+    const int keep_alives = f->keep_alives[0], acks = f->acks[0], payloads = f->payloads;
+    f->unreachable = true;
+    const uint64_t ring_full = protocol->counters->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    rocketnet_packet_context_t context;
+    CHECK(!rocketnet_server_transport_start_packet(server, 0, 64, &context));
+    CHECK(protocol->counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS] == 1);
+    rocketnet_server_transport_update(server, time + 1.0);
+    CHECK(protocol->counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS] > 1);
+    CHECK(protocol->counters->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full);
+    CHECK(f->keep_alives[0] == keep_alives && f->acks[0] == acks && f->payloads == payloads);
+
+    rocketnet_server_transport_destroy(server); delete f;
+    printf("test_staged_link_address_hooks\n");
+}
+
 int main(int argc, char ** argv)
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
@@ -495,5 +561,6 @@ int main(int argc, char ** argv)
     test_staged_lease_table_full();
     test_entries_carry_connection_id(false);
     test_entries_carry_connection_id(true);
+    test_staged_link_address_hooks();
     rocketnet_term();
 }

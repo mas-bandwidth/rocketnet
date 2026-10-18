@@ -262,11 +262,14 @@ static inline bool rocketnet_xdp_frame_parse(
 }
 
 // REPLY MAC: the destination MAC address of a reply frame. A peer is learned
-// from the source MAC of a packet the transport answered (a connection's
-// packet or a connect attempt), never from a packet it dropped; a reply goes
-// to the newest MAC learned for its address, and with none learned to the
-// gateway. With no gateway (an on-link segment with no default route) a reply
-// to an unlearned address is refused and counted, never sent to a zero MAC.
+// from the source MAC of a packet the transport accepted for a connection
+// (it opened under the connection's keys), never from a packet it dropped or
+// answered without authenticating; a reply goes to the newest MAC learned for
+// its address. With none learned, a direct response to a received frame goes
+// to that frame's source MAC (the router's MAC for routed traffic, the peer's
+// on link), and any other reply goes to the gateway. With no gateway (an
+// on-link segment with no default route) a reply to an unlearned address that
+// answers no frame is refused and counted, never sent to a zero MAC.
 //
 // The table is fixed-size and lives inside its owner's create-time
 // allocation: open addressing over ROCKETNET_XDP_REPLY_MAC_ENTRIES slots,
@@ -383,14 +386,19 @@ static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_m
         entry->state = ROCKETNET_XDP_REPLY_MAC_TOMBSTONE;
 }
 
-// the reply MAC for a destination: the learned MAC, else the gateway MAC,
-// else NULL with *refused incremented -- the reply is not sent.
+// the reply MAC for a destination: the learned MAC, else answered_mac (the
+// source MAC of the received frame this reply answers, NULL for none; a zero
+// or multicast one is ignored), else the gateway MAC, else NULL with
+// *refused incremented -- the reply is not sent.
 
-static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * destination, uint64_t * refused )
+static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * destination, const uint8_t * answered_mac, uint64_t * refused )
 {
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
     const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, destination );
     if ( entry )
         return entry->mac;
+    if ( answered_mac && !( answered_mac[0] & 1 ) && memcmp( answered_mac, zero_mac, 6 ) != 0 )
+        return answered_mac;
     if ( table->gateway_known )
         return table->gateway_mac;
     if ( refused )

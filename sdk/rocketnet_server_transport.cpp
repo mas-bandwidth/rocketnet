@@ -357,9 +357,16 @@ static bool rocketnet_server_transport_staged( const rocketnet_server_transport_
     return rocketnet_server_driver_has( transport->io, ROCKETNET_DRIVER_STAGED );
 }
 
+// a NULL start with the id ROCKETNET_DRIVER_PACKET_UNREACHABLE is the
+// driver's refusal for want of a link-layer destination (DRIVERS.md, xdp):
+// counted here, never as a full ring, and never sent or counted as sent
 static uint8_t * rocketnet_server_driver_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id )
 {
-    return transport->io.operations->start_packet( transport->io.instance, to, id );
+    *id = 0;
+    uint8_t * frame = transport->io.operations->start_packet( transport->io.instance, to, id );
+    if ( !frame && *id == ROCKETNET_DRIVER_PACKET_UNREACHABLE )
+        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
+    return frame;
 }
 static void rocketnet_server_driver_finish_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame, int bytes )
 {
@@ -1489,11 +1496,18 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         if ( response )
             response += ROCKETNET_FRAME_WIRE_OFFSET;
 
-        rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
+        const int outcome = rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
                                          received->packet_data[i], received->packet_bytes[i],
                                          current_timestamp, current_time,
                                          response ? response : response_overflow, &response_bytes,
                                          payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
+
+        // a packet that opened under a connection's keys teaches the driver
+        // its link-layer source (the xdp reply-MAC rule, DRIVERS.md); a
+        // dropped or unauthenticated packet (a cookie or a challenge answer)
+        // teaches nothing
+        if ( ( outcome == ROCKETNET_SERVER_PROCESS_ACCEPTED || outcome == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE ) && server_transport->io.operations->peer_accepted )
+            server_transport->io.operations->peer_accepted( server_transport->io.instance, i );
 
         int wire_client_after = wire_client_before;
         if ( wire_client_before < 0 )
@@ -1885,7 +1899,8 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         frame = rocketnet_server_driver_start_packet( server_transport, &to, &packet_id );
         if ( !frame )
         {
-            rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+            if ( packet_id != ROCKETNET_DRIVER_PACKET_UNREACHABLE )
+                rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return NULL;
         }
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
@@ -2019,7 +2034,8 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
         frame->data = rocketnet_server_driver_start_packet( server_transport, to, &frame->socket_packet_id );
         if ( !frame->data )
         {
-            rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+            if ( frame->socket_packet_id != ROCKETNET_DRIVER_PACKET_UNREACHABLE )
+                rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return 0;
         }
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
