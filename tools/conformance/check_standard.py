@@ -509,9 +509,16 @@ def main():
     cell = row("Replay buffer")
     if cell is not None:
         compare("replay buffer at least", ints(cell)[0],
-                code["ROCKETNET_HISTORY_PACKETS"])
+                code["ROCKETNET_HISTORY_PACKETS_MIN"])
         compare("replay window bits", ints(cell)[0],
                 code["ROCKETNET_REPLAY_WINDOW_BITS"])
+
+    # the depth's upper bound is a message-tier precondition (STANDARD.md
+    # _Numbers_), so its own row must track the implementation's macro
+    cell = row("Replay buffer maximum")
+    if cell is not None:
+        compare("replay buffer maximum", ints(cell)[0],
+                code["ROCKETNET_HISTORY_PACKETS_MAX"])
 
     cell = row("Kernel replay prefilter")
     if cell is not None:
