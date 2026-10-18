@@ -16,12 +16,13 @@
     --overflow-check (signed overflow), --ub-shift-check, and the unwinding
     assertions; harness_memory_sizing adds --unsigned-overflow-check.
 
-    Bounds. Every harness runs at the full production bound by default:
-    fragment type data up to the header plus ROCKETNET_MAX_RECEIVE_FRAGMENT_
-    BYTES, one byte past it, and max_payload_bytes up to
-    ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES. PROOF_MAX_FRAGMENT and
-    PROOF_MAX_PAYLOAD lower them for a quick run; results.md records the
-    bound each harness proved.
+    Bounds. Built with no bound macros, every harness is at the full
+    production bound: fragment type data up to the header plus
+    ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES and one byte past it, and
+    max_payload_bytes up to ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES.
+    PROOF_MAX_FRAGMENT, PROOF_MAX_PAYLOAD and the sizing macros lower them.
+    proof.mk passes the largest bounds that finish; results.md records the
+    bound each harness proved and the full bounds that did not finish.
 */
 
 #include <stdlib.h>
