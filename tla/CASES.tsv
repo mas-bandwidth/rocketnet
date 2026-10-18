@@ -173,3 +173,6 @@ MCRNClientIoDecryptBrokenOpenBeforeReplay.cfg	MCRNClientIoDecrypt.tla	invariant	
 MCRNClientIoDecryptBrokenSharedWindow.cfg	MCRNClientIoDecrypt.tla	invariant	SingleWriter	check	rnclientiodecrypt	required	-
 MCRNClientIoDecryptBrokenNoRetire.cfg	MCRNClientIoDecrypt.tla	invariant	NoOpenWithoutKeys	check	rnclientiodecrypt	required	-
 MCRNClientIoDecryptBrokenCountOnIo.cfg	MCRNClientIoDecrypt.tla	invariant	SingleWriter	check	rnclientiodecrypt	required	-
+MCRNLiveFleetRun.cfg	MCRNLiveFleetRun.tla	pass	-	check	rnlivefleetrun	required	-
+MCRNLiveFleetRunBrokenXdpLeftAttached.cfg	MCRNLiveFleetRun.tla	invariant	TeardownDetaches	check	rnlivefleetrun	required	-
+MCRNLiveFleetRunBrokenServerOrphaned.cfg	MCRNLiveFleetRun.tla	invariant	XdpNeverOrphaned	check	rnlivefleetrun	required	-
