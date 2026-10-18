@@ -299,18 +299,11 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
     if(WIN32)
-        # Isolate the RIO completion seam in a test-only driver copy. The
-        # production static and shared libraries never compile its hooks.
-        add_library(rocketnet_rio_overflow_test STATIC sdk/rocketnet_server_rio_windows.cpp)
-        target_compile_definitions(rocketnet_rio_overflow_test PRIVATE
-            ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1
-            $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
-        target_include_directories(rocketnet_rio_overflow_test BEFORE PRIVATE
-            "${CMAKE_CURRENT_BINARY_DIR}/generated" "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
-        target_compile_features(rocketnet_rio_overflow_test PRIVATE cxx_std_11)
-        target_compile_options(rocketnet_rio_overflow_test PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
-        target_link_libraries(rocketnet_rio_overflow_test PRIVATE Threads::Threads)
-        target_link_libraries(test PRIVATE rocketnet_rio_overflow_test)
+        # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
+        # the library in test builds, matching the filter-epoch seam above, so
+        # the production shared libraries never carry it.
+        target_compile_definitions(rocketnet PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
+        target_compile_definitions(test PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
     endif()
     # The counter audit (test_unit_counter_classes.cpp) reads source files: the
     # tests that must name every counter, and the sdk files that count them.

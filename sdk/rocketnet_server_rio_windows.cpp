@@ -91,9 +91,10 @@ struct rocketnet_server_rio_t
 
 #if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
 
-// This table exists only in the isolated unit-test driver copy. The receive
-// path substitutes only dequeue and receive repost; production builds call
-// the RIO function table directly with no test branch.
+// This table exists only in test builds, compiled into the library like the
+// filter-epoch seam. The receive path substitutes only dequeue and receive
+// repost; production builds call the RIO function table directly with no test
+// branch.
 typedef ULONG (WINAPI *rocketnet_rio_test_dequeue_fn)( RIO_CQ, PRIORESULT, ULONG );
 typedef BOOL (WINAPI *rocketnet_rio_test_receive_fn)( RIO_RQ, PRIO_BUF, ULONG, PRIO_BUF, PRIO_BUF,
                                                       PRIO_BUF, PRIO_BUF, DWORD, PVOID );
