@@ -2345,47 +2345,6 @@ within the message layer of a sealed connection.
 <a id="ma"></a>
 ## ma. Appendix A: test vectors
 
-This appendix indexes every vector of RN-2 by the section that defines it.
-It is generated; the bytes are in the sections.
-
-<!-- vector-index:begin -->
-| Section | Vector |
-|---|---|
-| [m2 Payload forms and sender size rules](#m2) | `m2.code0-at-limit` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.code0-over` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.code1-1404` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.code1-1405` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.code1-1406` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-1407` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-1408` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-1409` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-ordered-1400` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-ordered-1401` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-ordered-1402` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-sequenced-1398` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-sequenced-1399` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-sequenced-1400` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.single-limit` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.single-over` |
-| [m3 Record format](#m3) | `m3.block-wide-last` |
-| [m3 Record format](#m3) | `m3.code0` |
-| [m3 Record format](#m3) | `m3.code1` |
-| [m3 Record format](#m3) | `m3.code2` |
-| [m3 Record format](#m3) | `m3.code3` |
-| [m3 Record format](#m3) | `m3.code4` |
-| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-at-half-range` |
-| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-at-wrap` |
-| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-duplicate` |
-| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-stale-copy-at-depth` |
-| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code0-delivery-trace` |
-| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code1-hold-full-trace` |
-| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code1-sequenced-trace` |
-| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-loss-reorder` |
-| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-ordered-hold-drain` |
-| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-sequenced-hold-drain` |
-| [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.budget-trace` |
-| [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.resend-trace` |
-| [m10 Channels and priorities](#m10) | `m10.narrow-channel` |
-| [m10 Channels and priorities](#m10) | `m10.wide-channel` |
-| [m12 Receipts](#m12) | `m12.promotion` |
-<!-- vector-index:end -->
+The index of the vectors of RN-2 by section is printed by
+`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
+in the sections.

@@ -2130,64 +2130,9 @@ the counter list and the test list MUST be the same list.
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
 
-This appendix indexes every vector of RN-1 by the section that defines it.
-It is generated; the bytes are in the sections.
-
-<!-- vector-index:begin -->
-| Section | Vector |
-|---|---|
-| [t3 Constants and registries](#t3) | `t3.token-identifier` |
-| [t4 Wire encoding primitives](#t4) | `t4.address-ipv4` |
-| [t4 Wire encoding primitives](#t4) | `t4.address-ipv6` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-start` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-steady` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
-| [t5 Prefilter header](#t5) | `t5.reject-epoch` |
-| [t5 Prefilter header](#t5) | `t5.reject-long` |
-| [t5 Prefilter header](#t5) | `t5.reject-short` |
-| [t5 Prefilter header](#t5) | `t5.reject-value` |
-| [t5 Prefilter header](#t5) | `t5.unkeyed-accept` |
-| [t10 Receive processing](#t10) | `t10.already-received` |
-| [t10 Receive processing](#t10) | `t10.bad-ack-block` |
-| [t10 Receive processing](#t10) | `t10.client-cookie-state-before-size` |
-| [t10 Receive processing](#t10) | `t10.client-session-wrong-size` |
-| [t10 Receive processing](#t10) | `t10.client-wrong-direction` |
-| [t10 Receive processing](#t10) | `t10.client-wrong-state` |
-| [t10 Receive processing](#t10) | `t10.did-not-open` |
-| [t10 Receive processing](#t10) | `t10.fragment-zero-payload-id` |
-| [t10 Receive processing](#t10) | `t10.keep-alive-invalid-index` |
-| [t10 Receive processing](#t10) | `t10.prefilter-too-large` |
-| [t10 Receive processing](#t10) | `t10.prefilter-too-short` |
-| [t10 Receive processing](#t10) | `t10.prefilter-wrong-epoch` |
-| [t10 Receive processing](#t10) | `t10.prefilter-wrong-value` |
-| [t10 Receive processing](#t10) | `t10.reserved-type` |
-| [t10 Receive processing](#t10) | `t10.server-no-mapping` |
-| [t10 Receive processing](#t10) | `t10.server-not-connected` |
-| [t10 Receive processing](#t10) | `t10.server-wrong-direction` |
-| [t10 Receive processing](#t10) | `t10.wrong-opened-size` |
-| [t10 Receive processing](#t10) | `t10.zero-sequence` |
-| [t15 Acknowledgement](#t15) | `t15.fresh` |
-| [t15 Acknowledgement](#t15) | `t15.fully-received` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-first-too-long` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-first` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-range` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-geometry` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-short` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-walk` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-first` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-gap` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-length` |
-| [t15 Acknowledgement](#t15) | `t15.one-loss` |
-| [t15 Acknowledgement](#t15) | `t15.sequence-wrap` |
-| [t15 Acknowledgement](#t15) | `t15.truncated-oldest` |
-| [t15 Acknowledgement](#t15) | `t15.two-losses` |
-| [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
-| [t17 Timing and defaults](#t17) | `t17.timing-defaults` |
-| [t18 Error handling and counters](#t18) | `t18.counter-registry` |
-| [t19 Security considerations](#t19) | `t19.amplification` |
-<!-- vector-index:end -->
+The index of the vectors of RN-1 by section is printed by
+`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
+in the sections.
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02
