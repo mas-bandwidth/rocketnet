@@ -372,6 +372,7 @@ static void unreliable_promotion_every_mode()
             check(rocketnet_counter_value(cc,promotion_counters[m])==3);
             for(int other=0;other<3;++other) if(other!=m) check(rocketnet_counter_value(cc,promotion_counters[other])==0);
             check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==1);
+            check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET)==0);
             check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED)==0);
             check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==0);
             check(rocketnet_message_client_state(pair.client)==ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED);
