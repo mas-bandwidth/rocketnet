@@ -379,7 +379,6 @@ Cards moved out of the sprint on 2026-10-19, when Glenn moved everything not for
 | LAN throughput: the Windows rio server | ❌ |
 | The live stress run: the XDP server on the test server, one client from every fleet bench | ❌ |
 | The load harness runs nightly on Linux, macOS and Windows | ❌ |
-| The whole tree formatted with the committed .clang-format, proven formatting only, with a CI format gate | ❌ |
 | complete | 0% |
 
 [Source data](docs/roadmap.sexp)
