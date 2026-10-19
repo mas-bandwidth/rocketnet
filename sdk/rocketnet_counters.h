@@ -918,11 +918,10 @@ struct rocketnet_counters_t
  *
  * `prefilter` contains `ROCKETNET_SERVER_XDP_NUM_COUNTERS` values in
  * `ROCKETNET_SERVER_XDP_COUNTER_*` order. Each source total replaces its
- * mapped counter value; all other counter values are unchanged. Both pointers
- * must be valid and the caller must own the counter block for this write.
+ * mapped counter value; all other counter values are unchanged. The caller
+ * owns the counter block for this write.
  * @param counters Counter block to update; NULL is a counted no-op.
  * @param prefilter Array of at least `ROCKETNET_SERVER_XDP_NUM_COUNTERS` totals; NULL is a counted no-op.
- * @return None.
  */
 void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters, const uint64_t * prefilter );
 
