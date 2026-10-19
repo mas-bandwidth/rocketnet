@@ -105,17 +105,27 @@ struct rn_message_link_t
 // the region, layers 3 to 6, the budget, the queued sends and the write pass)
 // plus what the object keeps per slot: the slot binding and the receive views.
 
+/*
+    The declaration manifest: the struct is declared from this list, so a
+    member exists only as an entry here. The RESET/KEEP inventory in
+    rocketnet_connection_reset.h is compared with it by name, and a member with
+    no decision is named in connection_reset_inventory_covers_every_field.
+*/
+#define RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( X ) \
+    X( connection_id, uint64_t connection_id ) /* RNSlots: the connection this slot is bound to, 0 when free */          \
+    X( state, int state ) /* RN_MESSAGE_CONNECTION_* */                                                                  \
+    X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_MESSAGE_ERROR_* of the last connection that ended here */ \
+    /* the receive bookkeeping (RNSlots Release): one state per delivery entry, */                                       \
+    /* one cursor per channel, and the views held now */                                                                 \
+    X( views, uint8_t * views ) /* region->delivery_entries */                                                           \
+    X( cursors, uint32_t * cursors ) /* region->num_channels */                                                          \
+    X( held, uint32_t held )
+
 struct rn_message_connection_t : rn_endpoint_t
 {
-    uint64_t connection_id;                     // RNSlots: the connection this slot is bound to, 0 when free
-    int state;                                  // RN_MESSAGE_CONNECTION_*
-    int disconnect_reason;                      // ROCKETNET_MESSAGE_ERROR_* of the last connection that ended here
-
-    // the receive bookkeeping (RNSlots Release): one state per delivery entry,
-    // one cursor per channel, and the views held now
-    uint8_t * views;                            // region->delivery_entries
-    uint32_t * cursors;                         // region->num_channels
-    uint32_t held;
+#define RN_MESSAGE_CONNECTION_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
+    RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( RN_MESSAGE_CONNECTION_LAYOUT_FIELDS_DECLARE )
+#undef RN_MESSAGE_CONNECTION_LAYOUT_FIELDS_DECLARE
 };
 
 // ---------------------------------------------------------------

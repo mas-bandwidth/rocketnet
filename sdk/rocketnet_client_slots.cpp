@@ -6,38 +6,46 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_connection_reset.h"
 
 #include <sodium.h>
 #include <string.h>
 #include <limits.h>
 
+/*
+    The declaration manifest: the struct is declared from this list, so a
+    member exists only as an entry here. The RESET/KEEP inventory in
+    rocketnet_connection_reset.h is compared with it by name, and a member with
+    no decision is named in connection_reset_inventory_covers_every_field.
+*/
+#define ROCKETNET_CLIENT_SLOTS_LAYOUT_FIELDS( X ) \
+    X( context, void * context )                                                      \
+    X( max_clients, int max_clients )                                                 \
+    X( num_connected, int num_connected )                                             \
+    X( hash_key, uint8_t hash_key[crypto_shorthash_KEYBYTES] )                        \
+    X( bucket_head, int * bucket_head ) /* max_clients * 2, -1 when empty */          \
+    X( next, int * next ) /* chain link per slot */                                   \
+    X( num_buckets, int num_buckets )                                                 \
+    /* the free list: a stack of unused client indices, popped on connect */          \
+    /* and pushed on disconnect, so finding a free slot is constant time in */        \
+    /* the number of client slots and never a search (STANDARD.md, */                 \
+    /* "Lookup complexity": "a free slot is found from a free list, not a */          \
+    /* search") */                                                                    \
+    X( free_stack, int * free_stack ) /* max_clients, unused indices */               \
+    X( free_stack_count, int free_stack_count )                                       \
+    /* hot: walked by find */                                                         \
+    X( client_id, uint64_t * client_id )                                              \
+    X( connected, int * connected )                                                   \
+    /* cold: same index */                                                            \
+    X( mapping_index, int * mapping_index )                                           \
+    X( confirmed, int * confirmed )                                                   \
+    X( user_data, uint8_t * user_data ) /* max_clients * ROCKETNET_USER_DATA_BYTES */
+
 struct rocketnet_client_slots_t
 {
-    void * context;
-    int max_clients;
-    int num_connected;
-    uint8_t hash_key[crypto_shorthash_KEYBYTES];
-
-    int * bucket_head;                      // max_clients * 2, -1 when empty
-    int * next;                             // chain link per slot
-    int num_buckets;
-
-    // the free list: a stack of unused client indices, popped on connect
-    // and pushed on disconnect, so finding a free slot is constant time in
-    // the number of client slots and never a search (STANDARD.md,
-    // "Lookup complexity": "a free slot is found from a free list, not a
-    // search")
-    int * free_stack;                        // max_clients, unused indices
-    int free_stack_count;
-
-    // hot: walked by find
-    uint64_t * client_id;
-    int * connected;
-
-    // cold: same index
-    int * mapping_index;
-    int * confirmed;
-    uint8_t * user_data;                    // max_clients * ROCKETNET_USER_DATA_BYTES
+#define ROCKETNET_CLIENT_SLOTS_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
+    ROCKETNET_CLIENT_SLOTS_LAYOUT_FIELDS( ROCKETNET_CLIENT_SLOTS_LAYOUT_FIELDS_DECLARE )
+#undef ROCKETNET_CLIENT_SLOTS_LAYOUT_FIELDS_DECLARE
 };
 
 uint64_t rocketnet_client_slots_allocation_bytes(int clients)
@@ -277,6 +285,7 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     }
 
     slots->connected[client_index] = 0;
+    slots->next[client_index] = 0;
     slots->confirmed[client_index] = 0;
     slots->client_id[client_index] = 0;
     slots->mapping_index[client_index] = -1;
@@ -290,4 +299,45 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     slots->num_connected--;
 
     rocketnet_debug( "server released client slot %d", client_index );
+}
+
+bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t failure_bytes )
+{
+#define SLOT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_client_slots_t, field, -1 ),
+    static const rocketnet_reset_member_t members[] = { ROCKETNET_CLIENT_SLOTS_LAYOUT_FIELDS( SLOT_MEMBER ) };
+#undef SLOT_MEMBER
+#define SLOT_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_client_slots_t, field, #decision[0] == 'R' ),
+    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( SLOT_DECISION ) };
+#undef SLOT_DECISION
+    return rocketnet_reset_inventory_matches( "rocketnet_client_slots_t", members, sizeof(members) / sizeof(members[0]),
+                                              decisions, sizeof(decisions) / sizeof(decisions[0]), 0,
+                                              sizeof(rocketnet_client_slots_t), alignof(rocketnet_client_slots_t),
+                                              failure, failure_bytes );
+}
+
+bool rocketnet_client_slots_reset_witness_for_test()
+{
+    rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
+    if ( !slots )
+        return false;
+    uint8_t key[sizeof(slots->hash_key)];
+    memcpy( key, slots->hash_key, sizeof(key) );
+    uint8_t user[ROCKETNET_USER_DATA_BYTES];
+    memset( user, 0xA5, sizeof(user) );
+    const int index = rocketnet_client_slots_assign( slots, UINT64_MAX, 77, user );
+    if ( index != 0 )
+    {
+        rocketnet_client_slots_destroy( slots );
+        return false;
+    }
+    rocketnet_client_slots_confirm( slots, index );
+    rocketnet_client_slots_release( slots, index );
+    bool clean = slots->num_connected == 0 && slots->free_stack_count == 1 && slots->free_stack[0] == 0 &&
+                 slots->bucket_head[0] == -1 && slots->bucket_head[1] == -1 && slots->next[0] == 0 &&
+                 slots->client_id[0] == 0 && slots->connected[0] == 0 && slots->mapping_index[0] == -1 &&
+                 slots->confirmed[0] == 0 && memcmp( slots->hash_key, key, sizeof(key) ) == 0;
+    for ( int i = 0; clean && i < ROCKETNET_USER_DATA_BYTES; i++ )
+        clean = slots->user_data[i] == 0;
+    rocketnet_client_slots_destroy( slots );
+    return clean;
 }

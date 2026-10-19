@@ -730,6 +730,9 @@ void rocketnet_forbid_xdp_commit( void );
 // a NULL server_transport is a counted no-op.
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
 
+// Unit tests only: supplies token-validation Unix time so update reads no wall clock.
+void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp );
+
 // The admission gate, set per transport (see the callback type above). NULL
 // callback -- the default -- admits every source: the connect ladder alone
 // decides. May be set or cleared at any time between updates.
