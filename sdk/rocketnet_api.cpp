@@ -136,6 +136,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     transport->state_change_callback = config->state_change_callback;
     transport->time_callback = config->time_callback;
+    transport->step_driven = config->step_driven;
     transport->simulated_loss_percent = config->simulated_loss_percent;
     transport->simulated_latency_ms = config->simulated_latency_ms;
     transport->simulated_jitter_ms = config->simulated_jitter_ms;
@@ -248,6 +249,7 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
     config->time_callback = transport.time_callback;
+    config->step_driven = transport.step_driven;
     config->simulated_loss_percent = transport.simulated_loss_percent;
     config->simulated_latency_ms = transport.simulated_latency_ms;
     config->simulated_jitter_ms = transport.simulated_jitter_ms;

@@ -389,8 +389,8 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
 /** @brief Size in bytes of the client transport config before game_clock_epoch. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
-/** @brief Size in bytes of client transport config revision 1: before the public link simulator fields. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, game_clock_epoch ) + sizeof( uint64_t ), sizeof( uint64_t ) )
+/** @brief Size in bytes of client transport config revision 1: with game_clock_epoch and step_driven, before the public link simulator fields. */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ), sizeof( uint64_t ) )
 /** @brief Current known client transport config size, in bytes: the public link simulator fields. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
 /** @brief Current known client transport config size, in bytes. */

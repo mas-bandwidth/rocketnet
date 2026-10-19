@@ -24,7 +24,7 @@ struct abi_type_t { const char * name; size_t size; const abi_field_t * fields; 
 static const abi_field_t client_config_fields[] =
 {
     FIELD(filter_value) FIELD(max_payload_bytes) FIELD(num_reassembly_slots) FIELD(transport)
-    FIELD(state_change_callback) FIELD(time_callback) FIELD(send_kbps)
+    FIELD(state_change_callback) FIELD(time_callback) FIELD(step_driven) FIELD(send_kbps)
     FIELD(num_channels) FIELD(window_messages) FIELD(receive_ring_bytes) FIELD(max_message_bytes)
     FIELD(send_buffer_bytes) FIELD(send_queue_messages) FIELD(packets_in_flight) FIELD(max_packets_per_update)
     FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(rto_initial_ms)
@@ -62,6 +62,7 @@ static const abi_field_t client_transport_config_fields[] =
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE(INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD)
     FIELD(state_change_callback)
     FIELD(time_callback)
+    FIELD(step_driven)
 };
 #undef ABI_TYPE
 
