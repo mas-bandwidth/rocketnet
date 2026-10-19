@@ -57,7 +57,7 @@ static void lifecycle_client_config( rocketnet_client_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
-    config->step_driven = 1;
+    config->step_driven = true;
     config->time_callback = lifecycle_clock;
 }
 

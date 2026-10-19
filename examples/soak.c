@@ -156,7 +156,7 @@ int main( int argc, char ** argv ) {
     struct rocketnet_client_config_t c_cfg;
     CHECK( rocketnet_server_dev_config_sized( &s_cfg, sizeof( s_cfg ) ) == ROCKETNET_STATUS_OK );
     CHECK( rocketnet_client_default_config_sized( &c_cfg, sizeof( c_cfg ) ) == ROCKETNET_STATUS_OK );
-    s_cfg.max_clients = num_clients; c_cfg.step_driven = 1; s_cfg.transport = c_cfg.transport = transport_name;
+    s_cfg.max_clients = num_clients; c_cfg.step_driven = true; s_cfg.transport = c_cfg.transport = transport_name;
     s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000; s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
     s_cfg.num_channels = c_cfg.num_channels = s_cfg.num_reassembly_slots = c_cfg.num_reassembly_slots = 2;
     s_cfg.window_messages = c_cfg.window_messages = s_cfg.send_queue_messages = c_cfg.send_queue_messages = 64;

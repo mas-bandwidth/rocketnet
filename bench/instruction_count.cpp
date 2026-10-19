@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Deterministic instruction-count scenario on the in-process loopback driver:
-    one process, no sockets, no threads (step_driven = 1), no wall clock
+    one process, no sockets, no threads (step_driven = true), no wall clock
     (caller-passed time starting at 1000.0 with fixed dt = 0.01), and all
     random bytes drawn from a fixed splitmix64 seed installed before
     rocketnet_init.
@@ -190,7 +190,7 @@ void run_client_frame(bool setup_only)
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     strcpy(client_config.driver, "loopback");
-    client_config.step_driven = 1;
+    client_config.step_driven = true;
     client_config.game_clock_epoch = 1000;
     client_config.time_callback = sim_time_callback;
 
@@ -311,7 +311,7 @@ void run_server_tick(bool setup_only)
         rocketnet_client_transport_config_t client_config;
         rocketnet_client_transport_default_config(&client_config);
         strcpy(client_config.driver, "loopback");
-        client_config.step_driven = 1;
+        client_config.step_driven = true;
         client_config.game_clock_epoch = 1000;
         client_config.time_callback = sim_time_callback;
 

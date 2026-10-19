@@ -93,7 +93,7 @@ static void public_step_client_config( rocketnet_client_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
-    config->step_driven = 1;
+    config->step_driven = true;
     config->time_callback = public_step_clock;
 }
 
@@ -247,7 +247,7 @@ static void public_step_driven_client_refused_on_a_threaded_only_transport()
     rocketnet_fake_client_driver_t fake = {};
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    config.step_driven = 1;
+    config.step_driven = true;
     int status = ROCKETNET_STATUS_OK;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex(
         &fake, token, &config, 1000.0, &rocketnet_fake_client_operations_base, &fake, &status );

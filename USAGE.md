@@ -16,15 +16,18 @@ format lives in [STANDARD.md](STANDARD.md).
 ## Start and stop
 
 Call `rocketnet_init` once before creating a client or a server, and check its
-result. A second init returns false without disturbing the live library. A
-create before init returns NULL and allocates nothing. Call `rocketnet_term`
-after every client and server is destroyed; termination with live allocations
-is refused and logged, and a repeated termination is a no-op. Startup,
+result. Every call that can fail returns `enum rocketnet_status_t`, and
+`ROCKETNET_STATUS_OK` (0) is success; `rocketnet_status_name` names a code. A
+second init returns `ROCKETNET_STATUS_ALREADY_INITIALIZED` without disturbing
+the live library. A create before init returns NULL and allocates nothing. Call
+`rocketnet_term` after every client and server is destroyed; termination with
+live allocations is refused with `ROCKETNET_STATUS_LIVE_ALLOCATIONS` and
+logged, and a repeated termination returns `ROCKETNET_STATUS_NOT_INITIALIZED`. Startup,
 shutdown and process-wide logging setup are serialized with application work.
 
 Set custom allocator callbacks before initialization, with no live allocations.
-A refused `rocketnet_set_allocator` replacement returns false; an accepted one
-returns true. Every refused API call logs one line and increments
+A refused `rocketnet_set_allocator` replacement returns its status; an accepted
+one returns `ROCKETNET_STATUS_OK`. Every refused API call logs one line and increments
 `rocketnet_api_misuse_count`.
 
 The public API is NULL safe at the boundary. Every entry point checks each
@@ -239,8 +242,8 @@ void stop( struct rocketnet_client_t * client, struct rocketnet_server_t * serve
 ```
 
 `rocketnet_client_validate_config` and `rocketnet_server_validate_config`
-report whether create would accept the struct's own values; the environment is
-not read. Destroying a client ends its connection. Destroying a server
+return `ROCKETNET_STATUS_OK` when create would accept the struct's own values,
+else `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`; the environment is not read. Destroying a client ends its connection. Destroying a server
 disconnects every client and frees the server.
 
 ## Frame loop
@@ -343,7 +346,8 @@ uint32_t queue_state( struct rocketnet_client_t * client, const uint8_t * state,
 `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` change a
 connection's budget at runtime. A value of `0` or less disables the budget in
 that direction, which is not recommended; a positive value up to
-`ROCKETNET_SEND_BUDGET_MAX_KBPS` caps it.
+`ROCKETNET_SEND_BUDGET_MAX_KBPS` caps it. Each returns `ROCKETNET_STATUS_OK`, or
+`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` above the maximum with the rate unchanged.
 
 ## Receiving messages
 
@@ -469,7 +473,9 @@ the state becomes DISCONNECTED. On the server,
 slot and its client, `rocketnet_server_num_connected_clients` counts them, and
 `rocketnet_server_disconnect_client` ends one deliberately.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
-ended. The reason is one of the `ROCKETNET_DISCONNECT_REASON_*` values.
+ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
+`rocketnet_disconnect_reason_name`. A NULL client reads as
+`ROCKETNET_CLIENT_STATE_INVALID`.
 
 ```c
 #include "rocketnet.h"
