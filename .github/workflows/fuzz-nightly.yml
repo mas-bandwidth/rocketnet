@@ -169,10 +169,11 @@ jobs:
         run: |
           set -euo pipefail
           # One variable names the compiler: ROCKETNET_FUZZ_CXX wins when the
-          # caller sets it. Otherwise try the official LLVM tree, then Homebrew.
-          if [ -z "${ROCKETNET_FUZZ_CXX:-}" ]; then
+          # caller sets it, and ROCKETNET_FUZZ_CC alone is honored too. With
+          # neither set, try the official LLVM tree, then Homebrew.
+          if [ -z "${ROCKETNET_FUZZ_CXX:-}" ] && [ -z "${ROCKETNET_FUZZ_CC:-}" ]; then
             for prefix in "${ROCKETNET_FUZZ_LLVM_HOME:-$HOME/sdk/llvm}" "$(brew --prefix llvm 2>/dev/null || true)"; do
-              if [ -n "$prefix" ] && [ -x "$prefix/bin/clang++" ] \
+              if [ -n "$prefix" ] && [ -x "$prefix/bin/clang" ] && [ -x "$prefix/bin/clang++" ] \
                  && ls "$prefix"/lib/clang/*/lib/darwin/libclang_rt.fuzzer_osx.a >/dev/null 2>&1; then
                 export ROCKETNET_FUZZ_CC="$prefix/bin/clang"
                 export ROCKETNET_FUZZ_CXX="$prefix/bin/clang++"
@@ -180,9 +181,15 @@ jobs:
               fi
             done
           fi
-          ROCKETNET_FUZZ_CC="${ROCKETNET_FUZZ_CC:-${ROCKETNET_FUZZ_CXX:+$(dirname "$ROCKETNET_FUZZ_CXX")/clang}}"
-          if [ -z "${ROCKETNET_FUZZ_CXX:-}" ] || [ ! -x "$ROCKETNET_FUZZ_CXX" ]; then
-            echo "TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a (any) (no LLVM clang++ at \$HOME/sdk/llvm or from brew --prefix llvm) on $RUNNER_NAME"
+          # Fill whichever half the caller left out from the half supplied.
+          if [ -z "${ROCKETNET_FUZZ_CXX:-}" ] && [ -n "${ROCKETNET_FUZZ_CC:-}" ]; then
+            ROCKETNET_FUZZ_CXX="$(dirname "$ROCKETNET_FUZZ_CC")/clang++"
+          fi
+          if [ -z "${ROCKETNET_FUZZ_CC:-}" ] && [ -n "${ROCKETNET_FUZZ_CXX:-}" ]; then
+            ROCKETNET_FUZZ_CC="$(dirname "$ROCKETNET_FUZZ_CXX")/clang"
+          fi
+          if [ -z "${ROCKETNET_FUZZ_CXX:-}" ] || [ ! -x "$ROCKETNET_FUZZ_CXX" ] || [ ! -x "$ROCKETNET_FUZZ_CC" ]; then
+            echo "TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a (any) (no LLVM clang/clang++ at \$HOME/sdk/llvm or from brew --prefix llvm) on $RUNNER_NAME"
             exit 1
           fi
           if ! ls "$(dirname "$(dirname "$ROCKETNET_FUZZ_CXX")")"/lib/clang/*/lib/darwin/libclang_rt.fuzzer_osx.a >/dev/null 2>&1; then
