@@ -226,7 +226,6 @@
 
 #define ROCKETNET_MESSAGE_ERROR_NONE                                    0
 #define ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH                         1
-#define ROCKETNET_MESSAGE_ERROR_CONFIG_TIMEOUT                          2
 #define ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION                      3
 #define ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT                        4
 #define ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED                5
@@ -611,24 +610,13 @@ ROCKETNET_EXPORT int rocketnet_get_log_level( void );
 ROCKETNET_EXPORT const char * rocketnet_log_level_string( int level );
 
 /**
- * @brief Installs the legacy varargs logging function.
- *
- * The last registration across this function and rocketnet_set_log_callback
- * wins. Passing NULL restores the default sink. The function is called
- * synchronously on each logging thread with an already formatted message via
- * the format string "%s"; it must be thread-safe.
- * @param function Callback to install, or NULL to restore the default sink.
- */
-ROCKETNET_EXPORT void rocketnet_log_function( void (*function)( int level, const char * format, ... ) );
-
-/**
  * @brief Receives one preformatted log message through the FFI-safe sink (docs/ERRORS-AND-LOGGING.md 3.2).
  *
  * The callback runs synchronously on the logging thread. The message is
  * NUL-terminated (message[length] is always NUL), length is clamped to at most
  * 1023 bytes, and the pointer borrows the logging frame's stack buffer, valid
  * only until the callback returns. The callback must be thread-safe and must
- * not re-enter rocketnet_set_log_callback or rocketnet_log_function.
+ * not re-enter rocketnet_set_log_callback.
  * @param context Caller-owned pointer supplied when the callback is installed.
  * @param level The level passed by the logging call.
  * @param message Borrowed formatted bytes; valid only during this callback.
@@ -639,7 +627,7 @@ typedef void (*rocketnet_log_callback_t)( void * context, int level, const char 
 /**
  * @brief Installs the preformatted logging callback.
  *
- * The last registration across this function and rocketnet_log_function wins.
+ * The last registration wins.
  * Passing NULL restores the default sink and clears its context. Calls already
  * in flight may finish on their previously captured callback; callbacks must
  * be thread-safe.

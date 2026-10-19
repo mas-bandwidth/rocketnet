@@ -41,7 +41,6 @@ rocketnet_generate_server_keypair
 rocketnet_get_log_level
 rocketnet_init
 rocketnet_init_ex
-rocketnet_log_function
 rocketnet_log_level
 rocketnet_log_level_string
 rocketnet_num_status_codes

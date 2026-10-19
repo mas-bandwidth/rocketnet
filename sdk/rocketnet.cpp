@@ -244,35 +244,22 @@ static void default_log_callback( void * context, int level, const char * messag
 static volatile uint64_t rocketnet_log_sink_lock = 0;
 static rocketnet_log_callback_t rocketnet_log_callback = NULL;
 static void * rocketnet_log_callback_context = NULL;
-static void (*rocketnet_log_legacy)( int level, const char * format, ... ) = NULL;
 
-// docs/ERRORS-AND-LOGGING.md 3.2 and 3.3: a non-NULL callback on either entry
-// point replaces the active sink; NULL restores the default sink. the
-// (callback, context, legacy) tuple is guarded by the spin lock so it is never
-// observed torn.
+// docs/ERRORS-AND-LOGGING.md 3.2: a non-NULL callback replaces the active
+// sink; NULL restores the default sink. The (callback, context) pair is
+// guarded by the spin lock so it is never observed torn.
 void rocketnet_set_log_callback( rocketnet_log_callback_t callback, void * context )
 {
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
     rocketnet_log_callback = callback;
     rocketnet_log_callback_context = context;
-    rocketnet_log_legacy = NULL;
-    rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
-}
-
-void rocketnet_log_function( void (*function)( int level, const char * format, ... ) )
-{
-    rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
-    rocketnet_log_legacy = function ? function : NULL;
-    rocketnet_log_callback = NULL;
-    rocketnet_log_callback_context = NULL;
     rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
 }
 
 // docs/ERRORS-AND-LOGGING.md 3.3: filter before formatting (quiet and level are
 // relaxed atomics read before vsnprintf), format once into the 1024-byte
 // buffer, clamp length to 1023 (message[length] == '\0' is guaranteed by
-// vsnprintf), then dispatch to the preformatted callback, the legacy varargs
-// function, or the default sink.
+// vsnprintf), then dispatch to the preformatted callback or the default sink.
 static void rocketnet_log_v( int level, const char * format, va_list args )
 {
     if ( log_quiet.load( std::memory_order_relaxed ) )
@@ -289,16 +276,11 @@ static void rocketnet_log_v( int level, const char * format, va_list args )
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
     rocketnet_log_callback_t cb = rocketnet_log_callback;
     void * ctx = rocketnet_log_callback_context;
-    void (*legacy)( int, const char *, ... ) = rocketnet_log_legacy;
     rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
 
     if ( cb )
     {
         cb( ctx, level, buffer, length );
-    }
-    else if ( legacy )
-    {
-        legacy( level, "%s", buffer );
     }
     else
     {
@@ -545,13 +527,6 @@ float rocketnet_random_float()
 uint8_t rocketnet_random_uint8()
 {
     uint8_t value;
-    randombytes_buf( &value, sizeof(value) );
-    return value;
-}
-
-uint16_t rocketnet_random_uint16()
-{
-    uint16_t value;
     randombytes_buf( &value, sizeof(value) );
     return value;
 }

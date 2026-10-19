@@ -528,16 +528,6 @@ void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread
 void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thread );
 
 /**
- * @brief Requests the platform's client-thread scheduling priority.
- *
- * Call on a live thread. Operating-system permissions can prevent the request;
- * the API does not return that status.
- * @param thread Live thread handle; must be non-NULL.
- * @return None.
- */
-void rocketnet_platform_client_thread_priority( struct rocketnet_platform_thread_t * thread );
-
-/**
  * @brief Requests the platform's server-thread scheduling priority.
  *
  * Call on a live thread. Operating-system permissions can prevent the request;

@@ -1040,14 +1040,6 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_free( thread->context, thread );
 }
 
-void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
-{
-    // IMPORTANT: If you have linux clients, you can adjust the priority of the client thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
-}
-
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you have linux servers, you can adjust the priority of the server thread here.
@@ -2639,14 +2631,6 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_free( thread->context, thread );
 }
 
-void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
-{
-    // IMPORTANT: If you are developing for mac or ios you can adjust the affinity and priority for the client thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
-}
-
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you are developing for mac or ios you can adjust the affinity and priority for the server thread here.
@@ -2969,13 +2953,6 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_assert( thread );
     CloseHandle( thread->handle );
     rocketnet_free( thread->context, thread );
-}
-
-void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
-{
-    // IMPORTANT: If your client runs on windows, you can set the thread priority and affinity of the client thread here
-    rocketnet_assert( thread );
-    SetThreadPriority( thread->handle, THREAD_PRIORITY_TIME_CRITICAL );
 }
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )

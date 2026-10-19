@@ -7,8 +7,7 @@
 // and 3.3): a callback installed with rocketnet_set_log_callback receives each
 // line formatted once, with the exact byte length clamped to 1023 and
 // message[length] == '\0'; quiet and level are read before formatting; and
-// the preformatted callback and the legacy rocketnet_log_function coexist with
-// the last registration winning and NULL restoring the default sink.
+// the last registration wins, with NULL restoring the default sink.
 //
 // Every case runs in memory, with no clock, sockets or network.
 
@@ -140,15 +139,7 @@ static void log_callback_filters_before_formatting()
 
 // --- last registration wins, NULL restores default ------------------------
 
-static int g_legacy_count = 0;
 static int g_pf_count = 0;
-
-static void legacy_callback( int level, const char * format, ... )
-{
-    (void) level;
-    (void) format;
-    g_legacy_count++;
-}
 
 static void pf_callback( void * context, int level, const char * message, size_t length )
 {
@@ -159,42 +150,40 @@ static void pf_callback( void * context, int level, const char * message, size_t
     g_pf_count++;
 }
 
-static void log_callback_and_legacy_function_last_wins()
+static int g_pf2_count = 0;
+
+static void pf2_callback( void * context, int level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    (void) message;
+    (void) length;
+    g_pf2_count++;
+}
+
+static void log_callback_last_wins()
 {
     int saved = rocketnet_get_log_level();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
 
-    rocketnet_log_function( legacy_callback );
-    g_legacy_count = g_pf_count = 0;
-    rocketnet_error( "via legacy" );
-    check( g_legacy_count == 1 );
-    check( g_pf_count == 0 );
-
+    g_pf_count = g_pf2_count = 0;
     rocketnet_set_log_callback( pf_callback, NULL );
-    rocketnet_error( "via preformatted" );
+    rocketnet_error( "via first" );
     check( g_pf_count == 1 );
-    check( g_legacy_count == 1 );
+    check( g_pf2_count == 0 );
 
-    rocketnet_log_function( legacy_callback );
-    rocketnet_error( "legacy again" );
-    check( g_legacy_count == 2 );
+    rocketnet_set_log_callback( pf2_callback, NULL );
+    rocketnet_error( "via second" );
     check( g_pf_count == 1 );
+    check( g_pf2_count == 1 );
 
     rocketnet_set_log_callback( NULL, NULL );
     // the default sink writes to stdout, and a passing suite prints only names
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_error( "default sink" );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
-    check( g_legacy_count == 2 );
     check( g_pf_count == 1 );
-
-    rocketnet_log_function( legacy_callback );
-    rocketnet_log_function( NULL );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_error( "default again" );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
-    check( g_legacy_count == 2 );
-    check( g_pf_count == 1 );
+    check( g_pf2_count == 1 );
 
     rocketnet_set_log_callback( NULL, NULL );
     rocketnet_log_level( saved );
@@ -202,4 +191,4 @@ static void log_callback_and_legacy_function_last_wins()
 
 REGISTER_UNIT_TEST( log_callback_preformatted_contract );
 REGISTER_UNIT_TEST( log_callback_filters_before_formatting );
-REGISTER_UNIT_TEST( log_callback_and_legacy_function_last_wins );
+REGISTER_UNIT_TEST( log_callback_last_wins );

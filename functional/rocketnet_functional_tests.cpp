@@ -4368,13 +4368,13 @@ void rocketnet_test_server_port_zero_driver()
 
         rocketnet_test_captured_log[0] = '\0';
         const int saved_level = rocketnet_get_log_level();
-        rocketnet_log_function( rocketnet_test_capture_log );
+        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
         rocketnet_log_level( saved_level );
-        rocketnet_log_function( rocketnet_test_suite_log_function );
+        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "cannot discover the port it was granted and hand it back" ) != NULL );
@@ -4388,13 +4388,13 @@ void rocketnet_test_server_port_zero_driver()
         snprintf( expected_rung_refusal, sizeof(expected_rung_refusal), "server transport %s refused: a port-zero public address", name );
 
         rocketnet_test_captured_log[0] = '\0';
-        rocketnet_log_function( rocketnet_test_capture_log );
+        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
         rocketnet_log_level( saved_level );
-        rocketnet_log_function( rocketnet_test_suite_log_function );
+        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, expected_rung_refusal ) != NULL );
@@ -4409,13 +4409,13 @@ void rocketnet_test_server_port_zero_driver()
         // short-circuits the port-zero pins that would otherwise reach it.
 
         rocketnet_test_captured_log[0] = '\0';
-        rocketnet_log_function( rocketnet_test_capture_log );
+        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", &config);
 
         rocketnet_log_level( saved_level );
-        rocketnet_log_function( rocketnet_test_suite_log_function );
+        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
@@ -4699,50 +4699,16 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     rocketnet_test_env_restore( &driver_guard );
 }
 
-// the deprecated env aliases (the pre-#106 spellings): honored where the
-// successor is unset, logged loudly naming the successor, yielding loudly
-// beside it -- and the public address alias feeds the one resolved
-// address create uses everywhere
+// the public address env override feeds the one resolved address create
+// uses everywhere
 
 void rocketnet_test_config_env_aliases()
 {
-    struct rocketnet_test_env_guard_t alias_guard;
-    rocketnet_test_env_save( &alias_guard, "ROCKETNET_SERVER_NUM_QUEUES" );
-
-    struct rocketnet_test_env_guard_t successor_guard;
-    rocketnet_test_env_save( &successor_guard, "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
-
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
-    // the alias is honored where the successor is unset...
-
-    unsetenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3", 1 );
-
     struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config( &config );
-    snprintf( config.driver, sizeof(config.driver), "portable" );
-
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    // ...parsed strictly...
-
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3x", 1 );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
-
-    // ...and yields to the successor when both are set
-
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-even-a-number", 1 );
-    setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    rocketnet_test_env_restore( &alias_guard );
-    rocketnet_test_env_restore( &successor_guard );
+    struct rocketnet_server_transport_t * server = NULL;
 
     // the public address rides the table now, scoped first-create-consumes
     // for the env layer. proven deterministically, no fixed port: the
@@ -5374,13 +5340,13 @@ static bool rocketnet_test_server_uring_skipped( const char * test_name )
 
     rocketnet_test_captured_log[0] = '\0';
     const int saved_level = rocketnet_get_log_level();
-    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_server_uring_t * refused = rocketnet_server_uring_create( NULL, &refused_address, 2 );
 
     rocketnet_log_level( saved_level );
-    rocketnet_log_function( rocketnet_test_suite_log_function );
+    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( refused == NULL );
 
@@ -5464,14 +5430,14 @@ void rocketnet_test_server_uring_probe()
 
     rocketnet_test_captured_log[0] = '\0';
     const int stall_saved_level = rocketnet_get_log_level();
-    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
 
     rocketnet_server_uring_test_stall_destroy( stalled );
     rocketnet_server_uring_destroy( stalled );
 
     rocketnet_log_level( stall_saved_level );
-    rocketnet_log_function( rocketnet_test_suite_log_function );
+    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "destroy gave up waiting" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "leaked, not freed" ) != NULL );
@@ -7443,7 +7409,7 @@ void rocketnet_functional_prepare()
     if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
-        rocketnet_log_function( rocketnet_test_suite_log_function );
+        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
     if ( rocketnet_functional_environment == NULL )
