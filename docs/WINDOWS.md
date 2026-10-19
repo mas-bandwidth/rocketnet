@@ -231,8 +231,8 @@ networks clients connect from.
 
 ## Building
 
-Windows builds with CMake and Visual Studio 18 (MSVC x64); `BUILDING.md`
-lists what to install once.
+Windows builds with CMake and Visual Studio 18 (MSVC x64);
+[BUILDING.md](../BUILDING.md) lists what to install once.
 
     cmake -B build -A x64
     cmake --build build --config Release --parallel 4
@@ -246,7 +246,7 @@ land in `bin\Release\`:
 
     dir /b bin\Release\rocketnet*
 
-`docs/PLATFORMS.md` is the support claim. Windows x86_64 with MSVC is
+[PLATFORMS.md](PLATFORMS.md) is the support claim. Windows x86_64 with MSVC is
 supported, with `portable`, `iocp` and `rio`. clang-cl is not named there, so
 it is not supported. Windows arm64 is unsupported.
 
