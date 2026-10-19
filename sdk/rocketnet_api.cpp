@@ -410,7 +410,7 @@ int rocketnet_client_update( struct rocketnet_client_t * client, double time )
     return rocketnet_message_client_update( rn_client( client ), time );
 }
 
-void rocketnet_client_send_packets( struct rocketnet_client_t * client )
+void rocketnet_client_send_messages( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
@@ -462,35 +462,35 @@ const char * rocketnet_client_transport_name( const struct rocketnet_client_t * 
     return rocketnet_client_transport_driver( rocketnet_message_client_transport( rn_client( client ) ) );
 }
 
-uint8_t * rocketnet_client_start( struct rocketnet_client_t * client, int channel, int reliability, int bytes )
+uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, int reliability, int bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return NULL;
     return rocketnet_message_client_start( rn_client( client ), channel, reliability, bytes );
 }
 
-uint32_t rocketnet_client_finish( struct rocketnet_client_t * client, int bytes_written )
+uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
     return rocketnet_message_client_finish( rn_client( client ), bytes_written );
 }
 
-void rocketnet_client_abort( struct rocketnet_client_t * client )
+void rocketnet_client_abort_message( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
     rocketnet_message_client_abort( rn_client( client ) );
 }
 
-int rocketnet_client_receive( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes )
+int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
         return 0;
     return rocketnet_message_client_receive( rn_client( client ), channel, data, bytes );
 }
 
-void rocketnet_client_release( struct rocketnet_client_t * client, const uint8_t * data )
+void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) )
         return;
@@ -779,7 +779,7 @@ int rocketnet_server_update( struct rocketnet_server_t * server, double time )
     return rocketnet_message_server_update( rn_server( server ), time );
 }
 
-void rocketnet_server_send_packets( struct rocketnet_server_t * server )
+void rocketnet_server_send_messages( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
@@ -851,42 +851,35 @@ int rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server
     return rocketnet_message_server_disconnect_reason( rn_server( server ), client_index );
 }
 
-uint8_t * rocketnet_server_start( struct rocketnet_server_t * server, int client_index, int channel, int reliability, int bytes )
+uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, int client_index, int channel, int reliability, int bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return NULL;
     return rocketnet_message_server_start( rn_server( server ), client_index, channel, reliability, bytes );
 }
 
-uint32_t rocketnet_server_finish( struct rocketnet_server_t * server, int client_index, int bytes_written )
+uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, int client_index, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
     return rocketnet_message_server_finish( rn_server( server ), client_index, bytes_written );
 }
 
-void rocketnet_server_abort( struct rocketnet_server_t * server, int client_index )
+void rocketnet_server_abort_message( struct rocketnet_server_t * server, int client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
     rocketnet_message_server_abort( rn_server( server ), client_index );
 }
 
-int rocketnet_server_broadcast( struct rocketnet_server_t * server, int channel, int reliability, const uint8_t * data, int bytes )
-{
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) )
-        return 0;
-    return rocketnet_message_server_broadcast( rn_server( server ), channel, reliability, data, bytes );
-}
-
-int rocketnet_server_receive( struct rocketnet_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
+int rocketnet_server_receive_message( struct rocketnet_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
         return 0;
     return rocketnet_message_server_receive( rn_server( server ), client_index, channel, data, bytes );
 }
 
-void rocketnet_server_release( struct rocketnet_server_t * server, int client_index, const uint8_t * data )
+void rocketnet_server_release_message( struct rocketnet_server_t * server, int client_index, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) )
         return;

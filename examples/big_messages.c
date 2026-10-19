@@ -78,13 +78,13 @@ int main( void )
         // (2) receive and release every received message, checking each byte
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
         for ( int i = 0; i < max_clients; i++ )
         {
             if ( !rocketnet_server_client_connected( server, i ) )
                 continue;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 if ( bytes == BIG_BYTES )
                 {
@@ -93,7 +93,7 @@ int main( void )
                     printf( "server received the %d-byte reliable message intact after %.3f s\n",
                             bytes, rocketnet_time() - start - big_sent_at );
                 }
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
             }
         }
         // (3) run the game simulation for the frame: nothing to simulate here
@@ -102,10 +102,10 @@ int main( void )
         {
             if ( !big_sent )
             {
-                uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE, BIG_BYTES );
+                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE, BIG_BYTES );
                 CHECK( out != NULL );
                 memcpy( out, expected, BIG_BYTES );
-                CHECK( rocketnet_client_finish( client, BIG_BYTES ) != 0 );
+                CHECK( rocketnet_client_finish_message( client, BIG_BYTES ) != 0 );
                 big_sent = 1;
                 big_sent_at = rocketnet_time() - start;
             }
@@ -116,10 +116,10 @@ int main( void )
                 // 4096 bytes is above one packet's record limit. A start that
                 // returns a buffer here is the promotion: an oversize
                 // unreliable send without a receipt is refused instead.
-                uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, OVERSIZE_BYTES );
+                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, OVERSIZE_BYTES );
                 CHECK( out != NULL );
                 memset( out, 0x5a, OVERSIZE_BYTES );
-                CHECK( rocketnet_client_finish( client, OVERSIZE_BYTES ) != 0 );
+                CHECK( rocketnet_client_finish_message( client, OVERSIZE_BYTES ) != 0 );
                 oversize_sent = 1;
             }
             if ( oversize_sent )
@@ -128,8 +128,8 @@ int main( void )
         // (5) send_packets (send_messages after the lifecycle rename) is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
         if ( big_arrived && oversize_sent && promotion_after == promotion_before + 1 )
         {
             rocketnet_client_disconnect( client );

@@ -71,7 +71,7 @@ int main( void ) {
         const uint8_t * data = NULL;
         int bytes = 0;
         for ( int ch = 0; ch < NUM_MODES; ch++ )
-            while ( rocketnet_client_receive( client, ch, &data, &bytes ) )
+            while ( rocketnet_client_receive_message( client, ch, &data, &bytes ) )
             {
                 CHECK( bytes == 2 && data[0] < NUM_MODES && data[1] >= 1 && data[1] <= NUM_MSGS );
                 struct mode_stats_t * s = &stats[data[0]];
@@ -81,11 +81,11 @@ int main( void ) {
                 if ( s->seen[seq] ) s->dups++; else s->seen[seq] = 1;
                 if ( s->arrived < NUM_MSGS * 2 ) s->order[s->arrived] = seq;
                 s->arrived++;
-                rocketnet_client_release( client, data );
+                rocketnet_client_release_message( client, data );
             }
         const int slot = rocketnet_client_index( client );
-        while ( slot >= 0 && rocketnet_server_receive( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release( server, slot, data );
+        while ( slot >= 0 && rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+            rocketnet_server_release_message( server, slot, data );
         struct rocketnet_receipt_t receipts[32];
         const int n_rec = slot >= 0 ? rocketnet_server_receipts( server, slot, receipts, 32 ) : 0;
         for ( int r = 0; r < n_rec; r++ )
@@ -102,20 +102,20 @@ int main( void ) {
             if ( sent < NUM_MODES * NUM_MSGS )
             {
                 const int m = sent / NUM_MSGS, seq = sent % NUM_MSGS + 1;
-                uint8_t * out = rocketnet_server_start( server, slot, m, modes[m], 2 );
+                uint8_t * out = rocketnet_server_start_message( server, slot, m, modes[m], 2 );
                 CHECK( out != NULL );
                 out[0] = (uint8_t) m; out[1] = (uint8_t) seq;
-                stats[m].serials[seq - 1] = rocketnet_server_finish( server, slot, 2 );
+                stats[m].serials[seq - 1] = rocketnet_server_finish_message( server, slot, 2 );
                 CHECK( stats[m].serials[seq - 1] != 0 );
                 sent++;
             }
-            uint8_t * tick = rocketnet_client_start( client, 0, ROCKETNET_UNRELIABLE, 1 );
-            if ( tick ) { tick[0] = 0; CHECK( rocketnet_client_finish( client, 1 ) != 0 ); }
+            uint8_t * tick = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE, 1 );
+            if ( tick ) { tick[0] = 0; CHECK( rocketnet_client_finish_message( client, 1 ) != 0 ); }
         }
 
         // (5) send_packets is last so this frame's messages leave this frame
-        rocketnet_server_send_packets( server );
-        rocketnet_client_send_packets( client );
+        rocketnet_server_send_messages( server );
+        rocketnet_client_send_messages( client );
         rocketnet_sleep( 0.0005 );
     }
 

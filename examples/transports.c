@@ -56,16 +56,16 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
         for ( int i = 0; i < max_clients; i++ )
         {
             if ( !rocketnet_server_client_connected( server, i ) )
                 continue;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 received++;
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
             }
         }
         // (3) run the game simulation for the frame: nothing to simulate here
@@ -74,19 +74,19 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         {
             const char * message = "transports";
             const int message_bytes = (int) strlen( message );
-            uint8_t * buffer = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
             if ( !buffer )
                 break;
             memcpy( buffer, message, (size_t) message_bytes );
-            if ( !rocketnet_client_finish( client, message_bytes ) )
+            if ( !rocketnet_client_finish_message( client, message_bytes ) )
                 break;
             sent = 1;
         }
         // (5) send_packets is last, after this frame's messages are queued, so
         // this frame's messages leave this frame (send_messages after the
         // lifecycle rename)
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && received > 0 )
         {
             ok = 1;

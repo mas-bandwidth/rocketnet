@@ -101,17 +101,17 @@ int main( void )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
-                uint8_t * out = rocketnet_server_start( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+                uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
                 if ( out )
                 {
                     memcpy( out, data, (size_t) bytes );
-                    if ( rocketnet_server_finish( server, i, bytes ) )
+                    if ( rocketnet_server_finish_message( server, i, bytes ) )
                         echoed = 1;
                 }
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
             }
         }
 
@@ -122,7 +122,7 @@ int main( void )
         // (5) send_packets (send_messages after the lifecycle rename) is last,
         // after this frame's messages are queued, so they leave this frame
 
-        rocketnet_server_send_packets( server );
+        rocketnet_server_send_messages( server );
 
         if ( rocketnet_server_num_connected_clients( server ) > 0 )
             had_client = 1;

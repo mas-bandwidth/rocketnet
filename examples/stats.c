@@ -55,37 +55,37 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-                rocketnet_client_release( client, data );
+            while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+                rocketnet_client_release_message( client, data );
             for ( int i = 0; i < max_clients; i++ )
             {
                 if ( !rocketnet_server_client_connected( server, i ) )
                     continue;
-                while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+                while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
                 {
-                    uint8_t * out = rocketnet_server_start( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
                     if ( out )
                     {
                         memcpy( out, data, (size_t) bytes );
-                        rocketnet_server_finish( server, i, bytes );
+                        rocketnet_server_finish_message( server, i, bytes );
                     }
-                    rocketnet_server_release( server, i, data );
+                    rocketnet_server_release_message( server, i, data );
                 }
             }
         }
         // (3) simulate; (4) queue this frame's outgoing message once connected
         if ( connected )
         {
-            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
             if ( out )
             {
                 memcpy( out, payload, sizeof( payload ) );
-                rocketnet_client_finish( client, (int) sizeof( payload ) );
+                rocketnet_client_finish_message( client, (int) sizeof( payload ) );
             }
         }
         // (5) send_messages (send_packets before the lifecycle rename) is last
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
         rocketnet_sleep( 0.001 );
         if ( !connected && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
@@ -137,8 +137,8 @@ int main( void )
             const double now = 1000.0 + ( rocketnet_time() - start );
             rocketnet_client_update( client, now );
             rocketnet_server_update( server, now );
-            rocketnet_client_send_packets( client );
-            rocketnet_server_send_packets( server );
+            rocketnet_client_send_messages( client );
+            rocketnet_server_send_messages( server );
             rocketnet_sleep( 0.001 );
             if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED )
                 break;

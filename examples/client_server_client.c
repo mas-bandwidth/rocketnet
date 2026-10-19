@@ -107,10 +107,10 @@ int main( int argc, char ** argv )
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
         {
             printf( "client received: %.*s\n", bytes, (const char*) data );
-            rocketnet_client_release( client, data );
+            rocketnet_client_release_message( client, data );
             received = 1;
         }
 
@@ -122,18 +122,18 @@ int main( int argc, char ** argv )
         {
             const char message[] = "hello from the client";
             const int message_bytes = (int) sizeof( message ) - 1;
-            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
             if ( out )
             {
                 memcpy( out, message, (size_t) message_bytes );
-                sent = rocketnet_client_finish( client, message_bytes ) != 0;
+                sent = rocketnet_client_finish_message( client, message_bytes ) != 0;
             }
         }
 
         // (5) send_packets (send_messages after the lifecycle rename) is last,
         // after this frame's messages are queued, so they leave this frame
 
-        rocketnet_client_send_packets( client );
+        rocketnet_client_send_messages( client );
 
         if ( received ) break;
         if ( wrong_protocol && state < 0 )

@@ -84,7 +84,7 @@ int main( int argc, char ** argv )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 const int mode = bytes > 0 ? data[0] : -1;
                 const int ok = mode >= 0 && mode < 8 &&
@@ -98,7 +98,7 @@ int main( int argc, char ** argv )
                     bad = 1;
                 }
                 fflush( stdout );
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
             }
         }
 
@@ -123,7 +123,7 @@ int main( int argc, char ** argv )
         // (5) send_packets (send_messages after the lifecycle rename) is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
-        rocketnet_server_send_packets( server );
+        rocketnet_server_send_messages( server );
 
         if ( rocketnet_time() - wall_start > 30.0 )
         {

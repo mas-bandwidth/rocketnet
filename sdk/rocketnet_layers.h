@@ -1178,7 +1178,7 @@ struct rocketnet_message_config_t
     int send_buffer_bytes;              // 12288 .. 1 << 28; default 800000
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
     int packets_in_flight;              // 16 .. 1 << 16; default 256
-    int max_packets_per_update;         // 1 .. 256; default 4
+    int max_packets_per_update;         // 1 .. 4096; default 256
     int unreliable_deliveries;          // per connection per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                // 0 .. 4096; default 16
     int receipt_ring;                   // 16 .. 1 << 16; default 256

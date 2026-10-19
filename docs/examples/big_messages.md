@@ -11,9 +11,9 @@ in-memory `loopback` transport, so it needs no socket and no network.
    The defaults (262144) already hold 200 KB; the example sets them explicitly.
 2. Connect a client to a server with the published development keys and a
    development connect token.
-3. Send a 200 KB `ROCKETNET_RELIABLE` message with `rocketnet_client_start`, a
+3. Send a 200 KB `ROCKETNET_RELIABLE` message with `rocketnet_client_start_message`, a
    `memcpy` of a known pattern into the returned buffer, and
-   `rocketnet_client_finish`. The server receives one reassembled message,
+   `rocketnet_client_finish_message`. The server receives one reassembled message,
    checks every byte, and prints its size and the time it took to arrive.
 4. Send 4096 bytes as `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`. That is above
    one packet's record limit, so the library promotes the send to its reliable
@@ -31,9 +31,9 @@ packet is refused at this base.
 Each frame runs update, receive and release, simulate, queue, then send last.
 Sending last is what makes this frame's messages leave this frame.
 
-The header also still uses the pre-rename names: `rocketnet_client_start`,
-`rocketnet_client_finish`, `rocketnet_client_receive`,
-`rocketnet_client_release` and `rocketnet_client_send_packets` (and their
+The header also still uses the pre-rename names: `rocketnet_client_start_message`,
+`rocketnet_client_finish_message`, `rocketnet_client_receive_message`,
+`rocketnet_client_release_message` and `rocketnet_client_send_messages` (and their
 server counterparts); the lifecycle card renames them to `*_start_message`
 and so on, and this example uses the names the header at this base declares.
 
@@ -69,11 +69,11 @@ log lines before it are not part of the check.
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_update`,
   `rocketnet_server_port`, `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
-  `rocketnet_server_receive`, `rocketnet_server_release`, `rocketnet_server_send_packets`,
+  `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_send_messages`,
   `rocketnet_server_destroy`
 - `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_state`,
-  `rocketnet_client_update`, `rocketnet_client_start`, `rocketnet_client_finish`,
-  `rocketnet_client_receive`, `rocketnet_client_release`, `rocketnet_client_send_packets`,
+  `rocketnet_client_update`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
+  `rocketnet_client_receive_message`, `rocketnet_client_release_message`, `rocketnet_client_send_messages`,
   `rocketnet_client_counter`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
 - `rocketnet_write_dev_connect_token` (development library only)
 - `rocketnet_time`, `rocketnet_sleep`

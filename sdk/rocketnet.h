@@ -93,6 +93,15 @@
 
 #define ROCKETNET_MAX_CLIENTS                                       1000
 
+// Destination ids are uint64_t. Today every destination is a client index,
+// 0 .. max_clients - 1. An id with ROCKETNET_FLOW_ID_BIT set is a flow id,
+// reserved for a future server-side flow feature (clients subscribe and
+// unsubscribe; the server sends to a flow by id with the same start and
+// finish), and never a client index. Until flows exist every function taking
+// a destination id refuses one with the bit set, and counts it.
+
+#define ROCKETNET_FLOW_ID_BIT                                       ( 1ULL << 63 )
+
 // The in-memory loopback transport holds this many endpoints in one process:
 // enough for one server and ROCKETNET_MAX_CLIENTS clients. It is chosen only
 // by name ("loopback"), for tests and examples; auto never selects it.
@@ -262,7 +271,7 @@ extern "C" {
 #endif
 
 /**
- * @brief Stable status values returned by the _ex lifecycle calls and the creates.
+ * @brief Stable status values returned by the lifecycle calls, connect and start.
  *
  * Stable status codes (docs/ERRORS-AND-LOGGING.md 2.1): OK is the sole
  * success value, every failure is a positive code, and the numbering is
@@ -303,7 +312,12 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,   ///< the platform refused a thread
     ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,   ///< the platform refused a timer
 
-    ROCKETNET_NUM_STATUS_CODES                          = 23     ///< sentinel: the count of codes, OK included; not an operation result
+    // object lifecycle (rocketnet_client_connect, rocketnet_server_start) and destinations
+    ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = 23,   ///< connect refused: the client is not DISCONNECTED; call rocketnet_client_disconnect first; nothing changed
+    ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = 24,   ///< start refused: the server is already running; nothing changed
+    ROCKETNET_STATUS_FLOW_ID_RESERVED                   = 25,   ///< a destination id has ROCKETNET_FLOW_ID_BIT set: flow ids are reserved and refused until flows exist
+
+    ROCKETNET_NUM_STATUS_CODES                          = 26     ///< sentinel: the count of codes, OK included; not an operation result
 };
 
 // -----------------------------------------
@@ -505,47 +519,12 @@ ROCKETNET_EXPORT size_t rocketnet_abi_field_size( const char * type, const char 
 ROCKETNET_EXPORT bool rocketnet_init( void * context );
 
 /**
- * @brief Initializes RocketNet and optionally returns the exact status code.
- *
- * This has the same lifecycle and logging behavior as rocketnet_init, which is
- * this call with a NULL status. It writes the exact section-2.1 code to status
- * on every return path when status is non-NULL; a failure logs one error line.
- * No client or server may be created until initialization succeeds.
- *
- * @param context Opaque allocator context retained for platform allocations; NULL is allowed.
- * @param status Optional writable int receiving a ROCKETNET_STATUS_* value; NULL skips the write.
- * @return true on success; false on an existing transition or platform/crypto failure.
- * @code
- * int status;
- * if (!rocketnet_init_ex(NULL, &status)) {
- *     fprintf(stderr, "init failed: %s\n", rocketnet_status_string(status));
- * }
- * @endcode
- */
-ROCKETNET_EXPORT bool rocketnet_init_ex( void * context, int * status );
-
-/**
  * @brief Terminates the initialized library after every client and server is destroyed.
  *
- * This wrapper discards the status returned by rocketnet_term_ex. A refused
- * termination logs one error line. Do not call concurrently with SDK work that
+ * A refused termination logs one error line. Do not call concurrently with SDK work that
  * allocates or depends on platform state.
  */
 ROCKETNET_EXPORT void rocketnet_term( void );
-
-/**
- * @brief Terminates the library and returns why termination did or did not occur.
- *
- * Call after every client and server is destroyed and every SDK allocation is
- * released. A failure logs one error line. Do not race termination with other
- * SDK work.
- *
- * @return The section-2.1 code: ROCKETNET_STATUS_OK on termination,
- * ROCKETNET_STATUS_NOT_INITIALIZED if the library is not initialized (nothing
- * to terminate) or is transitioning, or ROCKETNET_STATUS_LIVE_ALLOCATIONS while
- * SDK allocations remain and the term refuses.
- */
-ROCKETNET_EXPORT int rocketnet_term_ex( void );
 
 /** @brief Returns the total number of status codes, including OK. @return Count of defined values; allocation-free and safe before init. */
 ROCKETNET_EXPORT int rocketnet_num_status_codes( void );
@@ -687,8 +666,6 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
  */
 ROCKETNET_EXPORT bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
-/** @brief Replaces allocator callbacks and returns the refusal reason. @param malloc_function Non-NULL allocator callback. @param free_function Non-NULL matching deallocator. @return The section-2.1 code: ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a partial pair, ALREADY_INITIALIZED after init or during the transition, or LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line. Install before init with no live allocations. */
-ROCKETNET_EXPORT int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 // -----------------------------------------
 //                             config
@@ -742,7 +719,7 @@ struct rocketnet_client_config_t
     const char * transport;                         // ROCKETNET_CLIENT_TRANSPORT: the candidate list; NULL is "auto"
     void (*state_change_callback)( void * context, int previous_state, int current_state );   // no env form; NULL is none
     double (*time_callback)( void * context );      // no env form: the receive stamp clock, read once at create; NULL is the platform clock
-    uint64_t step_driven;                           // ROCKETNET_CLIENT_STEP_DRIVEN: 1 runs the client I/O step inside update and send_packets on the caller's thread, with no I/O thread; 0 (the default) keeps today's thread
+    uint64_t step_driven;                           // ROCKETNET_CLIENT_STEP_DRIVEN: 1 runs the client I/O step inside update and send_messages on the caller's thread, with no I/O thread; 0 (the default) keeps today's thread
     int send_kbps;                                  // ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; 0 or less disables the budget in this direction (client to server), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               // ROCKETNET_CLIENT_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            // ROCKETNET_CLIENT_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
@@ -751,7 +728,7 @@ struct rocketnet_client_config_t
     int send_buffer_bytes;                          // ROCKETNET_CLIENT_SEND_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        // ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          // ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     // ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finishes and send_packets together; 1 .. 256; default 4
+    int max_packets_per_update;                     // ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finishes and send_messages together; 1 .. 4096; default 256; the send budget is the throttle
     int unreliable_deliveries;                      // ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            // ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /** @brief Maximum queued client send receipts, 16 through 65536 (default 256).
@@ -809,7 +786,7 @@ struct rocketnet_server_config_t
     int send_buffer_bytes;                          // ROCKETNET_SERVER_SEND_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        // ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          // ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     // ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finishes and send_packets together; per client; 1 .. 256; default 4
+    int max_packets_per_update;                     // ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finishes and send_messages together; per client; 1 .. 4096; default 256; the send budget is the throttle
     int unreliable_deliveries;                      // ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            // ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /** @brief Maximum queued receipts per server client, 16 through 65536 (default 256).
@@ -849,8 +826,8 @@ struct rocketnet_server_config_t
 // The update order, on the main thread: update (packets in, acks into the
 // channels, received messages into deliveries, then the checks that
 // disconnect), receive and release, send (or start, write, finish), then
-// send_packets (each connection's packets, under its send budget, out to the
-// wire).
+// send_messages (each connection's queued messages, in packets under its send
+// budget, out to the wire).
 //
 // Sending: start, write in place, finish is the only send path. start returns
 // a pointer into the connection's region for the message, write the message
@@ -1006,7 +983,7 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 ROCKETNET_EXPORT int rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
 // a NULL client is a counted no-op.
-ROCKETNET_EXPORT void rocketnet_client_send_packets( struct rocketnet_client_t * client );
+ROCKETNET_EXPORT void rocketnet_client_send_messages( struct rocketnet_client_t * client );
 
 // Ends the connection: the disconnect is sent and the state becomes DISCONNECTED. a NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_disconnect( struct rocketnet_client_t * client );
@@ -1033,28 +1010,28 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 // layer and the transport), or NULL when refused. Write the message there once,
 // or copy it in when the caller already holds a buffer:
 //
-//     uint8_t * out = rocketnet_client_start( client, channel, reliability, bytes );
+//     uint8_t * out = rocketnet_client_start_message( client, channel, reliability, bytes );
 //     if ( out )
 //     {
 //         memcpy( out, data, bytes );
-//         serial = rocketnet_client_finish( client, bytes );
+//         serial = rocketnet_client_finish_message( client, bytes );
 //     }
 //
 // The pointer is valid until finish or abort; one start is pending per object
 // at a time. a NULL client is a counted no-op that returns NULL.
-ROCKETNET_EXPORT uint8_t * rocketnet_client_start( struct rocketnet_client_t * client, int channel, int reliability, int bytes );
+ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, int reliability, int bytes );
 
 // the queued message's receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. for a message written in place, finish completes and stages that packet buffer, with no copy. a NULL client is a counted no-op that returns 0.
-ROCKETNET_EXPORT uint32_t rocketnet_client_finish( struct rocketnet_client_t * client, int bytes_written );
+ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written );
 
 // a NULL client is a counted no-op.
-ROCKETNET_EXPORT void rocketnet_client_abort( struct rocketnet_client_t * client );
+ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
 
 // 1 with the next message on channel, 0 when there is none. a NULL client, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_client_receive( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes );
+ROCKETNET_EXPORT int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes );
 
 // a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-ROCKETNET_EXPORT void rocketnet_client_release( struct rocketnet_client_t * client, const uint8_t * data );
+ROCKETNET_EXPORT void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data );
 
 /** @brief Copy this update's client receipt outcomes into caller storage.
  * Call after update and before the next update, without a concurrent update.
@@ -1130,7 +1107,7 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 ROCKETNET_EXPORT int rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
 // a NULL server is a counted no-op.
-ROCKETNET_EXPORT void rocketnet_server_send_packets( struct rocketnet_server_t * server );
+ROCKETNET_EXPORT void rocketnet_server_send_messages( struct rocketnet_server_t * server );
 
 // The port the server bound: the address's port, or the ephemeral port a
 // port of 0 was given. Build a token address from it in tests and tools. a
@@ -1166,34 +1143,28 @@ ROCKETNET_EXPORT int rocketnet_server_disconnect_reason( const struct rocketnet_
 // layer and the transport), or NULL when refused. Write the message there once,
 // or copy it in when the caller already holds a buffer:
 //
-//     uint8_t * out = rocketnet_server_start( server, client_index, channel, reliability, bytes );
+//     uint8_t * out = rocketnet_server_start_message( server, client_index, channel, reliability, bytes );
 //     if ( out )
 //     {
 //         memcpy( out, data, bytes );
-//         serial = rocketnet_server_finish( server, client_index, bytes );
+//         serial = rocketnet_server_finish_message( server, client_index, bytes );
 //     }
 //
 // The pointer is valid until finish or abort; one start is pending per object
 // at a time. a NULL server is a counted no-op that returns NULL.
-ROCKETNET_EXPORT uint8_t * rocketnet_server_start( struct rocketnet_server_t * server, int client_index, int channel, int reliability, int bytes );
+ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, int client_index, int channel, int reliability, int bytes );
 
 // the queued message's receipt serial, nonzero; 0 when no start is pending, bytes_written is outside 1 to the bytes started, or client_index is not a connected client. for a message written in place, finish completes and stages that packet buffer, with no copy. a NULL server is a counted no-op that returns 0.
-ROCKETNET_EXPORT uint32_t rocketnet_server_finish( struct rocketnet_server_t * server, int client_index, int bytes_written );
+ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, int client_index, int bytes_written );
 
 // a NULL server is a counted no-op.
-ROCKETNET_EXPORT void rocketnet_server_abort( struct rocketnet_server_t * server, int client_index );
-
-// Takes the caller's data and copies it to every connected client, one copy
-// per connection. Returns the number of clients it was queued for; a client
-// that refuses is skipped. a NULL server or data is a counted no-op that
-// returns 0.
-ROCKETNET_EXPORT int rocketnet_server_broadcast( struct rocketnet_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );
+ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server, int client_index );
 
 // 1 with the next message on channel, 0 when there is none. a NULL server, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_server_receive( struct rocketnet_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
+ROCKETNET_EXPORT int rocketnet_server_receive_message( struct rocketnet_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
 
 // a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-ROCKETNET_EXPORT void rocketnet_server_release( struct rocketnet_server_t * server, int client_index, const uint8_t * data );
+ROCKETNET_EXPORT void rocketnet_server_release_message( struct rocketnet_server_t * server, int client_index, const uint8_t * data );
 
 /** @brief Copy one connected server client's receipt outcomes.
  * Call after update and before the next update, without a concurrent update.

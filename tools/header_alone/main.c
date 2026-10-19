@@ -83,41 +83,41 @@ int main( void )
 
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( client_message ) );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( client_message ) );
             CHECK( out != NULL );
             memcpy( out, client_message, sizeof( client_message ) );
-            CHECK( rocketnet_client_finish( client, (int) sizeof( client_message ) ) != 0 );
+            CHECK( rocketnet_client_finish_message( client, (int) sizeof( client_message ) ) != 0 );
             client_sent = 1;
         }
 
         const uint8_t * data = NULL;
         int bytes = 0;
 
-        while ( rocketnet_server_receive( server, 0, 0, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
         {
             CHECK( bytes == (int) sizeof( client_message ) && memcmp( data, client_message, sizeof( client_message ) ) == 0 );
-            rocketnet_server_release( server, 0, data );
+            rocketnet_server_release_message( server, 0, data );
             server_got = 1;
         }
 
         if ( server_got && !server_sent )
         {
-            uint8_t * out = rocketnet_server_start( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( server_message ) );
+            uint8_t * out = rocketnet_server_start_message( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( server_message ) );
             CHECK( out != NULL );
             memcpy( out, server_message, sizeof( server_message ) );
-            CHECK( rocketnet_server_finish( server, 0, (int) sizeof( server_message ) ) != 0 );
+            CHECK( rocketnet_server_finish_message( server, 0, (int) sizeof( server_message ) ) != 0 );
             server_sent = 1;
         }
 
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
         {
             CHECK( bytes == (int) sizeof( server_message ) && memcmp( data, server_message, sizeof( server_message ) ) == 0 );
-            rocketnet_client_release( client, data );
+            rocketnet_client_release_message( client, data );
             client_got = 1;
         }
 
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
         rocketnet_sleep( 0.001 );
     }
 
@@ -169,7 +169,7 @@ int main( void )
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
 
-    CHECK( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_term();
 
 #ifdef __cplusplus
     printf( "header_alone (C++): one message each way through rocketnet.h alone\n" );

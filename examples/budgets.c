@@ -33,11 +33,11 @@ static int send_burst( struct rocketnet_client_t * client, int channel, int reli
 {
     for ( int i = 0; i < count; i++ )
     {
-        uint8_t * out = rocketnet_client_start( client, channel, reliability, MESSAGE_BYTES );
+        uint8_t * out = rocketnet_client_start_message( client, channel, reliability, MESSAGE_BYTES );
         if ( !out )
             return 0;
         memset( out, (int)( 'A' + ( i % 26 ) ), MESSAGE_BYTES );
-        if ( !rocketnet_client_finish( client, MESSAGE_BYTES ) )
+        if ( !rocketnet_client_finish_message( client, MESSAGE_BYTES ) )
             return 0;
     }
     return 1;
@@ -95,15 +95,15 @@ int main( void )
         // sent on channel 1, so the example checks none was lost
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
         const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release( server, slot, data );
-        while ( rocketnet_server_receive( server, slot, 1, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+            rocketnet_server_release_message( server, slot, data );
+        while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
         {
             reliable_received++;
-            rocketnet_server_release( server, slot, data );
+            rocketnet_server_release_message( server, slot, data );
         }
 
         // (3) run the game simulation for the frame: nothing to simulate here
@@ -127,8 +127,8 @@ int main( void )
 
         // (5) send_packets is last, after this frame's messages are queued,
         // so this frame's messages leave this frame
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
 
         if ( reliable_sent && reliable_received >= RELIABLE_COUNT )
             break;

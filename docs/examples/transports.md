@@ -69,8 +69,8 @@ variable and the value it displaced.
 ## Public calls it uses
 
 - Lifecycle: `rocketnet_init`, `rocketnet_term`, `rocketnet_log_level`
-- Server: `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_port`, `rocketnet_server_transport_name`, `rocketnet_server_update`, `rocketnet_server_max_clients`, `rocketnet_server_client_connected`, `rocketnet_server_receive`, `rocketnet_server_release`, `rocketnet_server_send_packets`, `rocketnet_server_destroy`
-- Client: `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_update`, `rocketnet_client_state`, `rocketnet_client_start`, `rocketnet_client_finish`, `rocketnet_client_receive`, `rocketnet_client_release`, `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
+- Server: `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_port`, `rocketnet_server_transport_name`, `rocketnet_server_update`, `rocketnet_server_max_clients`, `rocketnet_server_client_connected`, `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_send_messages`, `rocketnet_server_destroy`
+- Client: `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_update`, `rocketnet_client_state`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`, `rocketnet_client_receive_message`, `rocketnet_client_release_message`, `rocketnet_client_send_messages`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
 - Development token: `rocketnet_write_dev_connect_token`
 - Time: `rocketnet_time`, `rocketnet_sleep`
 

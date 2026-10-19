@@ -233,12 +233,12 @@ the server:
    calls.
 3. Run the game simulation for the frame.
 4. Queue this frame's outgoing messages with start and finish.
-5. Call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
+5. Call `rocketnet_client_send_messages` or `rocketnet_server_send_messages`
    **last**, after all of this frame's messages are queued.
 
 The common mistake is calling `send_messages` early in the frame, or before
-queuing (here that is `rocketnet_client_send_packets` or
-`rocketnet_server_send_packets`): this frame's messages then wait for the next
+queuing (here that is `rocketnet_client_send_messages` or
+`rocketnet_server_send_messages`): this frame's messages then wait for the next
 frame, adding a frame of latency. Receiving before update does the same:
 nothing has been pumped yet, so the messages that arrived wait a frame. The
 send step is named `send_packets` in this header; the lifecycle vocabulary
@@ -255,38 +255,39 @@ void client_frame( struct rocketnet_client_t * client, double time )
     /* 2. receive and release every delivered message */
     const uint8_t * data;
     int bytes;
-    while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-        rocketnet_client_release( client, data );
+    while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        rocketnet_client_release_message( client, data );
 
     /* 3. run the game simulation for this frame */
 
     /* 4. queue this frame's outgoing messages */
-    uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, 64 );
+    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, 64 );
     if ( out )
-        rocketnet_client_finish( client, 64 );
+        rocketnet_client_finish_message( client, 64 );
 
     /* 5. last: send now, so this frame's messages leave this frame */
-    rocketnet_client_send_packets( client );
+    rocketnet_client_send_messages( client );
 }
 ```
 
 The server runs the same block with `rocketnet_server_update`,
-`rocketnet_server_receive`, `rocketnet_server_release`,
-`rocketnet_server_start`, `rocketnet_server_finish` and
-`rocketnet_server_send_packets`, looping the receive step over every client
+`rocketnet_server_receive_message`, `rocketnet_server_release_message`,
+`rocketnet_server_start_message`, `rocketnet_server_finish_message` and
+`rocketnet_server_send_messages`, looping the receive step over every client
 index. `rocketnet_client_update` and `rocketnet_server_update` return
 `ROCKETNET_MESSAGE_OK`, or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` when a
 received view from the last update was not released.
 
 ## Sending messages
 
-`rocketnet_client_send` and `rocketnet_server_send` copy the message in and
-return its receipt serial, nonzero, or `0` when the send was refused. The
-zero-copy form is start, write the message once in place, then finish:
-`rocketnet_client_start` or `rocketnet_server_start` returns a pointer into the
+The send is start, write the message once in place, then finish:
+`rocketnet_client_start_message` or `rocketnet_server_start_message` returns a pointer into the
 connection's region, and finish queues the bytes written and returns the
-serial. Abort gives the room back. One start is pending per object at a time.
-`rocketnet_server_broadcast` sends one message to every connected client.
+serial, nonzero, or `0` when the send was refused. Abort gives the room back.
+One start is pending per object at a time. To send one message to every
+connected client, loop over the slots with `rocketnet_server_client_connected`
+and start and finish for each. A destination id is a client index today
+(`uint64_t`); ids with `ROCKETNET_FLOW_ID_BIT` set are reserved for flows.
 
 The reliability is one of `ROCKETNET_UNRELIABLE`,
 `ROCKETNET_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABLE`,
@@ -308,14 +309,14 @@ unreliable message over budget is dropped and counted.
 
 uint32_t queue_state( struct rocketnet_client_t * client, const uint8_t * state, int bytes )
 {
-    uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
     if ( !out )
         return 0;
 
     for ( int i = 0; i < bytes; i++ )
         out[i] = state[i];
 
-    return rocketnet_client_finish( client, bytes );
+    return rocketnet_client_finish_message( client, bytes );
 }
 ```
 
@@ -326,10 +327,10 @@ that direction, which is not recommended; a positive value up to
 
 ## Receiving messages
 
-`rocketnet_client_receive` and `rocketnet_server_receive` hand out the next
+`rocketnet_client_receive_message` and `rocketnet_server_receive_message` hand out the next
 message of the update on a channel as a const view and its length. The view is
 valid until the next update, and every received message must be released with
-`rocketnet_client_release` or `rocketnet_server_release` before the next
+`rocketnet_client_release_message` or `rocketnet_server_release_message` before the next
 update. Copy anything kept past the update. Updating with a view still held
 asserts in a debug build and returns `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` in
 a release build.
@@ -348,24 +349,30 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     /* 2. receive and release every delivered message */
     const uint8_t * data;
     int bytes;
-    while ( rocketnet_server_receive( server, client_index, channel, &data, &bytes ) )
+    while ( rocketnet_server_receive_message( server, client_index, channel, &data, &bytes ) )
     {
         /* process data and bytes, then release the view */
-        rocketnet_server_release( server, client_index, data );
+        rocketnet_server_release_message( server, client_index, data );
     }
 
     /* 3. run the game simulation for this frame */
 
     /* 4. queue this frame's outgoing messages */
     const uint8_t payload[] = { 1, 2, 3, 4 };
-    uint32_t serial = rocketnet_server_send( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, payload, (int) sizeof( payload ) );
+    uint32_t serial = 0;
+    uint8_t * out = rocketnet_server_start_message( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
+    if ( out )
+    {
+        memcpy( out, payload, sizeof( payload ) );
+        serial = rocketnet_server_finish_message( server, client_index, (int) sizeof( payload ) );
+    }
     if ( serial == 0 )
     {
         /* the send was refused: check the connection */
     }
 
     /* 5. last: send now, so this frame's messages leave this frame */
-    rocketnet_server_send_packets( server );
+    rocketnet_server_send_messages( server );
 
     struct rocketnet_receipt_t receipts[64];
     int count = rocketnet_server_receipts( server, client_index, receipts, 64 );

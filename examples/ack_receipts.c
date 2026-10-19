@@ -4,7 +4,7 @@
 
     Ack receipts: send unreliable state updates with
     ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, record the serial
-    rocketnet_client_finish returns, and read rocketnet_client_receipts each
+    rocketnet_client_finish_message returns, and read rocketnet_client_receipts each
     frame for ROCKETNET_RECEIPT_ACKED or ROCKETNET_RECEIPT_LOSS so the sender
     knows which snapshot the receiver actually got. Run: ./bin/example_ack_receipts.
 */
@@ -70,11 +70,11 @@ int main( void )
         // (2) receive and release incoming messages, and read this frame's receipts
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
         const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release( server, slot, data );
+        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+            rocketnet_server_release_message( server, slot, data );
 
         struct rocketnet_receipt_t receipts[32];
         const int count = rocketnet_client_receipts( client, receipts, 32 );
@@ -109,27 +109,27 @@ int main( void )
             if ( sent < NUM_UPDATES )
             {
                 uint32_t snapshot_id = (uint32_t) sent;
-                uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, (int) sizeof( snapshot_id ) );
+                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, (int) sizeof( snapshot_id ) );
                 CHECK( out != NULL );
                 memcpy( out, &snapshot_id, sizeof( snapshot_id ) );
-                serials[sent] = rocketnet_client_finish( client, (int) sizeof( snapshot_id ) );
+                serials[sent] = rocketnet_client_finish_message( client, (int) sizeof( snapshot_id ) );
                 CHECK( serials[sent] != 0 );
                 sent++;
             }
             if ( rocketnet_server_client_connected( server, slot ) )
             {
-                uint8_t * tick = rocketnet_server_start( server, slot, 0, ROCKETNET_UNRELIABLE, 1 );
+                uint8_t * tick = rocketnet_server_start_message( server, slot, 0, ROCKETNET_UNRELIABLE, 1 );
                 if ( tick )
                 {
                     tick[0] = 0;
-                    CHECK( rocketnet_server_finish( server, slot, 1 ) != 0 );
+                    CHECK( rocketnet_server_finish_message( server, slot, 1 ) != 0 );
                 }
             }
         }
 
         // (5) send_packets is last so this frame's queued messages leave this frame
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
         rocketnet_sleep( 0.005 );
     }
 

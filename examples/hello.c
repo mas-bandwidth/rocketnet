@@ -55,17 +55,17 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         const uint8_t * data = NULL;
         int bytes = 0;
 
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
 
         for ( int i = 0; i < max_clients; i++ )
         {
             if ( !rocketnet_server_client_connected( server, i ) )
                 continue;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
                 if ( received )
                     ( *received )++;
             }
@@ -78,11 +78,11 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         if ( send && !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const int message_bytes = (int) strlen( message );
-            uint8_t * buffer = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
             if ( !buffer )
                 return -1;
             memcpy( buffer, message, (size_t) message_bytes );
-            if ( !rocketnet_client_finish( client, message_bytes ) )
+            if ( !rocketnet_client_finish_message( client, message_bytes ) )
                 return -1;
             sent = 1;
         }
@@ -91,8 +91,8 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
 
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
 
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              ( !send || ( received && *received > 0 ) ) )

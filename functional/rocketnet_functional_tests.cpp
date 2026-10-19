@@ -3215,24 +3215,24 @@ void rocketnet_test_public_client_server_queries()
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const uint8_t payload[16] = { 1, 2, 3 };
-            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
-            rocketnet_check( rocketnet_client_finish( client, (int) sizeof( payload ) ) != 0 );
-            out = rocketnet_server_start( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            rocketnet_check( rocketnet_client_finish_message( client, (int) sizeof( payload ) ) != 0 );
+            out = rocketnet_server_start_message( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
-            rocketnet_check( rocketnet_server_finish( server, rocketnet_client_index( client ), (int) sizeof( payload ) ) != 0 );
+            rocketnet_check( rocketnet_server_finish_message( server, rocketnet_client_index( client ), (int) sizeof( payload ) ) != 0 );
             exchanged++;
         }
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_server_receive( server, 0, 0, &data, &bytes ) )
-            rocketnet_server_release( server, 0, data );
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
+            rocketnet_server_release_message( server, 0, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
         rocketnet_sleep( 0.005 );
     }
     rocketnet_check( exchanged == 20 );
@@ -3241,8 +3241,8 @@ void rocketnet_test_public_client_server_queries()
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
-        rocketnet_client_send_packets( client );
-        rocketnet_server_send_packets( server );
+        rocketnet_client_send_messages( client );
+        rocketnet_server_send_messages( server );
         rocketnet_sleep( 0.005 );
     }
 
