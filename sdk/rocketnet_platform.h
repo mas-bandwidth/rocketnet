@@ -10,9 +10,29 @@
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
 #define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
 
+/**
+ * @brief Names the SDK's IP address type used by the socket, conversion and
+ * resolve helpers.
+ *
+ * The full type is defined in the internal layers header; this header only
+ * forward-declares it so the functions below can take and return it.
+ */
 struct rocketnet_address_t;
+/**
+ * @brief Names the IPv4 socket-address type used by the conversion helpers.
+ *
+ * This is the system socket type; this header only forward-declares it.
+ */
 struct sockaddr_in;
 
+/**
+ * @brief Describes a function that runs as a platform thread.
+ *
+ * The function runs with the argument supplied to thread_create and returns
+ * normally to finish the thread.
+ * @param arg User argument; NULL is passed through unchanged.
+ * @return None.
+ */
 typedef void (*rocketnet_platform_thread_func_t)(void*);
 
 // ----------------------------------------------------------------
@@ -21,40 +41,174 @@ typedef void (*rocketnet_platform_thread_func_t)(void*);
 extern "C" {
 #endif
 
+/**
+ * @brief Initializes the platform layer before other platform calls.
+ *
+ * Call once before creating transports, sockets, threads, or mutexes. POSIX
+ * implementations return true after recording the time origin; Windows can
+ * return false when Winsock initialization fails.
+ * @return true when initialization succeeds; false when platform startup fails.
+ */
 bool rocketnet_platform_init();
 
+/**
+ * @brief Releases platform-wide resources after all users have stopped.
+ *
+ * Call after transports and platform objects are destroyed and worker threads
+ * are joined. The function has no status result.
+ * @return None.
+ */
 void rocketnet_platform_term();
 
 // ----------------------------------------------------------------
 
+/**
+ * @brief Returns the compile-time platform identifier.
+ *
+ * The result is one of the ROCKETNET_PLATFORM_* constants used by this build.
+ * @return The platform identifier; this call has no failure result.
+ */
 int rocketnet_platform_id();
 
+/**
+ * @brief Returns the connection type detected during platform initialization.
+ *
+ * Call after rocketnet_platform_init. A failed or unavailable route probe is
+ * reported as ROCKETNET_CONNECTION_TYPE_UNKNOWN.
+ * @return The detected connection type, or UNKNOWN when it cannot be detected.
+ */
 int rocketnet_platform_connection_type();
 
+/**
+ * @brief Reads elapsed monotonic time in seconds.
+ *
+ * Initialize the platform first. The value is relative to the platform's
+ * initialization time and is suitable for measuring durations.
+ * @return Elapsed seconds; no error status is reported.
+ */
 double rocketnet_platform_time();
 
+/**
+ * @brief Pauses the calling thread for the requested duration.
+ *
+ * @param time Requested seconds. Windows treats non-positive and NaN values
+ * as yield-only requests and rounds positive values up to its timer unit. POSIX
+ * passes the value converted to microseconds to usleep; invalid or
+ * unrepresentable values are not reported by this void API.
+ * @return None.
+ */
 void rocketnet_platform_sleep( double time );
 
+/**
+ * @brief Looks up a process environment variable.
+ *
+ * @param var NUL-terminated variable name; must not be NULL.
+ * @return A borrowed pointer to the value, or NULL when the variable is unset.
+ * The pointer is owned by the process environment and must not be freed.
+ */
 const char * rocketnet_platform_getenv( const char * var );
 
+/**
+ * @brief Converts a 16-bit value from network byte order to host byte order.
+ *
+ * @param in Value in network byte order.
+ * @return The converted host-order value.
+ */
 uint16_t rocketnet_platform_ntohs( uint16_t in );
 
+/**
+ * @brief Converts a 16-bit value from host byte order to network byte order.
+ *
+ * @param in Value in host byte order.
+ * @return The converted network-order value.
+ */
 uint16_t rocketnet_platform_htons( uint16_t in );
 
+/**
+ * @brief Copies an IPv4 address into a system socket address.
+ *
+ * @param address Source IPv4 address; must be non-NULL and have IPv4 type.
+ * Its address bytes are already in network order and its port is in host order.
+ * @param out Caller-owned destination structure; must be non-NULL. The port is
+ * converted to network byte order.
+ * @return None. The destination remains owned by the caller.
+ */
 void rocketnet_platform_address_to_sockaddr_in( const struct rocketnet_address_t * address, struct sockaddr_in * out );
 
+/**
+ * @brief Copies a system IPv4 socket address into a RocketNet address.
+ *
+ * @param in Source socket address; must be non-NULL.
+ * @param address Caller-owned destination; must be non-NULL. Address bytes
+ * remain in network order and the port is converted to host byte order.
+ * @return None. The destination remains owned by the caller.
+ */
 void rocketnet_platform_sockaddr_in_to_address( const struct sockaddr_in * in, struct rocketnet_address_t * address );
 
+/**
+ * @brief Parses a dotted-decimal IPv4 address.
+ *
+ * @param address_string NUL-terminated address text; must be non-NULL.
+ * @param address_out Caller-owned output word; must be non-NULL and is written
+ * only when parsing succeeds. Its four in-memory bytes are in network order.
+ * @return true for a valid IPv4 address; false when the text is invalid.
+ */
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out );
 
+/**
+ * @brief Parses an IPv6 address into its 16 network-order bytes.
+ *
+ * The bytes are written through eight 16-bit words as storage; the numeric
+ * word values are not host-order address groups. Convert each word with
+ * rocketnet_platform_ntohs before using it as a RocketNet IPv6 group.
+ * @param address_string NUL-terminated IPv6 text; must be non-NULL.
+ * @param address_out Caller-owned storage for eight 16-bit words; must be
+ * non-NULL.
+ * @return true for a valid IPv6 address; false when parsing fails.
+ */
 bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * address_out );
 
+/**
+ * @brief Formats 16 network-order IPv6 bytes as text.
+ *
+ * @param address Caller-owned storage containing eight words with the same
+ * network-order byte layout produced by inet_pton6; must be non-NULL.
+ * @param address_string Caller-owned output buffer; must be non-NULL.
+ * @param address_string_size Buffer capacity in bytes, including space for the
+ * terminator; must be large enough for an IPv6 string.
+ * @return true when formatting succeeds; false when the buffer is too small or
+ * the system formatter rejects the arguments.
+ */
 bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_string, size_t address_string_size );
 
+/**
+ * @brief Resolves a host name and service to one IPv4 or IPv6 address.
+ *
+ * @param hostname NUL-terminated host name accepted by the system resolver.
+ * @param port NUL-terminated service or port accepted by the system resolver.
+ * @param address Caller-owned output address; must be non-NULL and is written
+ * on success.
+ * @return true when the first supported result is IPv4 or IPv6; false when
+ * resolution fails or returns an unsupported address family.
+ */
 bool rocketnet_platform_hostname_resolve( const char * hostname, const char * port, struct rocketnet_address_t * address );
 
+/**
+ * @brief Returns the platform's preferred local client port.
+ *
+ * The current implementations return zero, asking socket creation to choose an
+ * ephemeral port.
+ * @return Preferred port, or zero for an ephemeral port.
+ */
 uint16_t rocketnet_platform_preferred_client_port();
 
+/**
+ * @brief Reports whether an IPv6 client socket can also use IPv4-mapped peers.
+ *
+ * Call after platform initialization. Some platforms, including OpenBSD,
+ * report false because they keep IPv6 sockets IPv6-only.
+ * @return true when dual-stack client sockets are supported; otherwise false.
+ */
 bool rocketnet_platform_client_dual_stack();
 
 #ifdef __cplusplus
@@ -67,6 +221,27 @@ bool rocketnet_platform_client_dual_stack();
 extern "C" {
 #endif
 
+/**
+ * @brief Creates and binds a UDP socket.
+ *
+ * Call after platform initialization. The address must be IPv4 or IPv6; port
+ * zero asks the OS for a port, which is written back to address. The returned
+ * object and native socket are owned by the caller and released with
+ * socket_destroy.
+ * @param context Allocator context passed to RocketNet allocation; NULL uses
+ * the default allocator.
+ * @param address Writable bind address, modified with the assigned port when its
+ * port is zero; must be non-NULL and IPv4 or IPv6.
+ * @param socket_type ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING or
+ * ROCKETNET_PLATFORM_SOCKET_BLOCKING.
+ * @param timeout_seconds Receive timeout in seconds for blocking sockets;
+ * positive values request an OS timeout and non-positive values request no
+ * timeout. A value rejected by the OS makes creation fail.
+ * @param send_buffer_size Requested send-buffer bytes; use a non-negative value.
+ * @param receive_buffer_size Requested receive-buffer bytes; use a non-negative value.
+ * @return An owned socket, or NULL if allocation, socket setup, buffer setup,
+ * bind, or requested mode setup fails.
+ */
 struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size );
 
 // pump-request create (#106): the driver ladder's entry into pump
@@ -74,12 +249,64 @@ struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * co
 // (probe, honoring ROCKETNET_PUMP); "portable" forces the portable pump;
 // "msgx" requires the darwin batch pump or returns NULL loudly.
 
+/**
+ * @brief Creates a UDP socket and requests a named packet pump.
+ *
+ * The address, socket mode, timeout, and buffer arguments follow
+ * socket_create. NULL or "auto" uses runtime selection and the
+ * ROCKETNET_PUMP environment override; "portable" requests the portable
+ * implementation; "msgx" requires the macOS batch pump.
+ * @param context Allocator context; NULL uses the default allocator.
+ * @param address Writable bind address, modified with the assigned port when
+ * zero; must be non-NULL and IPv4 or IPv6.
+ * @param socket_type NON_BLOCKING or BLOCKING.
+ * @param timeout_seconds Blocking receive timeout in seconds; positive values
+ * request an OS timeout, non-positive values disable it, and a rejected value
+ * makes creation fail.
+ * @param send_buffer_size Requested send-buffer bytes; use a non-negative value.
+ * @param receive_buffer_size Requested receive-buffer bytes; use a non-negative value.
+ * @param pump NULL, "auto", "portable", or "msgx"; other values are not
+ * documented as supported.
+ * @return An owned socket, or NULL when socket setup fails or the requested
+ * pump is unavailable.
+ */
 struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump );
 
+/**
+ * @brief Closes and frees a socket returned by socket_create.
+ *
+ * Call once after all sends, receives, and wake objects using the socket stop.
+ * @param socket Caller-owned socket; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * socket );
 
+/**
+ * @brief Sends one UDP datagram.
+ *
+ * @param socket Live socket returned by socket_create; must be non-NULL.
+ * @param to IPv4 or IPv6 destination; must be non-NULL.
+ * @param packet_data Caller-owned bytes; must be non-NULL and remain readable
+ * for the call.
+ * @param packet_bytes Datagram length in bytes; must be positive.
+ * @return None. Send errors are logged or dropped by the platform layer.
+ */
 void rocketnet_platform_socket_send_packet( struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to, const void * packet_data, int packet_bytes );
 
+/**
+ * @brief Receives one UDP datagram into caller storage.
+ *
+ * @param socket Live socket returned by socket_create; must be non-NULL.
+ * @param from Caller-owned output address; must be non-NULL.
+ * @param packet_data Caller-owned output buffer; must be non-NULL.
+ * @param max_packet_size Buffer capacity in bytes; must be positive.
+ * @return Received datagram length in bytes, or zero when no usable packet is
+ * available. If the datagram exceeds max_packet_size, only its prefix fits in
+ * packet_data and the returned value exceeds the capacity (Windows can report
+ * max_packet_size + 1 as an oversize marker). Treat that value as an oversize
+ * signal and do not read beyond the buffer. Receive errors have no separate
+ * status code.
+ */
 int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, void * packet_data, int max_packet_size );
 
 // ----------------------------------------------------------------
@@ -101,20 +328,64 @@ int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t
 // means drained. packet_stride is the caller's slot size and the per-packet
 // receive ceiling.
 
+/**
+ * @brief Describes one datagram in a batch send.
+ *
+ * The pointed-to address and packet bytes remain caller-owned and must stay
+ * valid until socket_send_packets returns. The platform may use a native batch
+ * path or loop over single-packet sends; socket_pump reports the live path,
+ * including a fallback after a native path degrades.
+ */
 struct rocketnet_platform_send_t
 {
+    /** @brief Destination address for this datagram. */
     const struct rocketnet_address_t * to;
+    /** @brief Caller-owned bytes to send; valid for the duration of the call. */
     const uint8_t * packet_data;
+    /** @brief Datagram length in bytes; the implementation requires a positive value. */
     int packet_bytes;
 };
 
+/**
+ * @brief Sends a caller-owned batch of UDP datagrams.
+ *
+ * The owning transport controls thread affinity. This function does not
+ * synchronize socket destruction with a concurrent call. Each datagram follows
+ * the send_packet error behavior and failures are dropped.
+ * @param socket Live socket; must be non-NULL.
+ * @param sends Array of num_packets entries; must be non-NULL when count is
+ * positive and remain valid until return.
+ * @param num_packets Number of entries; must not be negative.
+ * @return None.
+ */
 void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
 
+/**
+ * @brief Drains up to a fixed number of datagrams into caller-owned arrays.
+ *
+ * @param socket Live socket; must be non-NULL.
+ * @param from Output array of max_packets source addresses.
+ * @param packet_data Output storage with packet_stride bytes per slot.
+ * @param packet_stride Slot size and maximum stored prefix in bytes; positive.
+ * @param packet_bytes Output array of max_packets datagram lengths. A length
+ * may exceed packet_stride when a datagram is oversized; only its prefix is
+ * stored in the corresponding packet_data slot.
+ * @param max_packets Capacity of all output arrays; positive.
+ * @return Number of received datagrams, from zero through max_packets. A
+ * returned zero means no usable datagram was received.
+ */
 int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
 // the name of the pump path live behind the seam ("portable", "msgx"), for
 // logging and for tests that pin the degradation contract
 
+/**
+ * @brief Returns the packet-pump path currently selected by a socket.
+ *
+ * @param socket Live socket; must be non-NULL.
+ * @return Borrowed static text naming the currently selected path, such as
+ * "portable" or "msgx"; a degraded path is visible here. Do not free it.
+ */
 const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
 #ifdef __cplusplus
@@ -128,7 +399,33 @@ const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t 
 // above. Internal, no export, defined only where __linux__ is set.
 
 #if defined(__linux__)
+/**
+ * @brief Sends a batch with Linux sendmmsg on the caller's I/O thread.
+ *
+ * This internal Linux entry point has the same arguments and dropped-error
+ * behavior as socket_send_packets.
+ * @param socket Live socket.
+ * @param sends Caller-owned batch array.
+ * @param num_packets Number of entries.
+ * @return None.
+ */
 void rocketnet_platform_socket_send_packets_mmsg( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
+/**
+ * @brief Receives a batch with Linux recvmmsg on the caller's I/O thread.
+ *
+ * This internal Linux entry point follows socket_receive_packets layout,
+ * except that recvmmsg-truncated datagrams are skipped and produce no output
+ * entry. The generic socket_receive_packets path may instead report an
+ * oversized datagram with packet_bytes greater than packet_stride and store
+ * only its prefix.
+ * @param socket Live socket.
+ * @param from Output source-address array.
+ * @param packet_data Output storage with packet_stride bytes per slot.
+ * @param packet_stride Capacity of each packet slot in bytes.
+ * @param packet_bytes Output packet-length array.
+ * @param max_packets Capacity of each output array.
+ * @return Number of datagrams received, or zero when none are available.
+ */
 int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 #endif
 
@@ -148,10 +445,51 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #define ROCKETNET_PLATFORM_HAS_WAKE 1
 #endif
+/**
+ * @brief Opaque level-triggered wake object associated with a socket.
+ *
+ * Create it with wake_create and release it with wake_destroy. The socket must
+ * outlive the wake object.
+ */
 struct rocketnet_platform_wake_t;
+/**
+ * @brief Creates a wake object associated with a live socket.
+ *
+ * @param context Allocator context; NULL uses the default allocator.
+ * @param socket Live socket that remains open until the wake is destroyed.
+ * @return Owned wake object, or NULL if this platform does not implement wakes
+ * or allocation/native wake creation fails.
+ */
 struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket );
+/**
+ * @brief Destroys a wake object and releases its native wake handle.
+ *
+ * Destroy it before destroying its associated socket.
+ * @param wake Caller-owned wake; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_wake_destroy( struct rocketnet_platform_wake_t * wake );
+/**
+ * @brief Waits for a wake signal, optional socket readability, or timeout.
+ *
+ * @param wake Live wake object; must be non-NULL.
+ * @param readable When true, socket readability also releases the wait; when
+ * false, only a wake signal or timeout does.
+ * @param timeout_seconds Timeout in seconds. Non-positive values do not wait
+ * on POSIX; Windows converts the value for its native wait API. Avoid values
+ * outside the range supported by the target OS.
+ * @return true when the wake or requested readability releases the wait;
+ * false on timeout or when the native wait reports no event.
+ */
 bool rocketnet_platform_wake_wait( struct rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds );
+/**
+ * @brief Signals a wake object so a waiting thread can resume.
+ *
+ * Any thread may signal it. A signal made before a wait remains pending until
+ * consumed by a later wait.
+ * @param wake Live wake object; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
 
 // ----------------------------------------------------------------
@@ -160,26 +498,97 @@ void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
 extern "C" {
 #endif
 
+/**
+ * @brief Starts a platform thread running func(arg).
+ *
+ * @param context Allocator context; NULL uses the default allocator.
+ * @param func Thread function; must be non-NULL.
+ * @param arg User pointer passed unchanged; may be NULL.
+ * @return Owned thread handle, or NULL if allocation or native thread creation
+ * fails. Join the thread before destroying its handle.
+ */
 struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg );
 
+/**
+ * @brief Waits until a created platform thread has returned.
+ *
+ * Call once for a live thread, from a different thread than the one being
+ * joined.
+ * @param thread Live thread handle; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread );
 
+/**
+ * @brief Frees a thread handle after its thread has been joined.
+ *
+ * @param thread Joined thread handle; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thread );
 
+/**
+ * @brief Requests the platform's client-thread scheduling priority.
+ *
+ * Call on a live thread. Operating-system permissions can prevent the request;
+ * the API does not return that status.
+ * @param thread Live thread handle; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_client_thread_priority( struct rocketnet_platform_thread_t * thread );
 
+/**
+ * @brief Requests the platform's server-thread scheduling priority.
+ *
+ * Call on a live thread. Operating-system permissions can prevent the request;
+ * the API does not return that status.
+ * @param thread Live thread handle; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_server_thread_priority( struct rocketnet_platform_thread_t * thread );
 
 // ----------------------------------------------------------------
 
+/**
+ * @brief Opaque platform mutex storage.
+ *
+ * Create the object before locking it; destroy it after all users stop.
+ */
 struct rocketnet_platform_mutex_t;
 
+/**
+ * @brief Initializes caller-provided storage as a mutex.
+ *
+ * @param mutex Caller-owned storage; must be non-NULL and not already
+ * initialized.
+ * @return true when native mutex creation succeeds; false when it fails.
+ */
 bool rocketnet_platform_mutex_create( struct rocketnet_platform_mutex_t * mutex );
 
+/**
+ * @brief Destroys an initialized mutex and clears its storage.
+ *
+ * No thread may hold or wait on the mutex during destruction.
+ * @param mutex Initialized mutex storage; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_mutex_destroy( struct rocketnet_platform_mutex_t * mutex );
 
+/**
+ * @brief Locks an initialized mutex, waiting until it becomes available.
+ *
+ * Do not acquire the same non-recursive mutex twice on one thread.
+ * @param mutex Successfully initialized mutex; must be non-NULL.
+ * @return None.
+ */
 void rocketnet_platform_mutex_acquire( struct rocketnet_platform_mutex_t * mutex );
 
+/**
+ * @brief Unlocks a mutex held by the calling thread.
+ *
+ * @param mutex Successfully initialized mutex held by this thread.
+ * @return None.
+ */
 void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex );
 
 #ifdef __cplusplus
@@ -188,8 +597,14 @@ void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex
 
 #ifdef __cplusplus
 
+/**
+ * @brief Locks a mutex on construction and unlocks it on destruction.
+ *
+ * This C++ scope guard releases the mutex when its local scope ends.
+ */
 struct rocketnet_platform_mutex_helper_t
 {
+    /** @brief Mutex locked for this helper's lifetime. */
     rocketnet_platform_mutex_t * mutex;
 #if ROCKETNET_SPIKE_TRACKING
     const char * file;
@@ -253,25 +668,39 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     #include <unistd.h>
     #include <sched.h>
 
+    /**
+ * @brief Stores a native POSIX socket descriptor.
+ */
     typedef int rocketnet_platform_socket_handle_t;
 
+    /** @brief Holds the platform socket and its allocator context. */
     struct rocketnet_platform_socket_t
     {
+        /** @brief Allocator context used to free this socket. */
         void * context;
+        /** @brief Blocking or non-blocking mode selected at creation. */
         int type;
+        /** @brief True when the socket was created for an IPv6 bind address. */
         bool ipv6;
+        /** @brief Native socket descriptor owned by this object. */
         rocketnet_platform_socket_handle_t handle;
     };
 
+    /** @brief Holds a native thread and its allocator context. */
     struct rocketnet_platform_thread_t
     {
+        /** @brief Allocator context used to free the thread handle. */
         void * context;
+        /** @brief Native thread handle. */
         pthread_t handle;
     };
 
+    /** @brief Stores a POSIX mutex and whether its initialization succeeded. */
     struct rocketnet_platform_mutex_t
     {
+        /** @brief True only after native mutex initialization succeeds. */
         bool ok;
+        /** @brief Native non-recursive mutex handle. */
         pthread_mutex_t handle;
     };
 
@@ -371,11 +800,24 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
     #include <intrin.h>
 
+    /**
+     * @brief Atomically adds an unsigned value and returns the previous value.
+     *
+     * @param value Aligned, initialized shared word; must be non-NULL.
+     * @param add Amount added, including zero.
+     * @return The value observed before the addition.
+     */
     inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
     {
         return (uint64_t) _InterlockedExchangeAdd64( (volatile long long *) value, (long long) add );
     }
 
+    /**
+     * @brief Atomically reads an unsigned 64-bit shared word.
+     *
+     * @param value Aligned, initialized shared word; must be non-NULL.
+     * @return The value observed at read time. The read has relaxed ordering.
+     */
     inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
     {
     #if defined(_M_IX86)
@@ -390,6 +832,13 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     #endif
     }
 
+    /**
+     * @brief Atomically publishes an unsigned 64-bit value.
+     *
+     * @param value Aligned shared word; must be non-NULL.
+     * @param store Value to publish.
+     * @return None. The operation has relaxed ordering.
+     */
     inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
     {
     #if defined(_M_IX86)
@@ -402,6 +851,13 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     #endif // #if defined(_M_IX86)
     }
 
+    /**
+     * @brief Atomically publishes the bit pattern of a double value.
+     *
+     * @param value Aligned shared double; must be non-NULL.
+     * @param store Value to publish.
+     * @return None. The operation has relaxed ordering.
+     */
     inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
     {
         uint64_t bits;
@@ -412,6 +868,13 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     // folds value = max(value, candidate) with a compare-exchange loop, so
     // concurrent folds from any number of threads leave the largest
 
+    /**
+     * @brief Atomically raises a shared value to at least candidate.
+     *
+     * @param value Aligned, initialized shared word; must be non-NULL.
+     * @param candidate Candidate high-water value.
+     * @return None.
+     */
     inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
     {
         long long observed = *(volatile long long *) value;
@@ -426,21 +889,45 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
 #else // #if defined(_MSC_VER)
 
+    /**
+     * @brief Atomically adds an unsigned value and returns the previous value.
+     * @param value Aligned, initialized shared word; non-NULL.
+     * @param add Amount added, including zero.
+     * @return Value observed before the addition.
+     */
     inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
     {
         return __atomic_fetch_add( value, add, __ATOMIC_RELAXED );
     }
 
+    /**
+     * @brief Atomically reads an unsigned 64-bit shared word.
+     *
+     * @param value Aligned, initialized shared word; non-NULL.
+     * @return The value observed at read time. The read has relaxed ordering.
+     */
     inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
     {
         return __atomic_load_n( value, __ATOMIC_RELAXED );
     }
 
+    /**
+     * @brief Atomically publishes an unsigned 64-bit value.
+     * @param value Aligned shared word; non-NULL.
+     * @param store Value to publish.
+     * @return None. This operation has relaxed ordering.
+     */
     inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
     {
         __atomic_store_n( value, store, __ATOMIC_RELAXED );
     }
 
+    /**
+     * @brief Atomically publishes the bit pattern of a double.
+     * @param value Aligned shared double; non-NULL.
+     * @param store Value to publish.
+     * @return None. This operation has relaxed ordering.
+     */
     inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
     {
         uint64_t bits;
@@ -451,6 +938,12 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     // folds value = max(value, candidate) with a compare-exchange loop, so
     // concurrent folds from any number of threads leave the largest
 
+    /**
+     * @brief Atomically raises a shared value to at least candidate.
+     * @param value Aligned, initialized shared word; non-NULL.
+     * @param candidate Candidate high-water value.
+     * @return None.
+     */
     inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
     {
         uint64_t observed = __atomic_load_n( value, __ATOMIC_RELAXED );
@@ -468,6 +961,12 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
 // Short critical sections for bookkeeping whose ring slots can alias under a
 // concurrent burst. Unlike the independent counters above, these order data.
+/**
+ * @brief Spins until the shared lock word changes from zero to one.
+ *
+ * @param value Aligned lock word initialized to zero; must be non-NULL.
+ * @return None. The call blocks by spinning until the lock is acquired.
+ */
 inline void rocketnet_platform_spin_lock_u64( volatile uint64_t * value )
 {
 #if defined(_MSC_VER)
@@ -479,6 +978,12 @@ inline void rocketnet_platform_spin_lock_u64( volatile uint64_t * value )
 #endif
 }
 
+/**
+ * @brief Releases a shared lock word acquired by spin_lock_u64.
+ *
+ * @param value Lock word held by the caller; must be non-NULL.
+ * @return None.
+ */
 inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
 {
 #if defined(_MSC_VER)
@@ -505,14 +1010,38 @@ inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
 #include <sys/socket.h>
 #include <linux/netlink.h>
 
+/**
+ * @brief Holds the process-wide allocator context used by platform helpers.
+ *
+ * Set from the initialization context before platform discovery and cleared
+ * during failed initialization or termination. It is an internal borrowed
+ * pointer and is not an allocation owned by this variable.
+ */
 extern void * rocketnet_global_context;
 
+/**
+ * @brief Forward-declares the internal vector type used by the route probe.
+ *
+ * The definition is private to the implementation.
+ */
 template <typename T> struct rocketnet_vector_t;
 // Reads the kernel route table dump over netlink until an NLMSG_DONE message
 // ends it; returns true when the dump was read in full, false when a receive
 // fails or returns zero. receive is the recvmsg call, passed so tests can
 // drive the probe without a socket. get_connection_type maps a false result
 // to ROCKETNET_CONNECTION_TYPE_UNKNOWN.
+/**
+ * @brief Reads a Linux route dump through a caller-supplied receive function.
+ *
+ * This internal C++ helper consumes messages until NLMSG_DONE and supports
+ * deterministic tests without opening a socket.
+ * @param sock Netlink socket descriptor.
+ * @param kernel Kernel netlink address.
+ * @param route_table Caller-owned output vector.
+ * @param receive Receive function used to obtain each message.
+ * @return true when the complete dump is read; false when receiving fails or
+ * ends before completion.
+ */
 bool rocketnet_platform_read_route_table(
     int sock,
     struct sockaddr_nl * kernel,

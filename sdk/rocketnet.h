@@ -167,16 +167,52 @@
 #define ROCKETNET_MAX_CHANNELS                                         32
 #endif // #ifndef ROCKETNET_MAX_CHANNELS
 
+/** @brief Send once without delivery, ordering, sequencing, or receipt.
+ * The receiver can see the message at most once. A lost packet loses it.
+ */
 #define ROCKETNET_UNRELIABLE                                            0
+/** @brief Send without delivery guarantees and keep only newer channel state.
+ * The receiver delivers a state only when its ordering and sequencing values
+ * are newer; older or out-of-turn states can be discarded.
+ */
 #define ROCKETNET_UNRELIABLE_SEQUENCED                                  1
+/** @brief Resend until the peer's transport acknowledges the message.
+ * Delivery is once, but messages on the same channel have no order guarantee.
+ * This mode does not produce a receipt.
+ */
 #define ROCKETNET_RELIABLE                                              2
+/** @brief Resend until acknowledged and deliver in channel order.
+ * The receiver holds later messages until earlier messages on that channel
+ * arrive. This mode does not produce a receipt.
+ */
 #define ROCKETNET_RELIABLE_ORDERED                                      3
+/** @brief Resend until acknowledged and deliver only the newest channel state.
+ * The receiver can discard an acknowledged stale state; delivery order is
+ * not guaranteed. This mode does not produce a receipt.
+ */
 #define ROCKETNET_RELIABLE_SEQUENCED                                    4
+/** @brief Send once and report whether the carrying packet is acknowledged.
+ * A larger message is sent as a reliable block and can report ACKED only.
+ * A single-packet message can report ACKED or LOSS.
+ */
 #define ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT                           5
+/** @brief Resend until acknowledged and report an ACKED receipt.
+ * Delivery is once without channel ordering. A connection failure does not
+ * produce a LOSS receipt.
+ */
 #define ROCKETNET_RELIABLE_WITH_ACK_RECEIPT                             6
+/** @brief Resend until acknowledged, deliver in channel order, and report ACKED.
+ * A connection failure does not produce a LOSS receipt.
+ */
 #define ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT                     7
 
+/** @brief Receipt status meaning the peer's transport acknowledged the packet.
+ * This does not mean the peer application read the message.
+ */
 #define ROCKETNET_RECEIPT_ACKED                                         1
+/** @brief Receipt status meaning an unreliable receipt packet was not acknowledged.
+ * The message is not resent; reliable receipt modes do not produce LOSS.
+ */
 #define ROCKETNET_RECEIPT_LOSS                                          2
 
 // Why a connection ended: what rocketnet_client_disconnect_reason and
@@ -716,6 +752,9 @@ struct rocketnet_client_config_t
     int max_packets_per_update;                     // ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets send_packets sends per update; 1 .. 256; default 4
     int unreliable_deliveries;                      // ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            // ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
+    /** @brief Maximum queued client send receipts, 16 through 65536 (default 256).
+     * A full ring drops its oldest receipt; ROCKETNET_CLIENT_RECEIPT_RING can override it.
+     */
     int receipt_ring;                               // ROCKETNET_CLIENT_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
     int rto_initial_ms;                             // ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
     int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
@@ -763,6 +802,9 @@ struct rocketnet_server_config_t
     int max_packets_per_update;                     // ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets send_packets sends per update; per client; 1 .. 256; default 4
     int unreliable_deliveries;                      // ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            // ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
+    /** @brief Maximum queued receipts per server client, 16 through 65536 (default 256).
+     * A full ring drops its oldest receipt; ROCKETNET_SERVER_RECEIPT_RING can override it.
+     */
     int receipt_ring;                               // ROCKETNET_SERVER_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
     int rto_initial_ms;                             // ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
     int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
@@ -819,11 +861,15 @@ struct rocketnet_server_config_t
 // asserts in a debug build and returns ROCKETNET_ERROR_MESSAGE_NOT_RELEASED
 // in a release build. Copy what is kept past the update.
 
-// One outcome for a send's nonzero serial. The list after an update is valid
-// until the next update; a full receipt ring drops its oldest entry.
+/** @brief One outcome for a send's nonzero receipt serial.
+ * Receipts are copied into caller storage after an update. A full receipt ring
+ * drops its oldest entry; copy any result needed beyond the next update.
+ */
 struct rocketnet_receipt_t
 {
+    /** @brief Identify the send whose outcome is reported. */
     uint32_t serial;
+    /** @brief State whether the peer transport acknowledged or missed it. */
     uint32_t status;            // ROCKETNET_RECEIPT_ACKED or ROCKETNET_RECEIPT_LOSS
 };
 
@@ -972,9 +1018,16 @@ ROCKETNET_EXPORT int rocketnet_client_receive( struct rocketnet_client_t * clien
 // a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
 ROCKETNET_EXPORT void rocketnet_client_release( struct rocketnet_client_t * client, const uint8_t * data );
 
-// Copies this update's receipts into out, up to capacity entries; returns the
-// copied count. Repeated calls see the same list until the next update. a
-// NULL client or out is a counted no-op that returns 0.
+/** @brief Copy this update's client receipt outcomes into caller storage.
+ * Call after update and before the next update, without a concurrent update.
+ * Repeated calls copy the same visible entries; the client owns the internal
+ * list, and the caller owns the output array.
+ * @param client Client object; NULL returns 0.
+ * @param out Writable array with room for capacity entries; NULL returns 0.
+ * @param capacity Array length in entries; values below 1 return 0.
+ * @return Entries copied, from 0 through capacity. Zero means none are visible
+ * or an input is invalid; it is not an error status.
+ */
 ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity );
 
 // 1 when the budget took the new rate, from now on. 0 or less disables the budget in this direction, client to server (NOT RECOMMENDED); a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns 0 with the rate unchanged. a NULL client is a counted no-op that returns 0.
@@ -1091,7 +1144,18 @@ ROCKETNET_EXPORT int rocketnet_server_receive( struct rocketnet_server_t * serve
 // a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
 ROCKETNET_EXPORT void rocketnet_server_release( struct rocketnet_server_t * server, int client_index, const uint8_t * data );
 
-// As rocketnet_client_receipts, for one connected client. Invalid inputs return 0.
+/** @brief Copy one connected server client's receipt outcomes.
+ * Call after update and before the next update, without a concurrent update.
+ * Repeated calls copy the same visible entries; the server owns the internal
+ * list, and the caller owns the output array.
+ * @param server Server object; NULL returns 0.
+ * @param client_index Slot index in [0, configured max_clients); an invalid or
+ * disconnected slot returns 0.
+ * @param out Writable array with room for capacity entries; NULL returns 0.
+ * @param capacity Array length in entries; values below 1 return 0.
+ * @return Entries copied, from 0 through capacity. Zero means none are visible
+ * or an input is invalid; it is not an error status.
+ */
 ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity );
 
 // 1 when the client's budget took the new rate, from now on. 0 or less disables the budget in this direction, server to that client (NOT RECOMMENDED); a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns 0 with the rate unchanged. a NULL server is a counted no-op that returns 0.
