@@ -167,6 +167,35 @@ dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
 send phases, receive banks and destruction are modelled in
 `tla/RNRioDriver.tla`.
 
+## Windows connection reset
+
+When a UDP send reaches a port no socket holds, the peer's stack answers with
+an ICMP port unreachable. Winsock, unlike other stacks, reports that answer to
+the sending socket's next receive as `WSAECONNRESET` (or `WSAENETRESET` for a
+network unreachable), and an overlapped or registered receive completes with
+the matching unreachable status. A client that dies without closing its socket
+makes the server see one such report for every send to it, so a receive loop
+that stops at the first error, or a completion that is not posted again, stops
+serving every other client. Every socket rocketnet creates on Windows (the
+portable server and client sockets, `iocp` with and without USO and URO, and
+`rio`, IPv4 and IPv6) turns off `SIO_UDP_CONNRESET` and `SIO_UDP_NETRESET` at
+create through `rocketnet_platform_socket_disable_udp_resets`, which checks each
+`WSAIoctl` and logs a refusal once without failing the create. Every receive
+path still skips the reset and unreachable statuses and keeps draining: the
+portable receive reads on, an `iocp` or `rio` post refused with one is posted
+again, a failed `iocp` completion is reposted, and a `rio` slice whose re-post
+fails waits on a retry list for the next `receive_packets`.
+`rocketnet_platform_receive_resets` counts the statuses skipped. The functional
+cases in `functional/windows_connreset.cpp` prove it for each server transport
+and family: `windows_connreset_hard_killed_client_*` ends one of four clients
+with `TerminateProcess` while the server keeps sending to it, and the other
+three see no receive gap past one update interval plus 50 ms, the dead client
+times out by the normal timeout and a fifth client connects;
+`windows_connreset_send_to_closed_port_*` sends 1000 datagrams to the closed
+port with exact receive counts on the live clients; and
+`windows_client_connreset_server_gone_*` connects a client whose requests first
+went to a closed port.
+
 ## The io_uring server driver
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)

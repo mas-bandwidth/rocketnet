@@ -405,6 +405,33 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     windows_connreset_session_finish( &session );
 }
 
+// no sends: every side only reads, for seconds, counting what still arrives
+static void windows_connreset_drain( windows_connreset_session_t * session, double seconds )
+{
+    const double start = rocketnet_platform_time();
+    double next = start;
+    while ( rocketnet_platform_time() - start < seconds )
+    {
+        const double now = rocketnet_platform_time();
+        for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
+            windows_connreset_client_tick( session->live[i], now, 0, false, NULL, &session->client_received[i] );
+        rocketnet_server_transport_update( session->server, now );
+        const int num_payloads = rocketnet_server_transport_num_payloads( session->server );
+        for ( int j = 0; j < num_payloads; j++ )
+        {
+            int client_index = -1;
+            int payload_bytes = 0;
+            rocketnet_server_transport_payload( session->server, j, &client_index, &payload_bytes );
+            const int slot = windows_connreset_live_slot( session, client_index );
+            if ( slot >= 0 )
+                session->server_received[slot]++;
+        }
+        rocketnet_server_transport_send_packets( session->server );
+        next += WINDOWS_CONNRESET_TICK;
+        windows_connreset_sleep_to( next );
+    }
+}
+
 // windows_connreset_send_to_closed_port: with the child ended, the server
 // sends 1000 datagrams to its port, which no socket holds, while the live
 // clients exchange traffic: no stall, no disconnect, and every payload each
@@ -416,9 +443,15 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
     windows_connreset_session_start( &session, transport );
     windows_connreset_child_kill( &session.child );
 
-    // counts start here, on a quiet link
+    // counts start here, on a link drained quiet: nothing sent before is
+    // still in flight
+    session.measuring = false;
+    windows_connreset_drain( &session, 0.25 );
+    session.measuring = true;
+    const double restart = rocketnet_platform_time();
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
     {
+        session.last_receive[i] = restart;
         session.client_sent[i] = 0;
         session.client_received[i] = 0;
         session.server_received[i] = 0;
@@ -436,28 +469,8 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
     }
 
     // stop sending; drain until every count settles
-    const double drain = rocketnet_platform_time();
     session.measuring = false;
-    while ( rocketnet_platform_time() - drain < 0.5 )
-    {
-        const double now = rocketnet_platform_time();
-        for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
-            windows_connreset_client_tick( session.live[i], now, 0, false, NULL, &session.client_received[i] );
-        rocketnet_server_transport_update( session.server, now );
-        const int num_payloads = rocketnet_server_transport_num_payloads( session.server );
-        for ( int j = 0; j < num_payloads; j++ )
-        {
-            int client_index = -1;
-            int payload_bytes = 0;
-            rocketnet_server_transport_payload( session.server, j, &client_index, &payload_bytes );
-            const int slot = windows_connreset_live_slot( &session, client_index );
-            if ( slot >= 0 )
-                session.server_received[slot]++;
-        }
-        rocketnet_server_transport_send_packets( session.server );
-        next += WINDOWS_CONNRESET_TICK;
-        windows_connreset_sleep_to( next );
-    }
+    windows_connreset_drain( &session, 0.5 );
     const uint64_t resets = rocketnet_platform_receive_resets() - resets_before;
 
     printf( "windows_connreset_send_to_closed_port %s: %d datagrams to the closed port, max receive gap %.1f ms (bound %.1f ms), reset statuses skipped %llu\n",
