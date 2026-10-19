@@ -206,8 +206,8 @@ static void unreliable_promotion_every_mode()
         for(int c=0;c<BOUNDARY_TEST_CHANNEL_COUNT;++c) {
             const int channel=channels[c];
             boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
-            const int transport_max=pair.client->object.max_payload_bytes>0 ? pair.client->object.max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
-            const int record_capacity=transport_max<ROCKETNET_MAX_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PAYLOAD_BYTES;
+            // The fixture transport exceeds the packet cap, so the packet cap bounds each record.
+            const int record_capacity=ROCKETNET_MAX_PAYLOAD_BYTES;
             const int header=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? 3+3+3+(channel>=256?2:1) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
             const int one_packet_capacity=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? record_capacity :
                 (record_capacity<ROCKETNET_MESSAGE_SINGLE_BYTES ? record_capacity : ROCKETNET_MESSAGE_SINGLE_BYTES);
