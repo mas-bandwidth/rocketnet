@@ -286,7 +286,7 @@ jobs:
       # production shared library exports only the reviewed list (so the
       # development token minting symbol stays out of it).
       - name: Check the library is callable from C and C++ through rocketnet.h
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
         run: python3 tools/check_dll_consumer.py --build build
 
       - name: Check the examples against the house rules
