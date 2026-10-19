@@ -29,6 +29,7 @@
 #include "rocketnet_fragment.h"
 
 #include <unordered_map>
+#include <atomic>
 
 extern unsigned long long g_client_ack_stats_count;
 
@@ -7251,10 +7252,79 @@ extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
 
+// A destroyed client's receive thread always exits: destroy stores quit and
+// wakes the receive thread's wait explicitly before the join. These cases use
+// real threads and real waits, so they run here, not in the unit suite.
+
+struct rocketnet_test_receive_thread_quit_waiter_t
+{
+    std::atomic<int> about_to_wait;
+    std::atomic<int> waits_done;
+};
+
+static void rocketnet_test_receive_thread_quit_long_wait( void * data )
+{
+    rocketnet_test_receive_thread_quit_waiter_t * waiter = (rocketnet_test_receive_thread_quit_waiter_t*) data;
+    waiter->about_to_wait.store( 1, std::memory_order_release );
+    // an hour-long wait: only the wake ends it within the test
+    rocketnet_platform_thread_wait( 3600.0 );
+    // once woken, every later wait returns at once
+    rocketnet_platform_thread_wait( 3600.0 );
+    waiter->waits_done.store( 2, std::memory_order_release );
+}
+
+// the wake ends a wait whose timeout would not fire for an hour, whether the
+// wake lands before the wait starts or during it, and stays set for later
+// waits. Odd rounds wake at once (mostly before the wait), even rounds wake
+// after the thread reaches its wait (mostly during it). A lost wake hangs the
+// case, and the suite's time limit reports it.
+void rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait()
+{
+    for ( int i = 0; i < 100; i++ )
+    {
+        rocketnet_test_receive_thread_quit_waiter_t waiter;
+        waiter.about_to_wait.store( 0 );
+        waiter.waits_done.store( 0 );
+        rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, rocketnet_test_receive_thread_quit_long_wait, &waiter );
+        rocketnet_check( thread );
+        if ( ( i & 1 ) == 0 )
+        {
+            while ( !waiter.about_to_wait.load( std::memory_order_acquire ) ) {}
+        }
+        rocketnet_platform_thread_wake( thread );
+        rocketnet_platform_thread_join( thread );
+        rocketnet_platform_thread_destroy( thread );
+        rocketnet_check( waiter.waits_done.load( std::memory_order_acquire ) == 2 );
+    }
+}
+
+// 1000 create and destroy cycles of a client transport whose receive thread
+// polls the in-memory loopback driver: every destroy returns
+void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
+{
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+
+    // 127.0.0.1:40000 is never opened: the loopback driver opens no socket
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time( NULL ), token ) );
+
+    const double game_time = 1000.0;
+    for ( int i = 0; i < 1000; i++ )
+    {
+        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, game_time );
+        rocketnet_check( client != NULL );
+        rocketnet_client_transport_destroy( client );
+    }
+}
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
+    { "client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait },
+    { "client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times },
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
     { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn },
     { "test_client_disconnect_reports_state_change", rocketnet_test_client_disconnect_reports_state_change },
