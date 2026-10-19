@@ -91,6 +91,12 @@
 
 #define ROCKETNET_MAX_CLIENTS                                       1000
 
+// The in-memory loopback transport holds this many endpoints in one process:
+// enough for one server and ROCKETNET_MAX_CLIENTS clients. It is chosen only
+// by name ("loopback"), for tests and examples; auto never selects it.
+
+#define ROCKETNET_LOOPBACK_MAX_ENDPOINTS          ( ROCKETNET_MAX_CLIENTS + 1 )
+
 // The packet size: the UDP payload of one datagram on a 1500-byte MTU link,
 // the number every other size limit derives from (STANDARD.md _Packet
 // sizes_). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;

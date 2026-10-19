@@ -17,10 +17,16 @@ transport branches on generic capabilities, never a specific backend identity.
 
 A driver with a preference rank at or above `ROCKETNET_DRIVER_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
-always selects it, but `auto` never chooses it. The loopback driver is the one
-pin-only row. It is in-process, carries datagrams through memory with no socket
-and no system network call, and serves tests and tools; it is never chosen by
-auto.
+always selects it, but `auto` never chooses it. The loopback transport is the
+one pin-only row. It is in-process, carries datagrams through memory with no
+socket and no system network call, and serves tests and examples; it is never
+chosen by auto. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
+records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
+allocates its queue at create, `ROCKETNET_LOOPBACK_QUEUE_PACKETS` x
+`sizeof(rocketnet_loopback_packet_t)` = 1,531,904 bytes, so a full table of
+live endpoints is about 1,533,435,904 bytes. The cost is paid only by a process
+that instantiates the loopback transport, which is tests and examples, never a
+game on auto. Lookups scan the table linearly under the mutex.
 
 The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
 and `rocketnet_server_uring_leaked_drivers` are internal driver helpers
