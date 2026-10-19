@@ -20,6 +20,7 @@
 #include "rocketnet_connect_token.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -74,7 +75,7 @@ static void token_with_server_key( uint8_t * token, const uint8_t * server_key )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof(signed_fields) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
     signed_fields.expire_timestamp = 1ULL << 40;
@@ -118,6 +119,24 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
     delete fake;
 }
 
+static int test_set_environment( const char * name, const char * value )
+{
+#if defined( _WIN32 )
+    return _putenv_s( name, value );
+#else
+    return setenv( name, value, 1 );
+#endif
+}
+
+static int test_unset_environment( const char * name )
+{
+#if defined( _WIN32 )
+    return _putenv_s( name, "" );
+#else
+    return unsetenv( name );
+#endif
+}
+
 static void dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a release
@@ -151,15 +170,15 @@ static void dev_keys_warn_on_every_start()
         memset( config.server_public_key, 0x43, 32 );
         memset( config.server_secret_key, 0x44, 32 );
         config.protocol_id = 1;
-        setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1", 1 );
+        check( test_set_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1" ) == 0 );
         int status = -1;
         start_capture();
         void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
         stop_capture();
         check( srv == NULL );
-        check( status == ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED );
+        check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
         check( g_dev_warn_lines == 0 );
-        unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+        check( test_unset_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
     }
 
     // the client can tell from its token's server key: a development key warns

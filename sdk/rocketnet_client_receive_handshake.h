@@ -9,7 +9,7 @@
 #define ROCKETNET_CLIENT_RECEIVE_HANDSHAKE_H
 
 #include <atomic>
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_constants.h"
 
 // The receive handoff of docs/CLIENT-IO.md _The receive path_ and the receive

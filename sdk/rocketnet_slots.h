@@ -20,7 +20,7 @@
 
 #include <stdint.h>
 
-#include "rocketnet.h"                  // ROCKETNET_MAX_CLIENTS
+#include "rocketnet_internal.h"                  // ROCKETNET_MAX_CLIENTS
 
 // observe's answers, and the RNSlots Observe actions they name
 #define RN_SLOTS_NONE    0              // the binding did not change

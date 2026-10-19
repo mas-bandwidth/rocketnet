@@ -3,7 +3,7 @@
 
 #include <atomic>
 #include <stdint.h>
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 // The two send rings' state machine (docs/CLIENT-IO.md). Frames fill one ring
 // while the other is held by the I/O path; a ring is reused only after SENT.

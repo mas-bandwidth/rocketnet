@@ -268,7 +268,7 @@ static void no_allocation_after_create_reliable_receipts()
 {
     rocketnet_term();
     rocketnet_unit_check( rocketnet_allocator( reliable_receipt_malloc, reliable_receipt_free ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_init( NULL ) );
 
     reliable_receipt_fixture_t f;
     uint64_t after_create = 0;
@@ -281,7 +281,7 @@ static void no_allocation_after_create_reliable_receipts()
 
     rocketnet_term();
     rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_init( NULL ) );
 }
 
 REGISTER_UNIT_TEST( reliable_receipt_acked_never_loss );

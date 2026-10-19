@@ -146,7 +146,7 @@ static void ctv_fields( const struct ctv_input_t * input,
                         struct rocketnet_connect_token_private_t * private_fields )
 {
     memset( signed_fields, 0, sizeof(*signed_fields) );
-    signed_fields->version = ROCKETNET_VERSION;
+    signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = input->protocol_id;
     signed_fields->create_timestamp = input->create_timestamp;
     signed_fields->expire_timestamp = input->expire_timestamp;
@@ -264,7 +264,7 @@ static std::string ctv_generate_json()
            "the ephemeral X25519 secret: epk = X25519(ephemeral_secret, basepoint), nonce = BLAKE2b-192(epk || server_public_key), "
            "sealed = epk || crypto_box_easy(private_block, nonce, server_public_key, ephemeral_secret). The token is signed with the "
            "Ed25519 key expanded from backend_signing_seed. All keys are the published test keys; never use them in a deployment.\",\n";
-    out += "  \"version\": \"" + ctv_hex_u32( ROCKETNET_VERSION ) + "\",\n";
+    out += "  \"version\": \"" + ctv_hex_u32( ROCKETNET_WIRE_VERSION ) + "\",\n";
     out += "  \"vectors\": [\n";
 
     for ( int v = 0; v < ctv_input_count; v++ )
@@ -475,7 +475,7 @@ static void each_vector_verifies_and_opens()
 
         struct rocketnet_signed_connect_data_t signed_fields;
         rocketnet_read_signed_connect_data( &signed_fields, token.signed_connect_data );
-        rocketnet_unit_check( signed_fields.version == ROCKETNET_VERSION );
+        rocketnet_unit_check( signed_fields.version == ROCKETNET_WIRE_VERSION );
         rocketnet_unit_check( signed_fields.protocol_id == v.protocol_id );
         rocketnet_unit_check( signed_fields.create_timestamp == v.create_timestamp );
         rocketnet_unit_check( signed_fields.expire_timestamp == v.expire_timestamp );

@@ -18,7 +18,7 @@ Binaries and libraries land in `bin/`. Run the unit suite with:
 
     ./bin/test
 
-`./bin/test` does not open a socket and does not start a driver. It drives the
+`./bin/test` does not open a socket and does not start a transport. It drives the
 state machines and the in-memory network simulator. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). A test over
 60 seconds prints a warning line. A test over 120 seconds is killed and the
@@ -28,8 +28,8 @@ accepts only test-name lines on a passing `./bin/test` run, and that checker
 is shared with the unit suite.
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
-IOCP, or AF_XDP, or that starts a real driver (`rocketnet_server_transport_create`,
-`rocketnet_client_transport_create`, `rocketnet_platform_socket_create`, or a
+IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,
+`rocketnet_client_create`, `rocketnet_platform_socket_create`, or a
 sibling binary that does), belongs in the functional suite:
 
     ./bin/functional
@@ -38,14 +38,14 @@ The functional suite is its own target. It runs in parallel under the same
 60 second warning and 120 second failure limits, and it prints the ten
 slowest as a table. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`
-when the assertion is about a real socket or a real driver. A test that
+when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and
 ACK behavior already has protocol tests in the unit suite. The keyless-config
 create is functional; `test_server_keyless_config_has_no_keys` checks the
-config the gate reads, without creating a driver.
+config the gate reads, without creating a transport.
 
 Dependencies, per platform, as CI installs them:
 
@@ -228,18 +228,18 @@ still requires roughly 4.2 GiB; select fewer queues or provision that explicitly
 
 ## Pre-allocation server resource plans
 
-`rocketnet_server_transport_required_memory(config, driver)` returns the planned
-constructor storage in bytes for one concrete built-in driver. It works before
+`rocketnet_server_required_memory(config)` returns the bytes of the caller memory
+block the server needs for `config` at its `max_clients`. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
-Pass `NULL` config for defaults. A zero result means invalid geometry or a driver
-that has no built-in plan on this build; `auto`, candidate lists and custom drivers
-need separate policy. The query uses the supplied numeric configuration only:
+Pass `NULL` config for defaults. The query reads the supplied configuration only:
 it does not apply environment overrides, check keys, probe hardware or approve a
-configuration against the component budgets. Create reports each candidate's plan
-at INFO level before allocating the transport, using its effective configuration.
+configuration against the component budgets. `rocketnet_client_required_memory` is
+the client form. The detailed per-transport plan and the kernel-facing host memory
+estimate are internal to the transport layer (`sdk/rocketnet_layers.h`), not part
+of the public client and server API.
 
 The plan includes the transport, protocol tables and ACK history, reassembly and
-its delivered mirror, send arena, native driver queues and SDK worker allocations,
+its delivered mirror, send arena, native transport queues and SDK worker allocations,
 plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
@@ -248,15 +248,15 @@ application memory are outside this count. Provision room for those costs; a
 plan is not an available-RAM check or a whole-host peak estimate. Existing
 component budgets, queue defaults and history limits are unchanged.
 
-`rocketnet_server_transport_host_memory_estimate(config, driver, &estimate)` adds
-the kernel-facing memory a driver requests to that plan, under the same config
-and driver rules, with no allocation, socket or thread. Each field is a
+The internal transport layer's host memory estimate adds the kernel-facing
+memory a transport requests to the plan, under the same config and transport
+rules, with no allocation, socket or thread. Each field is a
 request, never what the kernel grants: `allocator_bytes` (the plan without
 UMEM), `umem_bytes` (XDP frame memory, the plan's UMEM), `socket_send_buffer_bytes`
 and `socket_receive_buffer_bytes` (the `SO_SNDBUF` and `SO_RCVBUF` sizes asked of
-every socket the driver opens), `xdp_ring_bytes` (the AF_XDP RX and TX
+every socket the transport opens), `xdp_ring_bytes` (the AF_XDP RX and TX
 descriptor rings of every queue) and `thread_stack_bytes` (`worker_threads` x
-`thread_stack_bytes_per_thread`; drivers create threads with the platform
+`thread_stack_bytes_per_thread`; transports create threads with the platform
 default stack, so on POSIX this is the default thread attribute's stack size,
 set by `ulimit -s` on glibc, and on Windows the executable's 1 MiB default
 reserve). `total_bytes` is their sum and is never below `required_memory`.
@@ -268,7 +268,7 @@ and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
 resident pages. With default configuration and an 8 MiB default stack, on Linux:
 
-| driver | required_memory | sockets | socket buffers | XDP rings | threads x stack | estimate total |
+| transport | required_memory | sockets | socket buffers | XDP rings | threads x stack | estimate total |
 | --- | --- | --- | --- | --- | --- | --- |
 | portable | 688,206,108 | 1 | 2,000,000 | 0 | 0 | 690,206,108 |
 | gso | 830,413,923 | 4 | 8,000,000 | 0 | 4 x 8 MiB | 871,968,355 |
@@ -285,8 +285,8 @@ Build tools normally, then use the resource probe:
 python3 tools/check_memory.py
 ```
 
-Arguments are clients, maximum payload bytes, reassembly slots, concrete driver
-and queue/worker count (zero selects that driver's default). `--plan-only` emits
+Arguments are clients, maximum payload bytes, reassembly slots, concrete transport
+and queue/worker count (zero selects that transport's default). `--plan-only` emits
 a component breakdown, worker/socket counts and an explicit unknown OS/application
 cost, then exits before initialization. Without it, the probe creates a loopback
 server, compares independent allocator live/peak observations against the plan,
@@ -310,71 +310,77 @@ These are target-specific constructor measurements, not deployment limits. The
 maximum legal numeric reassembly geometry plans roughly 146 GiB and can be queried
 without allocating it; the default reassembly component budget refuses its create.
 `test_transport_control` also exercises six maintenance passes over 1000 mixed
-ACK/keepalive clients while the buffered driver accepts only 256 controls per send
+ACK/keepalive clients while the buffered transport accepts only 256 controls per send
 batch. Its elapsed time is a diagnostic for that synthetic workload, not a packet
 rate or a frame/send/ACK cadence requirement.
 
-## Server transport drivers
+## Server transports
 
-Driver selection is runtime (#106): one build carries every driver its platform
-has — on Linux the AF_XDP driver (privileged), the GSO driver (SO_REUSEPORT +
-sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and the portable UDP driver; on macOS
+Transport selection is runtime (#106): one build carries every transport its
+platform has — on Linux the AF_XDP transport (privileged), the GSO transport
+(SO_REUSEPORT + sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and the portable UDP
+transport; on macOS
 the Darwin batch pump and portable — and the transport walks an ordered candidate
-list at create. The list rides the config's `driver` field or the
-`ROCKETNET_DRIVER` environment variable (precedence: default < struct < env):
+list at create. The list rides the config's transport field or the
+per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
+environment variables (precedence: default < struct < env). The old names
+`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
+`ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied:
 
     ./bin/functional                                # auto: the platform's recommended ladder
                                                 #   (linux: xdp,gso,portable — falls on refusal)
-    ROCKETNET_DRIVER=portable ./bin/functional  # a one-element list is a pin: that driver
+    ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
+                                                # a one-element list is a pin: that transport
                                                 #   or loud failure, never a silent fall
-    ROCKETNET_DRIVER=gso,portable ./bin/functional  # exactly these, exactly this order
+    ROCKETNET_SERVER_TRANSPORT=gso,portable ./bin/functional  # exactly these, exactly this order
 
 Names known but absent on a platform — or not applicable to an endpoint, like
 `gso` for a client — are skipped with a log line, so one fleet-wide value deploys
 everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
-Unknown names refuse loudly at create. The granted driver is reported by
-`rocketnet_server_transport_driver` / `rocketnet_client_transport_driver` and the
-create log line. Queue-count bounds are per driver, refused loudly and never
-clamped: the xdp driver takes any `num_xdp_queues` from 1, the gso driver refuses
-past its 32-queue geometry. The GSO driver still probes UDP_SEGMENT and UDP_GRO at
+Unknown names refuse loudly at create. The granted transport is reported by
+the transport name query on each client and server, and the create log line. Queue-count bounds are per transport, refused loudly and never
+clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport refuses
+past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
-that degradation is internal to the driver, below the ladder; likewise the Darwin
+that degradation is internal to the transport, below the ladder; likewise the Darwin
 batch pump's live-refusal pause. The pre-#106 `ROCKETNET_PUMP=portable` override is
 absorbed into this system with its exact old meaning — the msgx pump off —
-honored and named in the logs, with `ROCKETNET_DRIVER=portable` as its successor;
+honored and named in the logs, with `ROCKETNET_SERVER_TRANSPORT=portable` and
+`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors;
 `ROCKETNET_SERVER_NUM_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS` likewise keep
 working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
 `ROCKETNET_NUM_OS_CPUS`. Run `./bin/functional` against each rung. The unit
-suite, `./bin/test`, does not start a driver, so a driver pin does not change
+suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
 config tables and their legacy aliases, then restores them on return.
-`ROCKETNET_DRIVER` remains an intentional test pin; `ROCKETNET_TEST_VERBOSE`
+`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
+test pins, and the old transport names are cleared; `ROCKETNET_TEST_VERBOSE`
 keeps its diagnostic meaning. Passing ordinary runs print test names and
 explicitly named platform skips. Failures retain the captured diagnostic log.
 
 ### Windows IOCP server
 
-Native driver authors: [DRIVERS.md](DRIVERS.md) describes registration,
+Native transport authors: [DRIVERS.md](DRIVERS.md) describes registration,
 capabilities, ownership and the independently built extension example.
 
-Select `driver = "iocp"` in the existing server config, or set
-`ROCKETNET_DRIVER=iocp`. The driver uses overlapped UDP with completion batches;
+Select `transport = "iocp"` in the existing server config, or set
+`ROCKETNET_SERVER_TRANSPORT=iocp`. The transport uses overlapped UDP with completion batches;
 send buffers are recycled only after completion, and stop cancels and drains
 outstanding operations. IPv6 binds accept both address families. The client
 continues to use the portable path.
 
 The existing `num_xdp_queues` field selects IOCP workers, following the GSO
-driver's reuse of this field: zero selects four workers; 1 through 32 are valid.
+transport's reuse of this field: zero selects four workers; 1 through 32 are valid.
 There are 128 posted receives per worker, 1024 receive staging slots per worker
 per buffer, and 16384 send frames across all workers. These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
 IOCP is currently an explicit selection; Windows `auto` keeps portable first
-while this new driver is reviewed. Windows CI runs both configurations, plus
+while this new transport is reviewed. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
@@ -382,10 +388,10 @@ The current implementation shares one UDP socket between completion workers.
 Its receive-queue contention must be measured before choosing whether Windows
 needs RSS-sharded sockets or a different native backend for the line-rate tier.
 
-## Deploying the XDP driver: provision, then verify-and-bind
+## Deploying the XDP transport: provision, then verify-and-bind
 
-The library never mutates machine state. `rocketnet_server_transport_create()`
-with the xdp driver is verify-and-bind only: a non-mutating pre-flight checks
+The library never mutates machine state. `rocketnet_server_create()`
+with the xdp transport is verify-and-bind only: a non-mutating pre-flight checks
 that the machine is provisioned and refuses by name — each unmet condition logs
 the knob, the wanted value, and the script that sets it — and the library's own
 acts stay per-socket (its BPF program built, loaded and attached, AF_XDP binds,

@@ -8,7 +8,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_connect_token.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_crypto_tally.h"
 
@@ -223,7 +223,7 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
     rocketnet_assert( connection_salt );
 
     uint8_t * p = associated_data;
-    rocketnet_write_uint32( &p, ROCKETNET_VERSION );
+    rocketnet_write_uint32( &p, ROCKETNET_WIRE_VERSION );
     rocketnet_write_uint64( &p, protocol_id );
     rocketnet_write_uint8( &p, packet_type );
     rocketnet_write_bytes( &p, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );

@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_packet_builder.h"
@@ -47,7 +47,7 @@
 struct rn_endpoint_config_t
 {
     const struct rocketnet_message_config_t * config;   // the connection's message config; outlives the endpoint
-    uint32_t send_kbps;                                 // the send budget a reset starts with (R6)
+    int32_t send_kbps;                                  // the send budget a reset starts with (R6); 0 or lower uncapped
     int max_payload_bytes;                              // the transport's payload cap, for rn_endpoint_send's large unreliable check (0: ROCKETNET_MAX_PAYLOAD_BYTES)
 };
 
@@ -59,7 +59,8 @@ struct rn_endpoint_t
     rocketnet_send_budget_t budget;             // R6
 
     const struct rocketnet_message_config_t * config;
-    uint32_t default_kbps;                      // the budget a reset starts with
+    int32_t default_kbps;                       // the budget a reset starts with; 0 or lower uncapped
+    int send_budget_enabled;                    // 0: this connection is uncapped (R6, docs/CHANNELS.md 11.5)
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     int max_payload_bytes;                      // the transport's payload cap (rn_endpoint_send)
     int send_error;                             // ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE
@@ -111,6 +112,12 @@ void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now );
 // ---------------------------------------------------------------
 //                          events in
 // ---------------------------------------------------------------
+
+// tla/RNSendBudget.tla SetKbps (R6): the runtime override. kbps 0 or lower
+// uncaps this connection; a positive value up to
+// ROCKETNET_SEND_BUDGET_MAX_KBPS caps it, initialising the bucket at now when
+// the connection was uncapped. Above the maximum is refused, unchanged.
+bool rn_endpoint_set_send_kbps( struct rn_endpoint_t * endpoint, int32_t kbps, double now );
 
 // The send, as one call: the bytes copied into the region record. serial 0
 // takes the endpoint's next serial. 0 when refused; then rn_endpoint_error

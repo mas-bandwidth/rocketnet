@@ -1086,6 +1086,88 @@ run and recorded: `tla/RNConnectionMemory.tla`, `tla/README-RNConnectionMemory.m
   `rn_region_send_free_fragment`, `rn_region_exhaust`,
   `rn_connection_memory_decide`, `rn_region_reset`.
 
+### 12. `ClientSession` (the client object's life across connections)
+
+Added after the inventory, ahead of the connect, disconnect and reconnect API. Written, run
+and recorded: `tla/ClientSession.tla`, `tla/README-ClientSession.md`, group `clientsession`.
+
+- CONSTANTS `MaxSessions = 3`, `MaxCreates = 2`; `Defect`, `UnresetField` select a witness.
+- VARIABLES: `st` (NONE, DISCONNECTED, the three handshake stages, CONNECTED, seven error
+  states), `cur`, `conn` (one field per row of the reset inventory, Init or a session tag),
+  `reason`, `kept` (lifetime counters, config), `link`.
+- Actions: `Create`, `Destroy`, `Connect`, `HandshakeStep`, `Deny`, `TokenExpires`, `Timer`,
+  `ServerDisconnect`, `ClientDisconnect`, `DisconnectFromError`, `Send`, `ServerSend`,
+  `Deliver`, `Lose`; every exit from a connection goes through one `Reset`.
+- Properties: `ConnectOnlyFromDisconnected`, `NoSendUnlessConnected`, `ResetIsInit`,
+  `RecordIsCurrent`, `ReconnectObservesNothing`, `ReasonKeptUntilNextConnection`; LIVE
+  `ConnectReachesConnectedOrError`.
+- Reversed witnesses: `MCClientSessionUnreset.cfg` (Reset skips `replay_window`) must fail
+  `ReconnectObservesNothing`; `MCClientSessionConnectAnywhere.cfg` must fail
+  `ConnectOnlyFromDisconnected`.
+- Cite from: the client's single reset function and connect, written by
+  rocketnet-client-connect-disconnect-reconnect (owed; `tla/COVERAGE.tsv`).
+
+### 13. `ServerSession` (the server object's life and the per-slot reset)
+
+Added with module 12. Written, run and recorded: `tla/ServerSession.tla`,
+`tla/README-ServerSession.md`, group `serversession`.
+
+- CONSTANTS `SlotCount = 2`, `MaxSessions = 2`, `MaxTokens = 2`, `MaxStarts = 2`,
+  `MaxCreates = 1`; `Defect`, `UnresetField` select a witness.
+- VARIABLES: `state` (NONE, STOPPED, RUNNING, STOPPING), per slot `st`, `sess`, `rec` (the
+  same per-connection record), `reason`; `kept` (used-token history, keys, config, lifetime
+  counters, kept across stop and start per STANDARD.md:2913); `draining`; `link`.
+- Actions: `Create`, `Destroy`, `Start`, `Stop`, `DrainStep(i)`, `StopComplete`,
+  `DisconnectAll`, `DrainDone`, `ClientConnects(i, t)`, `Establish(i)`, `Deny(i)`,
+  `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)`, `ServerSend(i)`, `ClientSend`,
+  `Deliver`, `Lose`; every exit from a slot's connection goes through one `Reset(i)`.
+- Properties: `StartOnlyFromStopped`, `NoSendUnlessConnected`, `ResetIsInit`,
+  `RecordIsCurrent`, `SlotReuseObservesNothing`, `NoClientWhileStopped`,
+  `StopDisconnectsAll`, `ReasonKeptUntilNextConnection`, `ResetTouchesOnlyItsSlot`,
+  `TokenAdmitsOnce`; LIVE `HandshakeResolves`, `StopReachesStopped`.
+- Reversed witnesses: `MCServerSessionUnresetSlot.cfg` must fail `SlotReuseObservesNothing`;
+  `MCServerSessionStopLeavesClient.cfg` must fail `NoClientWhileStopped`;
+  `MCServerSessionTouchesOtherSlot.cfg` must fail `ResetTouchesOnlyItsSlot`.
+- Cite from: the server's per-slot reset, start, stop and `disconnect_all_clients`, written by
+  rocketnet-client-connect-disconnect-reconnect and rocketnet-per-connection-reset-is-complete
+  (owed; `tla/COVERAGE.tsv`).
+
+### 14. `RNSimFaults` (the DST's crash, restart and clock-skew injector)
+
+Written, run and recorded before its code: `tla/RNSimFaults.tla`, `tla/MCRNSimFaults.tla`,
+group `rnsimfaults`; the design is `docs/DST.md` sections 3 and 7.
+
+- CONSTANTS `Clients = {C1, C2}`, `Server = S0`, `MaxSessions = 6`, `MaxClientCrashes = 1`,
+  `MaxServerCrashes = 1`, `MaxDisconnects = 1`, `MaxTime = 1`, `MaxInFlight = 2`,
+  `Scale = 200` (clock units per step), `Offset` and `Rate` per peer at the design's extremes
+  (one client 50 units ahead at 201 per step, one 50 behind at 199, the server on time),
+  `OffsetBound = 50`, `DriftBound = 1`; rule switches `FreshOnRestart` and `CrashSilences`
+  select a witness, and `CompareGeneration` and `CompareIncarnation` drop one receiver
+  compare for a probe.
+- VARIABLES: `phase` per peer (up, crashed, restarting); per client `cst` (idle,
+  connecting, connected), `gen` (the session generation, from the global counter
+  `nextGen`), `cinc` (the incarnation its session was admitted under), `restarted` (rebuilt
+  and not connected since) and the ghost tag `sid` (from the counter `nextSid`); `genFirst`
+  (the first session to take each generation); `incarnation` (the server incarnation, a
+  separate counter); `srv` (the server's session records); `net` (packets stamped with
+  generation and incarnation); `t`; `clock` per peer; `faults`; `clientCrashes`,
+  `serverCrashes`, `disconnects`; the ghosts `lastAct` and `lastDel`.
+- Actions: `Crash(p)`, `Restart(p)`, `Rejoin(p)`, `Tick`, `EndFaults`, `Lose(m)`, and the
+  outside events `Connect(c)`, `Establish(c)`, `Disconnect(c)`, `ClientTimeout(c)`,
+  `ServerTimeout(r)`, `ClientSend(c)`, `ServerSend(r)`, `Deliver(m)`, `Refuse(m)`. A receiver
+  takes a packet only when its generation and, separately, its incarnation equal the
+  receiving session's. With the global generation counter the generation compare alone
+  keeps deliveries on their own session; the incarnation compare is a second, independent
+  check.
+- Properties: `TypeOK`, `CrashedPeerSilent`, `RestartIsFresh`,
+  `DeliverOnlyToLiveGeneration`, `LiveSessionOnCurrentIncarnation`, `SkewBounded`; ACTION
+  `ClockMonotone`; LIVE `EveryLiveClientConnects` (weak fairness on restarts, the
+  handshake, the timeouts and the end of the fault window).
+- Reversed witnesses: `MCRNSimFaultsBrokenRestartKeepsSession.cfg` must fail
+  `RestartIsFresh`; `MCRNSimFaultsBrokenCrashedSends.cfg` must fail `CrashedPeerSilent`.
+- Cite from: the injector, `dst_faults.h`, written by rocketnet-dst-fault-injectors (owed;
+  `tla/COVERAGE.tsv`).
+
 Modules 1 to 5 are what the request names: client and server connection and security,
 with the ack layer under the keep-alive rule. Module 1 goes first because modules 3 to 5
 read its received state and F1 lives in it. M15 and M16 get no module; their reasons are

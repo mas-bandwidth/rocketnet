@@ -1,0 +1,505 @@
+#!/usr/bin/env bash
+#
+# live-xdp-fleet -- orchestrate one live XDP fleet run (docs/LIVE-XDP.md
+# sections 6, 9, 11, 12 and 15; RULINGS (a)-(d) of 2026-10-18).
+#
+# The coordinator's machine runs only ssh, scp and this file. Every remote
+# step is a subcommand of scripts/live-xdp-fleet-remote, copied to the host
+# and run there; no inline quoted command string is sent over ssh.
+#
+#   scripts/live-xdp-fleet --dry-run --inventory FILE
+#   scripts/live-xdp-fleet --inventory FILE [--commit SHA] [--seed N] [--run-dir DIR]
+#
+# The dry run prints the plan, every client's cap, the run bound and the
+# studio-uplink bound of RULINGS (d), and every per-host build, start,
+# collect and teardown step with its full command line. It makes no ssh and
+# prints `dry-run: no host contacted`.
+#
+# The inventory has one row per machine:
+#   label ssh-name role shape site path cap-kbps nic address queues
+# as described in scripts/live-xdp-fleet.inventory.example.
+#
+# Root on the test server is used only for the steps of RULINGS (c): load
+# and unload the program, arm and cancel the dead-man timer, and start and
+# stop the server. Those run as `sudo -n <script>` on the copied script
+# file; the host's sudo is sudo-rs, so the environment list is passed with
+# --preserve-env=<list> and never -E. `sudo -n true` is proved before the
+# first root step.
+
+set -u
+
+here=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+root=$( cd "$here/.." && pwd )
+remote="$here/live-xdp-fleet-remote"
+
+dry_run=0
+inventory=""
+commit=""
+seed=1
+run_dir=""
+public_port=40000
+
+# section 6: nine windows, eight waits, the worst-case drain, the stagger,
+# load/listen and teardown. RULINGS (d) uses 621 s for the byte bound.
+window_seconds=35
+worst_drain_seconds=10
+cycles=8
+wait_seconds=20            # 2 x the token timeout
+max_stagger_seconds=56
+load_listen_seconds=30
+teardown_seconds=60
+attached_limit_seconds=780 # 13 minutes, section 6 and 12
+
+# RULINGS (d): 20 GB per run in total, at most 1 GB across the studio uplink.
+run_budget_bytes=20000000000
+studio_budget_bytes=1000000000
+
+usage()
+{
+    cat >&2 <<'EOF'
+usage: live-xdp-fleet [--dry-run] --inventory FILE [--commit SHA] [--seed N] [--run-dir DIR]
+
+  --dry-run        print the plan and every step; contact no host
+  --inventory FILE the machine inventory (see live-xdp-fleet.inventory.example)
+  --commit SHA     the commit every host builds (default: this checkout's HEAD)
+  --seed N         the run seed both ends are given (default: 1)
+  --run-dir DIR    the coordinator's run directory (default: ./live-xdp-fleet-run-<seed>)
+EOF
+    exit 2
+}
+
+refuse()
+{
+    echo "live-xdp-fleet: $*" >&2
+    exit 2
+}
+
+gb()
+{
+    awk -v b="$1" 'BEGIN { printf "%.2f", b / 1000000000 }'
+}
+
+site_cap()
+{
+    case "$1" in
+        studio)     echo 1000 ;;
+        datacenter) echo 100000 ;;
+        *)          echo "" ;;
+    esac
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run)   dry_run=1; shift ;;
+        --inventory) [ $# -ge 2 ] || usage; inventory="$2"; shift 2 ;;
+        --commit)    [ $# -ge 2 ] || usage; commit="$2"; shift 2 ;;
+        --seed)      [ $# -ge 2 ] || usage; seed="$2"; shift 2 ;;
+        --run-dir)   [ $# -ge 2 ] || usage; run_dir="$2"; shift 2 ;;
+        --help|-h)   usage ;;
+        *)           refuse "unknown argument: $1" ;;
+    esac
+done
+
+[ -n "$inventory" ] || usage
+[ -f "$inventory" ] || refuse "inventory file not found: $inventory"
+[ -x "$remote" ] || refuse "missing per-host step script: $remote"
+
+case "$seed" in
+    ''|*[!0-9]*) refuse "seed '$seed' is not a non-negative integer" ;;
+esac
+
+if [ -z "$commit" ]; then
+    commit=$( git -C "$root" rev-parse HEAD 2>/dev/null ) || commit=""
+fi
+[ -n "$commit" ] || refuse "no --commit and this checkout has no HEAD"
+run_id="$seed"
+[ -n "$run_dir" ] || run_dir="$PWD/live-xdp-fleet-run-$run_id"
+
+tmp=$( mktemp -d "${TMPDIR:-/tmp}/live-xdp-fleet.XXXXXX" ) || refuse "cannot create a temp directory"
+cleanup()
+{
+    rm -f "$tmp/clients.tsv" "$tmp/sorted.tsv" "$tmp/sorted.tsv.new" "$tmp/stop-heartbeat"
+    rmdir "$tmp" 2>/dev/null
+}
+trap cleanup EXIT
+
+# ------------------------------------------------------------------------
+# plan: read and validate the inventory (section 8; RULINGS (d))
+# ------------------------------------------------------------------------
+
+: > "$tmp/clients.tsv"
+
+server_count=0
+server_label=""
+server_ssh=""
+server_shape=""
+server_site=""
+server_path=""
+server_cap=""
+server_nic=""
+server_address=""
+server_queues=""
+
+line_number=0
+while IFS= read -r line || [ -n "$line" ]; do
+    line_number=$(( line_number + 1 ))
+    line="${line%%#*}"
+    read -r -a field <<< "$line"
+    [ "${#field[@]}" -eq 0 ] && continue
+    [ "${#field[@]}" -eq 10 ] || \
+        refuse "inventory line $line_number: expected 10 fields (label ssh role shape site path cap-kbps nic address queues), found ${#field[@]}"
+
+    label=${field[0]}
+    ssh_name=${field[1]}
+    role=${field[2]}
+    shape=${field[3]}
+    site=${field[4]}
+    path=${field[5]}
+    cap=${field[6]}
+    nic=${field[7]}
+    address=${field[8]}
+    queues=${field[9]}
+
+    case "$role" in
+        server|client) : ;;
+        *) refuse "inventory row $label: role '$role' is not server or client" ;;
+    esac
+    case "$shape" in
+        linux|windows-interop|macos) : ;;
+        *) refuse "inventory row $label: shape '$shape' is not linux, windows-interop or macos" ;;
+    esac
+    case "$site" in
+        studio|datacenter) : ;;
+        *) refuse "inventory row $label: site '$site' is not studio or datacenter" ;;
+    esac
+    case "$path" in
+        lan|internet) : ;;
+        *) refuse "inventory row $label: path '$path' is not lan or internet" ;;
+    esac
+
+    max_cap=$( site_cap "$site" )
+    case "$cap" in
+        ''|*[!0-9]*)
+            refuse "inventory row $label: no cap; RULINGS (d) requires a total kbps cap" ;;
+    esac
+    [ "$cap" -gt 0 ] || refuse "inventory row $label: cap is 0; RULINGS (d) requires a positive total"
+
+    if [ "$role" = "server" ]; then
+        server_count=$(( server_count + 1 ))
+        [ "$server_count" -le 1 ] || refuse "inventory row $label: a second server row; the run has one server"
+        [ "$nic" != "-" ] || refuse "inventory row $label: server row has no nic"
+        [ "$address" != "-" ] || refuse "inventory row $label: server row has no public address"
+        case "$queues" in
+            ''|*[!0-9]*) refuse "inventory row $label: queues '$queues' is not a positive integer" ;;
+        esac
+        [ "$queues" -gt 0 ] || refuse "inventory row $label: queues is 0"
+        [ "$cap" -le "$max_cap" ] || \
+            refuse "inventory row $label: $site-site server cap $cap kbps is above the $max_cap kbps total of RULINGS (d)"
+        server_label=$label
+        server_ssh=$ssh_name
+        server_shape=$shape
+        server_site=$site
+        server_path=$path
+        server_cap=$cap
+        server_nic=$nic
+        server_address=$address
+        server_queues=$queues
+    else
+        # RULINGS (d): the cap is a total, both directions combined.
+        if [ "$cap" -gt "$max_cap" ]; then
+            refuse "inventory row $label: $site-site cap $cap kbps is above the $max_cap kbps total of RULINGS (d)"
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$ssh_name" "$shape" "$site" "$path" "$cap" \
+            >> "$tmp/clients.tsv"
+    fi
+done < "$inventory"
+
+[ "$server_count" -eq 1 ] || refuse "inventory: found $server_count server rows; the run has exactly one"
+[ -s "$tmp/clients.tsv" ] || refuse "inventory: no client rows"
+
+sort -t $'\t' -k1,1 "$tmp/clients.tsv" > "$tmp/sorted.tsv"
+client_count=$( wc -l < "$tmp/sorted.tsv" | tr -d ' ' )
+
+# section 6: one client's worst window run, then the stagger.
+one_client_worst=$(( (cycles + 1) * (window_seconds + worst_drain_seconds) + cycles * wait_seconds ))
+run_worst=$(( one_client_worst + max_stagger_seconds ))
+attached_worst=$(( run_worst + load_listen_seconds + teardown_seconds ))
+[ "$attached_worst" -le "$attached_limit_seconds" ] || \
+    refuse "plan: attached-time bound $attached_worst s is over the 13 minute limit of section 6"
+
+# RULINGS (d): cap_kbps * 1000 bit/s * 621 s / 8 = cap_kbps * 77625 bytes.
+bytes_per_kbps=$(( 1000 * run_worst / 8 ))
+run_bytes=0
+studio_bytes=0
+min_each=0
+first=1
+index=0
+while IFS=$'\t' read -r label ssh_name shape site path cap; do
+    each=$(( cap / 2 ))
+    plan_total=$(( each * 2 ))
+    if [ "$plan_total" -gt "$cap" ]; then
+        refuse "inventory row $label: plan asks $plan_total kbps, above its row's $cap kbps cap of RULINGS (d)"
+    fi
+    run_bytes=$(( run_bytes + cap * bytes_per_kbps ))
+    if [ "$site" = "studio" ]; then
+        studio_bytes=$(( studio_bytes + cap * bytes_per_kbps ))
+    fi
+    if [ "$first" -eq 1 ] || [ "$each" -lt "$min_each" ]; then
+        min_each=$each
+        first=0
+    fi
+    stagger=$(( index * max_stagger_seconds / client_count ))
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$label" "$ssh_name" "$shape" "$site" "$path" "$cap" "$each" "$stagger" >> "$tmp/sorted.tsv.new"
+    index=$(( index + 1 ))
+done < "$tmp/sorted.tsv"
+mv "$tmp/sorted.tsv.new" "$tmp/sorted.tsv"
+
+[ "$run_bytes" -le "$run_budget_bytes" ] || \
+    refuse "plan: run bound $(gb "$run_bytes") GB is over the 20 GB budget of RULINGS (d)"
+[ "$studio_bytes" -le "$studio_budget_bytes" ] || \
+    refuse "plan: studio-uplink bound $(gb "$studio_bytes") GB is over the 1 GB budget of RULINGS (d)"
+
+# ------------------------------------------------------------------------
+# printed plan (the same in a dry run and a real run)
+# ------------------------------------------------------------------------
+
+echo "live-xdp-fleet: plan"
+echo "  inventory: $inventory"
+echo "  commit: $commit"
+echo "  seed: $seed"
+echo "  server: $server_label ($server_ssh) nic $server_nic address $server_address queues $server_queues"
+echo "  clients: $client_count"
+echo "  worst-case client run: $run_worst s = 9 windows x $(( window_seconds + worst_drain_seconds )) s worst + $cycles waits x $wait_seconds s + $max_stagger_seconds s stagger (section 6)"
+echo "  attached-time bound: $attached_worst s of $attached_limit_seconds s"
+echo "  run bound: $(gb "$run_bytes") GB of 20 GB (RULINGS (d))"
+echo "  studio-uplink bound: $(gb "$studio_bytes") GB of 1 GB (RULINGS (d))"
+echo "  server create send cap: $min_each kbps each way (the lowest slot cap; a HELLO raises a slot to its row's cap)"
+
+while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+    echo "  client $label: cap $cap kbps total ($each kbps each way), $site, $path, $shape, stagger $stagger s"
+done < "$tmp/sorted.tsv"
+
+# ------------------------------------------------------------------------
+# the exact per-host command lines (section 12; RULINGS (c),(d))
+# ------------------------------------------------------------------------
+
+remote_path="~/rocketnet-live/live-xdp-fleet-remote"
+server_results="~/rocketnet-live/results/$run_id/server.tsv"
+server_status="~/rocketnet-live/results/$run_id/server.status"
+
+server_command="ROCKETNET_SERVER_DRIVER=xdp ROCKETNET_SERVER_PRINT_COUNTERS=1 ~/rocketnet-live/$commit/bin/server --matrix --driver xdp --address $server_address --label $server_label --seed $seed --send-kbps $min_each --max-clients 1000 --update-hz 1000 --counters-every 60 --num-xdp-queues $server_queues --results $server_results --status $server_status"
+
+client_command()
+{
+    local label=$1 address=$2 stagger=$3 each=$4 results=$5
+    echo "~/rocketnet-live/$commit/bin/client --matrix --address $address --label $label --duration $window_seconds --cycles $cycles --stagger $stagger --seed $seed --send-kbps $each --max-packets-per-update 64 --update-hz 1000 --counters-every 60 --results $results"
+}
+
+print_host_common()
+{
+    local ssh_name=$1
+    echo "  mkdir:   ssh $ssh_name mkdir -p rocketnet-live/results/$run_id"
+    echo "  copy:    scp $remote $ssh_name:rocketnet-live/live-xdp-fleet-remote"
+    echo "  build:   ssh $ssh_name $remote_path build $commit"
+    echo "  skew:    ssh $ssh_name $remote_path skew"
+}
+
+echo
+echo "== server $server_label ($server_ssh) =="
+print_host_common "$server_ssh"
+echo "  XDP SAFETY 1: server_xdp/server_xdp.c returns XDP_PASS for every packet that is not the server's UDP port and address (server_xdp.c:126-128); it is never edited or reloaded by this run"
+echo "  preflight (read-only, before anything is attached): ssh $server_ssh $remote_path preflight $commit $server_nic $server_queues $server_address"
+echo "  root check: ssh $server_ssh sudo -n true   (a failure stops the run with not-done; no password is ever supplied)"
+echo "  XDP SAFETY 2: arm the dead-man timer before load: ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path arm $server_nic"
+echo "  XDP SAFETY 4: the preflight records ethtool -i $server_nic and refuses the in-tree i40e version (the one that equals uname -r)"
+echo "  start:   ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path start server $commit $server_label $server_address $seed $min_each 1000 1000 60 $server_queues $server_results $server_status"
+echo "  command: $server_command"
+echo "  XDP SAFETY 3: within 10 s of the load, a fresh ssh connection (no control master) proves ssh still works: ssh -o ControlMaster=no -o BatchMode=yes $server_ssh true"
+echo "  listen:  ssh $server_ssh grep -q '^listening' $server_status"
+echo "  heartbeat: ssh $server_ssh touch ~/rocketnet-live/heartbeat   (every 5 s until teardown)"
+echo "  stop:    ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path stop server $server_label"
+echo "  XDP SAFETY 5: teardown detaches and records the link: ssh $server_ssh sudo -n $remote_path restore $commit $server_nic"
+echo "  command: ip link set dev $server_nic xdp off; ip link set dev $server_nic xdpgeneric off; ip -d link show dev $server_nic; xdp-loader status; rocketnet-provision sweep"
+echo "  collect: ssh $server_ssh $remote_path collect $server_results > $run_dir/server.tsv"
+echo "  restore: ssh $server_ssh sudo -n $remote_path restore $commit $server_nic   (also stops rn-live-watchdog and cancels rn-live-deadman after the detach is confirmed)"
+
+while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+    results="~/rocketnet-live/results/$run_id/$label.tsv"
+    echo
+    echo "== client $label ($ssh_name, $shape, $site, $path) cap $cap kbps total ($each kbps each way) =="
+    print_host_common "$ssh_name"
+    echo "  start:   ssh $ssh_name $remote_path start client $commit $label $server_address $window_seconds $cycles $stagger $seed $each 64 1000 60 $results"
+    echo "  command: $( client_command "$label" "$server_address" "$stagger" "$each" "$results" )"
+    echo "  stop:    ssh $ssh_name $remote_path stop client $label"
+    echo "  collect: ssh $ssh_name $remote_path collect $results > $run_dir/$label.tsv"
+    echo "  restore: ssh $ssh_name $remote_path restore - -   (stops any leftover client unit; no XDP on a client)"
+done < "$tmp/sorted.tsv"
+
+echo
+echo "  merge:  scripts/live-xdp-fleet-merge $run_dir   (writes matrix.tsv, counters.tsv and PASS.md; exits 0 only on PASS)"
+
+if [ "$dry_run" -eq 1 ]; then
+    echo "dry-run: no host contacted"
+    exit 0
+fi
+
+# ------------------------------------------------------------------------
+# the real run: step 12 of section 12, in order
+# ------------------------------------------------------------------------
+
+ssh_run()
+{
+    local host=$1
+    shift
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$@"
+}
+
+scp_run()
+{
+    local host=$1
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" mkdir -p "rocketnet-live/results/$run_id" || return 1
+    scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:rocketnet-live/live-xdp-fleet-remote"
+}
+
+fail()
+{
+    echo "live-xdp-fleet: FAIL: $*" >&2
+    exit 1
+}
+
+heartbeat_pid=""
+teardown_allowed=1
+started_clients=0
+
+stop_heartbeat()
+{
+    : > "$tmp/stop-heartbeat"
+    if [ -n "$heartbeat_pid" ]; then
+        kill "$heartbeat_pid" 2>/dev/null
+        wait "$heartbeat_pid" 2>/dev/null
+        heartbeat_pid=""
+    fi
+}
+
+teardown()
+{
+    [ "$teardown_allowed" -eq 1 ] || return 0
+    stop_heartbeat
+    echo "teardown: stopping clients, then the server, then detaching" >&2
+    while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+        [ "$started_clients" -eq 1 ] && ssh_run "$ssh_name" "$remote_path" stop client "$label" >/dev/null 2>&1
+    done < "$tmp/sorted.tsv"
+    ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" stop server "$server_label" >/dev/null 2>&1
+    ssh_run "$server_ssh" sudo -n "$remote_path" restore "$commit" "$server_nic" >/dev/null 2>&1
+}
+
+trap 'teardown; cleanup; exit 1' EXIT INT TERM HUP
+
+# 2. build on every machine in parallel; compare the commit each reports.
+mkdir -p "$run_dir" || fail "cannot create run directory $run_dir"
+build_failed=0
+server_built=$tmp/server.build
+scp_run "$server_ssh" || fail "cannot copy the step script to $server_ssh"
+ssh_run "$server_ssh" "$remote_path" build "$commit" > "$server_built" 2>&1 &
+build_pids=($!)
+while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+    scp_run "$ssh_name" >> "$tmp/copy.log" 2>&1 || { echo "live-xdp-fleet: cannot copy the step script to $ssh_name" >&2; build_failed=1; }
+    ssh_run "$ssh_name" "$remote_path" build "$commit" > "$tmp/$label.build" 2>&1 &
+    build_pids+=($!)
+done < "$tmp/sorted.tsv"
+for pid in "${build_pids[@]}"; do wait "$pid" || build_failed=1; done
+[ "$build_failed" -eq 0 ] || fail "a build failed; see the run directory"
+
+head=$( tail -n 1 "$server_built" 2>/dev/null )
+[ "$head" = "$commit" ] || fail "server $server_ssh reported HEAD '$head', not $commit"
+while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+    head=$( tail -n 1 "$tmp/$label.build" 2>/dev/null )
+    [ "$head" = "$commit" ] || fail "client $label on $ssh_name reported HEAD '$head', not $commit"
+done < "$tmp/sorted.tsv"
+
+# 3. skew: every bench within 2 s of the test server (section 11).
+clock_offset()
+{
+    local host=$1 t0 t1 t
+    t0=$( date +%s.%N )
+    t=$( ssh_run "$host" date +%s.%N ) || fail "cannot read the clock on $host"
+    t1=$( date +%s.%N )
+    awk -v a="$t0" -v b="$t1" -v t="$t" 'BEGIN { o = t - (a + b) / 2; if (o < 0) o = -o; printf "%.3f", o }'
+}
+while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+    offset=$( clock_offset "$ssh_name" )
+    echo "skew $label: $offset s"
+    awk -v o="$offset" 'BEGIN { exit (o > 2.0) ? 1 : 0 }' || fail "bench $label is more than 2 s off the test server"
+done < "$tmp/sorted.tsv"
+
+# 4. server pre-flight, dead-man timer, watchdog, load, ssh check, listen.
+ssh_run "$server_ssh" sudo -n true || fail "sudo -n true failed on $server_ssh; stop with not-done (RULINGS (c))"
+ssh_run "$server_ssh" "$remote_path" preflight "$commit" "$server_nic" "$server_queues" "$server_address" || fail "server pre-flight refused"
+ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" arm "$server_nic" || fail "cannot arm the dead-man timer"
+ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" start server "$commit" "$server_label" "$server_address" "$seed" "$min_each" 1000 1000 60 "$server_queues" "$server_results" "$server_status" || fail "cannot start the server"
+
+# the fresh ssh connection within 10 s of the load
+if ! ssh -o BatchMode=yes -o ControlMaster=no -o ConnectTimeout=10 "$server_ssh" true; then
+    teardown_allowed=0
+    fail "ssh check failed after the load; the dead-man timer detaches the program"
+fi
+
+for _ in $( seq 1 30 ); do
+    ssh_run "$server_ssh" grep -q '^listening' "$server_status" 2>/dev/null && break
+    sleep 1
+done
+ssh_run "$server_ssh" grep -q '^listening' "$server_status" || fail "no listening line in $server_status"
+
+# 5. the clients, once the server is listening.
+while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+    results="~/rocketnet-live/results/$run_id/$label.tsv"
+    ssh_run "$ssh_name" "$remote_path" start client "$commit" "$label" "$server_address" "$window_seconds" "$cycles" "$stagger" "$seed" "$each" 64 1000 60 "$results" || fail "cannot start client $label"
+    started_clients=1
+done < "$tmp/sorted.tsv"
+
+# the heartbeat loop the watchdog reads (section 9, step 3)
+( while [ ! -f "$tmp/stop-heartbeat" ]; do
+      ssh -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" touch "~/rocketnet-live/heartbeat" >/dev/null 2>&1
+      sleep 5
+  done ) &
+heartbeat_pid=$!
+
+# 6. watch every 30 s until every client is done; a fail line ends the run.
+while :; do
+    sleep 30
+    running=0
+    while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+        results="~/rocketnet-live/results/$run_id/$label.tsv"
+        if ssh_run "$ssh_name" "$remote_path" alive client "$label" >/dev/null 2>&1; then
+            running=1
+        fi
+        if ssh_run "$ssh_name" grep -q '^fail' "$results" 2>/dev/null; then
+            fail "client $label reported a fail line"
+        fi
+    done < "$tmp/sorted.tsv"
+    [ "$running" -eq 0 ] && break
+done
+
+# 7. teardown first, then 8. collect, then 9. merge.
+teardown
+teardown_allowed=0
+trap - EXIT INT TERM HUP
+
+while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
+    results="~/rocketnet-live/results/$run_id/$label.tsv"
+    ssh_run "$ssh_name" "$remote_path" collect "$results" > "$run_dir/$label.tsv" 2>/dev/null \
+        || fail "cannot collect $label"
+done < "$tmp/sorted.tsv"
+ssh_run "$server_ssh" "$remote_path" collect "$server_results" > "$run_dir/server.tsv" 2>/dev/null \
+    || fail "cannot collect the server"
+
+if [ -x "$here/live-xdp-fleet-merge" ]; then
+    "$here/live-xdp-fleet-merge" "$run_dir" || fail "the merge did not PASS"
+else
+    echo "live-xdp-fleet: scripts/live-xdp-fleet-merge is not present; result files are in $run_dir" >&2
+fi
+
+cleanup
+echo "live-xdp-fleet: run complete; results in $run_dir"
+exit 0
