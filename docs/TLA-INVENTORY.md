@@ -1,5 +1,7 @@
 # rocketnet state machines: the TLA+ inventory
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 Every state machine in rocketnet, read from the code at `5cb7613` (origin/main). Each
 section gives the states, the state the machine owns (the variables a module would
 declare), the transitions that move it (each with the `file:line` that makes it), the

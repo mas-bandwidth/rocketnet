@@ -84,8 +84,9 @@ Two counted impurities.
    two-phase request (the machine returns "needs a keypair" and the caller supplies it
    in a second event) or a deterministic generator held in the state (a seed ratcheted
    and erased on every draw, so a captured state does not reveal earlier ephemerals).
-   Both are design changes, and the second touches forward secrecy (STANDARD.md, the
-   ephemeral erasure rule that `EphemeralErasedOutsideHandshake` pins). PUR-6 is that
+   Both are design changes, and the second touches forward secrecy
+   (standard/TRANSPORT.md, the ephemeral erasure rule that
+   `EphemeralErasedOutsideHandshake` pins). PUR-6 is that
    design, not a move.
 2. **A counter that changes behaviour.** The per-update handshake budget is read at
    `:439` and incremented at `:445`. It is reset at `:1267`, and it lives in

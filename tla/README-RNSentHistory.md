@@ -1,5 +1,7 @@
 # RNSentHistory: the sent history under loss, reordering and ack delay
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 `RNSentHistory.tla` is the sent-record slice of `docs/TLA-INVENTORY.md` M8: a
 ring of `N` records, each holding the newest sent session sequence congruent to
 its index mod `N`, and what a write does to the record it replaces.

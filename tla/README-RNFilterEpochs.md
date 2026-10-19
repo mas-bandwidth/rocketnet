@@ -1,5 +1,7 @@
 # RNFilterEpochs: the receiver's filter epoch window
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 `tla/RNFilterEpochs.tla` is the receiver side of the keyed filter value's
 generations (`STANDARD.md`, "The keyed filter value"): the table of live
 magics a keyed receiver holds, the backend handing it the next generation,
