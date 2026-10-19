@@ -140,6 +140,14 @@ jobs:
       - name: UDP loopback soak
         run: ./bin/soak 200000
 
+      - name: Many-client load (1000 clients, every server cell)
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/load 1000 60
+          ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/load 1000 60
+          ROCKETNET_PUMP=portable ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/load 1000 60
+
   soak-windows:
     name: soak (${{ matrix.ref }} / windows-2025)
     # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine

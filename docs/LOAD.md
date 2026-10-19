@@ -39,3 +39,25 @@
 At the end of every run, the single summary line records:
 - `server_update_p50_us` and `server_update_p99_us`: 50th and 99th percentile durations (in microseconds) of `rocketnet_message_server_update`.
 - `rss_mb`: process resident set size (in MiB) at the end of the run.
+- `fd_limit_soft` and `fd_limit_hard`: the `RLIMIT_NOFILE` soft and hard values the run used (`infinity` when unlimited).
+- `fds_start`, `fds_peak` and `fds_end`: open file-descriptor count at start, peak during the run, and end after teardown.
+- `threads_start`, `threads_peak` and `threads_end`: thread count at start, peak during the run, and end after teardown.
+
+## macOS file-descriptor limit
+
+macOS ships a low per-process file-descriptor limit: on the fleet's Apple-silicon member both `ulimit -n` and the soft `launchctl limit maxfiles` value are `256`. A 1000-client run needs one socket per client plus the server socket, so `bin/load` raises its own soft `RLIMIT_NOFILE` and refuses to start when the resulting soft limit is below two file descriptors per client plus a 64-descriptor margin. The refusal names the limit, both values, the needed soft limit and the command that raises it:
+
+```
+load: RLIMIT_NOFILE soft=256 hard=256 cannot cover clients=1000 (2 fds per client) plus margin=64 (need soft >= 2064)
+load: raise it with: ulimit -n 1064
+load: if the hard limit blocks that, raise the hard limit in a new shell (macOS: sudo launchctl limit maxfiles 65536 65536)
+```
+
+Raise the limit for the shell that runs the harness, then start the run:
+
+```
+ulimit -n 65536
+./bin/load 1000 60
+```
+
+When `ulimit -n` cannot raise the soft limit because the hard limit is low, raise the hard limit for the login session with `sudo launchctl limit maxfiles 65536 65536`, open a new shell, and run the harness there. The summary line records the soft and hard values the run used and the file-descriptor and thread counts at start, peak and end.
