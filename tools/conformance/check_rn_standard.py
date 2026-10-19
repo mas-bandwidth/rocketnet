@@ -33,7 +33,7 @@ Pending sections ('Status: pending') are listed, never failed.
 
     python3 tools/conformance/check_rn_standard.py
     python3 tools/conformance/check_rn_standard.py --section t3
-    python3 tools/conformance/check_rn_standard.py --write-index
+    python3 tools/conformance/check_rn_standard.py --print-index
 
 Exit 0 green, 1 a fault, 2 a usage or build error.
 """
@@ -674,24 +674,20 @@ def expected_index(doc, vectors):
     return "\n".join(lines)
 
 
-def check_index(docs, vectors, faults, write, only):
+def print_index(docs, vectors):
+    for tag, appendix in (("RN-1", "ta"), ("RN-2", "ma")):
+        doc = docs[tag]
+        print("%s Appendix A vector index (%s)" % (appendix, doc.name))
+        print(expected_index(doc, vectors))
+
+
+def check_index(docs, vectors, faults, only):
     for tag, appendix in (("RN-1", "ta"), ("RN-2", "ma")):
         if only and only != appendix:
             continue
         doc = docs[tag]
-        if INDEX_BEGIN not in doc.text or INDEX_END not in doc.text:
-            faults.append((appendix, "%s has no vector index markers" % doc.name))
-            continue
-        head, rest = doc.text.split(INDEX_BEGIN, 1)
-        current, tail = rest.split(INDEX_END, 1)
-        wanted = expected_index(doc, vectors)
-        if current.strip() != wanted:
-            if write:
-                with open(doc.path, "w", encoding="utf-8") as handle:
-                    handle.write(head + INDEX_BEGIN + "\n" + wanted + "\n" + INDEX_END + tail)
-                print("rewrote the vector index of %s" % doc.name)
-            else:
-                faults.append((appendix, "%s Appendix A vector index is stale; run with --write-index" % doc.name))
+        if INDEX_BEGIN in doc.text or INDEX_END in doc.text:
+            faults.append((appendix, "%s still holds vector index markers; the index is printed by --print-index" % doc.name))
 
 
 # ---------------------------------------------------------------------------
@@ -784,7 +780,8 @@ def check_language(docs, faults, only):
 def main():
     parser = argparse.ArgumentParser(description="Check the RocketNet standard against the implementation.")
     parser.add_argument("--section", help="check one section id only, and print whether it is pending or written")
-    parser.add_argument("--write-index", action="store_true", help="rewrite each Appendix A vector index")
+    parser.add_argument("--print-index", action="store_true", help="print each Appendix A vector index")
+    parser.add_argument("--write-index", action="store_true", help="alias for --print-index; writes no file")
     args = parser.parse_args()
 
     faults = []
@@ -807,10 +804,12 @@ def main():
         vectors = document_vectors(docs, faults)
         twins = test_twins(faults)
         vector_count = check_vectors(vectors, twins, faults, only)
-        check_index(docs, vectors, faults, args.write_index, only)
+        check_index(docs, vectors, faults, only)
         check_counter_registry(docs, faults, only)
         check_references(docs, faults, only)
         check_language(docs, faults, only)
+        if args.print_index or args.write_index:
+            print_index(docs, vectors)
     except Fault as fault:
         print("rn standard: %s" % fault)
         return 2

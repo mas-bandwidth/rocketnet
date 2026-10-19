@@ -71,7 +71,8 @@ in one process (`soak.c:115`, `soak.c:164`) and cannot be split across
 machines.
 
 Today both programs exchange transport payloads, not messages: `client.c`
-calls `rocketnet_client_send` (`client.c:91`), and
+sends with `rocketnet_client_start` and `rocketnet_client_finish`
+(`client.c:91`), and
 `server.c` echoes payloads back (`server.c:76-82`). Each gains a `--matrix`
 mode built on the client and server API (`rocketnet_client_create`,
 `rocketnet_server_create`, `sdk/rocketnet.h`). Without

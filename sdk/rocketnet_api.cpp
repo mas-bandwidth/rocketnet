@@ -389,13 +389,6 @@ void rocketnet_client_abort( struct rocketnet_client_t * client )
     rocketnet_message_client_abort( rn_client( client ) );
 }
 
-uint32_t rocketnet_client_send( struct rocketnet_client_t * client, int channel, int reliability, const uint8_t * data, int bytes )
-{
-    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) )
-        return 0;
-    return rocketnet_message_client_send( rn_client( client ), channel, reliability, data, bytes );
-}
-
 int rocketnet_client_receive( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
@@ -698,13 +691,6 @@ void rocketnet_server_abort( struct rocketnet_server_t * server, int client_inde
     if ( !rocketnet_api_null_guard( server ) )
         return;
     rocketnet_message_server_abort( rn_server( server ), client_index );
-}
-
-uint32_t rocketnet_server_send( struct rocketnet_server_t * server, int client_index, int channel, int reliability, const uint8_t * data, int bytes )
-{
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) )
-        return 0;
-    return rocketnet_message_server_send( rn_server( server ), client_index, channel, reliability, data, bytes );
 }
 
 int rocketnet_server_broadcast( struct rocketnet_server_t * server, int channel, int reliability, const uint8_t * data, int bytes )

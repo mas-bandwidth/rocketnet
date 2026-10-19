@@ -17,9 +17,13 @@ int main()
         return 1;
     }
 
-    uint8_t public_key[crypto_sign_PUBLICKEYBYTES];
-    uint8_t private_key[crypto_sign_SECRETKEYBYTES];
-    crypto_sign_keypair( public_key, private_key );
+    uint8_t public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t private_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    if ( rocketnet_generate_backend_keypair( public_key, private_key ) != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "error: failed to generate backend keypair\n" );
+        return 1;
+    }
 
     char public_key_string[256];
     char private_key_string[256];
