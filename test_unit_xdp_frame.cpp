@@ -465,7 +465,7 @@ static void xdp_ladder_skips_xdp_for_ipv6()
 static int xdp_ipv6_error_lines = 0;
 static bool xdp_ipv6_error_names_the_rule = false;
 
-static void xdp_ipv6_capture( void *, int level, const char * message, size_t )
+static void xdp_ipv6_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
 {
     if ( level != ROCKETNET_LOG_LEVEL_ERROR )
         return;
@@ -510,8 +510,8 @@ static void xdp_ipv6_pin_is_refused_at_create()
     config.protocol_id = 1;
     strcpy( config.driver, "xdp" );
 
-    const int level = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    const enum rocketnet_log_level_t level = rocketnet_get_log_level();
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     rocketnet_set_log_callback( xdp_ipv6_capture, NULL );
     xdp_ipv6_error_lines = 0;
     xdp_ipv6_error_names_the_rule = false;
@@ -520,7 +520,7 @@ static void xdp_ipv6_pin_is_refused_at_create()
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "[::1]:40000", &config, 1000.0, &status );
 
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( level );
+    rocketnet_set_log_level( level );
     if ( pinned )
         setenv( "ROCKETNET_SERVER_TRANSPORT", saved, 1 );
 

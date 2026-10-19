@@ -37,9 +37,6 @@
 
 // --- the removed names stay removed ----------------------------------------
 
-#if defined( ROCKETNET_VERSION_MAJOR_INT ) || defined( ROCKETNET_VERSION_MINOR_INT ) || defined( ROCKETNET_VERSION_PATCH_INT )
-#error "ruling 6: the ROCKETNET_VERSION_*_INT aliases are removed"
-#endif
 #if defined( ROCKETNET_UNRELIABLE ) || defined( ROCKETNET_RELIABLE_ORDERED ) || defined( ROCKETNET_RECEIPT_ACKED ) || defined( ROCKETNET_MESSAGE_OK )
 #error "ruling 3: the reliability, receipt and update #defines are enums now"
 #endif
