@@ -617,6 +617,15 @@ void rocketnet_test_hash()
     rocketnet_check( hash == 0x249f1fb6f3a680e8ULL );
 }
 
+uint64_t rocketnet_protocol_version_hash( int major, int minor );
+
+void rocketnet_test_protocol_version_hash()
+{
+    rocketnet_check( rocketnet_protocol_version_hash( 1, 10 ) != rocketnet_protocol_version_hash( 11, 0 ) );
+    rocketnet_check( rocketnet_protocol_version_hash( 1, 0 ) != rocketnet_protocol_version_hash( 10, 0 ) );
+    rocketnet_check( rocketnet_protocol_version_hash( 1, 0 ) == rocketnet_hash_string( "1.0" ) );
+}
+
 void rocketnet_test_copy_string()
 {
     // copy valid string
@@ -14343,6 +14352,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
     { "test_base64", rocketnet_test_base64 },
     { "test_hash", rocketnet_test_hash },
+    { "test_protocol_version_hash", rocketnet_test_protocol_version_hash },
      { "test_copy_string", rocketnet_test_copy_string },
      { "test_copy_string_zero_size_writes_nothing", rocketnet_test_copy_string_zero_size_writes_nothing },
      { "test_address", rocketnet_test_address },
