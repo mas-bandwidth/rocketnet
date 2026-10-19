@@ -216,6 +216,20 @@
     (:feature "The normative standard in standard/, a conformance vector per section" :cells (y) :evidence "61c0e67 skeleton and tools/conformance/check_rn_standard.py; one card per section, each with its vectors (standard_wire_primitives_vectors 062e2cb through standard_channels_receipts_security_vectors 263a088); standard/RATIONALE.md 3ba4ff2")
     (:feature "Independent review of the transport repair diff, received" :cells (n) :note "the repair of findings #143 to #159; a review request sent is not a review received or an approval")
     (:feature "The old to-do and readiness files retired into this roadmap" :cells (y) :evidence "rocketnet-retire-todo-and-readiness" :note "TODO.md and TRANSPORT_READINESS.md deleted; every open item is a row here")))
+  (:id "second-deliverable" :title "Second deliverable: keys and backends (later)"
+   :text "What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. After v1.0.0, by the owner's call (Glenn, 2026-10-19: Go because the owner's backends are Go, C# because RocketWerkz uses C#)."
+   :columns ("done")
+   :rows
+   ((:feature "Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production" :cells (n) :note "the server takes the public key; the private key stays on the backend; it replaces the published development keys. References: netcode's keygen and yojimbo's (keygen.cpp at the repository root is the starting point)")
+    (:feature "Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token" :cells (n) :note "covers where each key lives (backend, server, and never shipped in the client), rotation, and development keys versus production keys. References: netcode's and yojimbo's key documentation")
+    (:feature "Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect" :cells (n) :note "each comes with a connect token format test vector shared with the C SDK, so tokens minted in Go and C# are accepted by the server. References: the netcode connect token, the yojimbo matcher backend (Go) and the space game backend")))
+
+  (:id "correctness-post-v1" :title "Correctness after v1.0.0 (later)"
+   :text "Correctness work that follows the v1.0.0 milestone, by the owner's call."
+   :columns ("done")
+   :rows
+   ((:id "server-running-invariants" :feature "TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client" :cells (n) :note "The query itself shipped as rocketnet_server_running in v1.0.0. From card rocketnet-public-server-stopped-query, never started.")))
+
   (:id "landed-2026-10-19" :title "Landed in the sprint since the 2026-10-18 roadmap record"
    :text "Cards landed on sprint/rocketnet-proof after the 2026-10-18 roadmap record (782b0ba), one row per card, its id the card id, with the landing merge commit as evidence. They reach main when v1.0.0 promotes the sprint branch."
    :columns ("done")
@@ -2296,4 +2310,485 @@ No dependency the card does not name: no package-manager fetch, no network insta
 No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
 Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
 \"Not done\" is a welcome report; a green claim you did not run is not.
-ROUTE NOTE (coordinator, 2026-10-19; why attempts 2 and 3 held). The workflow YAML is on the carried head af6706867 and parsed; the attempts held waiting for an uncontended bench and for macOS and Windows evidence. Neither is owed by this card. (1) The Linux leg's commands by hand: build in Release as the leg does, then run `./bin/load 1000 300` once on the bench JOB.md names, as soon as its load guard admits a job; other work on the bench is not a reason to defer. bin/load and its five criteria are already on BASE (rocketnet-load-many-clients-harness), so a FAIL is not this card's: report its summary line first, rerun it once to tell an environment fault from a harness defect, and finish with both lines (LAND when the YAML holds and the run passed; HOLD naming the failed criterion otherwise, which the coordinator turns into its own card). (2) The macOS and Windows legs are verified by the coordinator's workflow_dispatch run after landing, as THE TASK says: name them as not done, never hold for them. Keep nightly-soak.yml's runner selection exactly.")))))
+ROUTE NOTE (coordinator, 2026-10-19; why attempts 2 and 3 held). The workflow YAML is on the carried head af6706867 and parsed; the attempts held waiting for an uncontended bench and for macOS and Windows evidence. Neither is owed by this card. (1) The Linux leg's commands by hand: build in Release as the leg does, then run `./bin/load 1000 300` once on the bench JOB.md names, as soon as its load guard admits a job; other work on the bench is not a reason to defer. bin/load and its five criteria are already on BASE (rocketnet-load-many-clients-harness), so a FAIL is not this card's: report its summary line first, rerun it once to tell an environment fault from a harness defect, and finish with both lines (LAND when the YAML holds and the run passed; HOLD naming the failed criterion otherwise, which the coordinator turns into its own card). (2) The macOS and Windows legs are verified by the coordinator's workflow_dispatch run after landing, as THE TASK says: name them as not done, never hold for them. Keep nightly-soak.yml's runner selection exactly.")
+    (:id "rocketnet-cbmc-ack-block-read" :feature "CBMC proves the ack-block reader free of out-of-bounds access up to the full packet size" :cells (n) :note "moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release); was ready in stream rocketnet-tests. Carried: branch sprint/rocketnet-cbmc-ack-block-read.w1.g1.e21, no head pushed (attempt 5, ready)"
+     :brief "RESULT: rocketnet-cbmc-ack-block-read sha=000000000000 tier: pro
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: normal
+STREAM: rocketnet-tests
+DEPENDS-ON: rocketnet-cbmc-packet-prefilter-open
+SOURCE: Glenn, 2026-10-18: \"Let's apply it [Frama-C] where it makes sense.\" The coordinator, the same day: rocketnet's SDK is C++ (sdk/*.cpp), so plain Frama-C does not apply; each untrusted-input reader gets a CBMC bounded check for no out-of-bounds access and no undefined behaviour on any input up to the maximum packet size. proofs/cbmc/ already proves small instances (8-byte fragments, 24-byte message payloads, read/write over 8 bytes); these cards take the readers to the full bound. CBMC 6.6.0 is installed in /usr/bin on amd-1, amd-2, amd-3, hetzner1, hetzner2 and vision (measured 2026-10-18; hulk has none). Read at BASE 1fcaea324.
+PATHS: none
+START: sdk/rocketnet_ack.cpp (read),sdk/rocketnet_ack.h (read),sdk/rocketnet_replay.h (read),proofs/cbmc/proof_ack_apply_run.c (read),proofs/cbmc/Makefile (read)
+NEW: proofs/cbmc/ack_block/proof_ack_block.c,proofs/cbmc/ack_block/proof.mk,proofs/cbmc/ack_block/results.md
+TEST: none because the work is CBMC proofs, not a Go package or a unit-suite case; DONE-WHEN names the make target and the lines it prints
+TOOLCHAIN: a Linux member with cbmc 6.x and goto-cc on PATH, make, a C/C++ compiler and python3; run `command -v cbmc` and `cbmc --version` first; libsodium is vendored under sodium/ and is stubbed, not proved
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 150 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: CBMC with the flags proofs/cbmc/Makefile already uses, as the existing proofs do; nothing new in the build.
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with a message layer above it. `make` builds into bin/; `./bin/test` is the unit suite, `./bin/functional` the loopback tier. proofs/cbmc/ holds the CBMC proofs: proofs/cbmc/Makefile (read) runs `make -C proofs/cbmc` (the `all` target, which .github/workflows/cbmc.yml runs on pull requests touching sdk/: that target is per-commit CI and this card never adds to it) with CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check --unsigned-overflow-check --div-by-zero-check --unwinding-assertions. A proof is a C file that #includes the sdk .cpp it proves (proof_message_read.c includes rocketnet_message.cpp: the worked example, with its nondet_ and __CPROVER_ fallbacks for a plain compiler) and a harness that drives it on symbolic input. Never mirror sdk code into a proof (proof_fragment_bounds.c copies the reassembly function rather than including it: that copy can drift from the code, which is why rocketnet-cbmc-fragment-reassembly proves the real one).
+
+# CBMC: the ack block reader and its apply path stay in bounds for every ack block up to the maximum packet size
+
+THE TASK. An ack block is read from every session packet; its range count and range lengths are attacker-chosen and drive loops over the sent-packet window, so a missed bound is a read past the packet or a write past the window. Write proofs/cbmc/ack_block/proof_ack_block.c, one harness per reader below, each on symbolic input up to the full bound (CBMC PROOF RULES):
+- rocketnet_ack_block_read (data of data_bytes symbolic bytes up to the maximum packet size, every highest_sent: ensures no read past data_bytes, a 0 refusal below ROCKETNET_ACK_BLOCK_MIN_BYTES, num_ranges inside the block's documented maximum)
+- rocketnet_reconstruct_ack_largest
+- rocketnet_ack_endpoint_process_block on a block the reader accepted (the static rocketnet_ack_apply_run at the largest run bound that finishes; the existing ack-run-bound-8 target is not proved and stays as it is)
+- rocketnet_ack_block_build and rocketnet_ack_block_write (output of capacity bytes: no write past capacity, a result at most capacity)
+
+Then proofs/cbmc/ack_block/proof.mk (target proofs-ack_block, appended to NIGHTLY) and proofs/cbmc/ack_block/results.md. Worktree: the job directory; branch: your own; base: sprint/rocketnet-proof; touch only the PATHS and NEW files.
+
+THE NIGHTLY LAYOUT (the first CBMC card creates it; every other CBMC card follows it). proofs/cbmc/Makefile gains, below its existing targets and without changing them or `all`: `NIGHTLY :=`, `-include $(wildcard */proof.mk)`, and a `nightly` target that runs every entry of NIGHTLY. Each reader is its own directory proofs/cbmc/<reader>/: proof_<reader>.c (the harness), proof.mk (appends `proofs-<reader>` to NIGHTLY and defines that target: `$(CBMC) $(CBMC_FLAGS) --unwind <n> -I$(SDK) ...` from proofs/cbmc, SDK as the Makefile already defines it, one line of output per harness `<harness> VERIFICATION SUCCESSFUL|FAILED|unwinding assertion failed`), and results.md (per harness: the properties checked, how many passed, the bounds and unwinding used, and every failed or unproved property with its sdk file and line and its reason). .github/workflows/nightly-proofs.yml (schedule and workflow_dispatch only, never push or pull_request; runs-on [self-hosted, Linux, X64, fleet, long]; timeout-minutes 180) runs `make -C proofs/cbmc nightly`, uploading the output as an artifact. A reader joins the nightly by its proof.mk alone, so CBMC cards never edit a shared file after the first.
+
+DONE-WHEN: on the Linux member, `make -C proofs/cbmc proofs-ack_block` runs every harness of this card to its end (paste the VERIFICATION line of each, and the bound each proved); proofs/cbmc/ack_block/results.md records per harness the properties passed out of total and every failed or unproved property with its sdk line and reason; `make -n -C proofs/cbmc nightly` lists proofs-ack_block; `make -C proofs/cbmc` (the per-commit `all`) prints the same VERIFICATION lines it prints at BASE; `git diff --stat` against BASE shows only the NEW files. Red at BASE: proofs/cbmc/ack_block does not exist at BASE and `make -C proofs/cbmc nightly` does not run proofs-ack_block.
+
+STEP 1. Confirm `uname -s` is Linux; cd into the staged checkout JOB.md names and run git log --oneline -1; run `command -v cbmc` and `cbmc --version`. If `make -n -C proofs/cbmc nightly` fails at BASE, finish HOLD at once: this card needs the first CBMC card (the nightly scaffold).
+STEP 2. Red first: show proofs/cbmc/ack_block does not exist at BASE and `make -C proofs/cbmc nightly` does not run proofs-ack_block; quote the line. Run `make -C proofs/cbmc` once and keep its VERIFICATION lines for the DONE-WHEN comparison.
+STEP 3. Read the worked example (proofs/cbmc/proof_message_read.c) and each reader in START; write the harnesses and stubs, then proof.mk; run `make -C proofs/cbmc proofs-ack_block`, starting from a small bound and raising it to the full one.
+STEP 4. Gate: the DONE-WHEN lines, each with its last line pasted. A failed property is named with its file, and whether it is a defect at BASE or the harness's.
+STEP 5. Commit on your own branch as `rocketnet-cbmc-ack-block-read: <what>` with the trailer. Nothing reaches the forge from inside the wall: the member makes the push and pull request from outside the wall when the card finishes, against the BASE: line's branch. The pull request body states the diff stat, the red line, each harness with the bound it proved, and what was not done.
+STEP 6. End as JOB.md says; where it asks for RESULT.md write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+
+CBMC PROOF RULES (every CBMC card in this repository).
+The claim is no out-of-bounds access and no undefined behaviour on ANY input up to the maximum: packet_bytes symbolic in [0, ROCKETNET_MAX_PACKET_BYTES] (rocketnet.h: 1500 - 20 - 8 = 1472; also ROCKETNET_RECEIVE_CEILING, wire.h), over a buffer object of exactly packet_bytes symbolic bytes, so a read one past the end is a bounds failure and not slack. Where CBMC cannot finish the full bound inside 30 minutes on one bench core, prove the largest bound that does finish, record in results.md the bound proved and the full bound not proved, with the time the full bound ran before you stopped it; never shrink the claim silently.
+Include the real sdk .cpp; never copy sdk code into the proof. Stub only what is outside the reader: every libsodium call (crypto_aead_chacha20poly1305_ietf_decrypt, crypto_box_seal_open, crypto_sign_verify_detached, sodium_memzero and kin) is a CBMC model in the harness that checks its own buffer arguments (__CPROVER_r_ok on what it reads, __CPROVER_w_ok on what it writes, with the lengths libsodium documents), writes nondet bytes, and returns a nondet success or failure; the platform, allocator and time calls a reader makes get the same treatment. libsodium itself is not proved.
+A failed property is either a real defect (paste the CBMC trace's input, reproduce it with a small program in the job directory, built against the sdk under -fsanitize=address,undefined and never committed, finish HOLD naming the sdk line; never fix sdk code in this card) or a harness limit (name it). An unwinding-assertion failure means the unwind is too small: raise it or bound the loop's input as the code bounds it, and say which.
+Never add a target to `all` or to .github/workflows/cbmc.yml: these proofs run nightly only. Use the installed cbmc (CBMC 6.x in /usr/bin on the Linux benches); a bench without `command -v cbmc` is a HOLD at once naming the bench.
+
+STANDING RULES.
+Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0.
+Make the smallest change, with no refactor.
+Never touch the space game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+Never read outside the job's working directory.
+Schema-table bounds: a bound is declared only if every writer and reader path enforces it. Otherwise the field stays open (*string, []T).
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Linux member JOB.md names, never the coordinator's machine.
+Anything that uses real time, sockets or the network is a functional test and belongs in ./bin/functional, never ./bin/test.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+ROUTE NOTE: coordinator 2026-10-18: THE CHECKER IS NOW ESBMC 8.5, NOT CBMC. This NOTE overrides every CBMC, cbmc, goto-cc, __CPROVER_ and \"CBMC 6.x\" statement above, including TOOLCHAIN, THE NIGHTLY LAYOUT, CBMC PROOF RULES and DONE-WHEN wording. Why: CBMC 6.6.0 cannot parse the sdk's C++ (range-for in rocketnet_memory.h, the || conditions in rocketnet_fragment.cpp, __builtin_offsetof static_asserts in rocketnet_wire.h). A trial of ESBMC 8.5.0 on amd-1 proved all three fragment harnesses from rocketnet PR #387 (head b2249e5c) with no sdk change: header_and_plan 59/59, process_fragment 240/240, memory_sizing 19/19. What to do:
+ROUTE NOTE: Shim: commit one shim header in the proofs dir (proofs/cbmc/esbmc_shim.h, shared by every reader; if it is already on your base or on the carried head, reuse it, never a second one). It maps __CPROVER_ to __ESBMC_ (assume, assert, nondet and the r_ok/w_ok style checks to their ESBMC forms), and each harness includes it before the sdk .cpp. The sdk is still included, never copied.
+ROUTE NOTE: Command per harness: `esbmc` built as C++17 (--std c++17), with --z3 (Bitwuzla ran out of memory on one property), --overflow-check, an explicit --unwind sized to that harness's loops (never a blanket large value) and an explicit memset bound (--memset-limit or the harness's own bound). Keep the harness's pointer, bounds and div-by-zero checks that ESBMC enables by default. Keep the proofs-<reader> target names, the proof.mk layout, results.md and the per-harness output line: `<harness> VERIFICATION SUCCESSFUL|FAILED|unwinding assertion failed`, now printed from ESBMC's result.
+ROUTE NOTE: Report each property as proved, refuted (the counterexample checked by hand against the sdk code; a real defect finishes HOLD naming the sdk line, a harness limit is named) or timed out (with the bound and the time). results.md records proved/refuted/timed out per harness with the counts and the flags used.
+ROUTE NOTE: Nightly only: the proofs never join `all` or .github/workflows/cbmc.yml. The nightly workflow runs `make -C proofs/cbmc nightly` as before; its job needs esbmc, which the benches now carry.
+ROUTE NOTE: Per-commit `all` (the existing CBMC proofs) stays unchanged.
+ROUTE NOTE (coordinator, 2026-10-19; LAND, after four held attempts): the scaffold and esbmc_shim.h are on BASE now (reuse them; STEP 1's scaffold HOLD is void). LAND when every harness named has a proof.mk target that ends in a verdict at the largest bound finishing under the per-harness cap (timeout 1800s, prlimit --as=8589934592, nice 19, one esbmc at a time, as connect_token/proof.mk), `make -C proofs/cbmc proofs-<reader>` exits 0, and results.md records per harness the bound proved, the full bound, proved/refuted/timed-out counts, and for any harness below the full bound how long (or how much memory) the full-bound run took before the cap. Split a harness by input range where that lets a larger bound finish; claim the union. Nightly runs only bounds that finish. A reduced bound recorded so is LAND; HOLD only for a real sdk defect (trace, ASan/UBSan repro, sdk line) or no esbmc. One translation unit: include exactly one sdk .cpp; a helper from another sdk .cpp is a harness model (r_ok/w_ok on its buffers at documented lengths, nondet result in its documented range), never a second .cpp (ESBMC merges header statics unsoundly). Benches: Linux amd-1, amd-2, amd-3, hetzner1, hetzner2, hulk, vision (esbmc 8.5 on ~/sdk/bin; run `command -v esbmc` first); never captain, space or the studio. A load-guard deferral is waited out, not a HOLD. Keep what the carried head proved.
+ROUTE NOTE (carried head, attempts 3-4): ack_block_read proved at 512/1472 (79 props); writer 77/77, reconstruct 8/8, builder 91/91; apply OOM at run bound 1. Next: raise the partitioned reader from 512; bound apply's ranges as the reader bounds them (an assume citing the reader's check and sdk line).")
+    (:id "rocketnet-cbmc-server-packet-readers" :feature "CBMC proves the server packet readers free of out-of-bounds access up to the full packet size" :cells (n) :note "moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release); was ready in stream rocketnet-tests. Carried: branch sprint/rocketnet-cbmc-server-packet-readers.w3.g3.e21, no head pushed (attempt 5, ready)"
+     :brief "RESULT: rocketnet-cbmc-server-packet-readers sha=000000000000 tier: pro
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: normal
+STREAM: rocketnet-tests
+DEPENDS-ON: rocketnet-cbmc-packet-prefilter-open
+SOURCE: Glenn, 2026-10-18: \"Let's apply it [Frama-C] where it makes sense.\" The coordinator, the same day: rocketnet's SDK is C++ (sdk/*.cpp), so plain Frama-C does not apply; each untrusted-input reader gets a CBMC bounded check for no out-of-bounds access and no undefined behaviour on any input up to the maximum packet size. proofs/cbmc/ already proves small instances (8-byte fragments, 24-byte message payloads, read/write over 8 bytes); these cards take the readers to the full bound. CBMC 6.6.0 is installed in /usr/bin on amd-1, amd-2, amd-3, hetzner1, hetzner2 and vision (measured 2026-10-18; hulk has none). Read at BASE 1fcaea324.
+PATHS: none
+START: sdk/rocketnet_server_protocol.cpp (read),sdk/rocketnet_server_protocol.h (read),sdk/rocketnet_protocol.h (read),sdk/rocketnet_read_write.h (read),proofs/cbmc/proof_message_read.c (read)
+NEW: proofs/cbmc/server_packets/proof_server_packets.c,proofs/cbmc/server_packets/proof.mk,proofs/cbmc/server_packets/results.md
+TEST: none because the work is CBMC proofs, not a Go package or a unit-suite case; DONE-WHEN names the make target and the lines it prints
+TOOLCHAIN: a Linux member with cbmc 6.x and goto-cc on PATH, make, a C/C++ compiler and python3; run `command -v cbmc` and `cbmc --version` first; libsodium is vendored under sodium/ and is stubbed, not proved
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 150 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: CBMC with the flags proofs/cbmc/Makefile already uses, as the existing proofs do; nothing new in the build.
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with a message layer above it. `make` builds into bin/; `./bin/test` is the unit suite, `./bin/functional` the loopback tier. proofs/cbmc/ holds the CBMC proofs: proofs/cbmc/Makefile (read) runs `make -C proofs/cbmc` (the `all` target, which .github/workflows/cbmc.yml runs on pull requests touching sdk/: that target is per-commit CI and this card never adds to it) with CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check --unsigned-overflow-check --div-by-zero-check --unwinding-assertions. A proof is a C file that #includes the sdk .cpp it proves (proof_message_read.c includes rocketnet_message.cpp: the worked example, with its nondet_ and __CPROVER_ fallbacks for a plain compiler) and a harness that drives it on symbolic input. Never mirror sdk code into a proof (proof_fragment_bounds.c copies the reassembly function rather than including it: that copy can drift from the code, which is why rocketnet-cbmc-fragment-reassembly proves the real one).
+
+# CBMC: the server's per-type packet readers read no byte out of bounds on any packet up to the maximum size
+
+THE TASK. rocketnet_server_protocol_process_packet is the server's whole untrusted surface after the prefilter: connection requests, responses and sealed session packets from any address on the internet. Write proofs/cbmc/server_packets/proof_server_packets.c, one harness per reader below, each on symbolic input up to the full bound (CBMC PROOF RULES):
+- rocketnet_server_protocol_process_connection_request (a request of any length up to the maximum, every connect-token byte symbolic)
+- the static rocketnet_server_process_connection_response and rocketnet_server_process_sealed_packet (reached by including sdk/rocketnet_server_protocol.c (read)pp), each on every packet type byte
+- rocketnet_server_protocol_process_packet, the dispatcher (from, packet_data of packet_bytes symbolic bytes, response_packet and out_payload sized as the header documents: ensures no write past them, *response_bytes and *out_payload_bytes inside their buffers)
+The server struct is built by the code's own create path with the smallest config it accepts (one client slot); if CBMC cannot finish the dispatcher at the full bound, prove each per-type reader at the full bound and record the dispatcher's largest bound in results.md.
+Then proofs/cbmc/server_packets/proof.mk (target proofs-server_packets, appended to NIGHTLY) and proofs/cbmc/server_packets/results.md. Worktree: the job directory; branch: your own; base: sprint/rocketnet-proof; touch only the PATHS and NEW files.
+
+THE NIGHTLY LAYOUT (the first CBMC card creates it; every other CBMC card follows it). proofs/cbmc/Makefile gains, below its existing targets and without changing them or `all`: `NIGHTLY :=`, `-include $(wildcard */proof.mk)`, and a `nightly` target that runs every entry of NIGHTLY. Each reader is its own directory proofs/cbmc/<reader>/: proof_<reader>.c (the harness), proof.mk (appends `proofs-<reader>` to NIGHTLY and defines that target: `$(CBMC) $(CBMC_FLAGS) --unwind <n> -I$(SDK) ...` from proofs/cbmc, SDK as the Makefile already defines it, one line of output per harness `<harness> VERIFICATION SUCCESSFUL|FAILED|unwinding assertion failed`), and results.md (per harness: the properties checked, how many passed, the bounds and unwinding used, and every failed or unproved property with its sdk file and line and its reason). .github/workflows/nightly-proofs.yml (schedule and workflow_dispatch only, never push or pull_request; runs-on [self-hosted, Linux, X64, fleet, long]; timeout-minutes 180) runs `make -C proofs/cbmc nightly`, uploading the output as an artifact. A reader joins the nightly by its proof.mk alone, so CBMC cards never edit a shared file after the first.
+
+DONE-WHEN: on the Linux member, `make -C proofs/cbmc proofs-server_packets` runs every harness of this card to its end (paste the VERIFICATION line of each, and the bound each proved); proofs/cbmc/server_packets/results.md records per harness the properties passed out of total and every failed or unproved property with its sdk line and reason; `make -n -C proofs/cbmc nightly` lists proofs-server_packets; `make -C proofs/cbmc` (the per-commit `all`) prints the same VERIFICATION lines it prints at BASE; `git diff --stat` against BASE shows only the NEW files. Red at BASE: proofs/cbmc/server_packets does not exist at BASE and `make -C proofs/cbmc nightly` does not run proofs-server_packets.
+
+STEP 1. Confirm `uname -s` is Linux; cd into the staged checkout JOB.md names and run git log --oneline -1; run `command -v cbmc` and `cbmc --version`. If `make -n -C proofs/cbmc nightly` fails at BASE, finish HOLD at once: this card needs the first CBMC card (the nightly scaffold).
+STEP 2. Red first: show proofs/cbmc/server_packets does not exist at BASE and `make -C proofs/cbmc nightly` does not run proofs-server_packets; quote the line. Run `make -C proofs/cbmc` once and keep its VERIFICATION lines for the DONE-WHEN comparison.
+STEP 3. Read the worked example (proofs/cbmc/proof_message_read.c) and each reader in START; write the harnesses and stubs, then proof.mk; run `make -C proofs/cbmc proofs-server_packets`, starting from a small bound and raising it to the full one.
+STEP 4. Gate: the DONE-WHEN lines, each with its last line pasted. A failed property is named with its file, and whether it is a defect at BASE or the harness's.
+STEP 5. Commit on your own branch as `rocketnet-cbmc-server-packet-readers: <what>` with the trailer. Nothing reaches the forge from inside the wall: the member makes the push and pull request from outside the wall when the card finishes, against the BASE: line's branch. The pull request body states the diff stat, the red line, each harness with the bound it proved, and what was not done.
+STEP 6. End as JOB.md says; where it asks for RESULT.md write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+
+CBMC PROOF RULES (every CBMC card in this repository).
+The claim is no out-of-bounds access and no undefined behaviour on ANY input up to the maximum: packet_bytes symbolic in [0, ROCKETNET_MAX_PACKET_BYTES] (rocketnet.h: 1500 - 20 - 8 = 1472; also ROCKETNET_RECEIVE_CEILING, wire.h), over a buffer object of exactly packet_bytes symbolic bytes, so a read one past the end is a bounds failure and not slack. Where CBMC cannot finish the full bound inside 30 minutes on one bench core, prove the largest bound that does finish, record in results.md the bound proved and the full bound not proved, with the time the full bound ran before you stopped it; never shrink the claim silently.
+Include the real sdk .cpp; never copy sdk code into the proof. Stub only what is outside the reader: every libsodium call (crypto_aead_chacha20poly1305_ietf_decrypt, crypto_box_seal_open, crypto_sign_verify_detached, sodium_memzero and kin) is a CBMC model in the harness that checks its own buffer arguments (__CPROVER_r_ok on what it reads, __CPROVER_w_ok on what it writes, with the lengths libsodium documents), writes nondet bytes, and returns a nondet success or failure; the platform, allocator and time calls a reader makes get the same treatment. libsodium itself is not proved.
+A failed property is either a real defect (paste the CBMC trace's input, reproduce it with a small program in the job directory, built against the sdk under -fsanitize=address,undefined and never committed, finish HOLD naming the sdk line; never fix sdk code in this card) or a harness limit (name it). An unwinding-assertion failure means the unwind is too small: raise it or bound the loop's input as the code bounds it, and say which.
+Never add a target to `all` or to .github/workflows/cbmc.yml: these proofs run nightly only. Use the installed cbmc (CBMC 6.x in /usr/bin on the Linux benches); a bench without `command -v cbmc` is a HOLD at once naming the bench.
+
+STANDING RULES.
+Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0.
+Make the smallest change, with no refactor.
+Never touch the space game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+Never read outside the job's working directory.
+Schema-table bounds: a bound is declared only if every writer and reader path enforces it. Otherwise the field stays open (*string, []T).
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Linux member JOB.md names, never the coordinator's machine.
+Anything that uses real time, sockets or the network is a functional test and belongs in ./bin/functional, never ./bin/test.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+ROUTE NOTE: coordinator 2026-10-18: THE CHECKER IS NOW ESBMC 8.5, NOT CBMC. This NOTE overrides every CBMC, cbmc, goto-cc, __CPROVER_ and \"CBMC 6.x\" statement above, including TOOLCHAIN, THE NIGHTLY LAYOUT, CBMC PROOF RULES and DONE-WHEN wording. Why: CBMC 6.6.0 cannot parse the sdk's C++ (range-for in rocketnet_memory.h, the || conditions in rocketnet_fragment.cpp, __builtin_offsetof static_asserts in rocketnet_wire.h). A trial of ESBMC 8.5.0 on amd-1 proved all three fragment harnesses from rocketnet PR #387 (head b2249e5c) with no sdk change: header_and_plan 59/59, process_fragment 240/240, memory_sizing 19/19. What to do:
+ROUTE NOTE: Shim: commit one shim header in the proofs dir (proofs/cbmc/esbmc_shim.h, shared by every reader; if it is already on your base or on the carried head, reuse it, never a second one). It maps __CPROVER_ to __ESBMC_ (assume, assert, nondet and the r_ok/w_ok style checks to their ESBMC forms), and each harness includes it before the sdk .cpp. The sdk is still included, never copied.
+ROUTE NOTE: Command per harness: `esbmc` built as C++17 (--std c++17), with --z3 (Bitwuzla ran out of memory on one property), --overflow-check, an explicit --unwind sized to that harness's loops (never a blanket large value) and an explicit memset bound (--memset-limit or the harness's own bound). Keep the harness's pointer, bounds and div-by-zero checks that ESBMC enables by default. Keep the proofs-<reader> target names, the proof.mk layout, results.md and the per-harness output line: `<harness> VERIFICATION SUCCESSFUL|FAILED|unwinding assertion failed`, now printed from ESBMC's result.
+ROUTE NOTE: Report each property as proved, refuted (the counterexample checked by hand against the sdk code; a real defect finishes HOLD naming the sdk line, a harness limit is named) or timed out (with the bound and the time). results.md records proved/refuted/timed out per harness with the counts and the flags used.
+ROUTE NOTE: Nightly only: the proofs never join `all` or .github/workflows/cbmc.yml. The nightly workflow runs `make -C proofs/cbmc nightly` as before; its job needs esbmc, which the benches now carry.
+ROUTE NOTE: Per-commit `all` (the existing CBMC proofs) stays unchanged.
+ROUTE NOTE (coordinator, 2026-10-19; LAND, after four held attempts): the scaffold and esbmc_shim.h are on BASE now (reuse them; STEP 1's scaffold HOLD is void). LAND when every harness named has a proof.mk target that ends in a verdict at the largest bound finishing under the per-harness cap (timeout 1800s, prlimit --as=8589934592, nice 19, one esbmc at a time, as connect_token/proof.mk), `make -C proofs/cbmc proofs-<reader>` exits 0, and results.md records per harness the bound proved, the full bound, proved/refuted/timed-out counts, and for any harness below the full bound how long (or how much memory) the full-bound run took before the cap. Split a harness by input range where that lets a larger bound finish; claim the union. Nightly runs only bounds that finish. A reduced bound recorded so is LAND; HOLD only for a real sdk defect (trace, ASan/UBSan repro, sdk line) or no esbmc. One translation unit: include exactly one sdk .cpp; a helper from another sdk .cpp is a harness model (r_ok/w_ok on its buffers at documented lengths, nondet result in its documented range), never a second .cpp (ESBMC merges header statics unsoundly). Benches: Linux amd-1, amd-2, amd-3, hetzner1, hetzner2, hulk, vision (esbmc 8.5 on ~/sdk/bin; run `command -v esbmc` first); never captain, space or the studio. A load-guard deferral is waited out, not a HOLD. Keep what the carried head proved.
+ROUTE NOTE (carried head, attempts 3-4): connection request proved at 1472; response, sealed-session and dispatcher blocked on helpers in other TUs: model them per the one-TU rule, citing the proof covering each helper where one exists.")
+    (:id "rocketnet-cbmc-sequence-buffers" :feature "CBMC proves the sequence buffers and replay window free of out-of-bounds access" :cells (n) :note "moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release); was review in stream rocketnet-tests. Carried: branch sprint/rocketnet-cbmc-sequence-buffers.w1.g1.e21 head 207b82605e720aaf0f1c12c403056f57826c5b17 (attempt 5, review)"
+     :brief "RESULT: rocketnet-cbmc-sequence-buffers sha=000000000000 tier: pro
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: normal
+STREAM: rocketnet-tests
+DEPENDS-ON: rocketnet-cbmc-packet-prefilter-open
+SOURCE: Glenn, 2026-10-18: \"Let's apply it [Frama-C] where it makes sense.\" The coordinator, the same day: rocketnet's SDK is C++ (sdk/*.cpp), so plain Frama-C does not apply; each untrusted-input reader gets a CBMC bounded check for no out-of-bounds access and no undefined behaviour on any input up to the maximum packet size. proofs/cbmc/ already proves small instances (8-byte fragments, 24-byte message payloads, read/write over 8 bytes); these cards take the readers to the full bound. CBMC 6.6.0 is installed in /usr/bin on amd-1, amd-2, amd-3, hetzner1, hetzner2 and vision (measured 2026-10-18; hulk has none). Read at BASE 1fcaea324.
+PATHS: none
+START: sdk/rocketnet_replay.cpp (read),sdk/rocketnet_replay.h (read),sdk/rocketnet_ack.cpp (read),sdk/rocketnet_window_receive.cpp (read),sdk/rocketnet_window_receive.h (read),proofs/cbmc/proof_replay_advance.c (read),proofs/cbmc/Makefile (read)
+NEW: proofs/cbmc/sequence_buffers/proof_sequence_buffers.c,proofs/cbmc/sequence_buffers/proof.mk,proofs/cbmc/sequence_buffers/results.md
+TEST: none because the work is CBMC proofs, not a Go package or a unit-suite case; DONE-WHEN names the make target and the lines it prints
+TOOLCHAIN: a Linux member with cbmc 6.x and goto-cc on PATH, make, a C/C++ compiler and python3; run `command -v cbmc` and `cbmc --version` first; libsodium is vendored under sodium/ and is stubbed, not proved
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 150 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: CBMC with the flags proofs/cbmc/Makefile already uses, as the existing proofs do; nothing new in the build.
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with a message layer above it. `make` builds into bin/; `./bin/test` is the unit suite, `./bin/functional` the loopback tier. proofs/cbmc/ holds the CBMC proofs: proofs/cbmc/Makefile (read) runs `make -C proofs/cbmc` (the `all` target, which .github/workflows/cbmc.yml runs on pull requests touching sdk/: that target is per-commit CI and this card never adds to it) with CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check --unsigned-overflow-check --div-by-zero-check --unwinding-assertions. A proof is a C file that #includes the sdk .cpp it proves (proof_message_read.c includes rocketnet_message.cpp: the worked example, with its nondet_ and __CPROVER_ fallbacks for a plain compiler) and a harness that drives it on symbolic input. Never mirror sdk code into a proof (proof_fragment_bounds.c copies the reassembly function rather than including it: that copy can drift from the code, which is why rocketnet-cbmc-fragment-reassembly proves the real one).
+
+# CBMC: the replay window and the sequence buffers index in bounds for every sequence
+
+THE TASK. Every received sequence number is attacker-chosen and is reduced to an index into a bit window or a ring; the existing replay proof covers deltas 1 to 3 only, and an index computed from a 64-bit sequence is exactly where a modulo or a shift goes wrong. Write proofs/cbmc/sequence_buffers/proof_sequence_buffers.c, one harness per reader below, each on symbolic input up to the full bound (CBMC PROOF RULES):
+- rocketnet_replay_already_received and rocketnet_replay_advance (every sequence and highest_opened: ensures every window index in range; the far-advance branch is a known defect with its own fix card, rocketnet-replay-far-advance-clears-every-window-word: if it is still red at BASE, record it as that known defect, never as new)
+- rocketnet_ack_endpoint_record_received, rocketnet_ack_endpoint_record_sent_classified and rocketnet_ack_endpoint_mark_keep_alive (the sent and received rings: every index inside its documented size for every sequence)
+- rn_window_receive_init, rn_window_receive_accept and rn_window_receive_release (sdk/rocketnet_window_receive.c (read)pp: every message number, ensures *slot inside the window)
+A 64-bit sequence space cannot be unrolled: state the claim per call (one arbitrary sequence against one arbitrary window state the code's invariants allow), as proof_replay_advance.c does with its one arbitrary word.
+Then proofs/cbmc/sequence_buffers/proof.mk (target proofs-sequence_buffers, appended to NIGHTLY) and proofs/cbmc/sequence_buffers/results.md. Worktree: the job directory; branch: your own; base: sprint/rocketnet-proof; touch only the PATHS and NEW files.
+
+THE NIGHTLY LAYOUT (the first CBMC card creates it; every other CBMC card follows it). proofs/cbmc/Makefile gains, below its existing targets and without changing them or `all`: `NIGHTLY :=`, `-include $(wildcard */proof.mk)`, and a `nightly` target that runs every entry of NIGHTLY. Each reader is its own directory proofs/cbmc/<reader>/: proof_<reader>.c (the harness), proof.mk (appends `proofs-<reader>` to NIGHTLY and defines that target: `$(CBMC) $(CBMC_FLAGS) --unwind <n> -I$(SDK) ...` from proofs/cbmc, SDK as the Makefile already defines it, one line of output per harness `<harness> VERIFICATION SUCCESSFUL|FAILED|unwinding assertion failed`), and results.md (per harness: the properties checked, how many passed, the bounds and unwinding used, and every failed or unproved property with its sdk file and line and its reason). .github/workflows/nightly-proofs.yml (schedule and workflow_dispatch only, never push or pull_request; runs-on [self-hosted, Linux, X64, fleet, long]; timeout-minutes 180) runs `make -C proofs/cbmc nightly`, uploading the output as an artifact. A reader joins the nightly by its proof.mk alone, so CBMC cards never edit a shared file after the first.
+
+DONE-WHEN: on the Linux member, `make -C proofs/cbmc proofs-sequence_buffers` runs every harness of this card to its end (paste the VERIFICATION line of each, and the bound each proved); proofs/cbmc/sequence_buffers/results.md records per harness the properties passed out of total and every failed or unproved property with its sdk line and reason; `make -n -C proofs/cbmc nightly` lists proofs-sequence_buffers; `make -C proofs/cbmc` (the per-commit `all`) prints the same VERIFICATION lines it prints at BASE; `git diff --stat` against BASE shows only the NEW files. Red at BASE: proofs/cbmc/sequence_buffers does not exist at BASE and `make -C proofs/cbmc nightly` does not run proofs-sequence_buffers.
+
+STEP 1. Confirm `uname -s` is Linux; cd into the staged checkout JOB.md names and run git log --oneline -1; run `command -v cbmc` and `cbmc --version`. If `make -n -C proofs/cbmc nightly` fails at BASE, finish HOLD at once: this card needs the first CBMC card (the nightly scaffold).
+STEP 2. Red first: show proofs/cbmc/sequence_buffers does not exist at BASE and `make -C proofs/cbmc nightly` does not run proofs-sequence_buffers; quote the line. Run `make -C proofs/cbmc` once and keep its VERIFICATION lines for the DONE-WHEN comparison.
+STEP 3. Read the worked example (proofs/cbmc/proof_message_read.c) and each reader in START; write the harnesses and stubs, then proof.mk; run `make -C proofs/cbmc proofs-sequence_buffers`, starting from a small bound and raising it to the full one.
+STEP 4. Gate: the DONE-WHEN lines, each with its last line pasted. A failed property is named with its file, and whether it is a defect at BASE or the harness's.
+STEP 5. Commit on your own branch as `rocketnet-cbmc-sequence-buffers: <what>` with the trailer. Nothing reaches the forge from inside the wall: the member makes the push and pull request from outside the wall when the card finishes, against the BASE: line's branch. The pull request body states the diff stat, the red line, each harness with the bound it proved, and what was not done.
+STEP 6. End as JOB.md says; where it asks for RESULT.md write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+
+CBMC PROOF RULES (every CBMC card in this repository).
+The claim is no out-of-bounds access and no undefined behaviour on ANY input up to the maximum: packet_bytes symbolic in [0, ROCKETNET_MAX_PACKET_BYTES] (rocketnet.h: 1500 - 20 - 8 = 1472; also ROCKETNET_RECEIVE_CEILING, wire.h), over a buffer object of exactly packet_bytes symbolic bytes, so a read one past the end is a bounds failure and not slack. Where CBMC cannot finish the full bound inside 30 minutes on one bench core, prove the largest bound that does finish, record in results.md the bound proved and the full bound not proved, with the time the full bound ran before you stopped it; never shrink the claim silently.
+Include the real sdk .cpp; never copy sdk code into the proof. Stub only what is outside the reader: every libsodium call (crypto_aead_chacha20poly1305_ietf_decrypt, crypto_box_seal_open, crypto_sign_verify_detached, sodium_memzero and kin) is a CBMC model in the harness that checks its own buffer arguments (__CPROVER_r_ok on what it reads, __CPROVER_w_ok on what it writes, with the lengths libsodium documents), writes nondet bytes, and returns a nondet success or failure; the platform, allocator and time calls a reader makes get the same treatment. libsodium itself is not proved.
+A failed property is either a real defect (paste the CBMC trace's input, reproduce it with a small program in the job directory, built against the sdk under -fsanitize=address,undefined and never committed, finish HOLD naming the sdk line; never fix sdk code in this card) or a harness limit (name it). An unwinding-assertion failure means the unwind is too small: raise it or bound the loop's input as the code bounds it, and say which.
+Never add a target to `all` or to .github/workflows/cbmc.yml: these proofs run nightly only. Use the installed cbmc (CBMC 6.x in /usr/bin on the Linux benches); a bench without `command -v cbmc` is a HOLD at once naming the bench.
+
+STANDING RULES.
+Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0.
+Make the smallest change, with no refactor.
+Never touch the space game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+Never read outside the job's working directory.
+Schema-table bounds: a bound is declared only if every writer and reader path enforces it. Otherwise the field stays open (*string, []T).
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Linux member JOB.md names, never the coordinator's machine.
+Anything that uses real time, sockets or the network is a functional test and belongs in ./bin/functional, never ./bin/test.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+ROUTE NOTE: coordinator 2026-10-18: THE CHECKER IS NOW ESBMC 8.5, NOT CBMC. This NOTE overrides every CBMC, cbmc, goto-cc, __CPROVER_ and \"CBMC 6.x\" statement above, including TOOLCHAIN, THE NIGHTLY LAYOUT, CBMC PROOF RULES and DONE-WHEN wording. Why: CBMC 6.6.0 cannot parse the sdk's C++ (range-for in rocketnet_memory.h, the || conditions in rocketnet_fragment.cpp, __builtin_offsetof static_asserts in rocketnet_wire.h). A trial of ESBMC 8.5.0 on amd-1 proved all three fragment harnesses from rocketnet PR #387 (head b2249e5c) with no sdk change: header_and_plan 59/59, process_fragment 240/240, memory_sizing 19/19. What to do:
+ROUTE NOTE: Shim: commit one shim header in the proofs dir (proofs/cbmc/esbmc_shim.h, shared by every reader; if it is already on your base or on the carried head, reuse it, never a second one). It maps __CPROVER_ to __ESBMC_ (assume, assert, nondet and the r_ok/w_ok style checks to their ESBMC forms), and each harness includes it before the sdk .cpp. The sdk is still included, never copied.
+ROUTE NOTE: Command per harness: `esbmc` built as C++17 (--std c++17), with --z3 (Bitwuzla ran out of memory on one property), --overflow-check, an explicit --unwind sized to that harness's loops (never a blanket large value) and an explicit memset bound (--memset-limit or the harness's own bound). Keep the harness's pointer, bounds and div-by-zero checks that ESBMC enables by default. Keep the proofs-<reader> target names, the proof.mk layout, results.md and the per-harness output line: `<harness> VERIFICATION SUCCESSFUL|FAILED|unwinding assertion failed`, now printed from ESBMC's result.
+ROUTE NOTE: Report each property as proved, refuted (the counterexample checked by hand against the sdk code; a real defect finishes HOLD naming the sdk line, a harness limit is named) or timed out (with the bound and the time). results.md records proved/refuted/timed out per harness with the counts and the flags used.
+ROUTE NOTE: Nightly only: the proofs never join `all` or .github/workflows/cbmc.yml. The nightly workflow runs `make -C proofs/cbmc nightly` as before; its job needs esbmc, which the benches now carry.
+ROUTE NOTE: Per-commit `all` (the existing CBMC proofs) stays unchanged.
+ROUTE NOTE (coordinator, 2026-10-19; LAND, after four held attempts): the scaffold and esbmc_shim.h are on BASE now (reuse them; STEP 1's scaffold HOLD is void). LAND when every harness named has a proof.mk target that ends in a verdict at the largest bound finishing under the per-harness cap (timeout 1800s, prlimit --as=8589934592, nice 19, one esbmc at a time, as connect_token/proof.mk), `make -C proofs/cbmc proofs-<reader>` exits 0, and results.md records per harness the bound proved, the full bound, proved/refuted/timed-out counts, and for any harness below the full bound how long (or how much memory) the full-bound run took before the cap. Split a harness by input range where that lets a larger bound finish; claim the union. Nightly runs only bounds that finish. A reduced bound recorded so is LAND; HOLD only for a real sdk defect (trace, ASan/UBSan repro, sdk line) or no esbmc. One translation unit: include exactly one sdk .cpp; a helper from another sdk .cpp is a harness model (r_ok/w_ok on its buffers at documented lengths, nondet result in its documented range), never a second .cpp (ESBMC merges header statics unsoundly). Benches: Linux amd-1, amd-2, amd-3, hetzner1, hetzner2, hulk, vision (esbmc 8.5 on ~/sdk/bin; run `command -v esbmc` first); never captain, space or the studio. A load-guard deferral is waited out, not a HOLD. Keep what the carried head proved.
+ROUTE NOTE (carried head, attempt 2): 4 harnesses, 130 props proved; ack received/sent stopped at 300 s (rerun at 1800 s); replay advance/window accept OOM at 8 GiB: split by sequence delta (in window, edge, beyond).")
+    (:id "rocketnet-cbmc-client-packet-readers" :feature "CBMC proves the client packet readers free of out-of-bounds access up to the full packet size" :cells (n) :note "moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release); was review in stream rocketnet-tests. Carried: branch sprint/rocketnet-cbmc-client-packet-readers.w6.g1.e21 head de2ec7ee82e58b1d3e13e4baffdf202675c6787b (attempt 7, review)"
+     :brief "RESULT: rocketnet-cbmc-client-packet-readers sha=000000000000 tier: pro
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: normal
+STREAM: rocketnet-tests
+DEPENDS-ON: rocketnet-cbmc-packet-prefilter-open
+SOURCE: Glenn, 2026-10-18: \"Let's apply it [Frama-C] where it makes sense.\" The coordinator, the same day: rocketnet's SDK is C++ (sdk/*.cpp), so plain Frama-C does not apply; each untrusted-input reader gets a CBMC bounded check for no out-of-bounds access and no undefined behaviour on any input up to the maximum packet size. proofs/cbmc/ already proves small instances (8-byte fragments, 24-byte message payloads, read/write over 8 bytes); these cards take the readers to the full bound. CBMC 6.6.0 is installed in /usr/bin on amd-1, amd-2, amd-3, hetzner1, hetzner2 and vision (measured 2026-10-18; hulk has none). Read at BASE 1fcaea324.
+PATHS: none
+START: sdk/rocketnet_client_protocol.cpp (read),sdk/rocketnet_client_protocol.h (read),sdk/rocketnet_client_receive_handshake.h (read),sdk/rocketnet_read_write.h (read),proofs/cbmc/proof_message_read.c (read)
+NEW: proofs/cbmc/client_packets/proof_client_packets.c,proofs/cbmc/client_packets/proof.mk,proofs/cbmc/client_packets/results.md
+TEST: none because the work is CBMC proofs, not a Go package or a unit-suite case; DONE-WHEN names the make target and the lines it prints
+TOOLCHAIN: a Linux member with cbmc 6.x and goto-cc on PATH, make, a C/C++ compiler and python3; run `command -v cbmc` and `cbmc --version` first; libsodium is vendored under sodium/ and is stubbed, not proved
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 150 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 150 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: CBMC with the flags proofs/cbmc/Makefile already uses, as the existing proofs do; nothing new in the build.
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with a message layer above it. `make` builds into bin/; `./bin/test` is the unit suite, `./bin/functional` the loopback tier. proofs/cbmc/ holds the CBMC proofs: proofs/cbmc/Makefile (read) runs `make -C proofs/cbmc` (the `all` target, which .github/workflows/cbmc.yml runs on pull requests touching sdk/: that target is per-commit CI and this card never adds to it) with CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check --unsigned-overflow-check --div-by-zero-check --unwinding-assertions. A proof is a C file that #includes the sdk .cpp it proves (proof_message_read.c includes rocketnet_message.cpp: the worked example, with its nondet_ and __CPROVER_ fallbacks for a plain compiler) and a harness that drives it on symbolic input. Never mirror sdk code into a proof (proof_fragment_bounds.c copies the reassembly function rather than including it: that copy can drift from the code, which is why rocketnet-cbmc-fragment-reassembly proves the real one).
+
+# CBMC: the client's per-type packet readers read no byte out of bounds on any packet up to the maximum size
+
+THE TASK. A client reads whatever arrives on its socket, including spoofed packets from anyone who knows its address; every per-type reader indexes the packet by its own length fields. Write proofs/cbmc/client_packets/proof_client_packets.c, one harness per reader below, each on symbolic input up to the full bound (CBMC PROOF RULES):
+- rocketnet_client_protocol_process_packet, the dispatcher (packet_data of packet_bytes symbolic bytes, out_payload of out_payload_capacity bytes: ensures no read past packet_bytes, no write past out_payload_capacity, *out_payload_bytes in [0, out_payload_capacity])
+- the static rocketnet_client_process_cookie, rocketnet_client_process_challenge, rocketnet_client_process_denied, rocketnet_client_open_session_packet, rocketnet_client_process_keep_alive, rocketnet_client_process_payload, rocketnet_client_process_ack, rocketnet_client_process_fragment, rocketnet_client_process_disconnect (reached by including sdk/rocketnet_client_protocol.c (read)pp), each on every client state the struct can hold
+- rocketnet_client_protocol_process_record
+As the server card: the client struct comes from the code's own create path; if the dispatcher does not finish at the full bound, prove each per-type reader at it and record the dispatcher's largest bound.
+Then proofs/cbmc/client_packets/proof.mk (target proofs-client_packets, appended to NIGHTLY) and proofs/cbmc/client_packets/results.md. Worktree: the job directory; branch: your own; base: sprint/rocketnet-proof; touch only the PATHS and NEW files.
+
+THE NIGHTLY LAYOUT (the first CBMC card creates it; every other CBMC card follows it). proofs/cbmc/Makefile gains, below its existing targets and without changing them or `all`: `NIGHTLY :=`, `-include $(wildcard */proof.mk)`, and a `nightly` target that runs every entry of NIGHTLY. Each reader is its own directory proofs/cbmc/<reader>/: proof_<reader>.c (the harness), proof.mk (appends `proofs-<reader>` to NIGHTLY and defines that target: `$(CBMC) $(CBMC_FLAGS) --unwind <n> -I$(SDK) ...` from proofs/cbmc, SDK as the Makefile already defines it, one line of output per harness `<harness> VERIFICATION SUCCESSFUL|FAILED|unwinding assertion failed`), and results.md (per harness: the properties checked, how many passed, the bounds and unwinding used, and every failed or unproved property with its sdk file and line and its reason). .github/workflows/nightly-proofs.yml (schedule and workflow_dispatch only, never push or pull_request; runs-on [self-hosted, Linux, X64, fleet, long]; timeout-minutes 180) runs `make -C proofs/cbmc nightly`, uploading the output as an artifact. A reader joins the nightly by its proof.mk alone, so CBMC cards never edit a shared file after the first.
+
+DONE-WHEN: on the Linux member, `make -C proofs/cbmc proofs-client_packets` runs every harness of this card to its end (paste the VERIFICATION line of each, and the bound each proved); proofs/cbmc/client_packets/results.md records per harness the properties passed out of total and every failed or unproved property with its sdk line and reason; `make -n -C proofs/cbmc nightly` lists proofs-client_packets; `make -C proofs/cbmc` (the per-commit `all`) prints the same VERIFICATION lines it prints at BASE; `git diff --stat` against BASE shows only the NEW files. Red at BASE: proofs/cbmc/client_packets does not exist at BASE and `make -C proofs/cbmc nightly` does not run proofs-client_packets.
+
+STEP 1. Confirm `uname -s` is Linux; cd into the staged checkout JOB.md names and run git log --oneline -1; run `command -v cbmc` and `cbmc --version`. If `make -n -C proofs/cbmc nightly` fails at BASE, finish HOLD at once: this card needs the first CBMC card (the nightly scaffold).
+STEP 2. Red first: show proofs/cbmc/client_packets does not exist at BASE and `make -C proofs/cbmc nightly` does not run proofs-client_packets; quote the line. Run `make -C proofs/cbmc` once and keep its VERIFICATION lines for the DONE-WHEN comparison.
+STEP 3. Read the worked example (proofs/cbmc/proof_message_read.c) and each reader in START; write the harnesses and stubs, then proof.mk; run `make -C proofs/cbmc proofs-client_packets`, starting from a small bound and raising it to the full one.
+STEP 4. Gate: the DONE-WHEN lines, each with its last line pasted. A failed property is named with its file, and whether it is a defect at BASE or the harness's.
+STEP 5. Commit on your own branch as `rocketnet-cbmc-client-packet-readers: <what>` with the trailer. Nothing reaches the forge from inside the wall: the member makes the push and pull request from outside the wall when the card finishes, against the BASE: line's branch. The pull request body states the diff stat, the red line, each harness with the bound it proved, and what was not done.
+STEP 6. End as JOB.md says; where it asks for RESULT.md write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+
+CBMC PROOF RULES (every CBMC card in this repository).
+The claim is no out-of-bounds access and no undefined behaviour on ANY input up to the maximum: packet_bytes symbolic in [0, ROCKETNET_MAX_PACKET_BYTES] (rocketnet.h: 1500 - 20 - 8 = 1472; also ROCKETNET_RECEIVE_CEILING, wire.h), over a buffer object of exactly packet_bytes symbolic bytes, so a read one past the end is a bounds failure and not slack. Where CBMC cannot finish the full bound inside 30 minutes on one bench core, prove the largest bound that does finish, record in results.md the bound proved and the full bound not proved, with the time the full bound ran before you stopped it; never shrink the claim silently.
+Include the real sdk .cpp; never copy sdk code into the proof. Stub only what is outside the reader: every libsodium call (crypto_aead_chacha20poly1305_ietf_decrypt, crypto_box_seal_open, crypto_sign_verify_detached, sodium_memzero and kin) is a CBMC model in the harness that checks its own buffer arguments (__CPROVER_r_ok on what it reads, __CPROVER_w_ok on what it writes, with the lengths libsodium documents), writes nondet bytes, and returns a nondet success or failure; the platform, allocator and time calls a reader makes get the same treatment. libsodium itself is not proved.
+A failed property is either a real defect (paste the CBMC trace's input, reproduce it with a small program in the job directory, built against the sdk under -fsanitize=address,undefined and never committed, finish HOLD naming the sdk line; never fix sdk code in this card) or a harness limit (name it). An unwinding-assertion failure means the unwind is too small: raise it or bound the loop's input as the code bounds it, and say which.
+Never add a target to `all` or to .github/workflows/cbmc.yml: these proofs run nightly only. Use the installed cbmc (CBMC 6.x in /usr/bin on the Linux benches); a bench without `command -v cbmc` is a HOLD at once naming the bench.
+
+STANDING RULES.
+Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0.
+Make the smallest change, with no refactor.
+Never touch the space game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+Never read outside the job's working directory.
+Schema-table bounds: a bound is declared only if every writer and reader path enforces it. Otherwise the field stays open (*string, []T).
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Linux member JOB.md names, never the coordinator's machine.
+Anything that uses real time, sockets or the network is a functional test and belongs in ./bin/functional, never ./bin/test.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+ROUTE NOTE: coordinator 2026-10-18: THE CHECKER IS NOW ESBMC 8.5, NOT CBMC. This NOTE overrides every CBMC, cbmc, goto-cc, __CPROVER_ and \"CBMC 6.x\" statement above, including TOOLCHAIN, THE NIGHTLY LAYOUT, CBMC PROOF RULES and DONE-WHEN wording. Why: CBMC 6.6.0 cannot parse the sdk's C++ (range-for in rocketnet_memory.h, the || conditions in rocketnet_fragment.cpp, __builtin_offsetof static_asserts in rocketnet_wire.h). A trial of ESBMC 8.5.0 on amd-1 proved all three fragment harnesses from rocketnet PR #387 (head b2249e5c) with no sdk change: header_and_plan 59/59, process_fragment 240/240, memory_sizing 19/19. What to do:
+ROUTE NOTE: Shim: commit one shim header in the proofs dir (proofs/cbmc/esbmc_shim.h, shared by every reader; if it is already on your base or on the carried head, reuse it, never a second one). It maps __CPROVER_ to __ESBMC_ (assume, assert, nondet and the r_ok/w_ok style checks to their ESBMC forms), and each harness includes it before the sdk .cpp. The sdk is still included, never copied.
+ROUTE NOTE: Command per harness: `esbmc` built as C++17 (--std c++17), with --z3 (Bitwuzla ran out of memory on one property), --overflow-check, an explicit --unwind sized to that harness's loops (never a blanket large value) and an explicit memset bound (--memset-limit or the harness's own bound). Keep the harness's pointer, bounds and div-by-zero checks that ESBMC enables by default. Keep the proofs-<reader> target names, the proof.mk layout, results.md and the per-harness output line: `<harness> VERIFICATION SUCCESSFUL|FAILED|unwinding assertion failed`, now printed from ESBMC's result.
+ROUTE NOTE: Where: ESBMC 8.5.0 is installed on every Linux bench by fleet ansible (amd-1, amd-2, amd-3, captain, hetzner1, hetzner2, hulk, vision), on the login PATH (~/sdk/bin). Run `command -v esbmc` and `esbmc --version` first; space and the studio are not benches for this.
+ROUTE NOTE: Report each property as proved, refuted (the counterexample checked by hand against the sdk code; a real defect finishes HOLD naming the sdk line, a harness limit is named) or timed out (with the bound and the time). results.md records proved/refuted/timed out per harness with the counts and the flags used.
+ROUTE NOTE: Nightly only: the proofs never join `all` or .github/workflows/cbmc.yml. The nightly workflow runs `make -C proofs/cbmc nightly` as before; its job needs esbmc, which the benches now carry.
+ROUTE NOTE: Per-commit `all` (the existing CBMC proofs) stays unchanged.
+ROUTE NOTE: coordinator 2026-10-19: LARGE-STRUCT EXCEPTION for client_packets. ESBMC was measured on this harness in attempts 4 and 5 (Z3 out of memory at 10-16 GB; Bitwuzla and Boolector crash; Yices not built) and cannot check the 307 KB client struct. CBMC parses this harness and proves it, so client_packets uses CBMC (with --external-sat-solver cadical where the harness needs it), overriding the ESBMC notes above for this harness only; every other harness stays on ESBMC. Head 3da641ff (11 harnesses, 4891/4891 properties, nothing refuted or timed out, counts in results.md) is the head to re-finish and read; a reader checks that a planted bug in a reader the harness covers is refuted.")
+    (:id "rocketnet-msan-known-list-matches-every-fleet-toolchain-b" :feature "The MSan known-findings list matches every fleet toolchain" :cells (n) :note "moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release); was review in stream rocketnet-tests. Carried: branch sprint/rocketnet-msan-known-list-matches-every-fleet-toolchain-b.w5.g1.e21 head 338c15f8dc0fd179efe02993281f41660b37c002 (attempt 6, review)"
+     :brief "RESULT: rocketnet-msan-known-list-matches-every-fleet-toolchain-b sha=<sha12> tier: pro
+CARRY: rocketnet-msan-known-list-matches-every-fleet-toolchain-b attempt 5 head=60a84d7b5b66f7495393d7ecab61732ad50f4340
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: fix
+PRIORITY: high
+STREAM: rocketnet-tests
+DEPENDS-ON: none
+SOURCE: the coordinator, 2026-10-18. The MSan leg's verdict depends on which fleet runner takes it: on the recent msan.yml runs the \"Run the MSan gate\" step is green on the amd-3 runner and red on hetzner-org-1, hetzner-org-2 and hetzner2 (runs 39193202067 green; 39193511521, 39193140276, 39192529561, 39192509796, 39192336529, 39187758110 red), and in a bench read at BASE 64da826 the MSan gate script exited 0 on amd-1 and exited 1 on hulk at the same tree. Every red names top frames that are not in tools/msan_known.txt (listed below). This is toolchain drift between benches (clang and the libstdc++ it links), and some of it is line drift in test helpers since the list was written.
+PATHS: tools/msan_known.txt,test/resource_file.h,test/pcapng.h,test_unit_counter_classes.cpp,test_unit_connect_token_vectors.cpp,sdk/rocketnet_platform.cpp,tools/run_msan.sh
+TEST: none because the property is the MSan gate's verdict on the member's toolchain (the run_msan.sh command msan.yml runs, read only here); a test-helper fix, if any, carries its own red-at-BASE MSan line
+TOOLCHAIN: clang with -fsanitize=memory, cmake, make, python3 on the Linux member JOB.md names; libsodium is vendored under sodium/
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 120 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 120 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: none; the gate is tools/run_msan.sh (read) as it stands and the list is a text file.
+
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library. tools/run_msan.sh (read) builds ./bin/test with clang -fsanitize=memory and fails on any MemorySanitizer warning whose top frame is not a line of tools/msan_known.txt (read it whole: each entry is a top frame, with `# origin:` lines and a comment saying why it is not an SDK defect). The suite is linked against the system libstdc++, which is not instrumented, so MSan reports reads of memory that libstdc++ initialised; which frames appear, and at which `include/c++/` line, depends on the clang and gcc versions on the bench.
+
+THE UNLISTED FRAMES SEEN (short form; the run prints them in full):
+on the hulk-class toolchain at BASE 64da826:
+  rocketnet_test_fopen(...) test/resource_file.h:72:12
+  std::replace<... wstring ...> include/c++/bits/stl_algo.h:4382:6
+  std::_Rb_tree<string, pair<const string,string>, ...>::_S_left include/c++/bits/stl_tree.h:782:9 and ::_S_right :790:9
+  std::_Rb_tree<string, pair<const string,int>, ...>::_S_left include/c++/bits/stl_tree.h:782:9
+  rocketnet_pcapng_list(...) test/pcapng.h:457:17
+  std::__cxx11::basic_string<char>::append(char const*) (/lib/x86_64-linux-gnu/libstdc++.so.6+0x16a0b8)
+  counters_find(char const*) test_unit_counter_classes.cpp:313:14 (the list has :306:14)
+  ctv_unhex(...) test_unit_connect_token_vectors.cpp:223:18 (the list has :219:18)
+  vectors_regenerate_byte_identical() test_unit_connect_token_vectors.cpp:436:5 (the list has :430:19 and :432:5)
+on the CI runners that go red: test/resource_file.h:72, std::replace in stl_algo.h, and _Rb_tree ... stl_tree.h:782.
+
+ROUTE NOTE (coordinator, 2026-10-19; why attempts 2, 3 and 4 held). The brief contradicted itself: on the clang 18 / libstdc++ 13 toolchain the gate prints one unlisted SDK-origin finding, rocketnet_address_parse (bin/librocketnet_dev.so) with origin the stack allocation of `reply` in rocketnet_platform_read_route_table at sdk/rocketnet_platform.cpp:1321, so \"exit 0 at head\" could not hold while the brief also ruled every SDK finding out of scope (yet listed sdk/rocketnet_platform.cpp in PATHS). Ruling: that one SDK finding is in scope. The carried head a3d4dabfdedc fixes it by zeroing the 8 KiB reply buffer before each receive (sdk/rocketnet_platform.cpp:1322); keep it, add a one-line comment saying why (the netlink parse must never read reply bytes the receive did not write), and show the finding at BASE and gone at head. Measured by the coordinator on hetzner2 (Ubuntu clang 18.1.3) at a3d4dabfdedc: the gate prints no `MSan: findings not in tools/msan_known.txt` line (every finding listed, address_parse gone), and exits 1 only on four `MSan: test failed` lines: test_dev_token_minting_absent_in_release signal 4, backend_keypair_from_seed_null_refused signal 5, test_channels_allocator_trap_witness exit 1, dev_connect_token_timeout_is_the_named_constant exit 1. That exit comes from the sibling change already on BASE (6e31c3d, rocketnet-run-msan-fails-on-crashed-test-b: the gate fails on a crashed test even when every warning is known), so DONE-WHEN no longer depends on run_msan.sh's exit alone: run the gate at BASE on the same toolchain and show those same test-failed lines there (pre-existing, not this card's to fix; name each in the report). The head merges cleanly onto sprint/rocketnet-proof 4f24f4d58 (merge-tree clean); its diff is sdk/rocketnet_platform.cpp (+1) and tools/msan_known.txt (+110), both in PATHS. Attempt 4 ran no gate (its load guard deferred); run every gate this time on a Linux bench with clang 18 (hetzner2 or hulk reproduce it; clang 21 benches do not print the SDK frame).
+
+THE TASK. Make the MSan gate's verdict the same on every fleet toolchain, with each listed frame justified by its origin and no SDK defect hidden.
+(1) Record the member's toolchain: `clang --version | head -1`, and the libstdc++ clang selects (`clang++ -v -x c++ /dev/null -fsyntax-only 2>&1 | grep 'Selected GCC'`). Run the gate, bash tools/run_msan.sh (read) from the checkout root followed by `echo exit=$?`, at BASE and keep the output.
+(2) For every finding the run prints that is not listed, read its origin trace and classify it: NOT A DEFECT when the origin is libstdc++ storage, the suite's own operator new (test_channels.cpp) or another uninstrumented allocation, with no SDK storage (sdk/) on the origin path; REAL when a test helper or the SDK reads memory it never wrote.
+(3) NOT A DEFECT: add the frame to tools/msan_known.txt in the existing form (function and location, `include/c++/` for libstdc++ frames, `(bin/test)` for binary frames; a frame in a shared library is written as the run's shortened form prints it), with its `# origin:` lines and one comment naming the clang and libstdc++ major versions that produce it (versions only, never a machine name). A drifted test-helper line (counters_find, ctv_unhex, vectors_regenerate_byte_identical) is updated to the line the head's source has, and the stale line is removed only if no toolchain you ran still prints it.
+(4) REAL: fix the read in the test helper (test/resource_file.h, test/pcapng.h, test_unit_counter_classes.cpp or test_unit_connect_token_vectors.cpp) by initialising what it reads, keep the MSan line red at BASE and gone at head. An SDK finding is fixed here only for the one already found (sdk/rocketnet_platform.cpp, the route-table reply buffer; see the ROUTE NOTE); any other SDK finding is reported with its trace as the first line of the report and that part stops as not-done.
+(5) Also print, in the report, every entry of tools/msan_known.txt that your toolchain no longer produces, so the coordinator can compare with the other benches; do not delete those (another toolchain may produce them).
+
+STEP 1. Confirm `uname -s` is Linux; cd into the staged checkout JOB.md names and run git log --oneline -1; it is a NEW worktree on the branch this card names. Do (1).
+STEP 2. If the member's toolchain prints no unlisted finding at BASE, say so with its versions, still do (3) for the three drifted test-helper lines by reading the head's source (grep -n the named functions; the frame is the line the warning would name), and report Verdict: HOLD with \"not reproduced on this toolchain\" and the versions, so the card can be dealt to a bench that reproduces it.
+STEP 3. Do (2), (3) and (4).
+STEP 4. Run the gate, bash tools/run_msan.sh (read) then `echo exit=$?`, at head; it prints \"MSan: clean\" or \"(all known)\" and exit=0; keep its last 30 lines. Then `make && ./bin/test` stays green. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 5. Commit on your own branch as `rocketnet-msan-known-list-matches-every-fleet-toolchain-b: <what>` with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names, and the member makes both, against the BASE: line's branch, from outside the wall when the card finishes. The pull request body states the toolchain versions, the triage table (frame, origin, NOT A DEFECT or REAL, action), the gate's exit at BASE and at head, and what was not done.
+STEP 6. End as JOB.md says: where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+
+DONE-WHEN: on the member's toolchain, bash tools/run_msan.sh (read) at BASE prints `MSan: findings not in tools/msan_known.txt:` naming the unlisted frames, and at head prints no such line (every finding listed, or `MSan: clean`); the gate's exit is 0 at head, OR it is 1 only because of `MSan: test failed: <name> signal|exit <n>` lines (tests that crash or fail under MSan for a reason other than a finding) and every one of those same lines is also printed at BASE on the same toolchain, all of them listed in the report as pre-existing and not fixed here; every added entry carries its origin and the toolchain versions that produce it; no SDK finding is listed in tools/msan_known.txt; the rocketnet_address_parse finding whose origin is the `reply` buffer of rocketnet_platform_read_route_table is shown at BASE and gone at head; any test-helper fix has its MSan line red at BASE; `make && ./bin/test` is green.
+
+STANDING RULES.
+Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0.
+Make the smallest change, with no refactor.
+Never touch the space game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+Never read outside the job's working directory.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the Linux member JOB.md names, never the coordinator's machine.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+ROUTE NOTE (coordinator, 2026-10-19; why attempt 5 held). The source work is done on the carried head 60a84d7b5b66 (it contains a3d4dabfdedc and a clean merge of the base): the route-table reply buffer is zeroed before each receive with the comment saying why, and tools/msan_known.txt carries the classified frames with no SDK finding listed. Attempt 5 ran no gate because it had no Linux job. What is left is measurement, and it is this card's DONE-WHEN unchanged: on a Linux bench with clang 18 and libstdc++ 13 (hetzner2 and hulk reproduce the SDK frame; a clang 21 bench does not), run STEP 1's gate at BASE and STEP 4's gate at the head, then the bounded build and ./bin/test, and report the lines. Change no file unless a gate shows a finding the head does not yet classify. A load-guard deferral is waited out inside the deadline (the gate is one process), not a HOLD; finishing without a gate run is not-done, and a bench whose toolchain is not clang 18 finishes STEP 2's HOLD at once, naming its versions.")
+    (:id "rocketnet-dst-fault-injectors" :feature "DST layer 2: the fault injectors (reorder, delay, clock skew, crash and restart), built from their model" :cells (n) :note "moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release); was ready in stream rocketnet-tests. Carried: branch sprint/rocketnet-dst-fault-injectors.w5.g1.e21 head 61e887ab8b9eb1ca5343bb271ceac59211233efc (attempt 5, ready); a read found that head BROKEN: dst_harness.h deletes the landed rocketnet-dst-invariant-checks wiring (the dst_checks.h include and its calls), so rebase onto the base tip and keep that wiring"
+     :brief "RESULT: rocketnet-dst-fault-injectors sha=000000000000 tier: pro
+CARRY: rocketnet-dst-fault-injectors attempt 5 head=61e887ab8b9eb1ca5343bb271ceac59211233efc
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: high
+STREAM: rocketnet-tests
+DEPENDS-ON: rocketnet-dst-harness-core,rocketnet-dst-fault-model
+SOURCE: docs/DST.md (read) section 3: reorder, delay, clock skew, and crash and restart of a client and of the server, each drawn from the fault substream of the one seed, each with its bounds; built from tla/RNSimFaults.tla (rocketnet-dst-fault-model), cited from the code.
+PATHS: soak_sim.cpp,CMakeLists.txt,sdk/rocketnet_network_simulator.h,sdk/rocketnet_network_simulator.cpp,tla/COVERAGE.tsv,sdk/rocketnet_ack.cpp
+NEW: dst.cpp,dst_harness.h,dst_faults.h,test_unit_dst_faults.cpp,docs/DST.md
+SHARED: CMakeLists.txt
+START: dst_harness.h (read), tla/RNSimFaults.tla (read), sdk/rocketnet_network_simulator.h (read)
+TEST: none because the cases are C++ checks registered with REGISTER_UNIT_TEST in test_unit_dst_faults.cpp; DONE-WHEN names the command that runs them
+DONE-WHEN: (1) red at BASE: `./bin/test dst_fault_crash_restart_client` prints `unknown unit test dst_fault_crash_restart_client`, exit 2; (2) the injectors as docs/DST.md section 3 states: reorder and delay (simulator), clock skew (a per-peer offset and rate applied to the time each peer's update is passed), client crash and restart, server crash and restart, every draw from the fault substream, every rate and bound from the design; each injector's code cites the tla/RNSimFaults.tla action or invariant it implements, and the tla/COVERAGE.tsv row for RNSimFaults moves from owed to covered naming the code; (3) ./bin/test cases, time as an argument starting at 1000.0, no socket: dst_fault_crash_restart_client (the restarted client reconnects on a fresh session within the design's bound), dst_fault_server_restart (every client sees the restart and reconnects), dst_fault_skew_bounded (no peer's time leaves its bound or runs backwards), dst_fault_reorder_delivers (reordered packets all arrive), dst_fault_off_same_trace (all new faults at rate zero leave the core's trace hash unchanged for a fixed seed); (4) every existing simulator user is unchanged with the new knobs off: soak_sim's summary at ROCKETNET_SOAK_SIM_SEED=1 equal at BASE and head, `bash scripts/soak-sim-selftest` green, `./bin/functional` green; (5) the DST over the design's per-push seed range PASS at head; `make && ./bin/test` green
+TOOLCHAIN: cmake, gcc or clang on the Linux member JOB.md names
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 180 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: none new; the tree's network simulator and the standard library.
+
+# DST layer 2: the fault injectors, built from their model
+
+THE TASK. Add the faults docs/DST.md (read) section 3 names to the DST core, drawn from the seed's fault substream, implementing tla/RNSimFaults.tla (read) action by action. The simulator header grows only what reorder and delay need, in its existing style, deterministic from its seed; every existing user of the simulator (soak_sim, the channel harness, the scripted schedules) stays bit-identical when the new knobs are off. A crash destroys the peer's protocol and message objects without a disconnect; a restart creates them again as section 3 says. Skew is applied to the time each peer is passed; no peer reads a clock. No invariant checks beyond the core's (rocketnet-dst-invariant-checks owns them); a fault that makes the core's pattern check fail on a healthy build is a finding for the report, never a check to loosen. Where the model and the code disagree, the model is right or the report says why. Where docs/DST.md names other files, list them as PATHS-PROPOSED.
+
+STEP 1. Confirm `uname -s` is Linux; cd into the staged checkout JOB.md names; git log --oneline -1; build (the bounded make) and record DONE-WHEN (1).
+STEP 2. Read the model and docs/DST.md section 3; write the red cases.
+STEP 3. Build the injectors, citing the model from each.
+STEP 4. Run the gate: every DONE-WHEN command. Read the last lines.
+STEP 5. Commit on your own branch as `rocketnet-dst-fault-injectors: <what>` with the trailer; end as JOB.md says.
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with a message layer above it. `make` builds into bin/; `./bin/test` is the unit suite (no sockets, no real time; `./bin/test <name>` runs one test and prints `unknown unit test <name>` with exit 2 for a name it does not hold), `./bin/functional` the loopback tier. Root test_unit_<topic>.cpp files register with REGISTER_UNIT_TEST (test_unit_registry.h (read)) and build with no CMakeLists.txt edit (CMakeLists.txt globs test_unit_*.cpp). sdk/rocketnet.h (read) is the public C surface; every new export also goes in tools/exports.txt, which tools/check_exports.py (read) compares on every platform. docs/CHANNELS.md (read) is the message-layer design; STANDARD.md (read) the wire and connect standard; docs/TLA-INVENTORY.md (read) the state-machine inventory. tla/ holds the models (an MC wrapper, a cfg per case, a README per module with its reversed witnesses); tla/CASES.tsv (read) names each case once, tla/RUNS.tsv (read) holds the measured records written by `tlacheck run` and joined by `tlacheck merge --keep tla/RUNS.tsv`, never edited by hand (tla/README.md (read), \"Refreshing records after a model edit\"), and the lander refuses a change whose cases have no current record. tla/COVERAGE.tsv (read) records which code each model covers. CMakeLists.txt keeps -ffp-contract=off on every target.
+
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel program or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+
+BUILD BOUND (the bench sandbox caps a job at 256 processes and 8 GiB, and the Makefile's build target runs an unbounded make -j). Wherever this card says `make` for the build, run instead `(mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && nice make -j4 --no-print-directory)`, the same build bounded to four jobs. Run builds and suites one at a time, never in the background. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any CI-equivalent gate that reads git status.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, ~ or /Volumes; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.")))))

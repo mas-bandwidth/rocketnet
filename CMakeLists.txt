@@ -171,14 +171,16 @@ add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # installed; the production shared library must not carry the minting symbol.
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The test hook library: the same source with the unit suite's seams compiled
-# in (the filter epoch window's MAC tally and the public link simulator's
-# development switch, test_unit_filter_epochs.cpp and
+# in (the filter epoch window's MAC tally, the message layer's payload copy
+# count and the public link simulator's development switch,
+# test_unit_filter_epochs.cpp, test_unit_unreliable_in_place.cpp and
 # test_unit_public_link_simulator.cpp). Only the unit suite links it, so the
 # installed rocketnet library carries no test hook.
 set(rocketnet_test_hook_targets)
 if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
-    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1
+        ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -308,14 +310,15 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
     target_link_libraries(rocketnet_test_support PUBLIC rocketnet_test_hooks)
     rocketnet_use_sodium(rocketnet_test_support)
-    # The filter epoch window's MAC tally (test_unit_filter_epochs.cpp) exists
-    # only for the unit suite: the test binary sees the declarations, and the
-    # definitions live in rocketnet_test_hooks, never in rocketnet.
+    # The filter epoch window's MAC tally (test_unit_filter_epochs.cpp) and the
+    # message layer's payload copy count (test_unit_unreliable_in_place.cpp)
+    # exist only for the unit suite: the test binary sees the declarations, and
+    # the definitions live in rocketnet_test_hooks, never in rocketnet.
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
     add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
-    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
+    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
         # the test hook library only, matching the filter-epoch seam above, so
@@ -380,6 +383,12 @@ if(ROCKETNET_BUILD_TESTS)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
         rocketnet_use_sodium(test)
+    endif()
+    # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
+    # which includes <sodium.h>: the vendored header, as the transport's own
+    # targets see it (a host with no system libsodium, such as Windows, has no other)
+    if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
+        set_property( SOURCE test_unit_driver_loopback.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/sodium" )
     endif()
     # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
     # compiled unchanged with the BPF build's defines behind a shadow include
@@ -574,7 +583,7 @@ install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-# rocketnet.h is the whole public C API; rocketnet.hpp is internal now (it wraps the transport layer).
+# rocketnet.h is the whole public C API.
 install(FILES sdk/rocketnet.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)

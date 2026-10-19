@@ -26,11 +26,13 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
 #include <stdarg.h>
+#if !defined(_WIN32)
+#include <unistd.h>
 #include <sys/select.h>
 #include <sys/stat.h>
+#endif
 
 #define ROCKETNET_SERVER_LABEL_MAX           64
 #define ROCKETNET_SERVER_DIRECTIONS           2
@@ -123,8 +125,15 @@ static void results_event( const char * fmt, ... )
     fflush( g_results );
 }
 
+// The live XDP fleet run's helpers below (resident memory, the stdin watch,
+// the NIC driver check) read Linux and POSIX facilities. On Windows the
+// out-of-the-box server builds without them: resident memory reads 0 (as on
+// macOS, which has no /proc), stdin is not watched, and no interface is found.
 static uint64_t resident_bytes( void )
 {
+#if defined(_WIN32)
+    return 0;
+#else
     FILE * f = fopen( "/proc/self/statm", "r" );
     if ( !f )
         return 0;
@@ -134,11 +143,13 @@ static uint64_t resident_bytes( void )
     fclose( f );
     const long page = sysconf( _SC_PAGESIZE );
     return (uint64_t) resident * (uint64_t) ( page > 0 ? page : 4096 );
+#endif
 }
 
 // the card: the server exits when its controlling ssh or stdin closes
 static void check_stdin_closed( void )
 {
+#if !defined(_WIN32)
     fd_set rfds;
     FD_ZERO( &rfds );
     FD_SET( 0, &rfds );
@@ -150,6 +161,7 @@ static void check_stdin_closed( void )
         if ( n == 0 )
             quit = 1;
     }
+#endif
 }
 
 static void dump_counters( const struct rocketnet_counters_t * counters )
@@ -168,6 +180,10 @@ static void dump_counters( const struct rocketnet_counters_t * counters )
 // the interface that carries an IPv4 address, via `ip -o -4 addr show`
 static int interface_for_address( const char * address, char * out, size_t out_size )
 {
+#if defined(_WIN32)
+    (void) address; (void) out; (void) out_size;
+    return 0;
+#else
     char cmd[256];
     snprintf( cmd, sizeof cmd, "ip -o -4 addr show 2>/dev/null | awk -v a=%s '$4 ~ a\"$\" {print $2; exit}'", address );
     FILE * f = popen( cmd, "r" );
@@ -183,12 +199,17 @@ static int interface_for_address( const char * address, char * out, size_t out_s
     }
     pclose( f );
     return 0;
+#endif
 }
 
 // Section 9: the in-tree i40e reports the running kernel's version (the same
 // string as `uname -r`); the out-of-tree build reports its own release number.
 static int in_tree_driver( const char * nic )
 {
+#if defined(_WIN32)
+    (void) nic;
+    return 0;
+#else
     char cmd[256];
     snprintf( cmd, sizeof cmd, "ethtool -i %s 2>/dev/null | awk '/^driver:/{d=$2} /^version:/{v=$2} END{print d, v}'", nic );
     FILE * f = popen( cmd, "r" );
@@ -213,6 +234,7 @@ static int in_tree_driver( const char * nic )
     }
     pclose( u );
     return strcmp( version, kernel ) == 0;
+#endif
 }
 
 // ---- the matrix server (docs/LIVE-XDP.md sections 3 to 7) ----
