@@ -29,7 +29,8 @@ first. `./bin/functional` prints one line a case:
 peak_rss_mb=<n> bound_mb=<b>]`, the names-only spelling its checker accepts.
 A case whose peak is over the bound fails the suite with the same
 `<case> peak_rss_mb=<n> bound_mb=<b>` text on its `FAIL:` line. The bound is
-`ROCKETNET_TEST_MAX_CASE_RSS_MB` in `test/suite_runner.h`; the environment
-variable of the same name overrides it with a positive value. A sanitizer build
+`ROCKETNET_TEST_MAX_CASE_RSS_MB`, 698 MiB in `test/suite_runner.h` (the larger
+of 256 MiB and 1.5 times the largest measured case, never over 1 GiB); the
+environment variable of the same name overrides it with a positive value. A sanitizer build
 prints the peaks and enforces no bound unless that variable sets one, because
 sanitizer shadow memory is not the case's own footprint.
