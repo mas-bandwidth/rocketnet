@@ -10,6 +10,7 @@
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 #include "sdk/rocketnet.h"
+#include "sdk/rocketnet_config.h"
 #include "rocketnet_client_io.h"       // refusal fixture for a driver with no non-blocking step
 
 #if defined(__linux__)
