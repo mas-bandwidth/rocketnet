@@ -43,47 +43,49 @@ SEQUENCE_BUFFERS_OWED = \
     harness_ack_mark_keep_alive_pinned:2:--z3 \
     harness_window_receive_accept:1048577:--z3
 
-# $(call sequence_buffers_run,<target name>,<harness list>)
-define sequence_buffers_run
-	@echo "$(1)"; \
-	command -v $(ESBMC) > /dev/null || [ -x "$(ESBMC)" ] || { echo "$(1): $(ESBMC) not found" >&2; exit 1; }; \
-	work=$$$$(mktemp -d); \
-	trap 'rm -rf "$$$$work"' EXIT HUP INT TERM; \
-	printf '#include "%s"\n' "$(SEQUENCE_BUFFERS_SOURCE)" > "$$$$work/proof.cpp"; \
+# The recipe of both targets: each runs its own SEQUENCE_BUFFERS_LIST.
+define sequence_buffers_recipe
+	@echo "$@"; \
+	command -v $(ESBMC) > /dev/null || [ -x "$(ESBMC)" ] || { echo "$@: $(ESBMC) not found" >&2; exit 1; }; \
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
+	printf '#include "%s"\n' "$(SEQUENCE_BUFFERS_SOURCE)" > "$$work/proof.cpp"; \
 	failed=0; \
-	for entry in $(2); do \
-	    harness=$$$${entry%%:*}; rest=$$$${entry#*:}; \
-	    unwind=$$$${rest%%:*}; extra=$$$$(echo "$$$${rest#*:}" | tr ',' ' '); \
-	    output="$$$$work/$$$$harness.log"; \
-	    start=$$$$(date +%s); status=0; \
+	for entry in $(SEQUENCE_BUFFERS_LIST); do \
+	    harness=$${entry%%:*}; rest=$${entry#*:}; \
+	    unwind=$${rest%%:*}; extra=$$(echo "$${rest#*:}" | tr ',' ' '); \
+	    output="$$work/$$harness.log"; \
+	    start=$$(date +%s); status=0; \
 	    timeout $(SEQUENCE_BUFFERS_TIMEOUT) $(ESBMC) $(SEQUENCE_BUFFERS_FLAGS) \
-	        --memlimit $(SEQUENCE_BUFFERS_MEMLIMIT) --unwind $$$$unwind $$$$extra \
-	        --function $$$$harness "$$$$work/proof.cpp" > "$$$$output" 2>&1 || status=$$$$?; \
-	    seconds=$$$$(( $$$$(date +%s) - start )); \
-	    if [ $$$$status -eq 124 ]; then \
+	        --memlimit $(SEQUENCE_BUFFERS_MEMLIMIT) --unwind $$unwind $$extra \
+	        --function $$harness "$$work/proof.cpp" > "$$output" 2>&1 || status=$$?; \
+	    seconds=$$(( $$(date +%s) - start )); \
+	    if [ $$status -eq 124 ]; then \
 	        verdict="timed out after $(SEQUENCE_BUFFERS_TIMEOUT) s"; \
-	    elif grep -q "^VERIFICATION SUCCESSFUL" "$$$$output"; then \
+	    elif grep -q "^VERIFICATION SUCCESSFUL" "$$output"; then \
 	        verdict="VERIFICATION SUCCESSFUL"; \
-	    elif grep -Eq "^ *FAILED .*unwinding assertion" "$$$$output"; then \
+	    elif grep -Eq "^ *FAILED .*unwinding assertion" "$$output"; then \
 	        verdict="unwinding assertion failed"; \
-	    elif grep -q "^VERIFICATION FAILED" "$$$$output"; then \
+	    elif grep -q "^VERIFICATION FAILED" "$$output"; then \
 	        verdict="VERIFICATION FAILED"; \
-	    elif grep -q "Out of memory" "$$$$output"; then \
+	    elif grep -q "Out of memory" "$$output"; then \
 	        verdict="out of memory at $(SEQUENCE_BUFFERS_MEMLIMIT)"; \
 	    else \
-	        verdict="FAILED (exit $$$$status)"; \
+	        verdict="FAILED (exit $$status)"; \
 	    fi; \
-	    if [ "$$$$verdict" != "VERIFICATION SUCCESSFUL" ]; then grep -v "^Unwinding loop" "$$$$output" | tail -n 40; failed=1; fi; \
-	    echo "$$$$harness $$$$verdict"; \
-	    echo "  unwind $$$$unwind $$$$extra; $$$$(grep -E 'of [0-9]+ properties' "$$$$output" | tail -1 | sed 's/^[* ]*//'); $$$$seconds s"; \
+	    if [ "$$verdict" != "VERIFICATION SUCCESSFUL" ]; then grep -v "^Unwinding loop" "$$output" | tail -n 40; failed=1; fi; \
+	    echo "$$harness $$verdict"; \
+	    echo "  unwind $$unwind $$extra; $$(grep -E 'of [0-9]+ properties' "$$output" | tail -1 | sed 's/^[* ]*//'); $$seconds s"; \
 	done; \
-	exit $$$$failed
+	exit $$failed
 endef
 
 .PHONY: proofs-sequence_buffers proofs-sequence_buffers-owed
 
+proofs-sequence_buffers: SEQUENCE_BUFFERS_LIST = $(SEQUENCE_BUFFERS_HARNESSES)
 proofs-sequence_buffers:
-	$(call sequence_buffers_run,proofs-sequence_buffers,$(SEQUENCE_BUFFERS_HARNESSES))
+	$(sequence_buffers_recipe)
 
+proofs-sequence_buffers-owed: SEQUENCE_BUFFERS_LIST = $(SEQUENCE_BUFFERS_OWED)
 proofs-sequence_buffers-owed:
-	$(call sequence_buffers_run,proofs-sequence_buffers-owed,$(SEQUENCE_BUFFERS_OWED))
+	$(sequence_buffers_recipe)
