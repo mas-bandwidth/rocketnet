@@ -16,8 +16,9 @@
     of 0..ROCKETNET_MAX_PACKET_BYTES bytes, over a buffer object of exactly
     packet_bytes symbolic bytes, and that every malformed packet is refused.
 
-    Checker: ESBMC 8.5 as C++17 with Z3 and --overflow-check, through the
-    shared ../esbmc_shim.h (proof.mk has the command and the loop bounds).
+    Checker: ESBMC 8.5 as C++17 with Z3, --overflow-check,
+    --unsigned-overflow-check and --ub-shift-check, through the shared
+    proofs/cbmc/esbmc_shim.h (proof.mk has the command and the loop bounds).
 
     Models, not proved here (each checks its own buffer arguments):
     - libsodium: every call is a model that checks the extent it reads and
@@ -66,7 +67,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../esbmc_shim.h"
+#include "esbmc_shim.h"
 
 #ifndef __CPROVER__
 #define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
@@ -89,11 +90,15 @@ double nondet_double( void );
    unconstrained for a struct member, so an extent is checked by touching its
    first and last byte: ESBMC's own bounds check on those two reads holds
    exactly when the whole range lies inside one object. A write's extent is
-   checked the same way (no object here is read-only). */
+   checked the same way (no object here is read-only). A length above 1 MiB
+   is refused, so a negative length converted to size_t cannot wrap the
+   last-byte index back inside the object. */
 static inline int proof_extent_ok( const void * p, size_t n )
 {
     if ( n == 0 )
         return 1;
+    if ( n > ( (size_t) 1 << 20 ) )
+        return 0;    /* a negative length converted to size_t */
     const uint8_t * bytes = (const uint8_t *) p;
     const uint8_t first = bytes[0];
     const uint8_t last = bytes[n - 1];

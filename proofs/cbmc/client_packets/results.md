@@ -6,19 +6,21 @@ only, through `proof.mk`. It is not in `all`, and not in
 `.github/workflows/cbmc.yml`.
 
 Verdict: not proved. No harness finishes under ESBMC 8.5.0 with Z3. Every
-harness that has been run ran Z3 out of memory under the 12 GiB cap, before
-any property verdict. No property is refuted and no sdk defect is
-established.
+harness that has been run stopped in the solver (Z3 out of memory, or "SMT
+solver failed") under the 12 GiB cap, before any property verdict. No
+property is refuted and no sdk defect is established.
 
 ## Checker, flags and bound
 
-- ESBMC 8.5.0, `--std c++17 --z3 --overflow-check -DROCKETNET_ESBMC`, with
+- ESBMC 8.5.0, `--std c++17 --z3 --overflow-check --unsigned-overflow-check
+  --ub-shift-check -DROCKETNET_ESBMC`, with
   ESBMC's default pointer, bounds, alignment and division-by-zero checks and
-  its unwinding assertions. `--unwind 65` covers every sdk loop on these
-  paths (the longest is the 32-byte key write). The named bounds
-  `proof_memcpy:0:1473`, `proof_memset:0:1473` and
-  `rocketnet_esbmc_havoc_slice:0:1473` cover a copy, fill or havoc of up to
-  one maximum packet. `rocketnet_assert` stays live (`ROCKETNET_ASSERTS 1`,
+  its unwinding assertions. `--unwind 65` is meant to cover every sdk loop
+  on these paths (the longest seen is the 32-byte key write). The named
+  bounds `proof_memcpy:0:1473`, `proof_memset:0:1473` and
+  `rocketnet_esbmc_havoc_slice:0:1473` are meant to cover a copy, fill or
+  havoc of up to one maximum packet. No run has reached the unwinding
+  assertions that check these bounds. `rocketnet_assert` stays live (`ROCKETNET_ASSERTS 1`,
   no `-DNDEBUG`).
 - The harness includes the shared `proofs/cbmc/esbmc_shim.h` and is copied
   to `proof_client_packets.cpp` so ESBMC selects its C++ front end.
@@ -26,14 +28,16 @@ established.
   0..`ROCKETNET_MAX_PACKET_BYTES` (1472), over a `malloc` of exactly
   `packet_bytes` bytes. The dispatcher and record harnesses also make the
   output capacity symbolic in 0..1472, over an object of exactly that size.
-- Each run: one bench core at low priority, `prlimit --as` 12 GiB, and a
-  1800-second timeout.
+- Each run: `nice -n 10`, `prlimit --as` 12 GiB, and a 1800-second timeout.
+- The three runs below used `--overflow-check` alone; the unsigned-overflow
+  and shift checks were added after them, so they only add properties to a
+  run that already did not finish.
 
 ## Results (ESBMC 8.5.0, Z3 4.13.3, 2026-10-18)
 
 | harness | result | time | detail |
 |---|---|---|---|
-| harness_process_cookie | out of memory | 885 s | 868 VCCs, 160 after simplification; 206 s encoding, 405 s in Z3, then "SMT solver failed" at 8 GB resident |
+| harness_process_cookie | solver failed | 885 s | 868 VCCs, 160 after simplification; 206 s encoding, 405 s in Z3, then "SMT solver failed" at 8 GB resident, under the 12 GiB cap |
 | harness_process_challenge | out of memory | 1429 s | 17356 VCCs, 1667 after simplification; "Z3 error out of memory" at 11.2 GB resident |
 | harness_process_payload | out of memory | 1234 s | 31634 VCCs, 10647 after simplification; "Z3 error out of memory" at 11.6 GB resident |
 | harness_process_denied | not run | | |
@@ -45,7 +49,7 @@ established.
 | harness_process_packet | not run | | |
 | harness_process_record | not run | | |
 
-Proved: 0. Refuted: 0. Out of memory: 3. Not run: 8. The reversed-witness
+Proved: 0. Refuted: 0. Out of memory: 2. Solver failed: 1. Not run: 8. The reversed-witness
 pass runs only after a harness proves, so it has not run under ESBMC.
 
 ## Why the solver runs out of memory
@@ -57,7 +61,7 @@ record per history packet and an acked-id batch of the same length.
 `ROCKETNET_HISTORY_PACKETS` is at least 4096 (`sdk/rocketnet_history.h`), so
 the client cannot be built smaller. ESBMC encodes the struct as one Z3
 tuple. Every field write on a reader path makes a new tuple of the whole
-client. Measured on smaller harnesses:
+client. Measured on scratch harnesses (not committed) built on this file:
 
 - `rocketnet_client_protocol_init` alone proves in 0.02 s of encoding.
 - Building the symbolic client (init, then about twenty field writes) takes
@@ -82,9 +86,11 @@ n is 38, so every model that asserts it on a packet fails spuriously. On a
 `__ESBMC_get_object_size` is unconstrained for a struct member. This harness
 checks an extent by reading its first and last byte instead
 (`proof_extent_ok`): ESBMC's own bounds check on those two reads holds
-exactly when the range lies inside one object. A small test checks both
-directions: a range inside a symbolic-size malloc passes, and a range one
-byte past the end, or past a static struct, fails.
+exactly when the range lies inside one object. A scratch test (not
+committed) checked both directions: a range inside a symbolic-size malloc
+passes, and a range one byte past the end, or past a static struct, fails.
+A length above 1 MiB is refused, so a negative length converted to size_t
+cannot pass.
 
 ## Client state
 
@@ -100,5 +106,10 @@ verdict of the record being consumed. Sequences stay below 2^63.
 - No harness proves under ESBMC. The CBMC 6.6.0 run of the same harnesses
   (this card's previous attempt) proved all eleven at the full bound, with
   every witness reached. That run is not the checker this card names.
-- The eight harnesses marked not run need the same memory or more than the
-  three that ran out.
+- The eight harnesses marked not run share the same client object, so they
+  are expected to stop the same way; that is not measured.
+- The sdk headers are included before the memset and memcpy models are
+  defined, so an inline helper in those headers that calls memcpy uses
+  ESBMC's library memcpy, not the model.
+- Landing this target as it stands puts a target on the nightly list that
+  does not finish. The CBMC target it replaces proved all eleven harnesses.
