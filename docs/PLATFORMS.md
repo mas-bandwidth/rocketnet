@@ -17,7 +17,7 @@ even if the source compiles there.
 | Ubuntu 24.04 (Linux) | x86_64 | GCC 13, Clang | portable, gso, io_uring, xdp, loopback | supported |
 | macOS 15 | arm64 | Apple Clang | portable, msgx, loopback | supported |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp, rio, loopback | supported |
-| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable, loopback | byte-order check, every commit |
+| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | none (in-memory wire check only) | byte-order check, every commit |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable, loopback | byte-order check, nightly |
 | Linux | arm64 (aarch64) | none | none | not tested |
 | Windows | arm64 | none | none | not tested |
@@ -55,6 +55,6 @@ full socket-crossing suite runs on `s390x` nightly in a full-system guest.
 
 ### Adding or dropping a platform
 
-A platform is added by enabling its per-commit or nightly verification leg and
-adding its row to the table in the same change. To drop or demote a platform,
+A platform is added as supported by enabling its per-commit verification leg
+and adding its row to the table in the same change. To drop or demote a platform,
 update or remove its verification leg and its table row together.

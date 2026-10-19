@@ -244,6 +244,9 @@ def check_selftest():
         print("selftest: fragment source does not start with " + FRAGMENT_INCLUDE, file=sys.stderr)
         return 1
     cc, cxx = find_compilers()
+    if not cc or not cxx:
+        print("selftest: no C or C++ compiler found (set CC and CXX)", file=sys.stderr)
+        return 1
     failures = []
     with tempfile.TemporaryDirectory(prefix="rocketnet-selftest-") as tmpdir:
         tmp = Path(tmpdir)
@@ -295,6 +298,9 @@ def check_usage():
         return 1
 
     cc, cxx = find_compilers()
+    if not cc or not cxx:
+        print("usage: no C or C++ compiler found (set CC and CXX)", file=sys.stderr)
+        return 1
     lib_static = ROOT / "build" / "librocketnet.a"
     lib_shared_so = ROOT / "bin" / "librocketnet.so"
     lib_shared_dylib = ROOT / "bin" / "librocketnet.dylib"
