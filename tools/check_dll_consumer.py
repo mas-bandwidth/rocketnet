@@ -118,18 +118,43 @@ def stage_shared(library, directory):
     return staged
 
 
+_msvc_env = None
+
+
+def msvc_root():
+    installer = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
+    return Path(subprocess.check_output([str(installer), "-latest", "-products", "*",
+                                         "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                                         "-property", "installationPath"], text=True).strip())
+
+
 def msvc_tool(name):
     found = shutil.which(name)
     if found:
         return found
-    installer = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
-    root = subprocess.check_output([str(installer), "-latest", "-products", "*",
-                                    "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                                    "-property", "installationPath"], text=True).strip()
-    tools = sorted(Path(root).glob(f"VC/Tools/MSVC/*/bin/Hostx64/x64/{name}.exe"))
+    tools = sorted(msvc_root().glob(f"VC/Tools/MSVC/*/bin/Hostx64/x64/{name}.exe"))
     if not tools:
         raise RuntimeError(f"Cannot find {name}")
     return str(tools[-1])
+
+
+def msvc_environment():
+    global _msvc_env
+    if _msvc_env is not None:
+        return _msvc_env.copy()
+    if os.environ.get("INCLUDE") and os.environ.get("LIB"):
+        _msvc_env = os.environ.copy()
+        return _msvc_env.copy()
+    vcvars = msvc_root() / "VC/Auxiliary/Build/vcvars64.bat"
+    output = subprocess.check_output(f"cmd.exe /d /s /c \"\"{vcvars}\" >nul && set\"",
+                                     text=True, errors="replace")
+    env = os.environ.copy()
+    for line in output.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            env[key.upper() if key.upper() in ("PATH", "INCLUDE", "LIB", "LIBPATH") else key] = value
+    _msvc_env = env
+    return _msvc_env.copy()
 
 
 def cmake_cache(build):
@@ -175,15 +200,16 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
 
         if sys.platform == "win32":
             compiler = msvc_tool("cl")
-            flags = ["/nologo", "/W4", "/WX", "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory)]
-            flags += ["/TC" if language == "C" else "/TP"]
+            crt = "/MDd" if config.lower() == "debug" else "/MD"
+            flags = ["/nologo", "/W4", "/WX", crt, "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory)]
             if linkage == "shared":
                 flags += ["/DROCKETNET_SHARED=1"]
+            source_arg = ("/Tc" if language == "C" else "/Tp") + str(source)
             executable = directory / ("dll_consumer_%s_%s.exe" % (language.lower(), linkage))
-            command = [compiler] + flags + [str(source), str(staged_link),
+            command = [compiler] + flags + [source_arg, str(staged_link),
                                             "ws2_32.lib", "iphlpapi.lib", "advapi32.lib",
                                             "/Fe:" + str(executable), "/Fo:" + str(directory) + "\\"]
-            environment = os.environ.copy()
+            environment = msvc_environment()
             environment["PATH"] = str(directory) + os.pathsep + environment.get("PATH", "")
         else:
             compiler = cc if language == "C" else cxx
@@ -201,9 +227,10 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
             if sys.platform == "darwin":
                 environment["DYLD_LIBRARY_PATH"] = str(directory)
 
-        result = subprocess.run(command, capture_output=True, text=True, cwd=directory)
+        result = subprocess.run(command, capture_output=True, text=True, cwd=directory, env=environment)
         if result.returncode != 0:
-            detail = (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]
+            detail = (result.stderr.strip().splitlines() or result.stdout.strip().splitlines() or
+                      ["exit %d" % result.returncode])[-1]
             report(False, f"{language} client against the {linkage} library builds: {detail}")
             return
         try:

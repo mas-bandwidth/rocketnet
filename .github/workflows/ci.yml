@@ -517,6 +517,10 @@ jobs:
         if: matrix.leg == 'b'
         run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
 
+      - name: Check the library is callable from C and C++ through rocketnet.h
+        if: matrix.leg == 'b'
+        run: python tools/check_dll_consumer.py --build build
+
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: matrix.leg == 'b'
         run: python tools/check_package.py build --config Release
