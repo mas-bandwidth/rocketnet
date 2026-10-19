@@ -136,10 +136,6 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     transport->state_change_callback = config->state_change_callback;
     transport->time_callback = config->time_callback;
-    uint64_t game_clock_epoch = config->game_clock_epoch;
-    if ( read_env && !rocketnet_config_apply_env_uint64( "client", "game_clock_epoch", &game_clock_epoch ) )
-        return false;
-    transport->game_clock_epoch = game_clock_epoch;
 
     rocketnet_message_default_config( message );
 #define RN_COPY( name ) message->name = config->name;
@@ -178,10 +174,6 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->num_reassembly_slots = config->num_reassembly_slots;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
-    uint64_t game_clock_epoch = config->game_clock_epoch;
-    if ( read_env && !rocketnet_config_apply_env_uint64( "server", "game_clock_epoch", &game_clock_epoch ) )
-        return false;
-    transport->game_clock_epoch = game_clock_epoch;
     if ( !rn_copy_config_string( transport->driver, sizeof( transport->driver ), config->transport, "auto", "server", "transport" ) )
         return false;
     if ( !rn_copy_config_string( transport->public_address, sizeof( transport->public_address ), config->public_address, "", "server", "public_address" ) )
@@ -508,7 +500,6 @@ static void rn_server_config_from_transport( struct rocketnet_server_config_t * 
     config->num_reassembly_slots = transport->num_reassembly_slots;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
-    config->game_clock_epoch = transport->game_clock_epoch;
     config->transport = NULL;
     config->public_address = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS;
