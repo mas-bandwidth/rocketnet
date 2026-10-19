@@ -526,7 +526,8 @@ const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t b
 uint64_t rocketnet_protocol_version()
 {
 #if !ROCKETNET_DEVELOPMENT
-    #define VERSION_STRING(major,minor) #major #minor
+    #define VERSION_STRING_TEXT(major,minor) #major #minor
+    #define VERSION_STRING(major,minor) VERSION_STRING_TEXT(major,minor)
     return rocketnet_hash_string( VERSION_STRING(ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR) );
 #else // #if !ROCKETNET_DEVELOPMENT
     return 0;
