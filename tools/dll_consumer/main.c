@@ -67,7 +67,7 @@ int main( void )
     client_config.transport = "portable";
 
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
-    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
         client = NULL;
@@ -125,8 +125,8 @@ int main( void )
             client_got = 1;
         }
 
-        rocketnet_client_send_messages( client );
-        rocketnet_server_send_messages( server );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.001 );
     }
 

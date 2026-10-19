@@ -174,7 +174,7 @@ struct rocketnet_server_gso_t
     // main-thread flush scratch: sendmmsg headers, gather iovecs (up to a
     // full super-datagram per message), destinations and segment cmsgs
 
-    struct mmsghdr send_messages[ROCKETNET_GSO_SEND_BATCH];
+    struct mmsghdr send_headers[ROCKETNET_GSO_SEND_BATCH];
     struct iovec send_iovecs[ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS];
     struct sockaddr_storage send_names[ROCKETNET_GSO_SEND_BATCH];
     char send_controls[ROCKETNET_GSO_SEND_BATCH][CMSG_SPACE(sizeof(uint16_t))];
@@ -929,7 +929,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
 
             // one message for the run
 
-            struct mmsghdr * message = &gso->send_messages[num_messages];
+            struct mmsghdr * message = &gso->send_headers[num_messages];
             struct msghdr * hdr = &message->msg_hdr;
             memset( hdr, 0, sizeof(struct msghdr) );
 
@@ -1001,7 +1001,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
         int sent = 0;
         while ( sent < num_messages )
         {
-            int result = sendmmsg( fd, &gso->send_messages[sent], (unsigned int) ( num_messages - sent ), 0 );
+            int result = sendmmsg( fd, &gso->send_headers[sent], (unsigned int) ( num_messages - sent ), 0 );
 
             if ( result > 0 )
             {

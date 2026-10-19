@@ -20,7 +20,7 @@
 
 // The lifecycle card that lands after this one renames start, finish, receive,
 // release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_messages. The header at this
+// *_receive_message, *_release_message and *_send_packets. The header at this
 // base still declares the old names, so this example uses them.
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
@@ -87,12 +87,12 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
             sent = 1;
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
 
-        rocketnet_client_send_messages( client );
-        rocketnet_server_send_messages( server );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
 
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              ( !send || ( received && *received > 0 ) ) )
@@ -150,7 +150,7 @@ int main( void )
         CHECK( rocketnet_write_dev_connect_token( server_address, (uint64_t) round, 4102444800ull, connect_token ) );
 
         client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
-        if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+        if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
             rocketnet_client_destroy( client );
             client = NULL;

@@ -3,7 +3,7 @@
 The client transport's goal here is less work on the game's main thread, not
 more throughput. At the base of this design (`sprint/rocketnet-proof` at
 `dfd313f`) the main thread calls the transport once per packet in
-`rocketnet_client_send_messages`
+`rocketnet_client_send_packets`
 (the client transport implementation, the send walk at lines 1001-1017), and
 `rocketnet_client_update` takes a mutex that the receive thread
 holds for its whole drain (`rocketnet_client_update_swap_receive_buffers`,
@@ -15,7 +15,7 @@ models it in TLA+ (`tla/RNClientIo.tla`) and cuts the implementation cards.
 The names `rocketnet_client_io_step` and `rocketnet_platform_sleep` in this
 document are internal functions (`sdk/rocketnet_client_io.h`,
 `sdk/rocketnet_platform.h`); a game uses `rocketnet_client_update`,
-`rocketnet_client_send_messages` and the other client entry points in
+`rocketnet_client_send_packets` and the other client entry points in
 `sdk/rocketnet.h`.
 
 ## Measured
@@ -463,7 +463,7 @@ exit 2. Needs: rocketnet-client-io-transport.
 `step_driven` field, environment `ROCKETNET_CLIENT_STEP_DRIVEN`) selects a
 client with no I/O thread. Zero, the default, keeps the I/O thread above. One
 runs `rocketnet_client_io_step` inside `rocketnet_client_update` and
-`rocketnet_client_send_messages` on the caller's thread, so a game or a test
+`rocketnet_client_send_packets` on the caller's thread, so a game or a test
 owns both the clock and the thread that reads the transport. The field is
 accepted with a driver whose receive returns at once when drained, the
 loopback driver included. A driver without a non-blocking I/O step is refused

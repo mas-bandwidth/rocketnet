@@ -77,7 +77,7 @@ int main( void )
     printf( "client send budget from config at create: %d kbps\n", client_config.send_kbps );
 
     client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
-    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
         client = NULL;
@@ -137,8 +137,8 @@ int main( void )
 
         // (5) send_packets is last, after this frame's messages are queued,
         // so this frame's messages leave this frame
-        rocketnet_client_send_messages( client );
-        rocketnet_server_send_messages( server );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
 
         if ( reliable_sent && reliable_received >= RELIABLE_COUNT )
             break;

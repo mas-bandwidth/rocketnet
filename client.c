@@ -709,7 +709,7 @@ static void run_matrix( opts_t * o )
         cc.max_packets_per_update = 64;     // the budget, section 2
 
         struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0 );
-        if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+        if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
             rocketnet_client_destroy( client );
             client = NULL;
@@ -735,7 +735,7 @@ static void run_matrix( opts_t * o )
         while ( !quit )
         {
             rocketnet_client_update( client, rocketnet_time() );
-            rocketnet_client_send_messages( client );
+            rocketnet_client_send_packets( client );
             int state = rocketnet_client_state( client );
             if ( state >= ROCKETNET_CLIENT_STATE_CONNECTED )
             {
@@ -837,7 +837,7 @@ static void run_matrix( opts_t * o )
                     }
                 }
             }
-            rocketnet_client_send_messages( client );
+            rocketnet_client_send_packets( client );
             receive_check( &st, client );
 
             if ( rocketnet_time() - last_stat >= 1.0 )
@@ -874,7 +874,7 @@ static void run_matrix( opts_t * o )
             while ( !quit && rocketnet_time() - d0 < drain_timeout )
             {
                 rocketnet_client_update( client, rocketnet_time() );
-                rocketnet_client_send_messages( client );
+                rocketnet_client_send_packets( client );
                 receive_check( &st, client );
                 if ( rocketnet_client_state( client ) < 0 )
                 {

@@ -177,7 +177,7 @@ int main( int argc, char ** argv ) {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         CHECK( rocketnet_write_dev_connect_token( addr, c + 1, 4102444800ULL, token ) );
         clients[c] = rocketnet_client_create_sized( NULL, &c_cfg, sizeof( c_cfg ), NULL, 0 );
-        if ( clients[c] && rocketnet_client_connect( clients[c], token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+        if ( clients[c] && rocketnet_client_connect( clients[c], token ) != ROCKETNET_STATUS_OK )
         {
             rocketnet_client_destroy( clients[c] );
             clients[c] = NULL;
@@ -195,10 +195,10 @@ int main( int argc, char ** argv ) {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
             for ( int c = base; c < end; c++ ) {
                 CHECK( rocketnet_client_update( clients[c], sim_time ) == ROCKETNET_MESSAGE_OK );
-                rocketnet_client_send_messages( clients[c] ); // send last so this frame's messages leave this frame
+                rocketnet_client_send_packets( clients[c] ); // send last so this frame's messages leave this frame
             }
             CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_MESSAGE_OK );
-            rocketnet_server_send_messages( server ); // send last so this frame's messages leave this frame
+            rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
         }
     }
     for ( int c = 0; c < num_clients; c++ )
@@ -247,7 +247,7 @@ int main( int argc, char ** argv ) {
                     }
                 }
                 // (5) send_packets last so this frame's messages leave this frame
-                rocketnet_client_send_messages( clients[c] );
+                rocketnet_client_send_packets( clients[c] );
             }
             tick_cli_us += ( rocketnet_time() - t0 ) * 1e6;
             double s0 = rocketnet_time();
@@ -285,7 +285,7 @@ int main( int argc, char ** argv ) {
                 }
             }
             // (5) server send_packets last so this frame's messages leave this frame
-            rocketnet_server_send_messages( server );
+            rocketnet_server_send_packets( server );
             tick_srv_us += ( rocketnet_time() - s0 ) * 1e6;
         }
         if ( tick < soak_ticks ) { cli_us[tick] = tick_cli_us; srv_us[tick] = tick_srv_us; }
@@ -310,11 +310,11 @@ int main( int argc, char ** argv ) {
             int end = base + DISCONNECT_BATCH < num_clients ? base + DISCONNECT_BATCH : num_clients;
             for ( int c = base; c < end; c++ ) {
                 rocketnet_client_disconnect( clients[c] );
-                rocketnet_client_send_messages( clients[c] ); // send last so this frame's messages leave this frame
+                rocketnet_client_send_packets( clients[c] ); // send last so this frame's messages leave this frame
             }
             sim_time += 1.0 / 60.0;
             CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_MESSAGE_OK );
-            rocketnet_server_send_messages( server ); // send last so this frame's messages leave this frame
+            rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
         }
     }
     CHECK( rocketnet_server_num_connected_clients( server ) == 0 );

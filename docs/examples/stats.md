@@ -28,7 +28,7 @@ frame's messages leave this frame instead of waiting a frame.
 
 The lifecycle card that lands after this one renames start, finish, receive,
 release and send_packets to `*_start_message`, `*_finish_message`,
-`*_receive_message`, `*_release_message` and `*_send_messages`. The header at
+`*_receive_message`, `*_release_message` and `*_send_packets`. The header at
 this base still declares the old names, so the example uses them and says so in
 the source comment.
 
@@ -62,7 +62,7 @@ library and are not part of the check.
   `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
   `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
   `rocketnet_server_receive_message`, `rocketnet_server_release_message`,
-  `rocketnet_server_send_messages`, `rocketnet_server_disconnect_reason`,
+  `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
   `rocketnet_server_client_stat`, `rocketnet_server_client_counter`,
   `rocketnet_server_destroy`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
@@ -70,7 +70,7 @@ library and are not part of the check.
   `rocketnet_client_index`, `rocketnet_client_update`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_receive_message`, `rocketnet_client_release_message`,
-  `rocketnet_client_send_messages`, `rocketnet_client_disconnect`,
+  `rocketnet_client_send_packets`, `rocketnet_client_disconnect`,
   `rocketnet_client_disconnect_reason`, `rocketnet_client_stat`,
   `rocketnet_client_counter`, `rocketnet_client_destroy`
 - `rocketnet_write_dev_connect_token` (development library only)

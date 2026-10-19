@@ -61,7 +61,7 @@ int main( void )
     client_config.transport = "loopback";
     client_config.simulated_loss_percent = 30;
     client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
-    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
         client = NULL;
@@ -138,8 +138,8 @@ int main( void )
         }
 
         // (5) send_packets is last so this frame's queued messages leave this frame
-        rocketnet_client_send_messages( client );
-        rocketnet_server_send_messages( server );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.005 );
     }
 

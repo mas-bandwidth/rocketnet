@@ -63,7 +63,7 @@ int main( int argc, char ** argv )
     config.transport = "portable";
 
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
-    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
         client = NULL;
@@ -188,10 +188,10 @@ int main( int argc, char ** argv )
                 done = 1;
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
-        rocketnet_client_send_messages( client );
+        rocketnet_client_send_packets( client );
 
         if ( !done )
             rocketnet_sleep( 0.005 );

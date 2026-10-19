@@ -7415,7 +7415,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
     "rocketnet_client_update",
-    "rocketnet_client_send_messages",
+    "rocketnet_client_send_packets",
     "rocketnet_client_disconnect",
     "rocketnet_client_state",
     "rocketnet_client_state_name",
@@ -7446,7 +7446,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_running",
     "rocketnet_server_destroy",
     "rocketnet_server_update",
-    "rocketnet_server_send_messages",
+    "rocketnet_server_send_packets",
     "rocketnet_server_port",
     "rocketnet_server_transport_name",
     "rocketnet_server_max_clients",
@@ -7485,7 +7485,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
     "rocketnet_client_update",
-    "rocketnet_client_send_messages",
+    "rocketnet_client_send_packets",
     "rocketnet_client_disconnect",
     "rocketnet_client_state",
     "rocketnet_client_disconnect_reason",
@@ -7510,7 +7510,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_server_running",
     "rocketnet_server_destroy",
     "rocketnet_server_update",
-    "rocketnet_server_send_messages",
+    "rocketnet_server_send_packets",
     "rocketnet_server_port",
     "rocketnet_server_transport_name",
     "rocketnet_server_max_clients",
@@ -7951,10 +7951,10 @@ void rocketnet_test_public_api_null()
 
     RN_TEST_ONE_MISUSE( rocketnet_client_default_config( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_sized( NULL, sizeof( client_config ) ) == 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_connect( NULL, token, 1000.0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_connect( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_update( NULL, 1000.0 ) == ROCKETNET_MESSAGE_OK ) );
-    RN_TEST_ONE_MISUSE( rocketnet_client_send_messages( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_client_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_disconnect_reason( NULL ) == ROCKETNET_MESSAGE_ERROR_NONE ) );
@@ -7981,7 +7981,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_running( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_update( NULL, 1000.0 ) == ROCKETNET_MESSAGE_OK ) );
-    RN_TEST_ONE_MISUSE( rocketnet_server_send_messages( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_port( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_transport_name( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_max_clients( NULL ) == 0 ) );

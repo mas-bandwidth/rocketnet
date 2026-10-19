@@ -521,7 +521,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( send_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( max_packets_per_update,    256,      1, 4096,                   0 )                                         \
+    INT_FIELD( max_packets_per_update,    256,      1, 1024,                   0 )                                         \
     INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
     INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \

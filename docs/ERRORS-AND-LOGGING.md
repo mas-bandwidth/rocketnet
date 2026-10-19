@@ -33,7 +33,7 @@ line at `ERROR` when it refuses, and counts the refusal in
 | `rocketnet_client_default_config( config )` | a NULL config is a counted no-op |
 | `rocketnet_client_validate_config( config )` | `0`, with a log line naming the rule |
 | `rocketnet_client_create( context, config, memory, memory_bytes )` | `NULL`, with one error line |
-| `rocketnet_client_connect( client, token, time )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
+| `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
 | `rocketnet_client_create_sized(...)` | `NULL` for an unknown config size |
 | `rocketnet_server_default_config( config )` / `rocketnet_server_dev_config( config )` | a NULL config is a counted no-op |
 | `rocketnet_server_validate_config( config )` | `0`, with a log line naming the rule |

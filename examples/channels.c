@@ -19,7 +19,7 @@
 
 // The lifecycle card that lands after this one renames start, finish, receive,
 // release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_messages. The header at this
+// *_receive_message, *_release_message and *_send_packets. The header at this
 // base still declares the old names, so this example uses them.
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 #define CHAT_CHANNEL     0
@@ -59,7 +59,7 @@ int main( void )
     client_config.rto_initial_ms = 120;
     client_config.rto_min_ms = 120;
     client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
-    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
         client = NULL;
@@ -144,8 +144,8 @@ int main( void )
         }
 
         // (5) send_packets is last so this frame's messages leave this frame
-        rocketnet_client_send_messages( client );
-        rocketnet_server_send_messages( server );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
         if ( chat_received == NUM_CHAT && positions_during_stall > 0 ) { printf( "PASS\n" ); result = 0; break; }
         rocketnet_sleep( 0.005 );
     }

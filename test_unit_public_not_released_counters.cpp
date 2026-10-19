@@ -189,8 +189,8 @@ static void public_not_released_pump( struct public_not_released_pair_t * pair )
     public_not_released_clock = pair->time;
     check( rocketnet_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
     check( rocketnet_client_update( pair->client, pair->time ) == ROCKETNET_MESSAGE_OK );
-    rocketnet_server_send_messages( pair->server );
-    rocketnet_client_send_messages( pair->client );
+    rocketnet_server_send_packets( pair->server );
+    rocketnet_client_send_packets( pair->client );
     rocketnet_client_io_step( rocketnet_client_transport_client_io( pair->client_transport ), false );
 }
 

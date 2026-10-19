@@ -125,10 +125,10 @@ int main( int argc, char ** argv )
             break;
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
-        rocketnet_server_send_messages( server );
+        rocketnet_server_send_packets( server );
 
         if ( rocketnet_time() - wall_start > 30.0 )
         {

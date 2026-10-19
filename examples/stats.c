@@ -17,7 +17,7 @@
 
 // The lifecycle card that lands after this one renames start, finish, receive,
 // release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_messages. The header at this
+// *_receive_message, *_release_message and *_send_packets. The header at this
 // base still declares the old names, so this example uses them.
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
@@ -83,9 +83,9 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
                 rocketnet_client_finish_message( client, (int) sizeof( payload ) );
             }
         }
-        // (5) send_messages (send_packets before the lifecycle rename) is last
-        rocketnet_client_send_messages( client );
-        rocketnet_server_send_messages( server );
+        // (5) send_packets is last
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.001 );
         if ( !connected && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
@@ -123,7 +123,7 @@ int main( void )
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
-    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
         client = NULL;
@@ -147,8 +147,8 @@ int main( void )
             const double now = 1000.0 + ( rocketnet_time() - start );
             rocketnet_client_update( client, now );
             rocketnet_server_update( server, now );
-            rocketnet_client_send_messages( client );
-            rocketnet_server_send_messages( server );
+            rocketnet_client_send_packets( client );
+            rocketnet_server_send_packets( server );
             rocketnet_sleep( 0.001 );
             if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED )
                 break;

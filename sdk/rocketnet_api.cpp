@@ -522,14 +522,12 @@ static int rn_client_state( const struct rocketnet_client_t * client )
     return client->refused_state;
 }
 
-enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const uint8_t * connect_token, double time )
+enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const uint8_t * connect_token )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    // time is not read: the connection's clock starts at its first update,
-    // as create's always has, so connect takes the game's time only to keep
-    // the call's shape with update (documented in rocketnet.h)
-    (void) time;
+    // connect reads no clock: the connection's clock starts at its first
+    // update, as create's always has (documented in rocketnet.h)
 
     // a connection the server ended (or a kick) is DISCONNECTED while its
     // object still exists: end it first, so its counters and reason are kept
@@ -583,7 +581,7 @@ int rocketnet_client_update( struct rocketnet_client_t * client, double time )
     return result;
 }
 
-void rocketnet_client_send_messages( struct rocketnet_client_t * client )
+void rocketnet_client_send_packets( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
@@ -1221,7 +1219,7 @@ int rocketnet_server_update( struct rocketnet_server_t * server, double time )
     return rocketnet_message_server_update( server->running, time );
 }
 
-void rocketnet_server_send_messages( struct rocketnet_server_t * server )
+void rocketnet_server_send_packets( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;

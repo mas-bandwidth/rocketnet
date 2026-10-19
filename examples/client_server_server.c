@@ -124,10 +124,10 @@ int main( void )
 
         // (4) this frame's echo is queued above, as each message arrives
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so they leave this frame
 
-        rocketnet_server_send_messages( server );
+        rocketnet_server_send_packets( server );
 
         if ( rocketnet_server_num_connected_clients( server ) > 0 )
             had_client = 1;

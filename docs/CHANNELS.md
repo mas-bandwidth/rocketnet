@@ -640,7 +640,8 @@ corruption.
   per payload byte (1.89 copies per chunk) with chunks on the 100 ms cap and
   1.15 (1.11 copies) on the RTO; the block completes in 0.68 s on the cap
   and 0.87 s on the RTO, a lost chunk waiting one RTO instead of 100 ms. At
-  the defaults (4 packets per update, 1000 kbps), where the first sends take
+  the former defaults (4 packets per update, 1000 kbps; measured before the
+  default became 256), where the first sends take
   the budget for two seconds, it is 1.24 on the cap and 1.16 on the RTO,
   completing in 2.53 s and 2.58 s. The single-packet rows above are
   unchanged.
@@ -1260,7 +1261,7 @@ After update returns, the application reads deliveries, receipts and events.
 They stay valid until the next update, the same lifetime as the transport's
 batch (U:68-81). It then sends with `rocketnet_server_start_message`, writes, and finishes. On the
 main thread, after every message for the frame is queued,
-`rocketnet_server_send_messages( server )` sends them all, last in the frame.
+`rocketnet_server_send_packets( server )` sends them all, last in the frame.
 
 ### 11.2 The zero-copy send
 
@@ -1412,7 +1413,7 @@ if ( out )
     uint32_t serial = rocketnet_client_finish_message( client, (int) bytes ); /* the receipt serial */
     (void) serial;
 }
-rocketnet_client_send_messages( client );                  /* 5. last: this frame's messages leave this frame */
+rocketnet_client_send_packets( client );                  /* 5. last: this frame's messages leave this frame */
 ```
 
 The server is the same loop with a `client_index` on receive, send, and
@@ -1750,7 +1751,7 @@ region follows.
   one RTT are at most `max_packets_per_update` times the updates in one RTT,
   resends included, because resends share the update's packet limit, and at
   most what the send budget pays for. At the defaults (`max_packets_per_update`
-  256, 1 .. 4096, so the send budget is the throttle) and RTT 200 ms, the
+  256, 1 .. 1024, so the send budget is the throttle) and RTT 200 ms, the
   client's 1000 kbps pays for about 17 packets of 1452 bytes in one RTT and
   the server's 10000 kbps per client about 172, both inside `P = 256`; the
   100 ms resend delay changes what fills those packets, not how many there

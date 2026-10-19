@@ -139,7 +139,7 @@ row per field of both public structs.
 | send_buffer_bytes | ROCKETNET_CLIENT_SEND_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refuses the create unless `16..65536` |
-| max_packets_per_update | ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..4096` |
+| max_packets_per_update | ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
 | unreliable_deliveries | ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES | int | `256` | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_CLIENT_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_CLIENT_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
@@ -170,7 +170,7 @@ row per field of both public structs.
 | send_buffer_bytes | ROCKETNET_SERVER_SEND_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refuses the create unless `16..65536` |
-| max_packets_per_update | ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..4096` |
+| max_packets_per_update | ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
 | unreliable_deliveries | ROCKETNET_SERVER_UNRELIABLE_DELIVERIES | int | `256` (per client per update) | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_SERVER_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_SERVER_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
@@ -209,10 +209,10 @@ the allocation; a block of at least the reported size, aligned to
 ```c
 #include "rocketnet.h"
 
-struct rocketnet_client_t * start_client( const uint8_t * token, const struct rocketnet_client_config_t * config, double time )
+struct rocketnet_client_t * start_client( const uint8_t * token, const struct rocketnet_client_config_t * config )
 {
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, NULL, 0 );
-    if ( client && rocketnet_client_connect( client, token, time ) != ROCKETNET_STATUS_OK )
+    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
         return NULL;
@@ -254,16 +254,15 @@ the server:
    calls.
 3. Run the game simulation for the frame.
 4. Queue this frame's outgoing messages with start and finish.
-5. Call `rocketnet_client_send_messages` or `rocketnet_server_send_messages`
+5. Call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
    **last**, after all of this frame's messages are queued.
 
-The common mistake is calling `send_messages` early in the frame, or before
-queuing (here that is `rocketnet_client_send_messages` or
-`rocketnet_server_send_messages`): this frame's messages then wait for the next
+The common mistake is calling `send_packets` early in the frame, or before
+queuing (here that is `rocketnet_client_send_packets` or
+`rocketnet_server_send_packets`): this frame's messages then wait for the next
 frame, adding a frame of latency. Receiving before update does the same:
-nothing has been pumped yet, so the messages that arrived wait a frame. The
-send step is named `send_packets` in this header; the lifecycle vocabulary
-calls it `send_messages`.
+nothing has been pumped yet, so the messages that arrived wait a frame.
+`send_packets` sends the packets this frame's messages are included in.
 
 ```c
 #include "rocketnet.h"
@@ -287,14 +286,14 @@ void client_frame( struct rocketnet_client_t * client, double time )
         rocketnet_client_finish_message( client, 64 );
 
     /* 5. last: send now, so this frame's messages leave this frame */
-    rocketnet_client_send_messages( client );
+    rocketnet_client_send_packets( client );
 }
 ```
 
 The server runs the same block with `rocketnet_server_update`,
 `rocketnet_server_receive_message`, `rocketnet_server_release_message`,
 `rocketnet_server_start_message`, `rocketnet_server_finish_message` and
-`rocketnet_server_send_messages`, looping the receive step over every client
+`rocketnet_server_send_packets`, looping the receive step over every client
 index. `rocketnet_client_update` and `rocketnet_server_update` return
 `ROCKETNET_MESSAGE_OK`, or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` when a
 received view from the last update was not released.
@@ -393,7 +392,7 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     }
 
     /* 5. last: send now, so this frame's messages leave this frame */
-    rocketnet_server_send_messages( server );
+    rocketnet_server_send_packets( server );
 
     struct rocketnet_receipt_t receipts[64];
     int count = rocketnet_server_receipts( server, client_index, receipts, 64 );

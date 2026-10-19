@@ -3208,7 +3208,7 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
-    if ( client && rocketnet_client_connect( client, token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
         client = NULL;
@@ -3241,8 +3241,8 @@ void rocketnet_test_public_client_server_queries()
             rocketnet_server_release_message( server, 0, data );
         while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
-        rocketnet_client_send_messages( client );
-        rocketnet_server_send_messages( server );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.005 );
     }
     rocketnet_check( exchanged == 20 );
@@ -3251,8 +3251,8 @@ void rocketnet_test_public_client_server_queries()
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
-        rocketnet_client_send_messages( client );
-        rocketnet_server_send_messages( server );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.005 );
     }
 

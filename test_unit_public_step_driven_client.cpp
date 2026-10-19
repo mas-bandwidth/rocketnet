@@ -124,7 +124,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     pair->threads_before_client = public_step_thread_count();
     pair->client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
     check( pair->client != NULL );
-    check( rocketnet_client_connect( pair->client, token, pair->time ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
     pair->threads_after_client = public_step_thread_count();
 }
 
@@ -140,9 +140,9 @@ static void public_step_pump( public_step_pair_t * pair )
 {
     public_step_now = pair->time;
     check( rocketnet_client_update( pair->client, pair->time ) == ROCKETNET_MESSAGE_OK );
-    rocketnet_client_send_messages( pair->client );
+    rocketnet_client_send_packets( pair->client );
     check( rocketnet_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
-    rocketnet_server_send_messages( pair->server );
+    rocketnet_server_send_packets( pair->server );
     pair->time += 0.01;
 }
 

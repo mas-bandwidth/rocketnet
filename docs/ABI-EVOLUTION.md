@@ -219,10 +219,11 @@ A counter member is wired to the internal counter of the same meaning in
 `sdk/rocketnet_counters.h`; the query is the public face of that internal
 count, and a member with no internal counter and no code path is not admitted.
 
-## 9. Revision 3: the Lifecycle API
+## 9. The Lifecycle API: ABI 1 at v1.0.0
 
-`ROCKETNET_ABI_VERSION` 3 (soname `librocketnet.so.3`) is an incompatible
-calling-contract change, made once before 1.0.0:
+`ROCKETNET_ABI_VERSION` is 1 at v1.0.0 (soname `librocketnet.so.1`), the
+first released ABI. The lifecycle API changed the calling contract once
+before 1.0.0; no earlier ABI was released, so the release starts at 1:
 
 - `rocketnet_client_create` and `rocketnet_client_create_sized` take no
   connect token; the token moves to the new `rocketnet_client_connect`.
@@ -234,7 +235,7 @@ calling-contract change, made once before 1.0.0:
   one; every server call taking a client index or destination id takes one).
 - The message calls are renamed verb first, noun last (`_start_message`,
   `_finish_message`, `_abort_message`, `_receive_message`,
-  `_release_message`, `_send_messages`); the public broadcast call is
+  `_release_message`, `_send_packets`); the public broadcast call is
   removed; `rocketnet_init_ex`, `rocketnet_term_ex` and
   `rocketnet_allocator_ex` leave the public header and `tools/exports.txt`.
 - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `SERVER_NOT_STOPPED` and
