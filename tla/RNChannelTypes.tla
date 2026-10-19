@@ -12,9 +12,15 @@ EXTENDS Naturals, Sequences, FiniteSets, TLC
 \* lost. This is a bounded fair-transport assumption, not a transport proof.
 \* Fixed capacities represent preallocated descriptors; no allocator, byte
 \* layout, copy-count, bandwidth scheduler or fragment machinery is modelled.
+\* The "promote" scenario models the rule that an unreliable send too big for
+\* one packet is promoted to its reliable twin: 0 to 2, 1 to 4, 5 to the
+\* reliable code-2 path (the receipt stays with the layer above).
 CONSTANTS Scenario, Broken, SendCapacity, OrderedCapacity, HoldCapacity
 Channels == 1..2
-Codes == {1,2,3,4}
+Codes == {0,1,2,3,4,5}
+PromotionSources == {0,1,5}
+Twin(k) == CASE k = 0 -> 2 [] k = 1 -> 4 [] k = 5 -> 2 [] OTHER -> k
+PromotePlanCodes == <<1,0,5,2>>
 MaxMessages == 4
 Messages == 1..MaxMessages
 Pids == 1..(2*MaxMessages)
@@ -27,13 +33,16 @@ Plans ==
       [] Scenario = "reset" -> {Plan(<<3,1,3,4>>, <<1,1,1,1>>)}
       [] Scenario = "twice" -> {Plan(<<2,2,3,1>>, <<1,1,1,1>>)}
       [] Scenario = "hold" -> {Plan(<<3,1,4,2>>, <<1,1,1,1>>)}
+      [] Scenario = "promote" -> {Plan(PromotePlanCodes, <<1,1,1,1>>),
+                                  Plan(<<1,3,4,2>>, <<1,1,1,1>>)}
       [] OTHER -> {Plan(<<1,3,4,2>>, <<1,1,1,1>>),
                    Plan(<<4,1,3,2>>, <<1,1,1,1>>),
                    Plan(<<1,1,4,2>>, <<1,1,1,1>>),
                    Plan(<<3,1,3,4>>, <<1,1,1,1>>),
                    Plan(<<3,1,4,2>>, <<1,1,1,1>>),
                    Plan(<<2,2,3,1>>, <<1,1,1,1>>),
-                   Plan(<<3,1,3,4>>, <<1,1,2,2>>)}
+                   Plan(<<3,1,3,4>>, <<1,1,2,2>>),
+                   Plan(<<1,0,5,2>>, <<1,1,1,1>>)}
 Reliable(code) == code \in {2,3,4}
 Sequenced(code) == code \in {1,4}
 Values(s) == {s[i] : i \in DOMAIN s}
@@ -49,9 +58,18 @@ vars == <<plan, queue, ordered_write, sequenced_write, written, numbers,
           opened, lost, acked, resend, receiver, orderedInputs,
           referenceTrace, connected, reason>>
 
+\* The first three sends of the promote plan are too big for one record, so
+\* each unreliable one is promoted to its reliable twin (RakNet's rule). The
+\* promote scenario also runs the mixed plan with nothing large, so the main
+\* configuration keeps checking it.
+Large(m) == Scenario = "promote" /\ m \in {1,2,3} /\
+            [i \in DOMAIN plan |-> plan[i].code] = PromotePlanCodes
+
 \* Message ids stand for stable reliable numbers after first packet write.
 \* numbers records their independent late assignment order; code 1 takes none.
-Code(m) == queue[m].code
+\* A promoted message carries its twin's wire code (0 to 2, 1 to 4, 5 to 2).
+Source(m) == queue[m].code
+Code(m) == IF Large(m) /\ Source(m) \in PromotionSources THEN Twin(Source(m)) ELSE Source(m)
 Channel(m) == queue[m].channel
 Order(m) == queue[m].ordering
 Sequence(m) == queue[m].sequencing
@@ -234,6 +252,11 @@ SequencedNeverBackwards == \A c \in Channels :
         i<j /\ Order(t[i])=Order(t[j]) => Sequence(t[i])<=Sequence(t[j])
 NoSequencedDuplicate == \A c \in Channels :
     LET t == SequencedTrace(receiver,c) IN Len(t)=Cardinality(Values(t))
+PromotedIsTwin == \A m \in DOMAIN queue :
+    Large(m) /\ Source(m) \in PromotionSources => Code(m) = Twin(Source(m))
+PromotedNeverUnreliable == \A m \in DOMAIN queue :
+    Large(m) /\ Source(m) \in {0,5} /\ m \in {PacketMessage(pid) : pid \in opened} =>
+        m \in Values(receiver.trace)
 ReliableExactlyOnce ==
     LET t == ReliableTrace(receiver)
         arrived == {PacketMessage(pid) : pid \in opened}

@@ -268,6 +268,12 @@ struct rocketnet_client_transport_config_t
     char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
     void (*state_change_callback)( void * context, int previous_state, int current_state );
     double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
+    uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
+    uint64_t step_driven;                           // 1: the caller's update and send_packets run the I/O step, no I/O thread; 0: today's thread
+    int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
+    int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
+    int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off
+    int simulated_duplicate_percent;                // development only: simulated duplicate 0..100, 0 off
 };
 
 // a NULL config is a counted no-op.
@@ -660,6 +666,11 @@ struct rocketnet_server_transport_config_t
     char public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     int max_timeout_seconds;                        // 1 .. 3600; default 60
     int handshake_deadline_seconds;                 // 1 .. 60; default 5
+    uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
+    int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
+    int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
+    int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off
+    int simulated_duplicate_percent;                // development only: simulated duplicate 0..100, 0 off
 };
 
 // a NULL config is a counted no-op.
@@ -672,6 +683,7 @@ int rocketnet_server_transport_default_config_sized( struct rocketnet_server_tra
 
 // a NULL config is a counted no-op.
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
+void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config );
 
 // Allocation-free constructor memory plan for one built-in driver name.
 // Includes SDK allocator requests (alignment/ownership overhead and transient

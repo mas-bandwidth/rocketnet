@@ -149,8 +149,9 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
         rocketnet_send_budget_begin_update( &budget, 1000.3 );
         out[n++] = (uint8_t) rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_NEW_RELIABLE, 1452 );
 
-        // a budget of 0 detaches the bucket: a large state larger than the
-        // default bucket depth is written whole, and nothing is charged
+        // a budget of 0 detaches the bucket and nothing is charged; the large
+        // state is promoted to RELIABLE_SEQUENCED (RakNet ReliabilityLayer
+        // promotion), so its first packet is no larger than one maximum packet
         {
             rocketnet_message_config_t config;
             rocketnet_message_default_config( &config );
@@ -196,7 +197,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
 static const rn_standard_vector_t standard_resend_and_budget_table[] =
 {
     RN_STANDARD_VECTOR( "m9.resend-trace", "00010001000104010001" ),
-    RN_STANDARD_VECTOR( "m9.budget-trace", "0000000000000000020102000100010101010101" ),
+    RN_STANDARD_VECTOR( "m9.budget-trace", "0000000000000000020102000100010100010101" ),
 };
 
 static void standard_resend_and_budget_vectors()

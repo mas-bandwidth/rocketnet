@@ -16,7 +16,9 @@ EXTENDS Naturals, Sequences, FiniteSets
 \*
 \* The bounded API workload consumes distinct serials: a nonreceipt type,
 \* then two single-fragment receipt messages or one two-fragment block.
-\* Each workload exercises the selected receipt type and size. Type 5 with two fragments promotes to 6; 6 and 7 never emit LOSS.
+\* Each workload exercises the selected source type and size. An unreliable
+\* send too big for one packet is promoted to its reliable twin, as RakNet
+\* does: 0 to 2, 1 to 4 and 5 to 6. Types 6 and 7 never emit LOSS.
 \* Fragments have independent numbers but share their message's serial.
 \* Outcomes are ghost emission history; ring is the bounded application queue.
 \* Dropping its oldest event is counted and never permits a second emission.
@@ -40,8 +42,12 @@ vars == <<receiptType, fragmentCount, nextSerial, live,
           ringDropped, writes>>
 
 SendLimit == IF fragmentCount = 1 THEN 3 ELSE 2
+PromotionSources == {0,1,5}
+Twin(k) == CASE k = 0 -> 2 [] k = 1 -> 4 [] k = 5 -> 6 [] OTHER -> k
+Large == fragmentCount = 2
 Kind(s) == IF s = 1 THEN 0 ELSE receiptType
-EffectiveKind(s) == IF Kind(s) = 5 /\ fragmentCount = 2 THEN 6 ELSE Kind(s)
+EffectiveKind(s) == IF s \in ReceiptSerials /\ Kind(s) \in PromotionSources /\ Large
+                      THEN Twin(Kind(s)) ELSE Kind(s)
 Parts(s) == {<<s,i>> : i \in 0..(fragmentCount-1)}
 Issued == 1..(nextSerial-1)
 Unacked == (UNION {Parts(s) : s \in Issued \cap ReceiptSerials}) \ acked
@@ -214,11 +220,16 @@ TypeOK ==
 ExactlyOneOutcomePerReceiptSerial == \A s \in Serials :
  Len(outcomes[s]) <= 1 /\ (outcomes[s] # <<>> => s \in Issued \cap ReceiptSerials)
 LossOnlyForUnreliableReceipt == \A s \in ReceiptSerials : Has(s,"LOSS") => EffectiveKind(s) = 5
+PromotedIsTwin == \A s \in ReceiptSerials :
+    Kind(s) \in PromotionSources /\ Large => EffectiveKind(s) = Twin(Kind(s))
+PromotedNeverLoses == \A s \in ReceiptSerials :
+    Kind(s) \in PromotionSources /\ Large => ~Has(s,"LOSS")
+PromotionTable == \A k \in PromotionSources : Twin(k) \in {2,4,6}
 AckedMeansPacketOpened == /\ acked \subseteq openedNums
                          /\ \A s \in ReceiptSerials :
                               Has(s,"ACKED") /\ EffectiveKind(s)=5 => s \in ackProof
 BlockAckedOnlyWhenAllFragmentsAcked == \A s \in ReceiptSerials :
- Has(s,"ACKED") /\ EffectiveKind(s) \in {6,7} => Complete(s)
+ Has(s,"ACKED") /\ EffectiveKind(s) \in {2,4,6,7} => Complete(s)
 ReceiptRingBounded == Len(ring) <= ReceiptCapacity
 UnreliableNeverResent == \A s \in ReceiptSerials : EffectiveKind(s)=5 => writes[s] <= 1
 ReceiptProgress == \A s \in ReceiptSerials : (s \in Issued) ~> (outcomes[s] # <<>> \/ ~live)

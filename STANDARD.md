@@ -299,6 +299,7 @@ section, and this table exists so an implementer never hunts for a number.
 | Receive ceiling | 1472, fixed | _Packet sizes_ |
 | Payload capacity | 1416 sent, 1439 received | _Packet sizes_ |
 | SINGLE message | 1415 bytes | _Messages_ |
+| Unreliable one-record threshold | 1411 bytes (UNRELIABLE and its receipt); 1405 narrow, 1404 WIDE (UNRELIABLE_SEQUENCED); larger sends promote | _Messages_ |
 | Fragment stride | 1413 sent, 1433 received | _Fragmentation_ |
 | Connect token | 768 bytes; signed data 576; sealed block 432; private block 384 | _Connect Token_ |
 | Sequence | 4 bytes wire, 64-bit value, starts at 1, zero invalid | _Sequence numbers_ |
@@ -2111,9 +2112,8 @@ form    := u8                   the LAST byte
 ```
 
 SINGLE costs one byte. Its message is always UNRELIABLE and carries no channel,
-number or receipt. A SINGLE payload larger than one packet is legal: the
-transport fragments it, and losing a fragment loses the message, which is what
-unreliable means.
+number or receipt. It fills one packet: an unreliable message too large for one
+packet's record is promoted to its reliable twin (below), never fragmented.
 
 RECORDS is the aggregation form: small unreliable messages, reliable records,
 resends and the CONFIG record share one payload, back to back.
@@ -2161,15 +2161,29 @@ receiver accepts packs back to the same bytes from the records it parsed, and
 no byte of an accepted payload is ignored.
 
 The receipt variants of the API never reach the wire: reliability 5 is sent as
-code 0, 6 as 2, and 7 as 3. The block stride is the wire constant
+code 0, 6 as 2, and 7 as 3. **An unreliable send too big for one packet's
+record is promoted to its reliable twin, as RakNet's ReliabilityLayer does.**
+UNRELIABLE (code 0) is one record in one packet up to 1411 bytes; above that it
+is sent as RELIABLE (code 2), as a record or a block as its size needs.
+UNRELIABLE_SEQUENCED (code 1) is one record while its payload fits 1416 bytes,
+at most 1405 data bytes, or 1404 when the channel is WIDE; above that it is
+sent as RELIABLE_SEQUENCED (code 4). UNRELIABLE_WITH_ACK_RECEIPT (code 5) uses
+the code-0 wire form up to 1411 bytes; above that it takes the reliable code-2
+block path and keeps its ACKED-only receipt. **The receiver sees the twin's
+code on the wire, and an implementation MUST count every promotion, once per
+send, in a counter for the source mode.** A send above `max_message_bytes` is refused in every unreliable mode; there is
+no second record-length refusal. There is no
+UNRELIABLE_SEQUENCED_WITH_ACK_RECEIPT mode. The block
+stride is the wire constant
 **F = 1152** bytes, a multiple of 16: fragments 0 to k−2 of a block carry
 exactly F bytes and fragment k−1 carries 1 to F (_CHANNELS 8_).
 
 A payload that carries a reliable record (code 2, 3 or 4) or a CONTROL record
 is at most `ROCKETNET_MAX_PAYLOAD_BYTES` (1416) long, so the transport sends it
 unfragmented. A reliable message longer than one record can hold is sent as a
-block. An unreliable record (code 0 or 1) may travel alone in a larger payload
-that the transport fragments; its u16 length caps it at 65,535 bytes.
+block. An unreliable record (code 0 or 1) also stays within one packet: a
+larger unreliable message is promoted to its reliable twin (above), so an
+unreliable record never rides a fragmented payload.
 
 ### The receiver's checks, in order
 

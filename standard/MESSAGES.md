@@ -143,7 +143,7 @@ When the connection layer's payload capacity is below the row `maximum payload s
 
 A sender MUST promote an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to its reliable twin: code 0 to code 2, code 1 to code 4, and code 5 to its reliable receipt twin (reliability 6, wire code 2) with the ACKED receipt kept. The receiver observes the twin's wire code. The sender MUST count each promotion once per send in `MESSAGE_PROMOTED_UNRELIABLE`, `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` or `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT`, according to the reliability the application chose.
 
-A sender MUST refuse a message above the row `record maximum message`, above the configured maximum message size, or, for UNRELIABLE_SEQUENCED, above the row `record maximum message` in wire length; a refused message MUST NOT be promoted. A receiver MUST accept a reliable or CONTROL record only in a payload no longer than the row `maximum payload size`.
+A sender MUST refuse a message above the configured maximum message size. For UNRELIABLE, UNRELIABLE_SEQUENCED and UNRELIABLE_WITH_ACK_RECEIPT that is the only refusal by size: a message at or below the configured maximum and above its one-record limit MUST be promoted, never refused by size, and a refused message MUST NOT be promoted. The row `record maximum message` bounds the data length of one record, not of a message: a message above its one-record limit travels as a block, and no record carries more than the row `record maximum message`. A receiver MUST accept a reliable or CONTROL record only in a payload no longer than the row `maximum payload size`.
 
 <a id="m2.2"></a>
 ### m2.2. Constants
@@ -2185,9 +2185,9 @@ last three are the long path's resend counts.
 ```vector m9.budget-trace
 clock: 1000.0
 rate: the client default
-trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, written whole and committed
+trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, promoted to reliable sequenced and its first packet written
 00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
-01 01 01 01
+00 01 01 01
 ```
 
 The first fourteen bytes are the decision for each offer in order: SEND,
@@ -2196,9 +2196,10 @@ the reliable item, the seven unreliable items that fit, the unreliable item
 that is dropped, the reliable item that waits, the unreliable item behind it
 that is dropped, the refill's reliable item, the setter and the new-rate
 reliable item. The last six bytes are, in order, the setter to 0 returning
-success, a packet request of more than zero, the item written larger than one
-maximum packet, the queue drained, no bytes charged to the budget and no
-unreliable item dropped.
+success, a packet request of more than zero, the first packet written larger
+than one maximum packet (0: the promoted item is a reliable block, sent one
+maximum packet at a time), the unreliable queue empty, no bytes charged to the
+budget and no unreliable item dropped.
 
 <a id="m10"></a>
 ## m10. Channels and priorities

@@ -156,7 +156,7 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
     // first update, whatever the game's clock reads then. time comes in only
     // through update.
 
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create( context, connect_token, transport_config, 0.0 );
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_sized( context, connect_token, transport_config, sizeof(*transport_config), 0.0 );
     if ( !transport )
         return NULL;
 
