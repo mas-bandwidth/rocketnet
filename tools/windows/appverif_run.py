@@ -3,8 +3,8 @@
 
 The script enables the Handles, Heaps, Locks, Memory, TLS, Threadpool and Leak
 layers for the executable's image name, sets every stop those layers issue to
-log without breaking (no debugger is needed and the run continues past a stop),
-runs the executable, exports the verifier log to XML and disables verification
+log to the verifier log file without a debugger (a stop ends the run with
+STATUS_VERIFIER_STOP after it is logged), runs the executable, exports the verifier log to XML and disables verification
 for the image again on every exit path. It exits non-zero when the executable
 fails or when the log holds any verifier stop, printing one line per stop with
 its layer, stop code and top frames.
@@ -41,12 +41,36 @@ STOP_CODE_RANGES = (
     (0x0900, 0x0910),  # Leak
 )
 
-# Stop report flags: log the stop and its stack trace to the log file, and do
-# not break into a debugger.
+# Stop report flags: log the stop and its stack trace to the log file; no
+# debugger is attached.
 STOP_ERROR_REPORT = "0x2"
 
 AVRF_NS = "{Application Verifier}"
 FRAMES_SHOWN = 8
+
+# Frames from these modules are the verifier itself or the system call path
+# that raised the stop; the frames shown start at the system API the caller
+# entered.
+SYSTEM_MODULES = {"vfbasics", "vrfcore", "verifier", "ntdll", "kernelbase", "kernel32"}
+
+
+def frame_module(frame: str) -> str:
+    return frame.split("!", 1)[0].strip().lower()
+
+
+def top_frames(frames: list) -> list:
+    first_caller = next(
+        (index for index, frame in enumerate(frames) if frame_module(frame) not in SYSTEM_MODULES),
+        None,
+    )
+    if first_caller is None:
+        return frames[:FRAMES_SHOWN]
+    start = first_caller
+    while start > 0 and frame_module(frames[start - 1]) in {"vfbasics", "vrfcore", "verifier"}:
+        start -= 1
+    api = [frames[start - 1]] if start > 0 else []
+    callers = [frame for frame in frames[first_caller:] if frame_module(frame) not in SYSTEM_MODULES]
+    return (api + callers)[:FRAMES_SHOWN]
 
 
 def find_appverif() -> str:
@@ -112,7 +136,7 @@ def parse_stops(xml_path: Path) -> list:
                 "stop_code": entry.attrib.get("StopCode", "Unknown"),
                 "severity": entry.attrib.get("Severity", "Unknown"),
                 "message": " ".join((entry.findtext(f"{AVRF_NS}message") or "").split()),
-                "frames": frames[:FRAMES_SHOWN],
+                "frames": top_frames(frames),
             }
         )
     return stops

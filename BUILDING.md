@@ -86,10 +86,10 @@ line continuation, so on Windows write each command on one line.
 
 `py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
 executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
-Memory, TLS, Threadpool and Leak) with every stop set to log rather than break
-into a debugger, exports the verifier log, and exits non-zero naming each
-stop's layer, stop code and top frames; it disables verification for the
-executable again on every exit path. It needs Application Verifier for x64 from
+Memory, TLS, Threadpool and Leak) with every stop logged and no debugger
+attached (a stop ends the run once it is logged), exports the verifier log, and
+exits non-zero naming each stop's layer, stop code and top frames; it disables
+verification for the executable again on every exit path. It needs Application Verifier for x64 from
 the Windows SDK and an elevated prompt, and runs a Debug build so the frames
 carry symbols; arguments after the executable and the environment
 (`ROCKETNET_SERVER_TRANSPORT` and the rest) pass through to it, and `--xml
