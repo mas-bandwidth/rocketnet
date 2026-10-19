@@ -121,7 +121,23 @@ environment overlay: `ROCKETNET_CLIENT_TRANSPORT` and
 and `rocketnet_server_config_t`). `NULL` is `auto`; one name is a pin (that
 transport or a refused create, never a silent fall); a comma list is an
 ordered candidate list (`BUILDING.md`, "Server transports"). An unknown name
-refuses the create and the log lists the valid names.
+refuses the create and the log lists the valid names. A name the registry
+knows but macOS does not build (`gso`, `xdp`, `iocp`, `io_uring`, `rio`) is
+skipped with `transport <name> is not available here. skipped`, and a list
+left with no transport for the endpoint falls to `auto` with a warning
+(`sdk/rocketnet_config.cpp`, `rocketnet_driver_ladder_parse`):
+
+```sh
+ROCKETNET_SERVER_TRANSPORT=gso ./bin/example_transports
+```
+
+logs `transport list "gso" names no transport for this endpoint on this
+platform. using auto (msgx,portable)` and `auto chose msgx`. The variable
+displaces whatever `transport` the program set (each create logs `server
+config override ROCKETNET_SERVER_TRANSPORT=gso (displaces <old>)`), so the
+example's own impossible pin is displaced too, its last check fails, and it
+exits 1. The functional
+case `driver_env_pin_is_honoured` fails under such a pin for the same reason.
 
 Pinning `msgx` requires the probe to grant it: a refused probe fails the create
 instead of falling to `portable`. Pinning `portable` skips the probe, so a
@@ -359,7 +375,7 @@ clang --version           # Apple clang
 cmake --version
 git log --oneline -1
 
-make
+make JOBS=4
 ./bin/test
 ./bin/functional
 ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
