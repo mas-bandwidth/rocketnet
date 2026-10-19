@@ -2,19 +2,40 @@
 # RocketNet. Copyright 2026 Mas Bandwidth LLC.
 #
 # Renders ROADMAP.md from docs/roadmap.sexp: one section per area, a table of
-# features with a checkmark or a cross per column, and a "complete" row.
+# features with a mark per column, and a closing "complete" row.
 #
 #   python3 tools/roadmap/render.py docs/roadmap.sexp ROADMAP.md          write the page
 #   python3 tools/roadmap/render.py --check docs/roadmap.sexp ROADMAP.md  exit 1 if it differs
 #
+# An area declares :columns transports (a column per server transport, in the
+# order the automatic ladder ranks them in sdk/rocketnet_drivers.inc) or
+# :columns platforms (Linux, macOS, Windows); a list naming one whole set is
+# the same declaration. Any other column is refused.
+#
 # An area may carry :milestone "next": its heading is marked (next milestone).
-# A cell is y (done), n (not done) or - (does not apply). A row with any y
-# cell must carry :evidence (a commit or a test name); the renderer refuses
-# the data otherwise. Evidence stays in the data, not on the page.
+# A cell is y (done and tested), n (not yet) or - (does not apply). Every y
+# cell needs evidence: :evidence is one string whose labels name each column
+# it covers ("Linux, macOS and Windows: ..." at the start or after "; "), or a
+# list of (column "evidence") pairs. A column named only in passing is not
+# covered. The renderer refuses the
+# data otherwise, naming the area and the row. Evidence stays in the data,
+# not on the page.
+#
+# The complete row gives, per column, round(100 * y / (y + n)) followed by %;
+# - cells are left out, and a column that is - throughout shows —.
 
+import re
 import sys
 
 CELL = { "y": "✅", "n": "❌", "-": "—" }
+
+# The server transports in the order the automatic ladder ranks them (server
+# preference in sdk/rocketnet_drivers.inc, lower first; ties in registry
+# order; loopback is pin-only and last). test_render.py holds this list to the
+# registry.
+TRANSPORTS = [ "xdp", "msgx", "gso", "io_uring", "portable", "iocp", "rio", "loopback" ]
+PLATFORMS = [ "Linux", "macOS", "Windows" ]
+COLUMN_SETS = { "transports": TRANSPORTS, "platforms": PLATFORMS }
 
 def tokenize( text ):
     i, n = 0, len( text )
@@ -84,6 +105,48 @@ def plist( form, where ):
 def text_list( v ):
     return [ v ] if isinstance( v, str ) else list( v or [] )
 
+def columns_of( area, aid ):
+    declared = area.get( "columns" )
+    if isinstance( declared, ( tuple, str ) ):
+        name = sym( declared )
+        if name in COLUMN_SETS:
+            return COLUMN_SETS[name]
+        raise ValueError( "area %s: columns %r is neither transports nor platforms" % ( aid, name ) )
+    names = [ sym( c ) for c in ( declared or [] ) ]
+    for c in names:
+        if c not in TRANSPORTS and c not in PLATFORMS:
+            raise ValueError( "area %s: column %r is outside the transport and platform sets" % ( aid, c ) )
+    for full in ( TRANSPORTS, PLATFORMS ):
+        if names == full:
+            return full
+    raise ValueError( "area %s: columns %r are not the whole transport set or the whole platform set" % ( aid, names ) )
+
+def labelled_columns( text ):
+    # The columns a string names in its labels: "Linux, macOS and Windows: ..."
+    # at the start, or after a "; ", each label ending at its colon.
+    named = set()
+    for m in re.finditer( r"(?:^|;)\s*([A-Za-z_]+(?:(?:,\s*|\s+and\s+)[A-Za-z_]+)*):", text ):
+        named.update( re.split( r",\s*|\s+and\s+", m.group( 1 ) ) )
+    return named
+
+def evidence_by_column( row, columns, where ):
+    evidence = row.get( "evidence" )
+    if evidence is None:
+        return {}
+    if isinstance( evidence, str ):
+        named = labelled_columns( evidence )
+        return { c: evidence for c in columns if c in named }
+    out = {}
+    for pair in evidence:
+        if not isinstance( pair, list ) or len( pair ) != 2 or not isinstance( pair[1], str ):
+            raise ValueError( "%s: evidence entries are (column \"evidence\") pairs" % where )
+        column = sym( pair[0] )
+        if column not in columns:
+            raise ValueError( "%s: evidence for %r, which is not a column of this area" % ( where, column ) )
+        if pair[1].strip():
+            out[column] = pair[1]
+    return out
+
 def render( data ):
     top = plist( data, "roadmap" )
     lines = [ "# " + top["title"], "",
@@ -97,7 +160,7 @@ def render( data ):
         if aid in seen:
             raise ValueError( "area %s: duplicate id" % aid )
         seen.add( aid )
-        columns = text_list( area["columns"] )
+        columns = columns_of( area, aid )
         milestone = area.get( "milestone" )
         if milestone not in ( None, "next" ):
             raise ValueError( "area %s: milestone %r is not \"next\"" % ( aid, milestone ) )
@@ -114,6 +177,9 @@ def render( data ):
             raise ValueError( "area %s: no rows" % aid )
         for r in rows:
             row = plist( r, "area %s row" % aid )
+            for key in ( "feature", "cells" ):
+                if key not in row:
+                    raise ValueError( "area %s row %r: no :%s" % ( aid, row.get( "feature" ), key ) )
             feature = row["feature"]
             cells = [ sym( c ) for c in row["cells"] ]
             if len( cells ) != len( columns ):
@@ -121,17 +187,25 @@ def render( data ):
             for c in cells:
                 if c not in CELL:
                     raise ValueError( "area %s row %r: cell %r is not y, n or -" % ( aid, feature, c ) )
-            if "y" in cells and not str( row.get( "evidence", "" ) ).strip():
-                raise ValueError( "area %s row %r: a done cell without :evidence" % ( aid, feature ) )
+            where = "area %s row %r" % ( aid, feature )
+            evidence = evidence_by_column( row, columns, where )
+            for column, c in zip( columns, cells ):
+                if c == "y" and column not in evidence:
+                    raise ValueError( "%s: the y cell in column %s has no evidence naming it" % ( where, column ) )
             for i, c in enumerate( cells ):
                 if c != "-":
                     total[i] += 1
                     done[i] += c == "y"
             lines.append( "| " + feature + " | " + " | ".join( CELL[c] for c in cells ) + " |" )
-        pct = [ ( "%d%%" % ( 100 * d // t ) ) if t else "—" for d, t in zip( done, total ) ]
+        pct = [ complete_cell( d, t ) for d, t in zip( done, total ) ]
         lines.append( "| complete | " + " | ".join( pct ) + " |" )
         lines += [ "", "[Source data](docs/roadmap.sexp)", "" ]
     return "\n".join( lines )
+
+def complete_cell( done, applies ):
+    if not applies:
+        return "—"
+    return "%d%%" % round( 100 * done / applies )
 
 def main( argv ):
     check = False
