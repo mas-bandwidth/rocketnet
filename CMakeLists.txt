@@ -507,6 +507,12 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
     add_executable(load load.c)
     add_executable(soak_sim soak_sim.cpp)
+    # The deterministic simulation harness (docs/DST.md): one seed drives N
+    # clients and a server over the in-memory wire, no socket and no clock.
+    add_executable(dst dst.cpp)
+    target_link_libraries(dst PRIVATE rocketnet_dev)
+    rocketnet_use_sodium(dst)
+    target_compile_features(dst PRIVATE cxx_std_11)
     add_executable(keygen keygen.cpp)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(transport_fill bench/transport_fill.cpp)
