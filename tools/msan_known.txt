@@ -195,10 +195,7 @@ vectors_regenerate_byte_identical() test_unit_connect_token_vectors.cpp:436:5
 # origin: vectors_regenerate_byte_identical() test_unit_connect_token_vectors.cpp:425:29
 # origin: rocketnet_unit_tests_run_named(char const*) test_unit_registry.h:145:9
 #
-# Excluded, not listed: rocketnet_address_parse (bin/librocketnet_dev.so+0x1279c), an
-# SDK-origin frame whose origin is an allocation of 'reply' in the stack frame of
-# rocketnet_platform_read_route_table(...) at sdk/rocketnet_platform.cpp:1321:9. The
-# read is in the SDK, not in a test helper or uninstrumented libstdc++ storage, so it
-# is an SDK defect; it is out of scope for this list and is intentionally not added
-# here. It is observed on the clang 18 / libstdc++ 13 toolchain; on the clang 21 /
-# libstdc++ 15 toolchain the gate does not emit it.
+# rocketnet_address_parse (bin/librocketnet_dev.so+0x1279c) is not an allowlist
+# entry. Its reply buffer is zeroed before receive in sdk/rocketnet_platform.cpp,
+# so the netlink parser never reads bytes receive did not write. The clang 18 /
+# libstdc++ 13 report is fixed; the clang 21 / libstdc++ 15 gate does not emit it.
