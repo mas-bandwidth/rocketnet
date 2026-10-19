@@ -3088,6 +3088,129 @@ void rocketnet_test_transport_ipv6_loopback()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
+// the transport-level dual-stack case: the server listens on the ipv6
+// wildcard [::] and an ipv4 client connects to 127.0.0.1 on the granted
+// port, with payloads both ways. like the ipv6 loopback above it has no
+// driver ifdefs: it runs on whichever transport the suite or the env pin
+// selects, so the CI transport matrix runs it per transport.
+//
+// EXPECTED TO FAIL until the card below lands: a server created at an ipv6
+// address advertises only that address, so it ignores a token that names
+// 127.0.0.1 (CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED) although the ipv4
+// datagrams reach it. while the card is set, a refused connect prints a named
+// skip that names the card and the suite stays green; a connect that
+// succeeds fails the case, so the marker is removed as the card lands. set
+// the card to NULL and the case asserts the exchange outright.
+
+static const char * rocketnet_dual_stack_expected_fail_card = "rocketnet-dual-stack-advertises-ipv4";
+
+void rocketnet_test_transport_dual_stack_ipv4_client()
+{
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 16;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::]", &server_config);
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        if ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] > 0 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    const bool connected = rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                           rocketnet_server_transport_num_connected_clients( server ) == 1;
+    if ( rocketnet_dual_stack_expected_fail_card != NULL )
+    {
+        if ( !connected )
+        {
+            const uint64_t not_advertised = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED];
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_transport_dual_stack_ipv4_client [SKIPPED expected to fail until %s lands: the ipv4 client did not connect, %llu requests not advertised]",
+                              rocketnet_dual_stack_expected_fail_card, (unsigned long long) not_advertised );
+            rocketnet_client_transport_destroy( client );
+            rocketnet_server_transport_stop( server );
+            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            rocketnet_server_transport_destroy( server );
+            return;
+        }
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_transport_dual_stack_ipv4_client connected although it is expected to fail until %s lands; remove the marker", rocketnet_dual_stack_expected_fail_card );
+    }
+    rocketnet_check( rocketnet_dual_stack_expected_fail_card == NULL );
+    rocketnet_check( connected );
+
+    int server_received = 0;
+    int client_received = 0;
+    int sent_to_server = 0;
+    int sent_to_client = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        if ( sent_to_server < 10 )
+        {
+            rocketnet_client_transport_send_packet( client, (const uint8_t*) "hello4", 6 );
+            sent_to_server++;
+        }
+        if ( sent_to_client < 10 )
+        {
+            rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "world4", 6 );
+            sent_to_client++;
+        }
+
+        rocketnet_server_transport_send_packets( server );
+
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 );
+            rocketnet_check( payload_bytes == 6 );
+            rocketnet_check( memcmp( payload, "hello4", 6 ) == 0 );
+            server_received++;
+        }
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == 6 );
+            rocketnet_check( memcmp( packet, "world4", 6 ) == 0 );
+            client_received++;
+        }
+
+        if ( server_received >= 10 && client_received >= 10 )
+            break;
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( server_received >= 10 );
+    rocketnet_check( client_received >= 10 );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
 void rocketnet_test_server_handshake_deadline_from_config()
 {
     struct rocketnet_test_env_guard_t deadline_guard, driver_guard;
@@ -7322,6 +7445,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
     { "test_transport_ipv6_loopback", rocketnet_test_transport_ipv6_loopback },
+    { "test_transport_dual_stack_ipv4_client", rocketnet_test_transport_dual_stack_ipv4_client },
     { "max_size_packet_crosses_a_1500_mtu_link_ipv4", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4 },
     { "max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6 },
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create },
