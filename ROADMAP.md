@@ -278,6 +278,19 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 
 [Source data](docs/roadmap.sexp)
 
+## Second deliverable: keys and backends (later)
+
+What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. After v1.0.0, by the owner's call (Glenn, 2026-10-19: Go because the owner's backends are Go, C# because RocketWerkz uses C#).
+
+| feature | done |
+|---|:---:|
+| Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production | ❌ |
+| Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token | ❌ |
+| Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect | ❌ |
+| complete | 0% |
+
+[Source data](docs/roadmap.sexp)
+
 ## Landed in the sprint since the 2026-10-18 roadmap record
 
 Cards landed on sprint/rocketnet-proof after the 2026-10-18 roadmap record (782b0ba), one row per card, its id the card id, with the landing merge commit as evidence. They reach main when v1.0.0 promotes the sprint branch.
