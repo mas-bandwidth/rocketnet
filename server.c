@@ -28,6 +28,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 
@@ -37,6 +38,11 @@
 #define ROCKETNET_SERVER_MAX_SEQUENCES       256
 #define ROCKETNET_SERVER_OVER_MAX_DELTA      1
 #define ROCKETNET_SERVER_HELLO_NIBBLE        0xD0u
+#define ROCKETNET_SERVER_PROGRESS_NIBBLE     0xC0u
+#define ROCKETNET_SERVER_LEDGER_CAP          4096
+#define ROCKETNET_SERVER_SEND_BUFFER_HALF    400000u
+#define ROCKETNET_SERVER_SEND_QUEUE_HALF     512u
+#define ROCKETNET_SERVER_WINDOW_HALF         512u
 
 static volatile int quit;
 
@@ -80,6 +86,36 @@ static void set_status( const char * path, const char * line )
     }
 }
 
+// the result lines (docs/LIVE-XDP.md section 7): tab-separated lines of the
+// six kinds cell, bench, counters, rss, event and fail, appended to --results.
+static FILE * g_results = NULL;
+
+static void results_line( const char * kind, const char * fmt, ... )
+{
+    if ( !g_results )
+        return;
+    va_list ap;
+    va_start( ap, fmt );
+    fprintf( g_results, "%s\t", kind );
+    vfprintf( g_results, fmt, ap );
+    fprintf( g_results, "\n" );
+    va_end( ap );
+    fflush( g_results );
+}
+
+static void results_event( const char * fmt, ... )
+{
+    if ( !g_results )
+        return;
+    va_list ap;
+    va_start( ap, fmt );
+    fprintf( g_results, "event\t" );
+    vfprintf( g_results, fmt, ap );
+    fprintf( g_results, "\n" );
+    va_end( ap );
+    fflush( g_results );
+}
+
 static uint64_t resident_bytes( void )
 {
     FILE * f = fopen( "/proc/self/statm", "r" );
@@ -113,8 +149,12 @@ static void dump_counters( const struct rocketnet_counters_t * counters )
 {
     const int n = rocketnet_num_counters();
     for ( int i = 0; i < n; i++ )
+    {
         printf( "rocketnet counter %s %llu\n", rocketnet_counter_name( i ), (unsigned long long) rocketnet_counter_value( counters, i ) );
+        results_line( "counters", "%s\t%llu", rocketnet_counter_name( i ), (unsigned long long) rocketnet_counter_value( counters, i ) );
+    }
     printf( "rocketnet rss %llu\n", (unsigned long long) resident_bytes() );
+    results_line( "rss", "%llu", (unsigned long long) resident_bytes() );
     fflush( stdout );
 }
 
@@ -180,6 +220,8 @@ struct server_stream_t
     uint32_t expected;              // ordered modes: the next sequence due
     int64_t last;                   // sequenced modes
     uint64_t seen[ROCKETNET_SERVER_MAX_SEQUENCES / 64];
+    uint32_t bucket_sent[ROCKETNET_LIVE_NUM_BUCKETS];
+    uint32_t bucket_received[ROCKETNET_LIVE_NUM_BUCKETS];
 };
 
 struct server_client_t
@@ -195,6 +237,14 @@ struct server_client_t
     char label[ROCKETNET_SERVER_LABEL_MAX];
     int have_label;
     int hello_seen;
+    uint32_t out_bytes;
+    uint32_t out_messages;
+    uint32_t out_numbers;
+    uint64_t paced;
+    uint32_t ledger_head;
+    uint32_t ledger_tail;
+    uint32_t ledger_len[ROCKETNET_SERVER_LEDGER_CAP];
+    uint32_t ledger_num[ROCKETNET_SERVER_LEDGER_CAP];
 };
 
 static int matrix_channels( int mode )
@@ -221,7 +271,59 @@ static void matrix_fail( struct server_client_t * c, int mode, int channel, int6
 {
     if ( c->failures < 64 )
         printf( "fail %s %u 1 %d %d %lld %s %d\n", c->label, c->cycle, mode, channel, (long long) sequence, reason, bytes );
+    results_line( "fail", "%s\t%u\t1\t%d\t%d\t%lld\t%s\t%d", c->label, c->cycle, mode, channel, (long long) sequence, reason, bytes );
     c->failures++;
+}
+
+// the pacing ledger (docs/LIVE-XDP.md section 6): outstanding bytes, messages
+// and reliable numbers, admitted only while each stays under its half margin.
+static void ledger_push( struct server_client_t * c, uint32_t length, uint32_t num )
+{
+    if ( c->ledger_tail - c->ledger_head < ROCKETNET_SERVER_LEDGER_CAP )
+    {
+        const uint32_t at = c->ledger_tail % ROCKETNET_SERVER_LEDGER_CAP;
+        c->ledger_len[at] = length;
+        c->ledger_num[at] = num;
+        c->ledger_tail++;
+    }
+    c->out_bytes += length;
+    c->out_messages++;
+    c->out_numbers += num;
+}
+
+static void ledger_pop_acked( struct server_client_t * c )
+{
+    if ( c->ledger_head < c->ledger_tail )
+    {
+        const uint32_t at = c->ledger_head % ROCKETNET_SERVER_LEDGER_CAP;
+        const uint32_t length = c->ledger_len[at];
+        const uint32_t num = c->ledger_num[at];
+        c->ledger_head++;
+        if ( c->out_bytes >= length ) c->out_bytes -= length; else c->out_bytes = 0;
+        if ( c->out_messages ) c->out_messages--;
+        if ( c->out_numbers >= num ) c->out_numbers -= num; else c->out_numbers = 0;
+    }
+}
+
+static void matrix_write_cells( struct server_client_t * c )
+{
+    for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
+    {
+        for ( int channel = 0; channel < matrix_channels( mode ); channel++ )
+        {
+            struct server_stream_t * s = &c->streams[mode][channel];
+            for ( int bucket = 0; bucket < ROCKETNET_LIVE_NUM_BUCKETS; bucket++ )
+            {
+                const uint32_t sent = s->bucket_sent[bucket];
+                const uint32_t recv = s->bucket_received[bucket];
+                if ( sent == 0 && recv == 0 )
+                    continue;
+                results_line( "cell", "%s\t%u\t1\t%d\t%d\t%s\t%u\t%u\t0\t0\t%u\t0\t0\t0\t0\t0\t0",
+                              c->label, c->cycle, mode, channel, rocketnet_live_bucket_name( bucket ),
+                              sent, recv, sent > recv ? sent - recv : 0u );
+            }
+        }
+    }
 }
 
 static void client_streams_reset( struct rocketnet_live_config_t * live, struct server_client_t * c )
@@ -275,7 +377,38 @@ static void matrix_over_maximum( struct rocketnet_message_server_t * server, str
 static void matrix_arrival( struct rocketnet_message_server_t * server, struct server_client_t * c,
                             int client_index, int receive_channel, const uint8_t * data, int bytes )
 {
-    (void) server; (void) client_index;
+    if ( bytes >= 1 )
+    {
+        const uint8_t nib = data[0] & ROCKETNET_LIVE_TAG_MASK;
+        if ( nib == ROCKETNET_SERVER_HELLO_NIBBLE )
+        {
+            // section 6: the first message of every connection is a HELLO,
+            // ribble 0xD, carrying the path's cap in kbps and the bench label.
+            uint32_t cap = 0;
+            if ( bytes >= 5 )
+                cap = (uint32_t) data[1] | ( (uint32_t) data[2] << 8 ) | ( (uint32_t) data[3] << 16 ) | ( (uint32_t) data[4] << 24 );
+            if ( !c->hello_seen )
+            {
+                c->hello_seen = 1;
+                if ( cap > 0 )
+                    rocketnet_message_server_set_send_kbps( server, client_index, (int) cap );
+                if ( bytes > 5 )
+                {
+                    int l = bytes - 5;
+                    if ( l > ROCKETNET_SERVER_LABEL_MAX - 1 )
+                        l = ROCKETNET_SERVER_LABEL_MAX - 1;
+                    memcpy( c->label, data + 5, (size_t) l );
+                    c->label[l] = 0;
+                    c->have_label = 1;
+                }
+                printf( "hello %s %u\n", c->label, cap );
+                results_event( "hello %s %u", c->label, cap );
+            }
+            return;
+        }
+        if ( nib == ROCKETNET_SERVER_PROGRESS_NIBBLE )
+            return;     // a progress report on channel 31, not a matrix message
+    }
     if ( bytes < 1 || ( data[0] & ROCKETNET_LIVE_TAG_MASK ) != ROCKETNET_LIVE_TAG_BASE || ( ( data[0] >> 3 ) & 1 ) != 0 )
     {
         matrix_fail( c, -1, receive_channel, -1, "bad-header", bytes );
@@ -305,6 +438,7 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
         if ( c->tiny_received[mode][bytes] > c->tiny_sent[mode][bytes] )
             matrix_fail( c, mode, channel, -1, "duplicate-tiny", bytes );
         s->received++;
+        s->bucket_received[rocketnet_live_bucket( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, (uint32_t) bytes )]++;
         c->verified++;
         return;
     }
@@ -332,6 +466,7 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
     s->seen[q / 64] |= 1ull << ( q % 64 );
     s->last = q;
     s->received++;
+    s->bucket_received[rocketnet_live_bucket( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, bytes >= ROCKETNET_SERVER_TINY ? rocketnet_live_length( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, channel, q ) : (uint32_t) bytes )]++;
     if ( matrix_ordered( mode ) )
         s->expected++;
     c->verified++;
@@ -377,6 +512,11 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
     {
         rocketnet_message_server_update( server, rocketnet_time() );
         matrix_receive( server, c, client_index );
+        struct rocketnet_message_receipt_t receipts[256];
+        const int nrcpt = rocketnet_message_server_receipts( server, client_index, receipts, 256 );
+        for ( int i = 0; i < nrcpt && i < 256; i++ )
+            if ( receipts[i].status == ROCKETNET_RECEIPT_ACKED )
+                ledger_pop_acked( c );
         all_done = 1;
         for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES && all_done; mode++ )
         {
@@ -386,11 +526,22 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
                 while ( s->next < s->total && s->next < ROCKETNET_SERVER_MAX_SEQUENCES )
                 {
                     const uint32_t length = rocketnet_live_length( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, channel, s->next );
+                    const uint32_t F = ROCKETNET_LIVE_BLOCK_STRIDE;
+                    const uint32_t rnum = ( mode >= 2 && mode <= 7 ) ? ( length + F - 1 ) / F : 0u;
+                    if ( c->out_bytes + length > ROCKETNET_SERVER_SEND_BUFFER_HALF ||
+                         c->out_messages + 1 > ROCKETNET_SERVER_SEND_QUEUE_HALF ||
+                         c->out_numbers + rnum > ROCKETNET_SERVER_WINDOW_HALF )
+                    {
+                        c->paced++;
+                        break;
+                    }
                     const uint32_t serial = matrix_send_one( server, client_index, mode, channel, c->cycle, s->next, length );
                     if ( serial == 0 )
                         break;
+                    ledger_push( c, length, rnum );
                     s->next++;
                     s->sent++;
+                    s->bucket_sent[rocketnet_live_bucket( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, length )]++;
                     if ( length < ROCKETNET_SERVER_TINY )
                         c->tiny_sent[mode][length]++;
                 }
@@ -401,6 +552,7 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
         rocketnet_message_server_send_packets( server );
         rocketnet_platform_sleep( 0.0005 );
     }
+    matrix_write_cells( c );
 }
 
 int main( int argc, char ** argv )
@@ -494,6 +646,15 @@ int main( int argc, char ** argv )
     struct rocketnet_server_transport_t * transport_obj = rocketnet_message_server_transport( server );
     printf( "server transport %s\n", rocketnet_server_transport_driver( transport_obj ) );
     printf( "server max_clients %d\n", config.max_clients );
+    if ( results_path )
+    {
+        g_results = fopen( results_path, "w" );
+        if ( g_results )
+        {
+            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_driver( transport_obj ) );
+            results_event( "listening" );
+        }
+    }
     set_status( status_path, "listening" );
 
     if ( !matrix )
@@ -577,6 +738,7 @@ int main( int argc, char ** argv )
     }
 
     printf( "\nserver stopping\n" );
+    results_event( "stopping" );
     set_status( status_path, "stopping" );
     rocketnet_message_server_destroy( server );
 
@@ -584,6 +746,12 @@ int main( int argc, char ** argv )
     (void) print_counters;
     rocketnet_term();
 
+    results_event( "stopped" );
     set_status( status_path, "stopped" );
+    if ( g_results )
+    {
+        fclose( g_results );
+        g_results = NULL;
+    }
     return 0;
 }
