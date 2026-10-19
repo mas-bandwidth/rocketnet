@@ -1127,7 +1127,7 @@ state; a server holds a slot from the first keep-alive it sends.
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
 | connected | keep-alive interval elapsed | this endpoint is a server, and no keep-alive it sent has been acknowledged | send a keep-alive and stamp the keep-alive clock | connected |
-| connected | keep-alive interval elapsed | this endpoint is a client, or a keep-alive has been acknowledged, and the interval has elapsed since the last send of anything | send a keep-alive | connected |
+| connected | keep-alive interval elapsed | the interval has elapsed since the last send of anything, and this endpoint is a client or a keep-alive has been acknowledged | send a keep-alive | connected |
 | connected | any session packet sent | | stamp the send clock | connected |
 | connected | any session packet accepted from the peer | | refresh the idle clock | connected |
 | connected | idle timeout elapsed | the timeout is positive, and no packet has been accepted for the timeout | reset | disconnected |
