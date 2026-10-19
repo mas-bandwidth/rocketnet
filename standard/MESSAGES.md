@@ -1673,16 +1673,16 @@ The constants this section names are:
    `MESSAGE_BAD_CHANNEL`.
 6. An application record MUST carry a code present in the receiver's enabled
    mask. A CONTROL record is exempt. Counter: `MESSAGE_TYPE_NOT_ENABLED`.
-7. In the whole-payload scan, a block record MUST satisfy all of: its
-   fragment count is at least 1; its fragment index is at most its fragment
-   count; its fragment count plus one is at most W; its fragment count plus
-   one, times `message fragment bytes`, is at most the maximum message size
-   plus `message fragment bytes` minus 1; every fragment but the last is
-   exactly `message fragment bytes` long; the last is at most `message
-   fragment bytes` long. When the record is applied, a block record's ring
-   base, the ring less the fragment index times `message fragment bytes`
-   divided by 16, MUST agree with a live block descriptor for the same block.
-   Counter: `MESSAGE_BAD_BLOCK`.
+ 7. In the whole-payload scan, a block record MUST satisfy all of: its
+    fragment count is at least 1; its fragment index is at most its fragment
+    count; its fragment count plus one is at most W; its fragment count plus
+    one, times `message fragment bytes`, is at most the maximum message size
+    plus `message fragment bytes` minus 1; every fragment but the last is
+    exactly `message fragment bytes` long; the last is at most `message
+    fragment bytes` long. Counter: `MESSAGE_PROTOCOL_VIOLATION`. When the
+    record is applied, a block record's ring base, the ring less the fragment
+    index times `message fragment bytes` divided by 16, MUST agree with a live
+    block descriptor for the same block. Counter: `MESSAGE_BAD_BLOCK`.
 8. A holdable record MUST have a span inside B. The span of a non-block record
    is its length rounded up to 16 bytes, added to 16 times its ring value. The
    span of a block runs from its base, the ring value less the fragment index
