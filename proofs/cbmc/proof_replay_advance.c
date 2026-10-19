@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 
     CBMC harness for rocketnet_replay_advance at the real window: 4096 bits,
-    64 words. The body below is the leaf in sdk/rocketnet_replay.cpp, including
-    the far branch that stores only window[0] through window[3].
+    64 words. The harness includes sdk/rocketnet_replay.cpp below, so it
+    proves the sdk itself rather than a copy.
 
     Specification. After an advance with delta = sequence - highest_opened:
       delta >= 4096 clears every word, then sets the new sequence bit;
@@ -13,9 +13,8 @@
 
     The near harness is the smaller-delta claim. The default make target
     proves deltas 1, 2, and 3 only (delta strictly less than 4). Bound 4096
-    is not proved. The far harness is the whole-window claim. At this source
-    the far claim has a counterexample (four words cleared, not sixty-four).
-    That harness stays expected-fail; the marker file names the fix card.
+    is not proved. The far harness is the whole-window claim, proved: a delta
+    of at least 4096 clears every word, then sets the new sequence bit.
 
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check --unwinding-assertions
@@ -33,8 +32,8 @@
 #define REPLAY_DELTA_BOUND 4096
 #endif
 
-#define ROCKETNET_REPLAY_WINDOW_BITS 4096
-#define ROCKETNET_REPLAY_WINDOW_WORDS ( ROCKETNET_REPLAY_WINDOW_BITS / 64 )
+#define static_assert _Static_assert
+#include "rocketnet_replay.cpp"
 
 #ifndef __CPROVER__
 #define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
@@ -44,73 +43,7 @@ static uint64_t nondet_uint64( void ) { return 0; }
 uint64_t nondet_uint64( void );
 #endif
 
-#define rocketnet_assert( c ) __CPROVER_assert( ( c ), "replay precondition" )
-
-struct rocketnet_replay_protection_t
-{
-    uint64_t highest_opened;
-    uint64_t window[ROCKETNET_REPLAY_WINDOW_WORDS];
-};
-
-static int rocketnet_replay_bit( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
-{
-    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
-    return ( replay->window[bit / 64] >> ( bit % 64 ) ) & 1;
-}
-
-static void rocketnet_replay_set_bit( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
-{
-    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
-    replay->window[bit / 64] |= 1ULL << ( bit % 64 );
-}
-
-static void rocketnet_replay_clear_bit( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
-{
-    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
-    replay->window[bit / 64] &= ~( 1ULL << ( bit % 64 ) );
-}
-
-static int rocketnet_replay_already_received( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
-{
-    rocketnet_assert( replay );
-    rocketnet_assert( sequence != 0 );
-
-    if ( sequence > replay->highest_opened )
-        return 0;
-
-    if ( replay->highest_opened >= ROCKETNET_REPLAY_WINDOW_BITS &&
-         sequence <= replay->highest_opened - ROCKETNET_REPLAY_WINDOW_BITS )
-        return 1;
-
-    return rocketnet_replay_bit( replay, sequence );
-}
-
-void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
-{
-    rocketnet_assert( replay );
-    rocketnet_assert( sequence != 0 );
-    rocketnet_assert( !rocketnet_replay_already_received( replay, sequence ) );
-
-    if ( sequence > replay->highest_opened )
-    {
-        uint64_t skipped = sequence - replay->highest_opened;
-        if ( skipped >= ROCKETNET_REPLAY_WINDOW_BITS )
-        {
-            replay->window[0] = 0;
-            replay->window[1] = 0;
-            replay->window[2] = 0;
-            replay->window[3] = 0;
-        }
-        else
-        {
-            for ( uint64_t s = replay->highest_opened + 1; s < sequence; s++ )
-                rocketnet_replay_clear_bit( replay, s );
-        }
-        replay->highest_opened = sequence;
-    }
-
-    rocketnet_replay_set_bit( replay, sequence );
-}
+#define ROCKETNET_REPLAY_WINDOW_WORDS ( ROCKETNET_REPLAY_WINDOW_BITS / 64 )
 
 /* Bits [lo, hi] inclusive inside one word. lo and hi are in 0..63. */
 static uint64_t bits_from_to( int lo, int hi )

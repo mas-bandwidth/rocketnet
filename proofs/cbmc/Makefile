@@ -21,12 +21,11 @@
 #                        bits, |result - reference| <= 2^23, round-trips every
 #                        in-window value (tie at 2^23 goes to the lower
 #                        candidate).
-#   replay-far         expected counterexample (not a passing proof):
-#                      harness_replay_far in proof_replay_advance.c, unwind 65,
-#                      sequence - highest_opened >= 4096. Fails at
-#                      sdk/rocketnet_replay.cpp because the far branch clears
-#                      window[0]..window[3] only, not all 64 words (fix card:
-#                      rocketnet-replay-far-advance-clears-every-window-word).
+#   replay-far         proved: harness_replay_far in proof_replay_advance.c,
+#                      unwind 65, sequence - highest_opened >= 4096: a delta of
+#                      at least 4096 clears every word, then sets the new
+#                      sequence bit. Runs against sdk/rocketnet_replay.cpp
+#                      itself, which the harness includes.
 #
 # `make -C proofs/cbmc slow-unproved` runs replay-near-4096 and ack-run-bound-8.
 # Neither is proved, and neither is in the default target or CI:
@@ -41,6 +40,8 @@ CBMC ?= cbmc
 CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
              --unsigned-overflow-check --div-by-zero-check \
              --unwinding-assertions
+
+SDK = ../../sdk
 
 # Bounded readers, fragment bounds, the message reader, and the XDP free
 # list. Same flags as the arithmetic leaves. Each proof is a bounded
@@ -92,22 +93,13 @@ all: replay-delta-1-3 replay-far reconstruct \
 # so the admitted deltas are 1, 2, and 3. Unwind 65 initializes all 64
 # symbolic window words; the clear loop runs at most twice.
 replay-delta-1-3: proof_replay_advance.c
-	$(CBMC) $(CBMC_FLAGS) --unwind 65 \
+	$(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
 	    -DREPLAY_DELTA_BOUND=4 \
 	    --function harness_replay_near proof_replay_advance.c
 
 replay-far: proof_replay_advance.c
-	@output=$$(mktemp); \
-	trap 'rm -f "$$output"' EXIT HUP INT TERM; \
-	status=0; \
-	$(CBMC) $(CBMC_FLAGS) --unwind 65 --function harness_replay_far \
-	    --json-ui --trace proof_replay_advance.c > "$$output" 2>&1 || status=$$?; \
-	cat "$$output"; \
-	if [ $$status -ne 10 ]; then \
-	    echo "replay-far: expected CBMC verification failure (exit 10), got $$status" >&2; \
-	    exit 1; \
-	fi; \
-	python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); properties=[p for group in data if isinstance(group,dict) for p in group.get("result",[]) if isinstance(p,dict)]; bad=[p for p in properties if p.get("status") not in ("SUCCESS","UNREACHABLE")]; expected="a delta at least the width clears every word"; ok=len(bad)==1 and bad[0].get("status")=="FAILURE" and expected in bad[0].get("description","") and "harness_replay_far" in bad[0].get("property",""); print("expected-fail: far advance counterexample (rocketnet-replay-far-advance-clears-every-window-word)" if ok else "replay-far: unrelated or missing failed property", file=sys.stdout if ok else sys.stderr); sys.exit(0 if ok else 1)' "$$output"
+	$(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
+	    --function harness_replay_far proof_replay_advance.c
 
 reconstruct: proof_reconstruct_sequence.c
 	$(CBMC) $(CBMC_FLAGS) --unwind 1 proof_reconstruct_sequence.c
@@ -116,7 +108,7 @@ reconstruct: proof_reconstruct_sequence.c
 slow-unproved: replay-near-4096 ack-run-bound-8
 
 replay-near-4096: proof_replay_advance.c
-	$(CBMC) $(CBMC_FLAGS) --unwind 4096 \
+	$(CBMC) $(CBMC_FLAGS) --unwind 4096 -I$(SDK) \
 	    -DREPLAY_DELTA_BOUND=4096 \
 	    --function harness_replay_near proof_replay_advance.c
 
@@ -124,8 +116,6 @@ ack-run-bound-8: proof_ack_apply_run.c
 	$(CBMC) $(CBMC_FLAGS) --unwind 8 \
 	    -DACK_RUN_BOUND=8 \
 	    proof_ack_apply_run.c
-
-SDK = ../../sdk
 
 read-write: proof_read_write.c
 	$(CBMC) $(CBMC_FLAGS) --unwind 9 -I$(SDK) proof_read_write.c

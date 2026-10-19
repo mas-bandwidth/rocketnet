@@ -50,6 +50,12 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Fleet-runner lint
+        run: python3 scripts/check-fleet-runners
+
+      - name: Fleet-runner lint selftest
+        run: bash scripts/check-fleet-runners-selftest
+
       - name: Install dependencies
         if: runner.environment == 'github-hosted'
         run: |

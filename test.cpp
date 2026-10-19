@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "test/suite_runner.h"
 #include "test_unit_registry.h"
 
@@ -71,7 +71,7 @@ static int rocketnet_unit_worker( const char * name )
     // allocator cases install their hooks here: replacement is refused after init
     rocketnet_channels_prepare( name );
 
-    if ( !rocketnet_init() )
+    if ( !rocketnet_init( NULL ) )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

@@ -18,15 +18,20 @@ permissions:
 jobs:
   cbmc:
     name: cbmc (arithmetic leaf proofs)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run the CBMC proofs
+      - name: Check the pinned CBMC is present
+        shell: bash
         run: |
+          set -euo pipefail
           if ! command -v cbmc >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y cbmc
+            echo "TOOL-MISSING cbmc (any) (missing) on $RUNNER_NAME"
+            exit 1
           fi
-          make -C proofs/cbmc
+          cbmc --version
+
+      - name: Run the CBMC proofs
+        run: make -C proofs/cbmc

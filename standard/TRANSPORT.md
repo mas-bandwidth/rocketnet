@@ -701,76 +701,2473 @@ packet length: 6
 <a id="t6"></a>
 ## t6. Connect token
 
-Status: pending
+A connect token is a fixed-size credential that a backend gives to a client. It names one server and carries the keys the client and that server use to establish a session. A server MUST accept a connection request only after it verifies the request's token as this section specifies.
 
-Scope: the private block, the signed connect data, the 768-byte token layout,
-minting and verification order (signature before sealed block), the token
-identifier, the frozen connect token vector.
+1. A token MUST be exactly the `connect token` size of [t3 Constants and registries](#t3) long. Every byte of the token is part of the layout below; there is no variable-length field.
+2. The version field MUST hold the `version` value of [t3 Constants and registries](#t3). The protocol performs no version negotiation and defines no mode by version. A server MUST ignore a connection request whose token carries any other version.
+3. The backend MUST write the session keys twice: in the clear for the client, and inside the sealed block for the server. A client MUST NOT verify the signature; it trusts the clear copy because the secure channel delivered the token. A tampered clear copy causes the handshake to fail and nothing worse.
+4. The token identifier MUST be the BLAKE2b hash, of the `token identifier` size of [t3 Constants and registries](#t3) and with no key, of the signed connect data. The identifier is content-determined, never the signature bytes.
+
+### t6.1. Private connect token data
+
+The private connect token data is the block that only the target server reads. Before sealing it is:
+
+```
+0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                          client id                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                         protocol id                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      expire timestamp                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   client to server key                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   server to client key                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        user data                             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                         zero pad                             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| client id | 0 | 8 | u64 | the identity the backend keys on | any |
+| protocol id | 8 | 8 | u64 | the title this token belongs to | any; MUST equal the signed protocol id |
+| expire timestamp | 16 | 8 | u64 | the time the token expires | any; MUST equal the signed expire timestamp |
+| client to server key | 24 | 32 | bytes[32] | the session key from client to server | any |
+| server to client key | 56 | 32 | bytes[32] | the session key from server to client | any |
+| user data | 88 | 256 | bytes[256] | application-defined data bound to the session | any |
+| zero pad | 344 | 40 | zero[40] | zero | zero |
+
+A backend MUST seal this block with crypto_box_seal to the server's X25519 public key: draw an ephemeral X25519 key pair, write the ephemeral public key, then the ciphertext of crypto_box_easy under the nonce that is the BLAKE2b-192 hash of the ephemeral public key concatenated with the server public key. The sealed block is the `sealed block` size of [t3 Constants and registries](#t3): the private block plus the `sealed box overhead` size of [t3 Constants and registries](#t3). A server MUST open the sealed block with its own X25519 secret key.
+
+### t6.2. Signed connect data
+
+Everything the server checks is gathered into one fixed buffer of the `signed connect data` size of [t3 Constants and registries](#t3) and signed by the backend. The token carries this buffer and its signature verbatim, so the server verifies with no shared secret. The signature MUST be an Ed25519 detached signature over the whole buffer, including its zero padding.
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| version | 0 | 4 | u32 | the wire revision | the version constant |
+| protocol id | 4 | 8 | u64 | the title; MUST equal the receiving server's configured protocol id | any |
+| create timestamp | 12 | 8 | u64 | unix time the token was created | any |
+| expire timestamp | 20 | 8 | u64 | unix time the token expires | any |
+| timeout seconds | 28 | 4 | i32 | the connection timeout in seconds; a negative value disables the timeout (development only); zero is invalid | `-2147483648..2147483647` |
+| address flags | 32 | 1 | u8 | bit 0 set means an IPv4 address is present, bit 1 an IPv6 address; bits 2 to 7 MUST be zero; at least one address MUST be present | `0x01`, `0x02`, `0x03` |
+| ipv4 address | 33 | 6 | bytes[6] | four octets then the port little-endian; zero when bit 0 is clear | any |
+| ipv6 address | 39 | 18 | bytes[18] | eight uint16 groups little-endian then the port little-endian; zero when bit 1 is clear | any |
+| server public key | 57 | 32 | bytes[32] | the X25519 key the private block is sealed to | any |
+| sealed private block | 89 | 432 | bytes[432] | the sealed block of [t6.1 Private connect token data](#t6.1) | any |
+| zero pad | 521 | 55 | zero[55] | zero | zero |
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| address flag IPv4 | `0x01` | bit | bit 0: an IPv4 address is present |
+| address flag IPv6 | `0x02` | bit | bit 1: an IPv6 address is present |
+| address flags both | `0x03` | bit | both address families are present |
+
+### t6.3. Connect token format
+
+The full token is handed to the client over the secure channel. The client splits it into its parts without parsing any length:
+
+```
+0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                signed connect data (576 bytes)               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   signature (64 bytes)                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|             client to server key (32 bytes)                  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|             server to client key (32 bytes)                  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       zero pad (64 bytes)                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| signed connect data | 0 | 576 | bytes[576] | the buffer of [t6.2 Signed connect data](#t6.2) | any |
+| signature | 576 | 64 | bytes[64] | the detached signature over the signed connect data | any |
+| client to server key | 640 | 32 | bytes[32] | the clear session key, for the client | any |
+| server to client key | 672 | 32 | bytes[32] | the clear session key, for the client | any |
+| zero pad | 704 | 64 | zero[64] | zero | zero |
+
+### t6.4. Verification and refusal order
+
+A server MUST check a token in this order and MUST stop at the first failure and refuse the request:
+
+1. The version field holds the `version` value of [t3 Constants and registries](#t3); otherwise the request is ignored.
+2. The address flags are valid: not zero, and no bit above bit 1 set.
+3. The signed server public key equals the server's configured X25519 public key.
+4. The signature verifies against the backend's Ed25519 public key.
+5. The sealed block opens with the server's X25519 secret key.
+6. The opened private protocol id and expire timestamp equal the signed ones.
+
+Checks of the protocol id, the expiry, the timeout and the advertised address belong to [t12 Handshake: server](#t12) and do not change this order.
+
+```vector t6.frozen-token
+input: the minting inputs of the frozen token: IPv4 203.0.113.10, port 40000, empty user data
+input: the signed connect data (576 bytes) then the signature, then the clear keys, then zero pad
+93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
+29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
+0c f2 21 5f 76 14 f4 80 1c b3 10 fd d3 03 d6 aa
+d8 c7 90 0d fc 42 52 d9 4d 21 34 f1 e6 e1 73 20
+f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87 72 08 61 88
+73 78 ed f0 1d e9 be fc 09 f1 bf 01 fd 3d f1 9e
+2a 79 e6 08 59 e8 96 34 6e b6 0c 08 f6 86 72 1d
+81 94 6e 78 1e 1a e2 c3 71 6a 46 58 80 a3 a5 f0
+68 ed e0 b0 39 cf 52 81 a9 7c d3 67 17 76 6b 5b
+b1 38 69 83 8e cb 33 3d 9e eb 10 42 bf 7a 7b 8f
+62 f9 cb b0 20 dd bd a6 cb 5f 44 e4 de f4 36 66
+64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b f2 26 86 84
+b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b 09 92 7b 6a
+fa c3 ec 0f 00 50 8e 9d 43 31 66 00 c6 b7 45 d6
+db b9 c6 8f 12 d5 69 a1 95 73 d4 60 ba 34 e8 01
+d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d 52 03 bb bd
+44 36 7e f8 9b cb b3 82 7f d8 02 95 f2 b9 40 4c
+dd 29 79 e3 aa 17 51 3f f9 f4 2b 67 06 24 8e a7
+62 28 20 28 d4 fe 0c f7 11 56 55 4f 26 bf 90 cb
+2b fc fe f4 38 b5 e6 8a d2 50 1f 9e 3b e2 4b c0
+b3 36 51 ec 75 6f 60 f4 23 f3 24 d9 03 23 ad c9
+f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26 06 7f e7 f1
+09 59 4a 80 3d 33 05 02 fe b0 3f 61 e9 29 7e c1
+1a ad eb cd 69 ba c0 bf d0 5c 1c 5c 14 4a e2 3b
+cd 11 4c 35 32 2e 79 78 43 e9 5c cb 8b c9 74 8f
+da 08 19 7c e6 d5 a1 0c 83 bc b0 eb 7f f4 71 d7
+38 a7 42 f6 8f a3 eb 77 df ad d3 20 a1 1a 55 42
+0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c f8 65 7f a7
+12 b7 c9 74 96 00 0e 6a 54 68 d8 00 d4 9d 13 45
+ce 18 5d c0 f7 bc 71 47 a9 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+6b 36 92 b4 9d 36 b7 a2 76 30 33 40 ab 83 99 b9
+85 61 ac 68 81 fc 7a a2 bb 60 ff e0 77 32 ea 71
+21 fe 50 44 eb b5 f5 3d be 76 8b 80 0c 30 d7 53
+70 eb 9b eb 49 14 ae 13 3d a6 4e a6 b0 9e 76 0d
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+```vector t6.token-identifier
+input: the signed connect data, bytes 0 to 575 of the frozen connect token
+input: BLAKE2b, output 16 bytes, no key
+f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
+```
+
+```vector t6.bad-address-flags
+input: IPv4 127.0.0.1, port 40000, empty user data, address flags 0x05 (a bit above bit 1 set)
+input: a token the server MUST refuse at the address-flags check, before any signature work
+93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+05 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
+29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
+0c f2 21 5f 76 14 f4 80 1c 39 2d 17 4a 38 b3 b1
+be af af 1f e8 24 87 08 41 c5 fa 53 1b c6 ea fd
+b6 40 2c 12 46 64 48 8c 1c a2 b9 57 f0 72 74 7e
+f5 ea 9e 73 f1 a1 d1 c2 d1 18 60 72 cd 71 30 5c
+22 e1 e4 84 55 14 6f 1b 4d 53 03 ab 2f 8c 0c f0
+08 62 b2 7b b9 46 f0 e6 8d 71 10 d0 d0 2c 7d 32
+a8 32 54 57 e1 98 48 28 35 3d 13 d8 84 01 34 99
+64 8a 55 d5 1f 5d ad 4c 37 4d 1b d6 c2 40 e7 70
+07 e1 55 11 3c bd a3 57 38 50 7b 96 40 1a a6 10
+cf 2f 5c 42 e8 4a 92 93 90 bb af c5 da 0e a8 75
+d2 61 3b 47 d3 a0 6c d0 e0 17 8d ee b7 5f ad 63
+dd 86 6c 56 a5 09 15 ff 44 8c 3f 2f f1 4d c2 db
+b0 60 e5 c5 fc 88 56 5a 00 c4 2a e4 a6 57 a3 38
+7e 5d b9 97 a9 f9 62 27 57 33 d0 29 a8 f6 f1 f3
+bb 09 a1 e3 e6 ad 15 5f cd 02 e4 69 42 c0 6a c8
+75 97 ee 1e 14 ee df a4 b6 4c 43 1f 63 ef fc b2
+4a ef 3e 22 ec 05 f2 ef b1 4a 59 bc 5a 80 a1 2e
+cb d0 d4 c7 51 bc 21 62 35 37 d5 a5 a6 8b 98 3a
+8b 69 4a 9b 9d ed 5e e7 d6 8c 90 c2 0d 0d e3 fb
+88 45 5e bc c6 95 27 b6 52 e8 58 8c 90 98 a3 af
+c7 61 5d 65 91 92 fe cc 28 29 06 63 e3 62 fc e1
+b3 df f5 f0 74 bb 04 fa e3 73 d2 a4 b0 14 5c 12
+34 a0 08 7c 44 73 12 21 79 68 2c 1f a1 36 c2 f1
+c3 9f 18 b3 48 78 78 ef 05 53 db a3 e9 01 a6 a1
+b3 58 a7 3c 8d 34 d2 fd e7 ff 83 ad 04 a1 c7 65
+69 5f 9a b9 5f e8 2e 31 71 e6 a0 d5 15 da fd ff
+12 b0 91 2a 4c ac 7e ec 77 14 10 19 83 4f 3e b8
+af 6a 8d 23 bf ba 36 79 4a 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+80 6f 9f 78 d4 60 9e 47 5d ae 14 5d 4d 0c dc 9b
+cc 3f 46 2c d8 83 10 2d d1 dd 1c 65 e6 8b 39 f3
+fb 89 f8 82 50 47 65 0f a5 0d e6 b0 70 e0 01 1a
+90 a5 2f 7c ac 91 39 a7 85 f2 b6 b6 52 fd 7f 07
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+```vector t6.wrong-server-key
+input: IPv4 127.0.0.1, port 40000, empty user data, the signed server public key replaced by a fixed key that is not the target server's
+input: a token the server MUST refuse at the server-public-key check
+93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+01 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 11 22 33 44 55 66 77
+88 99 aa bb cc dd ee ff 00 10 20 30 40 50 60 70
+80 90 a0 b0 c0 d0 e0 f0 01 23 b7 bb 8c 91 ae 00
+87 11 fb 12 84 67 80 bc df 1e 06 5f 82 1b df ec
+49 f5 7e 7c 7d cd 4c 48 23 d2 10 cb 80 cd 26 ae
+d6 3b 32 c3 03 f7 a1 c5 c2 35 1e 3b 77 87 5c e2
+fa 40 20 77 ec e6 68 29 70 6f b8 b4 9c ed 85 0c
+90 cc 84 bc e7 7d 3e 1c f7 53 62 ec 49 c0 23 6a
+44 bf 63 7f bb cf aa d7 bb b1 59 83 63 d2 8a fb
+57 c7 d5 59 f7 8e dc 84 96 95 46 eb 3f 9e 32 38
+8a 4d 3b f9 a2 bd 23 59 4c 0b 92 af d5 a9 5b f1
+7b 4e ee c3 14 40 d3 58 e6 39 20 52 c3 e2 b0 f2
+cc 2d be a3 9f d1 48 d7 80 77 57 98 70 ea 94 f3
+b5 17 6e e6 2f c4 ac 79 29 6b ba 3a 67 cd a2 c6
+23 57 2c f8 bf ec 80 8b 3c 3e 9e e4 43 de cf 14
+31 a7 c6 78 7c 03 2f d9 17 65 d5 63 42 da 1f 02
+59 b0 31 3b 73 b5 5f be b9 1f 3a ef c0 2d 6f 87
+91 31 97 11 76 bf 03 37 a9 a8 0e a1 39 a3 b7 92
+2e 0b 80 de 84 27 a3 33 84 2d 31 16 08 56 30 78
+4a 39 fa b9 6a d2 3e c9 27 60 77 be 6f ff 38 02
+85 41 68 ef d3 69 72 89 3b ea ac c0 86 4f 4f 78
+5c fe 0d 8a 04 23 f9 c7 9e ed 62 40 7a 78 d5 0b
+41 21 ad ff 38 1a c9 0c e3 2c 0b 37 f8 ab 3f 9d
+06 8e 02 3b bd 89 c0 1f d3 f4 cc 96 8e b1 d5 9c
+94 5d fa 4f 7d c0 ee 5d 5c aa 4c 39 9b 3a 4f cf
+83 24 c8 3e ac 3f 78 da 50 a1 d8 8d 47 c2 4a 43
+e1 08 83 06 3e e1 89 f5 cd 3a 17 ea 20 c5 f8 7a
+bf ae 42 a2 6c 75 d5 36 d1 05 90 0d 91 69 15 96
+51 4a c8 c1 c1 6e 4c 92 7c a3 56 0d 59 c3 de 9e
+86 0e e1 6f c3 6e 4a 40 2c 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+f7 cf 86 58 f0 9f 18 16 96 e5 99 c0 d2 09 d2 61
+5c 8b 62 ed c5 d6 f1 6a 69 c7 59 b3 91 9a 37 80
+d2 c7 64 0e bd 57 b2 79 ae df fe 74 32 cb 63 e4
+3e 26 01 b2 c6 a0 9c 30 06 9f 32 1c 22 c3 e3 0b
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+```vector t6.sealed-mismatch
+input: IPv4 127.0.0.1, port 40000, empty user data, the sealed private block's protocol id is the signed protocol id plus one
+input: a token whose signature verifies and whose sealed block opens, but whose private fields disagree with the signed fields
+93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+01 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
+29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
+0c f2 21 5f 76 14 f4 80 1c 9f d7 ad 6d cf f4 29
+8d d3 f9 6d 5b 1b 2a f9 10 a0 53 5b 14 88 d7 f8
+fa bb 34 9a 98 28 80 b6 15 c9 ae 23 6b 18 ad 61
+1e bf 16 e2 3c 9d cc 80 b2 0b 7b 3a 4a ad 40 f4
+20 63 e2 ea 16 12 d1 4e 23 e6 34 58 b6 04 5c 44
+32 5a 1f 38 a0 d6 d0 f4 d0 e3 74 5b 28 e4 9a 87
+2f 30 e8 b9 2c d2 ec 71 a7 f1 7c be 71 ff 64 1e
+76 20 2c 26 6e 24 30 3b d0 15 be f9 03 f5 7c ea
+c4 dd 4d 2d 8f d6 8a 80 16 d4 fc 43 a2 0b f4 5d
+5c f7 77 42 30 58 9f 98 7b 20 fa 74 64 ce 1c d0
+f5 52 f1 eb a7 a2 87 f9 b9 f2 e1 41 d9 b6 50 68
+74 79 78 ba 60 89 23 c0 13 6f 24 c9 57 a2 86 7c
+04 ae fd 78 70 c1 cf 53 93 16 ef 9a 6f 1f ec 93
+ab 6a 9e cf 66 45 de 72 91 e7 58 47 94 5e e9 1c
+f4 f5 3c 36 de 56 d7 cb b5 17 53 30 11 5a 67 14
+20 85 c4 7d 79 50 02 b6 29 79 fb 54 eb 33 f4 56
+4a 34 58 52 b5 1f ea e8 4b 07 ae 42 6d 12 3f fd
+42 80 2a 44 a4 1f b0 1f 03 0a 5f f3 1a c4 df 3f
+d8 26 50 a2 43 64 89 9a bb a5 b3 0f f2 80 70 56
+00 b0 1c ea d1 fb ac 12 f6 8d 13 d4 ef 19 48 57
+42 42 b7 24 4e 18 42 85 0b 68 43 91 d8 dd 58 e9
+85 19 9f 03 ec d5 f1 b2 28 b6 2e 6b 38 4b 18 b0
+6f 9a 17 1a 39 a6 64 ef 49 6a 9f 87 11 93 fa 31
+6d eb da de da ca 44 00 fa 44 09 c5 be 84 30 79
+c0 70 2b 52 ee dd 59 5e 58 37 b8 9c e2 0a 27 19
+74 eb b3 84 17 5f 54 dc b9 21 ea fb 64 65 be ff
+fe e0 3d 07 71 7e 56 7e 80 0b 7b 22 2a 31 b0 11
+7b 1d 4d fc 8e 66 89 14 3f 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+61 99 ef a8 e8 67 01 40 c3 1b 0e 6c ea b4 29 81
+f7 7d 88 51 69 01 87 b2 15 69 9b b2 4d ea c5 52
+5f c1 5a 46 22 f7 2e 68 f7 af 40 cf 2b d9 3e fd
+5a 4d 79 ca fb 1e 9c d9 f5 40 fc 5a f3 f0 03 05
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
 
 <a id="t7"></a>
 ## t7. Key schedule
 
-Status: pending
+The token keys of [t6 Connect token](#t6) never seal a packet; every
+connection derives four working keys, one for each phase and direction, and a
+key never serves two roles.
 
-Scope: the connection salt, the session nonce, the ephemeral exchange, the
-four derived keys and their labels, erasure; vectors.
+Rules:
+
+1. Both endpoints MUST derive the four keys of a connection from the same
+   fixed-length inputs in the same order: the two token keys, the client's
+   connection salt, the server's session nonce, the ephemeral exchange and the
+   key derivation labels of [t3 Constants and registries](#t3).
+2. The client MUST choose a fresh connection salt for every connection
+   attempt, from a cryptographically secure random source, and MUST send it in
+   the clear in the connection request. The salt is the connection salt row of
+   [t3 Constants and registries](#t3).
+3. The server MUST choose a fresh session nonce for every encryption mapping
+   it creates, from a cryptographically secure random source, and MUST send it
+   in the clear in the connection challenge. The nonce is the session nonce row
+   of [t3 Constants and registries](#t3). A server MUST NOT reuse a session
+   nonce across mappings.
+4. Each endpoint MUST use one X25519 keypair for the attempt: the client MUST
+   generate a fresh keypair for every attempt, and the server MUST generate one
+   for every mapping or take the current keypair of a bounded rotation window.
+   The client MUST send its ephemeral public key in the clear in the connection
+   request. The server MUST send its ephemeral public key inside the sealed
+   connection challenge. Both keys are X25519 public keys of
+   [t3 Constants and registries](#t3).
+5. Each endpoint MUST compute the shared secret with X25519 from its own
+   ephemeral secret key and the peer's ephemeral public key. When the scalar
+   multiplication reports a small-order peer public key, the endpoint MUST
+   abandon the attempt, MUST NOT derive a session key, and MUST NOT create a
+   mapping.
+6. An endpoint MUST derive the handshake client-to-server key by keyed BLAKE2b
+   (RFC 7693), with the token client-to-server key as the key and the handshake
+   input of [t7.1 Handshake key input](#t7.1) as the message, and MUST derive
+   the handshake server-to-client key by keyed BLAKE2b with the token
+   server-to-client key as the key and the same input as the message.
+7. An endpoint MUST derive the session client-to-server key by keyed BLAKE2b,
+   with the token client-to-server key as the key and the session input of
+   [t7.2 Session key input](#t7.2) as the message, and MUST derive the session
+   server-to-client key by keyed BLAKE2b with the token server-to-client key as
+   the key and the same input as the message.
+8. The output length of every derivation is the derived key row of
+   [t7.3 Derived key sizes](#t7.3), and the key length is the BLAKE2b key row
+   of [t3 Constants and registries](#t3).
+9. A verifier of a connect token MUST use strict Ed25519 verification
+   (RFC 8032) over the signed connect data of
+   [t3 Constants and registries](#t3) against the backend public key. It MUST
+   reject a signature
+   whose S component is not reduced modulo the group order, MUST reject an R
+   component or public key that is not a canonical encoding or is of small
+   order, MUST reject a public key that does not decode to a curve point, and
+   MUST NOT accept two distinct signature byte strings for one message.
+10. Both endpoints MUST erase the shared secret as soon as the four keys are
+    derived, MUST erase an ephemeral secret key when no handshake that needs it
+    remains, and MUST erase the four keys and the token keys when the attempt
+    or connection that owns them ends.
+
+<a id="t7.1"></a>
+### t7.1. Handshake key input
+
+The handshake input is the concatenation below, with the key derivation label
+of the direction appended last. It holds no ephemeral key material.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       connection salt                         +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       session nonce                           +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                    key derivation label                       +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| connection salt | 0 | 8 | bytes[8] | the client's salt for this attempt | any |
+| session nonce | 8 | 8 | bytes[8] | the server's nonce for this mapping | any |
+| key derivation label | 16 | 8 | bytes[8] | the direction's label row of [t3 Constants and registries](#t3) | `"RKTNHNDC"` or `"RKTNHNDS"` |
+
+<a id="t7.2"></a>
+### t7.2. Session key input
+
+The session input is the concatenation below, with the key derivation label of
+the direction appended last. The shared secret comes first; the two ephemeral
+public keys follow in client then server order, whichever endpoint computes
+the input.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                        shared secret                          +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                 client ephemeral public key                   +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                 server ephemeral public key                   +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       connection salt                         +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       session nonce                           +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                    key derivation label                       +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| shared secret | 0 | 32 | bytes[32] | the X25519 output of rule 5 | any |
+| client ephemeral public key | 32 | 32 | bytes[32] | the client's ephemeral public key | a canonical X25519 public key |
+| server ephemeral public key | 64 | 32 | bytes[32] | the server's ephemeral public key | a canonical X25519 public key |
+| connection salt | 96 | 8 | bytes[8] | the client's salt for this attempt | any |
+| session nonce | 104 | 8 | bytes[8] | the server's nonce for this mapping | any |
+| key derivation label | 112 | 8 | bytes[8] | the direction's label row of [t3 Constants and registries](#t3) | `"RKTNSESC"` or `"RKTNSESS"` |
+
+<a id="t7.3"></a>
+### t7.3. Derived key sizes
+
+| Name | Value | Unit |
+|---|---|---|
+| derived key | `32` | bytes |
+| shared secret | `32` | bytes |
+
+<a id="t7.4"></a>
+### t7.4. Vectors
+
+The inputs are the same in every vector below: the token keys, salt, session
+nonce and ephemeral keys of the frozen inputs, with the direction's label
+appended. The small-order vector's single byte is the value the derivation
+returns, zero for a refused derivation.
+
+```vector t7.handshake-client-to-server
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: key derivation label = "RKTNHNDC"
+4b 4d 63 0c db 00 c8 7b 73 d4 6b 34 21 d8 91 c2
+4c fd 0a b9 28 c9 87 51 5a ab bb d7 8b e2 73 50
+```
+
+```vector t7.handshake-server-to-client
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: key derivation label = "RKTNHNDS"
+86 04 5b 5f 8e 2d a9 4d bf 44 5a 65 80 86 d6 3d
+50 b7 3b 1e 66 6c 76 c4 95 2f ab f9 98 c0 c0 e0
+```
+
+```vector t7.session-client-to-server
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: client ephemeral secret key = c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0
+input: client ephemeral public key = 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24
+input: server ephemeral public key = 489cebba7a166c619835fe12eedc581dbfc1b36de10c830e4f0bc1c48734864b
+input: key derivation label = "RKTNSESC"
+ae dc 46 56 e3 f8 2b 7e 87 91 27 95 88 c7 f6 20
+4e d2 c1 bc 0c 17 ba 97 79 c0 4e 3b 1c 9e f4 3c
+```
+
+```vector t7.session-server-to-client
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: client ephemeral secret key = c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0
+input: client ephemeral public key = 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24
+input: server ephemeral public key = 489cebba7a166c619835fe12eedc581dbfc1b36de10c830e4f0bc1c48734864b
+input: key derivation label = "RKTNSESS"
+3c 63 7e 37 b1 01 b8 2c 9e da a9 a3 b5 5a 31 a8
+a3 bc 10 8f 13 3b a0 5e 8a 41 6b 3c fb 73 0e f0
+```
+
+```vector t7.small-order-peer-refused
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: client ephemeral secret key = c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0
+input: client ephemeral public key = 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24
+input: server ephemeral public key = 0000000000000000000000000000000000000000000000000000000000000000
+input: key derivation label = "RKTNSESC"
+00
+```
 
 <a id="t8"></a>
 ## t8. Packet formats
 
-Status: pending
+Every packet begins with the 6-byte prefilter header of [t5 Prefilter header](#t5): the packet type at offset 0, the filter epoch at offset 1, and the filter value at offsets 2 to 5. A sender MUST set the packet type byte to one of the ten types below. A receiver MUST drop a packet whose type is 10 or above.
 
-Scope: the layout of each packet type, its fixed size or size range,
-and the maximum packet size rule for senders; assembled vectors.
+A sender MUST emit a packet of the size its type and fields give, and MUST NOT emit a packet larger than the send budget. A receiver MUST drop a packet whose size is below its type's minimum or above the receive ceiling before it examines any field inside the packet ([t10 Receive processing](#t10)).
+
+Types 0 (connection request) and 7 (connection cookie) are not sealed. Types 1 to 6, 8 and 9 are sealed: after the prefilter header and the 4-byte sequence, their bytes are the sealed data of [t9 Packet protection](#t9). Types 1 and 2 place the 8-byte session nonce in the clear between the sequence and the sealed data. The session types 4, 5, 6, 8 and 9 open their sealed plaintext with the ack block of [t15 Acknowledgement](#t15), and the type data follows it.
+
+Every integer is little-endian, every structure is packed with no padding, and every size is in bytes ([t1.4 Conventions](#t1.4)). The offsets below count from the first byte of the packet, the packet type.
+
+<a id="t8.1"></a>
+### t8.1. Connection request packet (type 0)
+
+The connection request is not sealed. It carries the client's per-attempt salt and ephemeral key, and the signed connect data and signature taken verbatim from the connect token ([t6 Connect token](#t6)).
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    return cookie (bytes[24])                  |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|              connection salt (bytes[8])                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|         client ephemeral public key (bytes[32])               |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|            signed connect data (bytes[576])                   |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                 signature (bytes[64])                         |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `0` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| return cookie | 6 | 24 | bytes[24] | the cookie expire timestamp followed by the cookie MAC, echoed from a type 7 packet | all zero on the first request of an attempt |
+| connection salt | 30 | 8 | bytes[8] | the client's salt for this attempt | any |
+| client ephemeral public key | 38 | 32 | bytes[32] | the client's X25519 ephemeral public key | any |
+| signed connect data | 70 | 576 | bytes[576] | bytes 0 to 575 of the connect token | any |
+| signature | 646 | 64 | bytes[64] | the token's Ed25519 signature | any |
+
+<a id="t8.2"></a>
+### t8.2. Connection denied packet (type 1)
+
+The connection denied packet is sealed and carries no type data.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   session nonce (bytes[8])                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `1` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| session nonce | 10 | 8 | bytes[8] | the server's session nonce for this mapping, in the clear | any |
+| AEAD tag | 18 | 16 | bytes[16] | the tag over an empty plaintext | any |
+
+<a id="t8.3"></a>
+### t8.3. Connection challenge packet (type 2)
+
+The connection challenge is sealed. Its cleartext session nonce lets a client that has not yet derived handshake keys open it.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   session nonce (bytes[8])                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          server ephemeral public key (bytes[32])              |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `2` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| session nonce | 10 | 8 | bytes[8] | the server's session nonce for this mapping, in the clear | any |
+| server ephemeral public key | 18 | 32 | bytes[32] | the server's X25519 ephemeral public key, sealed | any |
+| AEAD tag | 50 | 16 | bytes[16] | the tag over the server ephemeral public key | any |
+
+<a id="t8.4"></a>
+### t8.4. Connection response packet (type 3)
+
+The connection response is sealed and carries 24 zero bytes of padding.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     padding (zero[24])                        |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `3` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| padding | 10 | 24 | zero[24] | zero bytes, sealed | all zero |
+| AEAD tag | 34 | 16 | bytes[16] | the tag over the padding | any |
+
+<a id="t8.5"></a>
+### t8.5. Connection keep-alive packet (type 4)
+
+The keep-alive is a session packet. Its sealed plaintext is the ack block followed by the keep-alive fields.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      client index (u32)                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      max clients (u32)                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `4` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| client index | 10 plus the ack block size | 4 | u32 | the slot that holds this connection | below max clients |
+| max clients | 14 plus the ack block size | 4 | u32 | the server's slot count | any |
+| AEAD tag | 18 plus the ack block size | 16 | bytes[16] | the tag over the ack block and the keep-alive fields | any |
+
+<a id="t8.6"></a>
+### t8.6. Connection payload packet (type 5)
+
+The payload packet is a session packet. Its sealed plaintext is the ack block followed by one payload.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      payload data (bytes[n])                  |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `5` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| payload data | 10 plus the ack block size | 1 to the send budget less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
+| AEAD tag | 16 plus the ack block size and the payload size | 16 | bytes[16] | the tag over the ack block and the payload | any |
+
+<a id="t8.7"></a>
+### t8.7. Connection disconnect packet (type 6)
+
+The disconnect packet is a session packet with no type data.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `6` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| AEAD tag | 10 plus the ack block size | 16 | bytes[16] | the tag over the ack block | any |
+
+<a id="t8.8"></a>
+### t8.8. Connection cookie packet (type 7)
+
+The connection cookie is not sealed.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|              connection salt (bytes[8])                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                  cookie expire timestamp (u64)                |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    cookie MAC (bytes[16])                     |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `7` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| connection salt | 6 | 8 | bytes[8] | the salt echoed from the request | any |
+| cookie expire timestamp | 14 | 8 | u64 | the time at which the cookie expires | any |
+| cookie MAC | 22 | 16 | bytes[16] | the MAC over the client address, the salt and the expire timestamp | any |
+
+<a id="t8.9"></a>
+### t8.9. Connection ack packet (type 8)
+
+The standalone ack packet is a session packet whose ack block is its whole type data.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `8` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| AEAD tag | 10 plus the ack block size | 16 | bytes[16] | the tag over the ack block | any |
+
+<a id="t8.10"></a>
+### t8.10. Connection payload fragment packet (type 9)
+
+The fragment packet is a session packet. Its sealed plaintext is the ack block, the fragment header, and the fragment data ([t16 Fragmentation and reassembly](#t16)).
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      payload id (u32)                         |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| fragment index|fragment count |      fragment data ...        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    fragment data (bytes[n])                   |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `9` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| payload id | 10 plus the ack block size | 4 | u32 | the fragmented payload's identifier | nonzero |
+| fragment index | 14 plus the ack block size | 1 | u8 | this fragment's index | below the fragment count |
+| fragment count minus one | 15 plus the ack block size | 1 | u8 | the fragment count less one | 1 to 255 |
+| fragment data | 16 plus the ack block size | 1 to the send budget less 32 and the ack block size | bytes[n] | this fragment's bytes | at least 1 byte |
+| AEAD tag | 16 plus the ack block size and the fragment size | 16 | bytes[16] | the tag over the ack block, the header and the fragment data | any |
+
+<a id="t8.11"></a>
+### t8.11. Packet sizes
+
+The wire size of each type is the sum of its fields. The handshake types have a fixed size; the session types have a minimum and a receive maximum, because the ack block and the type data vary.
+
+| Name | Value | Unit | Composition |
+|---|---|---|---|
+| connection request packet wire size | `710` | bytes | 6 + 704 |
+| connection denied packet wire size | `34` | bytes | 6 + 4 + 8 + 16 |
+| connection challenge packet wire size | `66` | bytes | 6 + 4 + 8 + 32 + 16 |
+| connection response packet wire size | `50` | bytes | 6 + 4 + 24 + 16 |
+| connection keep-alive packet minimum wire size | `41` | bytes | 6 + 4 + 7 + 8 + 16 |
+| connection payload packet minimum wire size | `34` | bytes | 6 + 4 + 7 + 1 + 16 |
+| connection disconnect packet minimum wire size | `33` | bytes | 6 + 4 + 7 + 16 |
+| connection cookie packet wire size | `38` | bytes | 6 + 8 + 8 + 16 |
+| connection ack packet minimum wire size | `33` | bytes | 6 + 4 + 7 + 16 |
+| connection fragment packet minimum wire size | `40` | bytes | 6 + 4 + 7 + 6 + 1 + 16 |
+
+A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than its send budget. The unfragmented payload capacity, the receive payload maximum and the fragment stride are rows of [t3 Constants and registries](#t3).
+
+<a id="t8.12"></a>
+### t8.12. Vectors
+
+Each vector below is one assembled packet, from its packet type byte to its last tag byte.
+
+```vector t8.request
+input: packet type 0, filter value b7 59 01 00
+input: return cookie 24 zero bytes
+input: connection salt bytes 30 31 32 33 34 35 36 37
+input: client ephemeral public key bytes 20 to 3f
+input: signed connect data byte i is i, for i 0 to 575
+input: signature byte i is ff minus i, for i 0 to 63
+00 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 31
+32 33 34 35 36 37 20 21 22 23 24 25 26 27 28 29
+2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
+3a 3b 3c 3d 3e 3f 00 01 02 03 04 05 06 07 08 09
+0a 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19
+1a 1b 1c 1d 1e 1f 20 21 22 23 24 25 26 27 28 29
+2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
+3a 3b 3c 3d 3e 3f 40 41 42 43 44 45 46 47 48 49
+4a 4b 4c 4d 4e 4f 50 51 52 53 54 55 56 57 58 59
+5a 5b 5c 5d 5e 5f 60 61 62 63 64 65 66 67 68 69
+6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 78 79
+7a 7b 7c 7d 7e 7f 80 81 82 83 84 85 86 87 88 89
+8a 8b 8c 8d 8e 8f 90 91 92 93 94 95 96 97 98 99
+9a 9b 9c 9d 9e 9f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9
+aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
+ba bb bc bd be bf c0 c1 c2 c3 c4 c5 c6 c7 c8 c9
+ca cb cc cd ce cf d0 d1 d2 d3 d4 d5 d6 d7 d8 d9
+da db dc dd de df e0 e1 e2 e3 e4 e5 e6 e7 e8 e9
+ea eb ec ed ee ef f0 f1 f2 f3 f4 f5 f6 f7 f8 f9
+fa fb fc fd fe ff 00 01 02 03 04 05 06 07 08 09
+0a 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19
+1a 1b 1c 1d 1e 1f 20 21 22 23 24 25 26 27 28 29
+2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
+3a 3b 3c 3d 3e 3f 40 41 42 43 44 45 46 47 48 49
+4a 4b 4c 4d 4e 4f 50 51 52 53 54 55 56 57 58 59
+5a 5b 5c 5d 5e 5f 60 61 62 63 64 65 66 67 68 69
+6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 78 79
+7a 7b 7c 7d 7e 7f 80 81 82 83 84 85 86 87 88 89
+8a 8b 8c 8d 8e 8f 90 91 92 93 94 95 96 97 98 99
+9a 9b 9c 9d 9e 9f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9
+aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
+ba bb bc bd be bf c0 c1 c2 c3 c4 c5 c6 c7 c8 c9
+ca cb cc cd ce cf d0 d1 d2 d3 d4 d5 d6 d7 d8 d9
+da db dc dd de df e0 e1 e2 e3 e4 e5 e6 e7 e8 e9
+ea eb ec ed ee ef f0 f1 f2 f3 f4 f5 f6 f7 f8 f9
+fa fb fc fd fe ff 00 01 02 03 04 05 06 07 08 09
+0a 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19
+1a 1b 1c 1d 1e 1f 20 21 22 23 24 25 26 27 28 29
+2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
+3a 3b 3c 3d 3e 3f ff fe fd fc fb fa f9 f8 f7 f6
+f5 f4 f3 f2 f1 f0 ef ee ed ec eb ea e9 e8 e7 e6
+e5 e4 e3 e2 e1 e0 df de dd dc db da d9 d8 d7 d6
+d5 d4 d3 d2 d1 d0 cf ce cd cc cb ca c9 c8 c7 c6
+c5 c4 c3 c2 c1 c0
+```
+
+```vector t8.denied
+input: packet type 1, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 1
+input: session nonce bytes 40 to 47
+input: handshake server-to-client key bytes 80 to 9f
+input: sealed data empty
+01 00 b7 59 01 00 01 00 00 00 40 41 42 43 44 45
+46 47 9c c7 b0 41 7c 4d 93 52 f9 a1 98 ef 49 ad
+6f cb
+```
+
+```vector t8.challenge
+input: packet type 2, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 1
+input: session nonce bytes 40 to 47
+input: server ephemeral public key bytes 40 to 5f
+input: client ephemeral public key bytes 20 to 3f
+input: handshake server-to-client key bytes 80 to 9f
+02 00 b7 59 01 00 01 00 00 00 40 41 42 43 44 45
+46 47 a3 50 36 4e 3a 3a 61 a1 2a 4c 90 5d c6 39
+c8 a5 49 1e 7e 8d 4b 7c 58 51 98 cd 4b 94 4e e9
+d1 90 f4 2a d8 21 0f ab 19 e4 1a 3b 96 dc 06 08
+3d 31
+```
+
+```vector t8.response
+input: packet type 3, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 1
+input: padding 24 zero bytes
+input: client ephemeral public key bytes 20 to 3f
+input: handshake client-to-server key bytes 60 to 7f
+03 00 b7 59 01 00 01 00 00 00 f6 0f fd 9b d3 d8
+bd e8 c3 8b e5 af 01 f3 eb a1 47 55 ea 1a 6a ff
+0c 04 71 79 8c f7 4a 64 66 7d bc d6 ea 5f 4c a5
+b9 97
+```
+
+```vector t8.keep-alive
+input: packet type 4, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 1
+input: ack block 00 00 00 00 00 00 00
+input: client index 3, max clients 1000
+input: session server-to-client key bytes c0 to df
+04 00 b7 59 01 00 01 00 00 00 93 f3 ae 3f 05 4a
+38 d0 41 ec 2f 98 38 7a ff bf 5e 31 4c df 50 0e
+03 e1 28 04 ec 28 00 1b 99
+```
+
+```vector t8.payload
+input: packet type 5, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 3
+input: ack block 00 00 00 00 00 00 00
+input: payload bytes 68 65 6c 6c 6f
+input: session client-to-server key bytes a0 to bf
+05 00 b7 59 01 00 03 00 00 00 d2 ca 22 7d 0d e1
+9a dc 82 7d ea d4 4a 38 fd 84 26 82 9a 5d b6 7b
+80 e5 85 fe 54 0c
+```
+
+```vector t8.disconnect
+input: packet type 6, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 4
+input: ack block 00 00 00 00 00 00 00
+input: no type data
+input: session client-to-server key bytes a0 to bf
+06 00 b7 59 01 00 04 00 00 00 17 e7 37 e8 c4 f6
+f2 25 6f b7 76 70 25 43 e9 59 d3 09 27 85 70 ed
+91
+```
+
+```vector t8.cookie
+input: packet type 7, filter value b7 59 01 00
+input: connection salt bytes 30 31 32 33 34 35 36 37
+input: cookie expire 0x0102030405060708, little-endian on the wire
+input: cookie mac bytes d0 to df
+07 00 b7 59 01 00 30 31 32 33 34 35 36 37 08 07
+06 05 04 03 02 01 d0 d1 d2 d3 d4 d5 d6 d7 d8 d9
+da db dc dd de df
+```
+
+```vector t8.ack
+input: packet type 8, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 5
+input: ack block 00 00 00 00 00 00 00
+input: no type data
+input: session client-to-server key bytes a0 to bf
+08 00 b7 59 01 00 05 00 00 00 18 11 d7 e6 43 54
+2c 6e a6 b4 9e e8 de 56 b3 3d ba 0d 4f 61 7e 85
+b5
+```
+
+```vector t8.fragment
+input: packet type 9, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 6
+input: ack block 00 00 00 00 00 00 00
+input: payload id 1, fragment index 0, fragment count 2
+input: fragment data bytes 68 65 6c 6c 6f
+input: session client-to-server key bytes a0 to bf
+09 00 b7 59 01 00 06 00 00 00 c2 9e 52 06 da d5
+b3 e8 ab a8 f1 4c cb 35 88 29 3a 74 2f 39 e4 00
+ad c5 bd df c7 8f aa 2a 94 fb 2b 78
+```
 
 <a id="t9"></a>
 ## t9. Packet protection
 
-Status: pending
+Every sealed packet carries its per-packet data and its tag encrypted and
+authenticated with ChaCha20-Poly1305 (IETF) under one key of the connection.
+The associated data binds the version, the application protocol id, the
+packet type and the connection salt, and, for the two handshake types that
+carry the ephemeral exchange, the client's ephemeral public key. It never
+travels on the wire; both ends construct it. The sealed types are the
+connection denied, connection challenge, connection response, connection
+keep-alive, connection payload, connection disconnect, connection ack and
+connection payload fragment packets of [t8 Packet formats](#t8); the
+connection request and connection cookie are not sealed.
 
-Scope: the AEAD, nonce formation from the sequence, associated data for each
-packet type, which key seals which type; sealed vectors.
+1. A sender MUST seal the per-packet data of every sealed type with
+   `crypto_aead_chacha20poly1305_ietf_encrypt` under the type's key of the
+   sender's direction and key phase, the nonce below, and the associated data
+   below. The sealed output is the per-packet data followed by the AEAD tag.
+2. A receiver MUST open the sealed data with
+   `crypto_aead_chacha20poly1305_ietf_decrypt`, the same key, nonce and
+   associated data. A receiver MUST reject a packet whose tag does not verify,
+   before using any plaintext byte.
+3. A sender MUST NOT seal with sequence zero. A receiver MUST reject sequence
+   zero before opening the packet.
+4. The nonce MUST be the AEAD nonce size of [t3 Constants and registries](#t3):
+   four zero bytes followed by the 64-bit sequence as a little-endian integer.
+5. The associated data MUST be exactly the fields and length of the table
+   below. Its length MUST be the associated data row of
+   [t3 Constants and registries](#t3) for types 1, 4, 5, 6, 8 and 9, and the
+   associated data with ephemeral key row for types 2 and 3.
+6. A sender MUST set the version field to the version row of
+   [t3 Constants and registries](#t3), the protocol id to the connection's
+   application protocol id, the packet type to the type being sealed, and the
+   connection salt to the connection's salt. For types 2 and 3, and only those
+   types, the sender MUST append the client's ephemeral public key. A receiver
+   MUST construct the same bytes.
+7. A receiver MUST reject a sealed packet whose associated data length does not
+   match its type.
+8. A sender and a receiver MUST each count, per connection and across all of
+   that connection's keys, every sealed packet whose AEAD open fails. The count
+   MUST NOT include a packet refused before the open for its wire size, its
+   state, its sequence or its replay mark, and MUST NOT include a packet that
+   opens and then fails a later structural check. On reaching the AEAD
+   integrity limit below, the endpoint MUST end the connection and MUST
+   increment the `INTEGRITY_LIMIT_REACHED` counter; the client enters the
+   disconnected state, and the server removes the mapping and releases the
+   slot it holds for it, if any.
+
+The key that seals a sealed type:
+
+| Packet type | Name | Key phase | Direction | Key |
+|---|---|---|---|---|
+| 1 | connection denied | handshake | server to client | handshake server-to-client |
+| 2 | connection challenge | handshake | server to client | handshake server-to-client |
+| 3 | connection response | handshake | client to server | handshake client-to-server |
+| 4 | connection keep-alive | session | either; the sender's direction | session key of that direction |
+| 5 | connection payload | session | either; the sender's direction | session key of that direction |
+| 6 | connection disconnect | session | either; the sender's direction | session key of that direction |
+| 8 | connection ack | session | either; the sender's direction | session key of that direction |
+| 9 | connection payload fragment | session | either; the sender's direction | session key of that direction |
+
+The four keys are derived as [t7 Key schedule](#t7) specifies.
+
+<a id="t9.1"></a>
+### t9.1. Associated data
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                          version                              |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                        protocol id                            |
+   |                                                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |  packet type  |            connection salt                    |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |               connection salt (continued)                     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                                                               |
+   |             client ephemeral public key (32 bytes)            |
+   |                  types 2 and 3 only                           |
+   |                                                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| version | 0 | 4 | u32 | the protocol version | the version row of [t3 Constants and registries](#t3) |
+| protocol id | 4 | 8 | u64 | the application protocol id | any; equal at both ends |
+| packet type | 12 | 1 | u8 | the type of the sealed data | 1 to 6, 8 and 9 |
+| connection salt | 13 | 8 | bytes[8] | the connection's salt | the connection's salt |
+| client ephemeral public key | 21 | 32 | bytes[32] | the client's ephemeral public key | present for types 2 and 3; absent otherwise |
+
+<a id="t9.2"></a>
+### t9.2. Nonce
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| zero | 0 | 4 | zero[4] | four zero bytes | zero |
+| sequence | 4 | 8 | u64 | the packet's sequence | not zero |
+
+<a id="t9.3"></a>
+### t9.3. Constants
+
+| Name | Value | Unit | Kind | Defined in |
+|---|---|---|---|---|
+| AEAD integrity limit | `68719476736` | sealed open failures | protocol value | [t9 Packet protection](#t9) |
+
+<a id="t9.4"></a>
+### t9.4. Vectors
+
+The vectors use these fixed inputs. The application protocol id is
+`0x1122334455667788`. The connection salt is
+`53 41 4c 54 30 30 30 31` and the session nonce is
+`4e 4f 4e 43 45 30 30 31`. The client ephemeral public key is
+`3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0 fd a1 4c be 24`
+and the server ephemeral public key is
+`48 9c eb ba 7a 16 6c 61 98 35 fe 12 ee dc 58 1d bf c1 b3 6d e1 0c 83 0e 4f 0b c1 c4 87 34 86 4b`.
+The handshake client-to-server key is
+`4b 4d 63 0c db 00 c8 7b 73 d4 6b 34 21 d8 91 c2 4c fd 0a b9 28 c9 87 51 5a ab bb d7 8b e2 73 50`;
+the handshake server-to-client key is
+`86 04 5b 5f 8e 2d a9 4d bf 44 5a 65 80 86 d6 3d 50 b7 3b 1e 66 6c 76 c4 95 2f ab f9 98 c0 c0 e0`;
+the session client-to-server key is
+`ae dc 46 56 e3 f8 2b 7e 87 91 27 95 88 c7 f6 20 4e d2 c1 bc 0c 17 ba 97 79 c0 4e 3b 1c 9e f4 3c`;
+the session server-to-client key is
+`3c 63 7e 37 b1 01 b8 2c 9e da a9 a3 b5 5a 31 a8 a3 bc 10 8f 13 3b a0 5e 8a 41 6b 3c fb 73 0e f0`.
+
+```vector t9.challenge-ad
+input: the fixed inputs, packet type 2, with the client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.challenge-sealed
+input: the challenge associated data, the handshake server-to-client key, sequence 1, plaintext the server ephemeral public key (32 bytes)
+68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb b2 91
+20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32 94 7b
+3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7 6f 88
+```
+
+```vector t9.denied-ad
+input: the fixed inputs and packet type 1, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 01 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.denied-sealed
+input: the denied associated data, the handshake server-to-client key, sequence 2, empty plaintext
+e7 12 b8 8e e2 36 cf d9 05 38 7c bc 0f 9d ee 13
+```
+
+```vector t9.response-ad
+input: the fixed inputs, packet type 3, with the client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 03 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.response-sealed
+input: the response associated data, the handshake client-to-server key, sequence 1, plaintext 24 zero bytes
+9c 08 60 98 96 b9 d4 05 d5 14 9e 1e d9 da e4 dc
+2b d2 4a e4 cd a1 93 10 5c bf a9 ce 74 61 b3 97
+ce 4b 50 c0 1b 2f 8f 7e
+```
+
+```vector t9.keepalive-ad
+input: the fixed inputs and packet type 4, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 04 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.keepalive-sealed
+input: the keep-alive associated data, the session server-to-client key, sequence 1, plaintext the keep-alive block and fields
+d2 48 d8 10 b0 69 78 85 27 a0 51 d0 6e bc ea da
+25 a6 66 38 35 c4 71 ac 21 66 38 3b a8 42 1c
+```
+
+```vector t9.payload-ad
+input: the fixed inputs and packet type 5, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 05 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.payload-sealed
+input: the payload associated data, the session client-to-server key, sequence 3, plaintext the ack block and the five bytes 68 65 6c 6c 6f
+e3 e6 e1 ab c8 d7 33 fe f9 d5 e1 e2 af 0d f9 49
+ae 6d 5e bc aa df f1 94 89 74 4c b4
+```
+
+```vector t9.disconnect-ad
+input: the fixed inputs and packet type 6, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 06 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.disconnect-sealed
+input: the disconnect associated data, the session client-to-server key, sequence 4, plaintext seven zero bytes
+e4 db 4c 3d 2d 40 30 39 31 ba 13 55 32 5b fd 8f
+2f 3a 2b 31 75 bd a2
+```
+
+```vector t9.ack-ad
+input: the fixed inputs and packet type 8, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 08 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.ack-sealed
+input: the ack associated data, the session client-to-server key, sequence 5, plaintext the ack block
+cb ac a3 98 67 d9 e7 2a 0e 3f b6 04 85 51 28 e1
+5b d4 b1 18 bd d5 96 38 f7 9a e2
+```
+
+```vector t9.fragment-ad
+input: the fixed inputs and packet type 9, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 09 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.fragment-sealed
+input: the fragment associated data, the session client-to-server key, sequence 6, plaintext the ack block and fragment header and data
+4d 11 93 54 55 cd 7b df e3 97 35 05 ee 20 42 14
+33 37 a0 b1 eb a2 ce d3 53 f8 dd b3 78 a4 e5 ed
+ff 7f
+```
+
+The tamper vectors below are the challenge associated data with one field
+altered. No sealed vector opens under any of them.
+
+```vector t9.version-tampered
+input: the challenge associated data with the version low byte changed from 93 to 92
+92 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.protocol-id-tampered
+input: the challenge associated data with the protocol id low byte changed from 88 to 89
+93 1a 7c 4e 89 77 66 55 44 33 22 11 02 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.packet-type-tampered
+input: the challenge associated data with the packet type changed from 2 to 3
+93 1a 7c 4e 88 77 66 55 44 33 22 11 03 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.connection-salt-tampered
+input: the challenge associated data with the connection salt first byte changed from 53 to 52
+93 1a 7c 4e 88 77 66 55 44 33 22 11 02 52 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.client-ephemeral-tampered
+input: the challenge associated data with the client ephemeral public key first byte changed from 3a to 3b
+93 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+54 30 30 30 31 3b 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
 
 <a id="t10"></a>
 ## t10. Receive processing
 
-Status: pending
+A client MUST drop a datagram whose source is not the server it dialed
+before applying this list. A client protocol call with insufficient output
+capacity MUST be refused before this list and MUST increment
+`RECEIVE_CURSOR_TOO_SMALL`; it does not increment `PACKETS_RECEIVED`.
+A receiver MUST process every datagram that reaches this list through the
+ordered checks below. Each check MUST reject exactly the packets named for
+it and MUST increment exactly the counter named for it in
+[t18 Error handling and counters](#t18). A receiver MUST NOT examine a packet
+beyond the first check that rejects it. The list is the same for both ends;
+a row marked server or client applies only at that end.
 
-Scope: the receiver's ordered checks for every packet, from prefilter to
-dispatch, with the counter each refusal increments.
+1. A receiver MUST count the datagram as `PACKETS_RECEIVED` on entry to this
+   list, before any check.
+2. A receiver MUST apply the prefilter of [t5 Prefilter header](#t5). A
+   datagram shorter than the prefilter header is `PREFILTER_TOO_SHORT`; a
+   datagram longer than the receive ceiling is `PREFILTER_TOO_LARGE`; an
+   epoch this receiver does not hold is `PREFILTER_WRONG_EPOCH`; a filter
+   value that does not compare is `PREFILTER_WRONG_VALUE`. The comparison is
+   constant time when the epoch is nonzero.
+3. A receiver MUST reject a packet type at or above the first reserved
+   packet type as `RESERVED_TYPE`.
+4. A server MUST reject the connection denied, connection challenge and
+   connection cookie types as `WRONG_DIRECTION`. A client MUST reject the
+   connection request and connection response types as `WRONG_DIRECTION`.
+   These types travel in one direction only.
+5. A server MUST pass a connection request to
+   [t12 Handshake: server](#t12). A client MUST apply the connection cookie
+   state gate before checking its exact wire size, then pass an accepted cookie
+   to [t11 Handshake: client](#t11). A cookie in any other client state is
+   `CLIENT_COOKIE_WRONG_STATE`; a cookie in an accepted state with the wrong
+   exact size is `CLIENT_COOKIE_WRONG_SIZE`. Connection requests and cookies
+   carry no sealed data.
+6. For every other type with both checks, a receiver MUST apply the type's
+   size check before its state gate and before any decryption. A packet that
+   fails the size check MUST increment the type's `WRONG_SIZE` counter and
+   MUST NOT increment the integrity-failure count or a `DID_NOT_OPEN` counter.
+7. A receiver MUST apply each remaining type's state gate. A packet the
+   current state does not process is dropped with that type's `WRONG_STATE`
+   counter.
+8. A server MUST look up the connection mapping for the source address. A
+   packet with no mapping is `NO_MAPPING`. A client MUST drop a datagram
+   whose source is not the server it dialed, before the list above.
+9. A receiver MUST reconstruct the 64-bit sequence from the 32-bit wire
+   field and the highest sequence already opened. A reconstructed sequence
+   of zero is `ZERO_SEQUENCE`.
+10. For the session types, a receiver MUST reject a sequence already marked
+    received as `ALREADY_RECEIVED`, before decryption. The handshake types
+    have no replay test.
+11. For the connection denied and connection challenge types, the clear
+    session nonce sits between the sequence and the sealed data; a client
+    MUST derive handshake keys into temporary storage and MUST commit them
+    only after the open succeeds.
+12. A receiver MUST open the sealed data with the key for the type and the
+    associated data of [t9 Packet protection](#t9). A packet that does not
+    open, or whose expected handshake plaintext size is not exact, is
+    `DID_NOT_OPEN`; this check alone increments the integrity-failure count
+    that [t14 Replay protection](#t14) bounds.
+13. A server MUST reject a session packet whose mapping has no assigned
+    slot as `NOT_CONNECTED`, after the open and before marking the sequence.
+14. For the session types, a receiver MUST mark the sequence received and
+    then advance the most recent sequence.
+15. For session types, a receiver MUST read and validate the ack block at
+    the front of the opened data as [t15 Acknowledgement](#t15) specifies. A
+    malformed block is `BAD_ACK_BLOCK`; the type data behind it is not
+    examined. Handshake types have no ack block.
+16. For session types, a receiver MUST check the opened size less the ack
+    block against the type. A mismatch is `WRONG_OPENED_SIZE`.
+17. Before applying the ack block, a client MUST validate the index and
+    slot count in a keep-alive. The slot count MUST be from 1 through the
+    maximum client slot count, and the index MUST be less than the slot count.
+    An invalid value is `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+18. After the session checks pass, a receiver MUST apply the ack block's
+    delivery information and refresh the connection's receive time, then
+    perform the type-specific processing. A type-specific refusal increments
+    its counter; a fragment refusal does not undo the ack information or
+    receive-time refresh, as [t16 Fragmentation and reassembly](#t16)
+    specifies. Handshake types follow their type-specific processing after
+    their checks pass.
+
+| Step | Check | Position | Refusal counter |
+|---|---|---|---|
+| 1 | packet counted | entry | |
+| 2 | prefilter length, epoch, value | before decryption | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE`, `PREFILTER_WRONG_EPOCH`, `PREFILTER_WRONG_VALUE` |
+| 3 | reserved type | before decryption | `RESERVED_TYPE` |
+| 4 | direction | before decryption | `WRONG_DIRECTION` |
+| 5 | client cookie state gate | before exact cookie size | `CLIENT_COOKIE_WRONG_STATE` |
+| 5a | client cookie exact size | after cookie state gate | `CLIENT_COOKIE_WRONG_SIZE` |
+| 6 | wire size for each other type | before its state gate and before decryption | the type's `WRONG_SIZE` |
+| 7 | remaining state gates | before decryption | the type's `WRONG_STATE` |
+| 8 | server mapping | before decryption | `NO_MAPPING` |
+| 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
+| 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
+| 12 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
+| 13 | server slot gate | after decryption, before the replay mark | `NOT_CONNECTED` |
+| 15 | session ack block | after decryption | `BAD_ACK_BLOCK` |
+| 16 | session opened size less the ack block | after decryption | `WRONG_OPENED_SIZE` |
+| 17 | client keep-alive index and slot count | after decryption, before ack application | `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE` |
+| 18 | type-specific processing | after session ack application, or after handshake checks | the type's own counters |
+
+The fixed sizes of the handshake types, the minimum wire sizes of the session
+types, and the response padding are:
+
+| Name | Value | Unit | Kind | Defined in |
+|---|---|---|---|---|
+| receive connection request wire size | `710` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection denied wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection challenge wire size | `66` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection response wire size | `50` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection cookie wire size | `38` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection keep-alive minimum wire size | `41` | bytes | size | [t8 Packet formats](#t8) |
+| connection payload minimum wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| connection disconnect minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
+| connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
+| connection payload fragment minimum wire size | `40` | bytes | size | [t8 Packet formats](#t8) |
+| connection response padding | `24` | bytes | size | [t8 Packet formats](#t8) |
+| maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
+
+A session packet's total wire size is its minimum or larger, up to the
+receive ceiling. The payload's opened data holds at least one payload byte
+after the ack block.
+
+The vectors below name one malformed packet per refusal and the counter it
+fires. Each packet begins with the prefilter header of type, epoch and the
+test filter value, and each is truncated or altered at the step it tests.
+
+```vector t10.prefilter-too-short
+input: a connection payload packet truncated one byte below the prefilter header
+counter: PREFILTER_TOO_SHORT
+05 00 b7 59 01
+```
+
+```vector t10.prefilter-wrong-epoch
+input: a connection payload packet whose epoch is not a held generation
+counter: PREFILTER_WRONG_EPOCH
+05 01 b7 59 01 00
+```
+
+```vector t10.prefilter-wrong-value
+input: a connection payload packet whose filter value is not the receiver's
+counter: PREFILTER_WRONG_VALUE
+05 00 00 00 00 00
+```
+
+```vector t10.reserved-type
+input: a packet whose type is the first reserved packet type
+counter: RESERVED_TYPE
+0a 00 b7 59 01 00
+```
+
+```vector t10.server-wrong-direction
+input: a connection denied packet arriving at a server
+counter: WRONG_DIRECTION
+01 00 b7 59 01 00
+```
+
+```vector t10.client-session-wrong-size
+input: a connection keep-alive packet one byte below its minimum wire size
+counter: CLIENT_KEEP_ALIVE_WRONG_SIZE
+04 00 b7 59 01 00
+```
+
+```vector t10.prefilter-too-large
+input: a connection payload packet one byte above the receive ceiling
+counter: PREFILTER_TOO_LARGE
+05 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00
+```
+
+```vector t10.client-wrong-direction
+input: a connection request packet arriving at a client
+counter: WRONG_DIRECTION
+00 00 b7 59 01 00
+```
+
+```vector t10.client-cookie-state-before-size
+input: an undersized connection cookie at a client in a state that rejects cookies
+counter: CLIENT_COOKIE_WRONG_STATE
+07 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00
+```
+
+```vector t10.client-wrong-state
+input: a connection keep-alive packet at a client not in a session state
+counter: CLIENT_KEEP_ALIVE_WRONG_STATE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.server-no-mapping
+input: a connection keep-alive packet from an address with no mapping
+counter: KEEP_ALIVE_NO_MAPPING
+04 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00
+```
+
+```vector t10.server-not-connected
+input: a connection keep-alive packet for a mapping with no assigned slot
+counter: KEEP_ALIVE_NOT_CONNECTED
+04 00 b7 59 01 00 e8 03 00 00 2e 73 ac 3a 5d df
+e7 a5 8a f0 4a f3 97 9d f3 b7 56 9c a5 e6 86 63
+30 2e d1 bf d8 4e f9 ac 23
+```
+
+```vector t10.zero-sequence
+input: a connection keep-alive packet whose reconstructed sequence is zero
+counter: CLIENT_KEEP_ALIVE_ZERO_SEQUENCE
+04 00 b7 59 01 00 00 00 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.already-received
+input: a connection keep-alive packet whose sequence is already marked received
+counter: CLIENT_KEEP_ALIVE_ALREADY_RECEIVED
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.did-not-open
+input: a connection keep-alive packet sealed under a key the receiver does not hold
+counter: CLIENT_KEEP_ALIVE_DID_NOT_OPEN
+04 00 b7 59 01 00 e8 03 00 00 f8 c3 ad 9b 05 4e
+a2 d3 b5 79 df 29 48 34 2f ad 2d ca b4 05 1d 60
+e7 be f3 17 65 04 cf 34 2a
+```
+
+```vector t10.bad-ack-block
+input: a connection keep-alive packet whose ack block is malformed
+counter: CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK
+04 00 b7 59 01 00 e8 03 00 00 1b 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 c1 26 ae 3c ae 1b d1
+78 c4 a3 c6 ca 6f 48 a0 17
+```
+
+```vector t10.wrong-opened-size
+input: a connection keep-alive packet with nine type bytes after the ack block
+counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 c6 2e 2c 88 af c2 45
+4f 6f 62 77 03 4b 30 f3 49 2a
+```
+
+```vector t10.keep-alive-invalid-index
+input: a validly opened keep-alive whose client index equals its slot count
+counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8b 69 ab 93 07 a5 3c d6 11 13 7c 3d 36 90 4e
+d3 30 e5 ec f7 45 2e 8e 62
+```
+
+```vector t10.fragment-zero-payload-id
+input: a connection payload fragment packet naming payload id zero
+counter: FRAGMENT_ZERO_PAYLOAD_ID
+09 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a4 d2 ec a3 b0 d7 eb 0e af 4b
+9b b6 e3 94 bd 3b 5d 2c
+```
 
 <a id="t11"></a>
 ## t11. Handshake: client
 
-Status: pending
+The client is in exactly one of the states of the table below. A state number is signed: a negative state is how the last attempt or connection ended, and a non-negative state is a state the client acts in.
 
-Scope: the client states, with their values, and the client's state table
-from requesting a cookie to connected.
+1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0). In every other state, a connect token MUST be ignored and the state MUST NOT change.
+2. A connect token accepted in disconnected (0) MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
+3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set, otherwise the IPv4 address.
+4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
+5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
+6. While the client is in requesting cookie (1), sending connection request (2) or sending connection response (3), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in connected (4).
+7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t3 Constants and registries](#t3) until a packet advances it or a deadline ends the attempt. A client MUST NOT send a packet because a packet arrived.
+8. In a positive state below connected (4), a client that has received no packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5).
+9. A negative state MUST persist until the client disconnects. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0) the client MAY connect again with a new token.
+
+The state numbers:
+
+| Name | Value | Meaning |
+|---|---|---|
+| connect token expired | `-7` | the attempt ended at the token's lifetime |
+| invalid connect token | `-6` | the attempt never began: the token failed a pre-send check |
+| connection timed out | `-5` | an established connection received nothing for the timeout |
+| connection response timed out | `-4` | no answer to the response for the timeout |
+| connection request timed out | `-3` | no answer to the request for the timeout |
+| cookie request timed out | `-2` | no answer to the first request for the timeout |
+| connection denied | `-1` | the server denied the attempt |
+| disconnected | `0` | the client holds no connection and may connect |
+| requesting cookie | `1` | the client waits for a cookie |
+| sending connection request | `2` | the client waits for a challenge or a denial |
+| sending connection response | `3` | the client waits for the server's first session packet |
+| connected | `4` | the connection is established |
+
+<a id="t11.1"></a>
+### t11.1. Cookie processing
+
+A connection cookie packet MUST be processed in requesting cookie (1) and sending connection request (2) and MUST be ignored in every other state. A client MUST refuse a packet whose size is not the cookie packet size of [t8 Packet formats](#t8), and MUST ignore one whose echoed connection salt is not the attempt's salt. A client that accepts a cookie MUST store its last 24 bytes, replacing any cookie already stored, and MUST send nothing in response. In requesting cookie (1) the accepted cookie MUST move the client to sending connection request (2); in sending connection request (2) the state MUST NOT change.
+
+<a id="t11.2"></a>
+### t11.2. Challenge and denial processing order
+
+A connection challenge packet MUST be processed only in sending connection request (2); in every other state it MUST be ignored. A connection denied packet MUST be processed in sending connection request (2) and sending connection response (3); in every other state it MUST be ignored.
+
+Each packet MUST be checked in this order:
+
+1. Its size MUST be the packet's wire size of [t8 Packet formats](#t8). A client MUST refuse a wrong-size packet as WRONG_SIZE before any state, sequence or cryptographic check, MUST NOT count an integrity failure for it, and MUST NOT change its state.
+2. Its sequence MUST be nonzero; a sequence of zero MUST be refused with no state change.
+3. In sending connection request (2), a challenge MUST derive the handshake keys from the carried session nonce and open under them. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
+4. An accepted challenge MUST derive the four connection keys from the ephemeral exchange, MUST erase the ephemeral secret, MUST build the response once, and MUST move to sending connection response (3).
+5. A denial in sending connection request (2) MUST open under handshake keys derived from its carried session nonce; a denial in sending connection response (3) MUST open under the handshake server-to-client key the client already holds. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
+6. An accepted denial MUST release the connection state and MUST move to connection denied (-1).
+
+The response of step 4 MUST be retransmitted byte for byte; a later challenge MUST NOT produce a second response.
+
+<a id="t11.3"></a>
+### t11.3. Session processing before connected
+
+A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be delivered to the application. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0).
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| disconnected (0) | connect | token invalid | do not begin an attempt | invalid connect token (-6) |
+| disconnected (0) | connect | token expired | do not begin an attempt | connect token expired (-7) |
+| disconnected (0) | connect | token valid | fresh salt and ephemeral keypair; sequences at one | requesting cookie (1) |
+| disconnected (0) | any other event | | ignore | disconnected (0) |
+| any negative state | disconnect | | per-connection reset | disconnected (0) |
+| any negative state | connect | | ignore | unchanged |
+| any negative state | any other event | | ignore | unchanged |
+| requesting cookie (1) | update, send due | | send request with a zero return cookie | requesting cookie (1) |
+| requesting cookie (1) | cookie | size correct, salt matches | store the last 24 bytes | sending connection request (2) |
+| requesting cookie (1) | cookie | size wrong or salt differs | ignore | requesting cookie (1) |
+| requesting cookie (1) | timeout | no packet received for the token timeout | | cookie request timed out (-2) |
+| requesting cookie (1) | total deadline | token lifetime elapsed | | connect token expired (-7) |
+| sending connection request (2) | update, send due | | send request with the stored cookie | sending connection request (2) |
+| sending connection request (2) | cookie | size correct, salt matches | replace the stored cookie | sending connection request (2) |
+| sending connection request (2) | cookie | size wrong or salt differs | ignore | sending connection request (2) |
+| sending connection request (2) | challenge | size correct, opens | derive keys; erase the ephemeral secret; build the response | sending connection response (3) |
+| sending connection request (2) | challenge | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
+| sending connection request (2) | challenge | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
+| sending connection request (2) | denied | size correct, opens | release the connection state | connection denied (-1) |
+| sending connection request (2) | denied | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
+| sending connection request (2) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
+| sending connection request (2) | timeout | no packet received for the token timeout | | connection request timed out (-3) |
+| sending connection request (2) | total deadline | token lifetime elapsed | | connect token expired (-7) |
+| sending connection response (3) | update, send due | | send the stored response byte for byte | sending connection response (3) |
+| sending connection response (3) | keep-alive | opens | store the client index and the slot count | connected (4) |
+| sending connection response (3) | payload | opens | deliver the payload | sending connection response (3) |
+| sending connection response (3) | denied | size correct, opens | release the connection state | connection denied (-1) |
+| sending connection response (3) | denied | size wrong | refuse as WRONG_SIZE | sending connection response (3) |
+| sending connection response (3) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection response (3) |
+| sending connection response (3) | disconnect | opens | release the connection state | disconnected (0) |
+| sending connection response (3) | timeout | no packet received for the token timeout | | connection response timed out (-4) |
+| sending connection response (3) | total deadline | token lifetime elapsed | | connect token expired (-7) |
+| connected (4) | update, send due | | send a keep-alive with the client index and the slot count | connected (4) |
+| connected (4) | session packet | opens | refresh the last-received time; deliver a payload; apply an ack block | connected (4) |
+| connected (4) | disconnect | opens | release the connection state | disconnected (0) |
+| connected (4) | timeout | no packet received for the token timeout | | connection timed out (-5) |
+
+An event a state does not list is ignored in that state with no state change. A packet that fails a guard is refused and counted, with no state change except where the table states one.
+
+```vector t11.client-transcript
+input: the frozen connect token of 768 bytes and its protocol id
+input: connection salt 53 41 4c 54 30 30 30 31
+input: the published client ephemeral keypair and server ephemeral keypair
+input: the published session nonce 4e 4f 4e 43 45 30 30 31
+input: updates at 1000.0, 1000.1, 1000.2 and 1000.31 seconds; the challenge is lost
+input: bytes 1 to 710 are the first request, 711 to 1420 the request with the cookie, 1421 to 2130 the request retransmitted after the lost challenge, 2131 to 2180 the response
+state after packet 1: requesting cookie (1)
+state after packet 2: sending connection request (2)
+state after packet 3: sending connection request (2), the challenge lost
+state after packet 4: sending connection response (3)
+00 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 53 41
+4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
+9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
+c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+22 11 00 f9 ac 68 00 00 00 00 2c fa ac 68 00 00
+00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
+24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
+06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c b3
+10 fd d3 03 d6 aa d8 c7 90 0d fc 42 52 d9 4d 21
+34 f1 e6 e1 73 20 f4 c5 b1 bd 4f 28 79 da 3c e2
+f2 87 72 08 61 88 73 78 ed f0 1d e9 be fc 09 f1
+bf 01 fd 3d f1 9e 2a 79 e6 08 59 e8 96 34 6e b6
+0c 08 f6 86 72 1d 81 94 6e 78 1e 1a e2 c3 71 6a
+46 58 80 a3 a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c
+d3 67 17 76 6b 5b b1 38 69 83 8e cb 33 3d 9e eb
+10 42 bf 7a 7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f
+44 e4 de f4 36 66 64 2f f8 e6 f8 35 a5 f2 95 dd
+8d 7b f2 26 86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0
+5e 5b 09 92 7b 6a fa c3 ec 0f 00 50 8e 9d 43 31
+66 00 c6 b7 45 d6 db b9 c6 8f 12 d5 69 a1 95 73
+d4 60 ba 34 e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4
+e0 8d 52 03 bb bd 44 36 7e f8 9b cb b3 82 7f d8
+02 95 f2 b9 40 4c dd 29 79 e3 aa 17 51 3f f9 f4
+2b 67 06 24 8e a7 62 28 20 28 d4 fe 0c f7 11 56
+55 4f 26 bf 90 cb 2b fc fe f4 38 b5 e6 8a d2 50
+1f 9e 3b e2 4b c0 b3 36 51 ec 75 6f 60 f4 23 f3
+24 d9 03 23 ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7
+96 26 06 7f e7 f1 09 59 4a 80 3d 33 05 02 fe b0
+3f 61 e9 29 7e c1 1a ad eb cd 69 ba c0 bf d0 5c
+1c 5c 14 4a e2 3b cd 11 4c 35 32 2e 79 78 43 e9
+5c cb 8b c9 74 8f da 08 19 7c e6 d5 a1 0c 83 bc
+b0 eb 7f f4 71 d7 38 a7 42 f6 8f a3 eb 77 df ad
+d3 20 a1 1a 55 42 0e 3c cd 03 f1 5e fc 18 3a 5d
+d3 5c f8 65 7f a7 12 b7 c9 74 96 00 0e 6a 54 68
+d8 00 d4 9d 13 45 ce 18 5d c0 f7 bc 71 47 a9 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 6b 36 92 b4 9d 36 b7 a2 76 30
+33 40 ab 83 99 b9 85 61 ac 68 81 fc 7a a2 bb 60
+ff e0 77 32 ea 71 21 fe 50 44 eb b5 f5 3d be 76
+8b 80 0c 30 d7 53 70 eb 9b eb 49 14 ae 13 3d a6
+4e a6 b0 9e 76 0d 00 00 b7 59 01 00 2c fa ac 68
+00 00 00 00 0f b2 b2 8f 32 db d6 c9 eb 36 4f 57
+74 86 f3 e9 53 41 4c 54 30 30 30 31 3a 55 3d 74
+79 2d 72 7e fa 9b 9a 4c de 3d a1 ad 93 f1 a2 d0
+c0 9c b6 39 b1 a3 c0 fd a1 4c be 24 93 1a 7c 4e
+88 77 66 55 44 33 22 11 00 f9 ac 68 00 00 00 00
+2c fa ac 68 00 00 00 00 0a 00 00 00 01 cb 00 71
+0a 40 9c 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 3d 24 90 88 9d 37 4c 29 6f ab 1d
+57 70 cb 71 47 6a 06 f7 4e f2 f2 54 0c f2 21 5f
+76 14 f4 80 1c b3 10 fd d3 03 d6 aa d8 c7 90 0d
+fc 42 52 d9 4d 21 34 f1 e6 e1 73 20 f4 c5 b1 bd
+4f 28 79 da 3c e2 f2 87 72 08 61 88 73 78 ed f0
+1d e9 be fc 09 f1 bf 01 fd 3d f1 9e 2a 79 e6 08
+59 e8 96 34 6e b6 0c 08 f6 86 72 1d 81 94 6e 78
+1e 1a e2 c3 71 6a 46 58 80 a3 a5 f0 68 ed e0 b0
+39 cf 52 81 a9 7c d3 67 17 76 6b 5b b1 38 69 83
+8e cb 33 3d 9e eb 10 42 bf 7a 7b 8f 62 f9 cb b0
+20 dd bd a6 cb 5f 44 e4 de f4 36 66 64 2f f8 e6
+f8 35 a5 f2 95 dd 8d 7b f2 26 86 84 b2 a9 3e c1
+7a c8 fd c4 c4 f0 5e 5b 09 92 7b 6a fa c3 ec 0f
+00 50 8e 9d 43 31 66 00 c6 b7 45 d6 db b9 c6 8f
+12 d5 69 a1 95 73 d4 60 ba 34 e8 01 d7 44 d6 db
+6a 0a 01 bd 35 b4 e0 8d 52 03 bb bd 44 36 7e f8
+9b cb b3 82 7f d8 02 95 f2 b9 40 4c dd 29 79 e3
+aa 17 51 3f f9 f4 2b 67 06 24 8e a7 62 28 20 28
+d4 fe 0c f7 11 56 55 4f 26 bf 90 cb 2b fc fe f4
+38 b5 e6 8a d2 50 1f 9e 3b e2 4b c0 b3 36 51 ec
+75 6f 60 f4 23 f3 24 d9 03 23 ad c9 f6 c8 f1 76
+2b 02 ba 31 c7 e7 96 26 06 7f e7 f1 09 59 4a 80
+3d 33 05 02 fe b0 3f 61 e9 29 7e c1 1a ad eb cd
+69 ba c0 bf d0 5c 1c 5c 14 4a e2 3b cd 11 4c 35
+32 2e 79 78 43 e9 5c cb 8b c9 74 8f da 08 19 7c
+e6 d5 a1 0c 83 bc b0 eb 7f f4 71 d7 38 a7 42 f6
+8f a3 eb 77 df ad d3 20 a1 1a 55 42 0e 3c cd 03
+f1 5e fc 18 3a 5d d3 5c f8 65 7f a7 12 b7 c9 74
+96 00 0e 6a 54 68 d8 00 d4 9d 13 45 ce 18 5d c0
+f7 bc 71 47 a9 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 6b 36 92 b4
+9d 36 b7 a2 76 30 33 40 ab 83 99 b9 85 61 ac 68
+81 fc 7a a2 bb 60 ff e0 77 32 ea 71 21 fe 50 44
+eb b5 f5 3d be 76 8b 80 0c 30 d7 53 70 eb 9b eb
+49 14 ae 13 3d a6 4e a6 b0 9e 76 0d 00 00 b7 59
+01 00 2c fa ac 68 00 00 00 00 0f b2 b2 8f 32 db
+d6 c9 eb 36 4f 57 74 86 f3 e9 53 41 4c 54 30 30
+30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c de 3d
+a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0 fd a1 4c
+be 24 93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9
+ac 68 00 00 00 00 2c fa ac 68 00 00 00 00 0a 00
+00 00 01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 3d 24 90 88 9d
+37 4c 29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2
+f2 54 0c f2 21 5f 76 14 f4 80 1c b3 10 fd d3 03
+d6 aa d8 c7 90 0d fc 42 52 d9 4d 21 34 f1 e6 e1
+73 20 f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87 72 08
+61 88 73 78 ed f0 1d e9 be fc 09 f1 bf 01 fd 3d
+f1 9e 2a 79 e6 08 59 e8 96 34 6e b6 0c 08 f6 86
+72 1d 81 94 6e 78 1e 1a e2 c3 71 6a 46 58 80 a3
+a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c d3 67 17 76
+6b 5b b1 38 69 83 8e cb 33 3d 9e eb 10 42 bf 7a
+7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f 44 e4 de f4
+36 66 64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b f2 26
+86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b 09 92
+7b 6a fa c3 ec 0f 00 50 8e 9d 43 31 66 00 c6 b7
+45 d6 db b9 c6 8f 12 d5 69 a1 95 73 d4 60 ba 34
+e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d 52 03
+bb bd 44 36 7e f8 9b cb b3 82 7f d8 02 95 f2 b9
+40 4c dd 29 79 e3 aa 17 51 3f f9 f4 2b 67 06 24
+8e a7 62 28 20 28 d4 fe 0c f7 11 56 55 4f 26 bf
+90 cb 2b fc fe f4 38 b5 e6 8a d2 50 1f 9e 3b e2
+4b c0 b3 36 51 ec 75 6f 60 f4 23 f3 24 d9 03 23
+ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26 06 7f
+e7 f1 09 59 4a 80 3d 33 05 02 fe b0 3f 61 e9 29
+7e c1 1a ad eb cd 69 ba c0 bf d0 5c 1c 5c 14 4a
+e2 3b cd 11 4c 35 32 2e 79 78 43 e9 5c cb 8b c9
+74 8f da 08 19 7c e6 d5 a1 0c 83 bc b0 eb 7f f4
+71 d7 38 a7 42 f6 8f a3 eb 77 df ad d3 20 a1 1a
+55 42 0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c f8 65
+7f a7 12 b7 c9 74 96 00 0e 6a 54 68 d8 00 d4 9d
+13 45 ce 18 5d c0 f7 bc 71 47 a9 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 6b 36 92 b4 9d 36 b7 a2 76 30 33 40 ab 83
+99 b9 85 61 ac 68 81 fc 7a a2 bb 60 ff e0 77 32
+ea 71 21 fe 50 44 eb b5 f5 3d be 76 8b 80 0c 30
+d7 53 70 eb 9b eb 49 14 ae 13 3d a6 4e a6 b0 9e
+76 0d 03 00 b7 59 01 00 01 00 00 00 9c 08 60 98
+96 b9 d4 05 d5 14 9e 1e d9 da e4 dc 2b d2 4a e4
+cd a1 93 10 5c bf a9 ce 74 61 b3 97 ce 4b 50 c0
+1b 2f 8f 7e
+```
+The cookie moves the client from requesting cookie (1) to sending connection request (2); the lost challenge leaves it in sending connection request (2) until the retransmitted request draws the same challenge again; the accepted challenge moves it to sending connection response (3); the server's keep-alive moves it to connected (4).
 
 <a id="t12"></a>
 ## t12. Handshake: server
 
-Status: pending
+The server turns a connection request into an encryption mapping, and a connection response into a client slot. It answers only traffic that has cleared the rung that provoked the answer.
 
-Scope: cookie issue and validation, connection requests, the used-token
-history, encryption mappings, challenge and response, slot assignment, the
-server's state table.
+1. On a connection request, a server MUST apply the checks below in the order given, and MUST stop at the first that refuses.
+2. A server MUST ignore a request whose size is not the request wire size, whose version is not the protocol version, whose protocol id is not the server's, whose timeout is zero or negative without permission, whose address flags name no family, whose advertised address is not one this server serves, or whose server public key is not this server's. It MUST NOT answer such a request.
+3. A server MUST ignore a request from a source address that is already connected. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, and it MUST NOT create a second mapping or derive new keys for that address.
+4. A server MUST refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
+5. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
+6. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
+7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request from a source that has spent the failed-signature budget in the current window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`.
+8. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
+9. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
+10. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
+11. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
+12. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which traffic refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A server MUST count these removals apart.
+
+The policy values of this section are below. A value of `0` for the maximum token lifetime selects no limit.
+
+| Name | Value | Unit |
+|---|---|---|
+| token creation skew | `5` | seconds |
+| maximum token lifetime | `0` | seconds |
+| failed-signature source table | `64` | sources |
+
+The cookie lifetime, the cookie key rotation period and the used-token history
+capacity per slot are rows of [t3 Constants and registries](#t3). The handshake
+deadline is the server configuration field of
+[t2.3 Configuration surface](#t2.3). The handshake work budget, the
+failed-signature budget and window, and the half-open idle deadline are rows of
+[t17 Timing and defaults](#t17).
+
+The states of one source address are below. An event that a state does not
+list is ignored in that state.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| no mapping | request | any fixed-offset check fails | ignore, count the reason | no mapping |
+| no mapping | request | token expired | ignore, count | no mapping |
+| no mapping | request | token created in the future | ignore, count | no mapping |
+| no mapping | request | token lifetime too long | ignore, count | no mapping |
+| no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
+| no mapping | request | handshake work budget spent | ignore, count | no mapping |
+| no mapping | request | token used from another address | ignore, count | no mapping |
+| no mapping | request | failed-signature budget spent | ignore, count | no mapping |
+| no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
+| no mapping | request | client id connected | ignore, count | no mapping |
+| no mapping | request | no free slot | send connection denied | no mapping |
+| no mapping | request | all checks pass | create mapping, derive keys, send challenge | mapping |
+| mapping | request | source connected | resend the stored challenge | mapping |
+| mapping | request | source not connected | resend the stored challenge, refresh idle | mapping |
+| mapping | response | mapping has no connected slot, source or client id already connected | ignore, count | mapping |
+| mapping | response | no free slot | send connection denied | mapping |
+| mapping | response | free slot | bind token, assign slot, send keep-alive | connected |
+| mapping | handshake deadline reached | never refreshed | remove mapping, count | no mapping |
+| mapping | idle deadline reached | no traffic inside the timeout | remove mapping, count | no mapping |
+| connected | session packet | any | refresh idle | connected |
+| connected | disconnect | any | reset slot, remove mapping | no mapping |
+| connected | idle timeout | any | reset slot, remove mapping | no mapping |
+
+```vector t12.cookie
+input: source 198.51.100.7:56789
+input: connection salt 53414c5430303031, server time 1756166400, cookie lifetime 3
+input: cookie key 102030405060708090a0b0c0d0e0f0000f1f2f3f4f5f6f7f8f9fafbfcfdfeff
+07 00 b7 59 01 00 53 41 4c 54 30 30 30 31 03 f9
+ac 68 00 00 00 00 0f b2 b2 8f 32 db d6 c9 eb 36
+4f 57 74 86 f3 e9
+```
+
+```vector t12.stale-cookie
+input: source 203.0.113.44:40001
+input: connection salt 53414c5430303031, server time 1756166400
+input: return cookie expire 1756166300, a valid mac for this address and salt
+07 00 b7 59 01 00 53 41 4c 54 30 30 30 31 03 f9
+ac 68 00 00 00 00 59 2e 1f 69 fa 21 b0 74 4b 92
+09 f7 9a 33 94 fb
+```
+
+```vector t12.challenge
+input: connection salt 53414c5430303031, session nonce 4e4f4e4345303031
+input: token keys 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20 and a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: server ephemeral public key 489cebba7a166c619835fe12eedc581dbfc1b36de10c830e4f0bc1c48734864b
+input: client ephemeral public key 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24
+input: protocol id 1122334455667788, filter value b7590100, sequence 1
+02 00 b7 59 01 00 01 00 00 00 4e 4f 4e 43 45 30
+30 31 68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb
+b2 91 20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32
+94 7b 3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7
+6f 88
+```
+
+```vector t12.keep-alive
+input: connection salt 53414c5430303031, session nonce 4e4f4e4345303031
+input: the ephemeral keypairs whose public keys are 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24 and 489cebba7a166c619835fe12eedc581dbfc1b36de10c830e4f0bc1c48734864b
+input: client index 0, max_clients 4, protocol id 1122334455667788, filter value b7590100, sequence 1
+input: an empty receive replay state, so the ack block is the minimum
+04 00 b7 59 01 00 01 00 00 00 d2 48 d8 10 b0 69
+78 86 27 a0 51 3c 6d bc ea 6d 28 2c 39 1b b9 28
+8e fb 4c 5d ba 9c 70 72 4b
+```
+
+```vector t12.token-created-in-future
+input: the request of [t8 Packet formats](#t8)
+input: signed create timestamp 1756166406, expire 1756166700, server time 1756166400
+input: the return cookie is valid for the source and connection salt
+00 00 b7 59 01 00 03 f9 ac 68 00 00 00 00 0f b2
+b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9 53 41
+4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
+9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
+c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+22 11 06 f9 ac 68 00 00 00 00 2c fa ac 68 00 00
+00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
+24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
+06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c 34
+e4 2d 4a f5 ef 94 a0 7a 3a 84 20 1b 88 9d 4c d1
+a7 43 cb 27 b1 1b 6a 10 43 8a 8f eb 8e 58 47 d5
+da 88 97 83 41 4a 57 bb 78 b0 11 46 db 8f 9a 3f
+0c bd b6 0f 45 ee cb e3 8e a0 a7 2c ec 1b 6b 42
+e3 4a fd 6e fb 43 6d 00 34 5c 40 4c 4d e3 92 57
+86 d2 59 cc 06 b1 23 9e 25 9c a8 eb 13 7f 93 49
+19 1a 21 1c a7 f0 17 04 ae 96 dd d5 2c 86 e1 69
+34 78 9b 7c 3a 07 74 d0 88 e0 35 28 a4 af a2 da
+c5 aa 04 d2 41 80 59 30 ca 24 ff 62 b9 41 7c 1e
+b7 f3 62 48 71 75 57 ad 34 0a 1a 21 11 eb 1f 6b
+5b 71 ab ab 8f 60 44 45 0e 18 00 58 98 b6 88 6f
+8b aa 2d e5 bf 46 1e e4 f9 b3 26 38 73 2e 4f 4d
+9e a8 37 61 de a2 a1 73 c2 e7 4f 13 83 bb 45 09
+26 b3 cd 38 89 ef 3b 4d d3 d8 4f b8 5a ad 0a 12
+e5 a7 7b e7 01 40 2d 52 07 05 78 41 e3 58 89 d9
+9f 82 43 09 bf 6b 60 e2 40 3c 77 16 53 be ac 7b
+23 68 00 70 fa f4 a9 19 5e 31 69 fb 4d d8 36 91
+b7 7e 19 bf a6 51 03 42 21 6a 03 49 39 1e 2e 9c
+c7 c9 68 b0 16 63 7d 9f 8a e4 9c 24 52 8a 35 75
+42 ae c0 1e f8 32 4a 94 6a f6 ac d6 15 6b 9c 17
+7f 06 cf 3b 82 9b fc e6 0e c0 09 d5 79 2d 16 2e
+6d 9b 58 85 2d 11 b4 df 6c 62 3a 1d 39 3a e3 15
+c2 46 ed 69 60 57 f4 f8 d7 b9 18 af 57 43 1a 7e
+c5 0c dd 40 aa 72 bf ed 55 c0 cf 4a a8 c9 18 8b
+d9 4c 05 63 fe 96 fe cc 32 27 7a bf cc 8b fb 18
+d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
+4d 80 76 ed 82 74 32 f3 3d 0c f7 3b a8 81 af 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 11 9e b3 02 5c ab 63 a6 65 63
+5d 30 d7 73 5c 6f 88 9e e2 1c eb 7d 8c 7e 1e 9f
+53 f2 26 e8 5f b4 92 ed 6b d3 43 f8 51 92 b3 91
+d2 fe ff 81 9e ea 88 f4 02 6e ba 4b cf a8 f0 1c
+b7 a1 ab c4 74 09
+```
+
+```vector t12.token-lifetime-too-long
+input: the request of [t8 Packet formats](#t8)
+input: signed create timestamp 1756166300, expire 1756167100, server maximum token lifetime 600
+input: the return cookie is valid for the source and connection salt
+00 00 b7 59 01 00 03 f9 ac 68 00 00 00 00 0f b2
+b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9 53 41
+4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
+9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
+c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+22 11 9c f8 ac 68 00 00 00 00 bc fb ac 68 00 00
+00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
+24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
+06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c 34
+e4 2d 4a f5 ef 94 a0 7a 3a 84 20 1b 88 9d 4c d1
+a7 43 cb 27 b1 1b 6a 10 43 8a 8f eb 8e 58 47 cc
+fb b6 a7 54 90 8b 0c e8 c7 d8 45 f4 91 33 be 3f
+0c bd b6 0f 45 ee cb e3 8e a0 a7 2c ec 1b 6b d2
+e2 4a fd 6e fb 43 6d 00 34 5c 40 4c 4d e3 92 57
+86 d2 59 cc 06 b1 23 9e 25 9c a8 eb 13 7f 93 49
+19 1a 21 1c a7 f0 17 04 ae 96 dd d5 2c 86 e1 69
+34 78 9b 7c 3a 07 74 d0 88 e0 35 28 a4 af a2 da
+c5 aa 04 d2 41 80 59 30 ca 24 ff 62 b9 41 7c 1e
+b7 f3 62 48 71 75 57 ad 34 0a 1a 21 11 eb 1f 6b
+5b 71 ab ab 8f 60 44 45 0e 18 00 58 98 b6 88 6f
+8b aa 2d e5 bf 46 1e e4 f9 b3 26 38 73 2e 4f 4d
+9e a8 37 61 de a2 a1 73 c2 e7 4f 13 83 bb 45 09
+26 b3 cd 38 89 ef 3b 4d d3 d8 4f b8 5a ad 0a 12
+e5 a7 7b e7 01 40 2d 52 07 05 78 41 e3 58 89 d9
+9f 82 43 09 bf 6b 60 e2 40 3c 77 16 53 be ac 7b
+23 68 00 70 fa f4 a9 19 5e 31 69 fb 4d d8 36 91
+b7 7e 19 bf a6 51 03 42 21 6a 03 49 39 1e 2e 9c
+c7 c9 68 b0 16 63 7d 9f 8a e4 9c 24 52 8a 35 75
+42 ae c0 1e f8 32 4a 94 6a f6 ac d6 15 6b 9c 17
+7f 06 cf 3b 82 9b fc e6 0e c0 09 d5 79 2d 16 2e
+6d 9b 58 85 2d 11 b4 df 6c 62 3a 1d 39 3a e3 15
+c2 46 ed 69 60 57 f4 f8 d7 b9 18 af 57 43 1a 7e
+c5 0c dd 40 aa 72 bf ed 55 c0 cf 4a a8 c9 18 8b
+d9 4c 05 63 fe 96 fe cc 32 27 7a bf cc 8b fb 18
+d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
+4d 80 76 ed 82 74 32 f3 3d 0c f7 3b a8 81 af 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 6e a4 ba 25 9d 89 d7 0d 3c bd
+35 1f 4d bf 00 83 89 dd 5d e9 0f 7a 6e e4 01 a6
+3c 32 20 d0 3e d6 22 ec 66 a6 3e df a2 93 4a ef
+1d b0 9d 03 06 5e 5c f5 5a 57 f8 4e a7 ba 39 b1
+55 04 96 f2 aa 05
+```
+
+
+
+
+```vector t12.token-expired
+input: the request of [t8 Packet formats](#t8)
+input: signed create timestamp 1756166300, expire 1756166350, server time 1756166400
+input: the return cookie is valid for the source and connection salt
+00 00 b7 59 01 00 03 f9 ac 68 00 00 00 00 0f b2
+b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9 53 41
+4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
+9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
+c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+22 11 9c f8 ac 68 00 00 00 00 ce f8 ac 68 00 00
+00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
+24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
+06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c 34
+e4 2d 4a f5 ef 94 a0 7a 3a 84 20 1b 88 9d 4c d1
+a7 43 cb 27 b1 1b 6a 10 43 8a 8f eb 8e 58 47 08
+df eb b3 86 fe 9d 32 82 32 59 14 c7 92 00 5b 3f
+0c bd b6 0f 45 ee cb e3 8e a0 a7 2c ec 1b 6b a0
+e1 4a fd 6e fb 43 6d 00 34 5c 40 4c 4d e3 92 57
+86 d2 59 cc 06 b1 23 9e 25 9c a8 eb 13 7f 93 49
+19 1a 21 1c a7 f0 17 04 ae 96 dd d5 2c 86 e1 69
+34 78 9b 7c 3a 07 74 d0 88 e0 35 28 a4 af a2 da
+c5 aa 04 d2 41 80 59 30 ca 24 ff 62 b9 41 7c 1e
+b7 f3 62 48 71 75 57 ad 34 0a 1a 21 11 eb 1f 6b
+5b 71 ab ab 8f 60 44 45 0e 18 00 58 98 b6 88 6f
+8b aa 2d e5 bf 46 1e e4 f9 b3 26 38 73 2e 4f 4d
+9e a8 37 61 de a2 a1 73 c2 e7 4f 13 83 bb 45 09
+26 b3 cd 38 89 ef 3b 4d d3 d8 4f b8 5a ad 0a 12
+e5 a7 7b e7 01 40 2d 52 07 05 78 41 e3 58 89 d9
+9f 82 43 09 bf 6b 60 e2 40 3c 77 16 53 be ac 7b
+23 68 00 70 fa f4 a9 19 5e 31 69 fb 4d d8 36 91
+b7 7e 19 bf a6 51 03 42 21 6a 03 49 39 1e 2e 9c
+c7 c9 68 b0 16 63 7d 9f 8a e4 9c 24 52 8a 35 75
+42 ae c0 1e f8 32 4a 94 6a f6 ac d6 15 6b 9c 17
+7f 06 cf 3b 82 9b fc e6 0e c0 09 d5 79 2d 16 2e
+6d 9b 58 85 2d 11 b4 df 6c 62 3a 1d 39 3a e3 15
+c2 46 ed 69 60 57 f4 f8 d7 b9 18 af 57 43 1a 7e
+c5 0c dd 40 aa 72 bf ed 55 c0 cf 4a a8 c9 18 8b
+d9 4c 05 63 fe 96 fe cc 32 27 7a bf cc 8b fb 18
+d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
+4d 80 76 ed 82 74 32 f3 3d 0c f7 3b a8 81 af 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 b2 89 10 2e ed 08 cc 04 fa f6
+3d b4 bc fe 50 bd 70 e8 ef 89 80 a3 75 9f 79 f5
+5d 90 ef 7c 76 82 25 64 c4 01 68 1b 65 ff 37 81
+c6 cb 4d 2b e9 6e 69 da dc 39 95 9d d6 7f 85 ea
+f8 24 2b 06 9d 06
+```
+
 
 <a id="t13"></a>
 ## t13. Session: keep-alive, timeout, disconnect, slot reset
 
-Status: pending
+A connection enters the session when the server assigns its slot and sends
+the first keep-alive. It ends by a deliberate disconnect by either endpoint,
+by either endpoint's timeout, or by the server's stop.
 
-Scope: keep-alive generation, connection timeout from the token, the
-redundant disconnect, slot reset and what a reset clears.
+1. An endpoint MUST generate keep-alives as
+   [t13.1 Keep-alive generation](#t13.1) says, paced by elapsed time at the
+   `send rate` row of [t3 Constants and registries](#t3).
+2. An endpoint MUST refresh the connection's idle clock when it accepts an
+   opened session packet from the peer, whatever the packet type.
+3. Every path that ends a connection MUST run exactly one reset on each side
+   ([t13.4 Slot reset](#t13.4)).
+4. An endpoint MUST ignore a session event in a state whose row of the state
+   table does not list it.
+
+The table is one endpoint's view. `sending connection response` is a client
+state; a server holds a slot from the first keep-alive it sends.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| connected | keep-alive interval elapsed | this endpoint is a server, and no keep-alive it sent has been acknowledged | send a keep-alive and stamp the keep-alive clock | connected |
+| connected | keep-alive interval elapsed | the interval has elapsed since the last send of anything, and this endpoint is a client or a keep-alive has been acknowledged | send a keep-alive | connected |
+| connected | any session packet sent | | stamp the send clock | connected |
+| connected | any session packet accepted from the peer | | refresh the idle clock | connected |
+| connected | idle timeout elapsed | the timeout is positive, and no packet has been accepted for the timeout | reset | disconnected |
+| connected | local disconnect | | send the redundant disconnect burst ([t13.3 Disconnect](#t13.3)) and reset | disconnected |
+| connected | disconnect opened | | reset | disconnected |
+| sending connection response | keep-alive opened | | store the client index and the client slot count, and refresh the idle clock | connected |
+| sending connection response | disconnect opened | | reset | disconnected |
+| sending connection response | local disconnect | | send the redundant disconnect burst ([t13.3 Disconnect](#t13.3)) and reset | disconnected |
+| disconnected | connection established | | assign the slot and send the first keep-alive | connected |
+
+<a id="t13.1"></a>
+### t13.1. Keep-alive generation
+
+A keep-alive is a sealed session packet of type `connection keep-alive packet` ([t3 Constants and registries](#t3)). Its type data names the client
+index and the client slot count.
+
+1. A server MUST send a keep-alive whenever the send rate interval has
+   elapsed since it last sent that peer a keep-alive, until a keep-alive it
+   sent to that peer has been acknowledged. Ordinary traffic MUST NOT
+   suppress this keep-alive.
+2. A server MUST send a keep-alive whenever the send rate interval has
+   elapsed since it last sent that peer anything, once a keep-alive it sent
+   to that peer has been acknowledged. Ordinary traffic suppresses this
+   keep-alive, which appears only while the connection is otherwise idle.
+3. A client in `connected` MUST send a keep-alive whenever the send rate
+   interval has elapsed since it last sent that peer anything. It keeps no
+   acknowledgement latch, so its own traffic always suppresses its
+   keep-alives. A client MUST NOT send a keep-alive in any other state.
+
+A client that receives a keep-alive in `sending connection response` MUST
+store the client index and the client slot count and MUST enter `connected`.
+A client that receives a keep-alive in `connected` MUST refresh its idle
+clock, as it does for any other accepted packet.
+
+An acknowledgement of a keep-alive is the peer's claim to have received it.
+A server MUST take the claim at face value and MUST NOT wait for any other
+evidence before entering the regime of rule 2.
+
+The type data of a keep-alive is:
+
+     0                   1                   2                   3
+     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                          client index                         |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                       client slot count                       |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| client index | 0 | 4 | u32 | the slot the server assigned this connection | 0 to one less than the client slot count |
+| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 to the `maximum client slot count` row of [t3 Constants and registries](#t3) |
+
+A keep-alive's type data is eight bytes and follows the ack block
+([t15 Acknowledgement](#t15)). A keep-alive carries no application bytes.
+
+The transcript below starts two clocks at 1000.0 with no keep-alive
+acknowledged, sends a payload at 1000.10, checks the keep-alive rule at
+1000.05, 1000.15, 1000.20 and 1000.30, acknowledges a keep-alive after
+1000.30, sends a payload at 1000.40, and checks the rule again at 1000.35,
+1000.45 and 1000.55. Each byte is one check: `01` sends a keep-alive, `00`
+suppresses one. The payload before the acknowledgement does not suppress the
+check at 1000.15; the payload after it suppresses the check at 1000.45.
+
+```vector t13.keep-alive-suppression
+input: send rate 10 hertz, both clocks at 1000.0, no keep-alive acknowledged
+input: payload sent at 1000.10
+input: due checks at 1000.05, 1000.15, 1000.20 and 1000.30
+input: keep-alive acknowledged after 1000.30
+input: payload sent at 1000.40
+input: due checks at 1000.35, 1000.45 and 1000.55
+input: one byte per due check, 01 sent and 00 suppressed
+00 01 00 01 00 00 01
+```
+
+<a id="t13.2"></a>
+### t13.2. Timeout
+
+An established connection times out at either end when no packet has been
+accepted from the peer for the connection timeout interval.
+
+The interval is the token's `timeout seconds` field ([t6 Connect token](#t6)).
+The server MUST refuse a connection request whose timeout is zero, MUST
+refuse a negative timeout unless a development mode explicitly permits one,
+and MUST clamp a positive timeout to the `server max_timeout_seconds` row of
+[t2.3 Configuration surface](#t2.3). A positive timeout is the interval; a
+negative timeout disables the timeout.
+
+A server whose connection times out MUST reset its slot
+([t13.4 Slot reset](#t13.4)) and MUST destroy the connection's encryption
+mapping. A client whose connection times out MUST enter `connection timed out` and MUST release its connection state.
+
+The timeout stands behind every lost disconnect: a peer that receives no
+disconnect still ends the connection when the interval has elapsed.
+
+<a id="t13.3"></a>
+### t13.3. Disconnect
+
+An endpoint that ends a connection deliberately MUST send the number of
+sealed disconnect packets named by the `server redundant disconnect packets`
+or `client redundant disconnect packets` row of
+[t3 Constants and registries](#t3), at consecutive session sequence numbers,
+each carrying the current ack block. It MUST then release its state
+immediately, without waiting for an acknowledgement.
+
+A client MUST send the burst only when it holds session keys: from `sending connection response` and `connected`. Outside those states it releases its
+state with no packet.
+
+A disconnect packet is never answered and never retransmitted. An endpoint
+that accepts one MUST treat the connection as ended and MUST reset.
+
+The type data of a disconnect is empty; its sealed plaintext holds only the
+ack block.
+
+<a id="t13.4"></a>
+### t13.4. Slot reset
+
+Every path that ends a connection MUST run exactly one slot reset on each
+side.
+
+A server slot reset MUST clear the slot's client id, user data, confirmed
+flag and mapping reference. It MUST destroy the associated encryption
+mapping, and with it both key phases, both send sequences and both replay
+windows. It MUST zero all key material rather than merely mark the slot
+free. The slot is immediately available for reuse, and a connection later
+assigned to it MUST start with fresh keys and sequences.
+
+A client reset MUST release its connection state and MUST zero its derived
+keys, its token keys and its ephemeral secret key. It ends in `disconnected`.
+
+A slot reset MUST keep the used-token history
+([t12 Handshake: server](#t12)). It MUST keep the disconnect reason until
+the slot's next connection is established, so an application can read why
+the previous connection ended.
+
+When a server stops it MUST disconnect every connected client with the
+redundant burst of [t13.3 Disconnect](#t13.3) and reset every slot. A server
+that starts again MUST begin with every slot free, no key or sequence from
+the previous run, and a fresh used-token history.
 
 <a id="t14"></a>
 ## t14. Replay protection
 
-Status: pending
+Each endpoint keeps one replay window per direction and key phase. A replay
+window is a high-water mark and a ring of received bits, one bit per sequence.
+The window depth is at least the `replay window depth minimum` and at most the
+`replay window depth maximum` (both rows of
+[t3 Constants and registries](#t3)). The depth is a count of sequences, never a
+time span or a packet rate. The message layer reconstructs 24-bit numbers
+against a reference and stays unambiguous only while a stale copy is bounded
+by this window.
 
-Scope: the replay window, its minimum depth and configured depth, the check
-placement against decryption, the optional kernel prefilter.
+A receiver MUST perform these steps on every session packet, in this order:
+
+1. Reconstruct the packet's 64-bit sequence from the 32-bit wire value and the
+   window's high-water mark.
+2. Refuse the packet without opening it when the high-water mark is at least
+   one window depth and the sequence is at or below the high-water mark minus
+   the window depth.
+3. Refuse the packet without opening it when the sequence is at or below the
+   high-water mark and its received bit is set.
+4. Open the sealed packet.
+5. Mark the sequence received only after the open succeeds; a packet that does
+   not open MUST NOT change the window.
+
+Marking a sequence ahead of the high-water mark clears every received bit
+between the old high-water mark and the sequence, then sets the sequence's bit
+and raises the high-water mark to it. When that forward jump is at least one
+window depth, the receiver MUST clear the whole ring.
+
+A receiver MUST apply the replay window to the five session packet types:
+connection keep-alive, connection payload, connection disconnect, connection
+ack and connection payload fragment. Handshake packet types are outside the
+window. A server MUST NOT move the window of a session packet whose source
+address has no assigned client slot: it opens the packet, ignores it, and does
+not mark it.
+
+Each endpoint MUST count, per connection and across all of that connection's
+keys, every sealed packet that fails to open, and MUST disconnect the
+connection on reaching the `integrity limit`.
+
+An implementation MAY drop session packets before decryption in a kernel
+prefilter that holds, per source address and port, a high-water mark written
+only by the endpoint after a packet opens. Such a prefilter MUST NOT drop a
+packet fewer than the `kernel replay window` sequences behind that high-water
+mark, and it MAY drop any packet at or beyond that distance. The prefilter
+never advances the mark and never accepts a packet the window would refuse.
+
+| Name | Value | Unit | Kind | Meaning |
+|---|---|---|---|---|
+| integrity limit | `68719476736` | sealed packets | protocol value | failed opens that end a connection |
+| kernel replay window | `16` | sequences | protocol value | distance behind the kernel high-water mark that a prefilter may drop |
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| fresh | sequence received | none | open; set the bit; high-water mark = sequence | tracking |
+| tracking | sequence received | high-water mark at least one depth and sequence at or below high-water mark minus depth | refuse; no change | tracking |
+| tracking | sequence received | received bit set | refuse; no change | tracking |
+| tracking | sequence received | received bit clear and sequence at or below high-water mark | set the bit; no change to the high-water mark | tracking |
+| tracking | sequence received | sequence above high-water mark | clear the skipped bits, the whole ring when the jump is at least one depth; set the bit; high-water mark = sequence | tracking |
+| any | open fails | none | no mark; count one integrity failure | unchanged |
+
+A replay vector's bytes are the window depth as a 4-byte little-endian
+unsigned integer, the final high-water mark as an 8-byte little-endian
+unsigned integer, then one byte per probe in input order: `01` when the probe
+is accepted, `00` when it is refused. A probe is accepted when its sequence is
+not behind the high-water mark and its received bit is clear.
+
+```vector t14.in-window-duplicate
+input: from an empty window, mark sequences 1000 and 1010 received
+input: probe sequences 1000, 1005, 1010 and 1011 in that order
+00 10 00 00 f2 03 00 00 00 00 00 00 00 01 00 01
+```
+
+```vector t14.behind-window
+input: from an empty window, mark sequence 4140 received
+input: probe sequences 44, 45 and 4140 in that order
+00 10 00 00 2c 10 00 00 00 00 00 00 00 01 00
+```
+
+```vector t14.forward-jump-clears
+input: from an empty window, mark sequences 1 and 4097 received
+input: probe sequences 4097, 1 and 2 in that order
+00 10 00 00 01 10 00 00 00 00 00 00 00 00 01
+```
+
+```vector t14.window-maximum
+input: a window of depth 32768, from empty, mark sequences 1 and 32769 received
+input: probe sequences 32769, 1 and 2 in that order
+00 80 00 00 01 80 00 00 00 00 00 00 00 00 01
+```
 
 <a id="t15"></a>
 ## t15. Acknowledgement
@@ -1520,6 +3917,12 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_DROPPED_REPLAYED` | `refusal` | `none` |
 | `CLIENT_CHALLENGE_WRONG_SIZE` | `refusal` | `CLIENT_CHALLENGE_RECEIVED` |
 | `CLIENT_DENIED_WRONG_SIZE` | `refusal` | `CLIENT_DENIED_RECEIVED` |
+| `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
+| `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
+| `SEND_NO_LINK_ADDRESS` | `refusal` | `none` |
+| `MESSAGE_PROMOTED_UNRELIABLE` | `expected` | `none` |
+| `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` | `expected` | `none` |
+| `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT` | `expected` | `none` |
 | `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK` | `expected` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
@@ -1634,7 +4037,10 @@ f7 fa 01 00 00 75 4f 7d 3a 00 00 00 b1 eb 07 8c
 00 34 b4 85 d8 00 00 00 b0 cb 42 af 01 00 00 00
 d9 df bc 00 21 00 bd b0 38 5c 01 00 00 9f 8d 1d
 fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
-54 00 f9 84 f0 6e 01 00 00
+54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00 08 00
+8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00 9b 86
+1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84 f0 6e
+01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -1783,45 +4189,9 @@ the counter list and the test list MUST be the same list.
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
 
-This appendix indexes every vector of RN-1 by the section that defines it.
-It is generated; the bytes are in the sections.
-
-<!-- vector-index:begin -->
-| Section | Vector |
-|---|---|
-| [t3 Constants and registries](#t3) | `t3.token-identifier` |
-| [t4 Wire encoding primitives](#t4) | `t4.address-ipv4` |
-| [t4 Wire encoding primitives](#t4) | `t4.address-ipv6` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-start` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-steady` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
-| [t5 Prefilter header](#t5) | `t5.reject-epoch` |
-| [t5 Prefilter header](#t5) | `t5.reject-long` |
-| [t5 Prefilter header](#t5) | `t5.reject-short` |
-| [t5 Prefilter header](#t5) | `t5.reject-value` |
-| [t5 Prefilter header](#t5) | `t5.unkeyed-accept` |
-| [t15 Acknowledgement](#t15) | `t15.fresh` |
-| [t15 Acknowledgement](#t15) | `t15.fully-received` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-first-too-long` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-first` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-range` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-geometry` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-short` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-walk` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-first` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-gap` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-length` |
-| [t15 Acknowledgement](#t15) | `t15.one-loss` |
-| [t15 Acknowledgement](#t15) | `t15.sequence-wrap` |
-| [t15 Acknowledgement](#t15) | `t15.truncated-oldest` |
-| [t15 Acknowledgement](#t15) | `t15.two-losses` |
-| [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
-| [t17 Timing and defaults](#t17) | `t17.timing-defaults` |
-| [t18 Error handling and counters](#t18) | `t18.counter-registry` |
-| [t19 Security considerations](#t19) | `t19.amplification` |
-<!-- vector-index:end -->
+The index of the vectors of RN-1 by section is printed by
+`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
+in the sections.
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02

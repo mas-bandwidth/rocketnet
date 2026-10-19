@@ -5,7 +5,7 @@
 
 #include "rocketnet_memory.h"
 #include "rocketnet_client_slots.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <sodium.h>
 #include <string.h>

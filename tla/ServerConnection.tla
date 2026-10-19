@@ -183,10 +183,12 @@ C2S == INSTANCE Link WITH wire <- c2sWire, sent <- c2sSent, pulse <- c2sPulse,
 S2C == INSTANCE Link WITH wire <- s2cWire, sent <- s2cSent, pulse <- s2cPulse,
                           Packets <- ServerPackets, Pattern <- S2CPattern
 
-NoMap == [live |-> FALSE, est |-> FALSE, salt |-> NoSalt, nonce |-> 0, tok |-> 0, slot |-> 0,
+NoMap == [live |-> FALSE, est |-> FALSE, salt |-> NoSalt, nonce |-> 0,
+          csalt |-> NoSalt, cnonce |-> 0, tok |-> 0, slot |-> 0,
           age |-> 0, sinceRecv |-> 0, sinceKA |-> 0, acked |-> FALSE]
 
 Mapping == [live : BOOLEAN, est : BOOLEAN, salt : Salts \cup {NoSalt}, nonce : Nonce \cup {0},
+            csalt : Salts \cup {NoSalt}, cnonce : Nonce \cup {0},
             tok : Tokens \cup {0}, slot : Slots \cup {0},
             age : 0..HandshakeDeadline, sinceRecv : 0..Timeout, sinceKA : 0..SendInterval,
             acked : BOOLEAN]
@@ -394,8 +396,8 @@ serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 
 \* rocketnet_server_protocol_process_connection_request, the ladder in the
 \* standard's order as far as this model sees it: a connected address is
-\* silent; a half-open mapping resends its stored challenge to the same
-\* salt and is silent to another; no cookie (or a cookie issued to another
+\* silent; a half-open mapping resends its stored challenge whatever salt
+\* the request carries; no cookie (or a cookie issued to another
 \* address) -> a cookie; an expired token is refused before cookie/decrypt;
 \* a token bound elsewhere or a connected client id is silent; history
 \* binds only when a response opens; no slot is denied; else map+challenge
@@ -410,11 +412,9 @@ ServerRecvRequest(p) ==
        IN CASE m.live /\ m.slot # 0 ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
             [] m.live ->
-                 /\ IF p.salt = m.salt
-                      THEN /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
-                           /\ smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
-                      ELSE /\ ServerSilent
-                           /\ UNCHANGED smap
+                 \* STANDARD.md: a mapped address always gets its original challenge.
+                 /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.csalt, nonce |-> m.cnonce])
+                 /\ smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
                  /\ UNCHANGED <<bound, churnDenied>>
             [] p.tok \in ExpiredTokens ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
@@ -433,12 +433,13 @@ ServerRecvRequest(p) ==
                            /\ churnDenied' = (churnDenied \/ (fresh /\ (FreeSlots > 0)))
                       [] NumMappings = MapCap ->
                            ServerSilent /\ UNCHANGED <<smap, churnDenied>>
-                      [] OTHER ->
-                           /\ \E n \in FreshNonce :
-                                /\ smap' = [smap EXCEPT ![p.from] = [NoMap EXCEPT !.live = TRUE, !.salt = p.salt,
-                                                                                  !.nonce = n, !.tok = p.tok]]
-                                /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
-                           /\ UNCHANGED churnDenied
+                       [] OTHER ->
+                            /\ \E n \in FreshNonce :
+                                 /\ smap' = [smap EXCEPT ![p.from] = [NoMap EXCEPT !.live = TRUE, !.salt = p.salt,
+                                                                                   !.nonce = n, !.csalt = p.salt,
+                                                                                   !.cnonce = n, !.tok = p.tok]]
+                                 /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
+                            /\ UNCHANGED churnDenied
     /\ UNCHANGED <<slot, serverRecvUnchanged>>
 
 \* a response that opens under the mapping's handshake keys refreshes the
@@ -694,6 +695,13 @@ ExpiredTokenNeverMapped ==
 
 \* no two live mappings share keys: the nonce is fresh per mapping
 NonceFresh == \A a, b \in LiveAddrs : a # b => KeysOf(smap[a]) # KeysOf(smap[b])
+
+\* Each live mapping retains the challenge chosen at its creation.
+StoredChallengeNeverReplaced ==
+    \A a \in LiveAddrs :
+        /\ smap[a].csalt = smap[a].salt
+        /\ smap[a].cnonce = smap[a].nonce
+        /\ smap[a].csalt # NoSalt
 
 \* the timeouts fire when they are due
 TimeoutHonoured  == \A a \in Addrs : (smap[a].est /\ Timeout > 0) => smap[a].sinceRecv < Timeout

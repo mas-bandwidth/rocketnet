@@ -1,0 +1,17 @@
+# The rows of RN-1 t10 (TRANSPORT.md): document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+#include "rocketnet_wire.h"
+#include "rocketnet.h"
+#include "rocketnet_protocol.h"
+receive connection request wire size	ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES	710
+receive connection denied wire size	ROCKETNET_CONNECTION_DENIED_WIRE_BYTES	34
+receive connection challenge wire size	ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES	66
+receive connection response wire size	ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES	50
+receive connection cookie wire size	ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES	38
+receive connection keep-alive minimum wire size	ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES	41
+connection payload minimum wire size	ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES	34
+connection disconnect minimum wire size	ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES	33
+connection ack minimum wire size	ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES	33
+connection payload fragment minimum wire size	ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES	40
+connection response padding	ROCKETNET_RESPONSE_PADDING_BYTES	24
+maximum client slot count	ROCKETNET_MAX_CLIENTS	1000

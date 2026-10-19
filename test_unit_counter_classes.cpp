@@ -18,7 +18,7 @@
 #include "test_unit_registry.h"
 #include "test/resource_file.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
@@ -300,6 +300,12 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_REPLAYED",
     "CLIENT_CHALLENGE_WRONG_SIZE",
     "CLIENT_DENIED_WRONG_SIZE",
+    "CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE",
+    "CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG",
+    "SEND_NO_LINK_ADDRESS",
+    "MESSAGE_PROMOTED_UNRELIABLE",
+    "MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED",
+    "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
     "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
 };
 
@@ -405,6 +411,7 @@ static void counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED ) == ROCKETNET_COUNTER_CLASS_ARRIVAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 }
 
 REGISTER_UNIT_TEST( counters_every_counter_has_a_class );

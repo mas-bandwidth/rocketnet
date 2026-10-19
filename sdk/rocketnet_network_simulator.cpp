@@ -5,7 +5,7 @@
 
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_protocol.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -304,6 +304,42 @@ void rocketnet_network_simulator_config( struct rocketnet_network_simulator_t * 
     simulator->jitter = jitter;
     simulator->packet_loss_percent = packet_loss_percent;
     simulator->duplicate_percent = duplicate_percent;
+}
+
+static void rocketnet_simulator_unlink( struct rocketnet_network_simulator_t * simulator, int slot );
+
+int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t * simulator,
+                                             double current_time,
+                                             struct rocketnet_address_t * out_from,
+                                             struct rocketnet_address_t * out_to,
+                                             uint8_t * out_packet )
+{
+    rocketnet_assert( simulator );
+    rocketnet_assert( out_from );
+    rocketnet_assert( out_to );
+    rocketnet_assert( out_packet );
+
+    int slot = -1;
+    for ( int i = 0; i < simulator->capacity; i++ )
+    {
+        if ( simulator->used[i] && simulator->delivery_time[i] <= current_time )
+        {
+            slot = i;
+            break;
+        }
+    }
+    if ( slot < 0 )
+        return 0;
+
+    const int bytes = simulator->packet_bytes[slot];
+    *out_from = simulator->from[slot];
+    *out_to = simulator->to[slot];
+    memcpy( out_packet, simulator->packet_data + (size_t) slot * ROCKETNET_RECEIVE_CEILING, (size_t) bytes );
+    rocketnet_simulator_unlink( simulator, slot );
+    simulator->used[slot] = 0;
+    if ( slot < simulator->free_hint )
+        simulator->free_hint = slot;
+    return bytes;
 }
 
 void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * simulator, int enabled )

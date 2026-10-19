@@ -30,7 +30,7 @@
 #ifndef ROCKETNET_CHANNEL_HARNESS_H
 #define ROCKETNET_CHANNEL_HARNESS_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_network_simulator.h"
@@ -829,10 +829,10 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     rocketnet_channel_allocator_calls = 0;
     if ( !rocketnet_allocator( rocketnet_channel_counting_malloc, rocketnet_channel_counting_free ) )
         return 0;
-    if ( !rocketnet_init() )
+    if ( !rocketnet_init( NULL ) )
     {
         rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
-        rocketnet_init();
+        rocketnet_init( NULL );
         return 0;
     }
     h->counting_allocator_installed = 1;
@@ -1084,7 +1084,7 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     {
         rocketnet_term();
         rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
-        rocketnet_init();
+        rocketnet_init( NULL );
     }
     rocketnet_channel_seed_state().live = 0;
     rocketnet_channel_capture_flush();

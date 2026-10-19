@@ -7,7 +7,7 @@
     60s warning and 120s failure limits.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "../test/suite_runner.h"
 
 #include <stdio.h>
@@ -42,7 +42,7 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( !rocketnet_init() )
+    if ( !rocketnet_init( NULL ) )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
