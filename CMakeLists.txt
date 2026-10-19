@@ -334,8 +334,10 @@ if(ROCKETNET_BUILD_TESTS)
     endif()
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
-        rocketnet_use_sodium(test)
     endif()
+    # test_unit_driver_loopback compiles the server transport source for its
+    # staged-driver fixture, and that source includes sodium.h.
+    rocketnet_use_sodium(test)
     # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
     # compiled unchanged with the BPF build's defines behind a shadow include
     # directory of minimal kernel and libbpf headers, so the unit suite judges
