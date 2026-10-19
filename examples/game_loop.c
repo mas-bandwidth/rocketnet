@@ -96,14 +96,12 @@ int main( int argc, char ** argv )
     struct rocketnet_client_t ** clients = calloc( (size_t) num_clients, sizeof( clients[0] ) );
     if ( !clients || !rocketnet_init( NULL ) ) { printf( "FAIL: init\n" ); return 1; }
 
-    // the in-memory loopback transport holds 64 endpoints; past that, they talk
-    // UDP on 127.0.0.1: the server on this platform's recommended transport
-    // (NULL is "auto"), each client on the portable one
-    const bool in_memory = num_clients < 64;
+    // the in-memory loopback transport holds ROCKETNET_LOOPBACK_MAX_ENDPOINTS
+    // endpoints: one server and ROCKETNET_MAX_CLIENTS clients
     struct rocketnet_server_config_t server_config;
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = num_clients;
-    server_config.transport = in_memory ? "loopback" : NULL;
+    server_config.transport = "loopback";
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
     if ( !server ) { printf( "FAIL: server create\n" ); goto cleanup; }
     printf( "%d clients, server transport %s\n", num_clients, rocketnet_server_transport_name( server ) );
@@ -112,7 +110,7 @@ int main( int argc, char ** argv )
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
-    client_config.transport = in_memory ? "loopback" : "portable";
+    client_config.transport = "loopback";
     for ( int i = 0; i < num_clients; i++ )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];       // a development token stamped far ahead, as in hello

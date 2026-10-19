@@ -166,7 +166,11 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
         }
     }
     if ( slot < 0 )
+    {
+        rocketnet_warn( "loopback transport refused a create: ROCKETNET_LOOPBACK_MAX_ENDPOINTS is %d",
+                        (int) ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
         return NULL;
+    }
 
     rocketnet_loopback_endpoint_t * ep = &state.endpoints[slot];
     ep->packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( context,

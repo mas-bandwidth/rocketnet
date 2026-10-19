@@ -182,6 +182,15 @@ int rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_k
     return ROCKETNET_STATUS_OK;
 }
 
+int rocketnet_generate_backend_keypair_from_seed( const uint8_t * seed, uint8_t * public_key, uint8_t * secret_key )
+{
+    if ( !rocketnet_api_null_guard( seed ) || !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( crypto_sign_seed_keypair( public_key, secret_key, seed ) != 0 )
+        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    return ROCKETNET_STATUS_OK;
+}
+
 int rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key )
 {
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
