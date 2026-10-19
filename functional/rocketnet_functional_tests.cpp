@@ -8180,14 +8180,12 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-// POSIX lifecycle stress lives in its own translation unit; each case counts
-// the process's descriptors and threads around every transport cell.
-void rocketnet_posix_init_term_1000();
-void rocketnet_posix_server_create_destroy_1000();
-void rocketnet_posix_client_create_destroy_1000();
-void rocketnet_posix_server_restart_same_port_100();
-void rocketnet_posix_connect_disconnect_1000();
-void rocketnet_posix_destroy_under_traffic_100();
+// The POSIX lifecycle stress cases cycle a thousand creates and handshakes,
+// which is minutes of wall time per case, so they sit outside the default list
+// and its 120s limit, in their own translation unit: each runs as
+// ./bin/functional --run <case>, and this lookup returns false for any other
+// name.
+bool rocketnet_posix_lifecycle_run_named( const char * name );
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
@@ -8199,12 +8197,6 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "client_receive_thread_quit_wake_before_wait_returns", rocketnet_test_client_receive_thread_quit_wake_before_wait_returns },
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times },
-    { "posix_init_term_1000", rocketnet_posix_init_term_1000 },
-    { "posix_server_create_destroy_1000", rocketnet_posix_server_create_destroy_1000 },
-    { "posix_client_create_destroy_1000", rocketnet_posix_client_create_destroy_1000 },
-    { "posix_server_restart_same_port_100", rocketnet_posix_server_restart_same_port_100 },
-    { "posix_connect_disconnect_1000", rocketnet_posix_connect_disconnect_1000 },
-    { "posix_destroy_under_traffic_100", rocketnet_posix_destroy_under_traffic_100 },
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
     { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn },
     { "test_client_disconnect_reports_state_change", rocketnet_test_client_disconnect_reports_state_change },
@@ -8427,6 +8419,8 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_functional_tests[i].function();
         return 0;
     }
+    if ( rocketnet_posix_lifecycle_run_named( name ) )
+        return 0;
     fprintf( stderr, "unknown functional test %s\n", name );
     return 2;
 }

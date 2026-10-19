@@ -256,20 +256,6 @@ static bool posix_lifecycle_write_token( const char * address, uint8_t * connect
     return rocketnet_write_dev_connect_token( address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token );
 }
 
-static void posix_lifecycle_pump( struct rocketnet_server_transport_t * server,
-                                  struct rocketnet_client_transport_t * client,
-                                  double seconds )
-{
-    const double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < seconds )
-    {
-        rocketnet_client_transport_update( client, rocketnet_platform_time() );
-        rocketnet_server_transport_update( server, rocketnet_platform_time() );
-        rocketnet_server_transport_send_packets( server );
-        rocketnet_platform_sleep( 0.001 );
-    }
-}
-
 static bool posix_lifecycle_connect( struct rocketnet_server_transport_t * server,
                                      struct rocketnet_client_transport_t * client,
                                      double seconds )
@@ -285,6 +271,33 @@ static bool posix_lifecycle_connect( struct rocketnet_server_transport_t * serve
             return true;
         if ( rocketnet_client_transport_state( client ) < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             return false;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    return false;
+}
+
+static bool posix_lifecycle_connect_all( struct rocketnet_server_transport_t * server,
+                                         struct rocketnet_client_transport_t ** clients,
+                                         int num_clients,
+                                         double seconds )
+{
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < seconds )
+    {
+        int connected = 0;
+        for ( int i = 0; i < num_clients; i++ )
+        {
+            rocketnet_client_transport_update( clients[i], rocketnet_platform_time() );
+            const int state = rocketnet_client_transport_state( clients[i] );
+            if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+                return false;
+            if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                connected++;
+        }
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( connected == num_clients && rocketnet_server_transport_num_connected_clients( server ) >= num_clients )
+            return true;
         rocketnet_platform_sleep( 0.001 );
     }
     return false;
@@ -471,8 +484,10 @@ static void posix_lifecycle_destroy_under_traffic_cell( const struct posix_lifec
             POSIX_LIFECYCLE_CHECK( posix_lifecycle_write_token( address, connect_token ) );
             clients[i] = posix_lifecycle_create_client( client_cell->driver, connect_token );
             POSIX_LIFECYCLE_CHECK( clients[i] != NULL );
-            POSIX_LIFECYCLE_CHECK( posix_lifecycle_connect( server, clients[i], 5.0 ) );
         }
+        // the eight handshakes run together, so a cycle costs one handshake
+        // cadence rather than eight
+        POSIX_LIFECYCLE_CHECK( posix_lifecycle_connect_all( server, clients, 8, 5.0 ) );
 
         // the clients keep sending until the server goes away mid-traffic
         const double traffic_start = rocketnet_platform_time();
@@ -530,7 +545,7 @@ static void posix_lifecycle_run_combined( void ( *run )( const struct posix_life
     }
 }
 
-void rocketnet_posix_init_term_1000()
+static void rocketnet_posix_init_term_1000()
 {
     struct posix_lifecycle_cell_t cells[8];
     const int count = posix_lifecycle_server_cells( cells );
@@ -538,7 +553,7 @@ void rocketnet_posix_init_term_1000()
         posix_lifecycle_init_term_cell( &cells[i] );
 }
 
-void rocketnet_posix_server_create_destroy_1000()
+static void rocketnet_posix_server_create_destroy_1000()
 {
     struct posix_lifecycle_cell_t cells[8];
     const int count = posix_lifecycle_server_cells( cells );
@@ -546,7 +561,7 @@ void rocketnet_posix_server_create_destroy_1000()
         posix_lifecycle_server_create_destroy_cell( &cells[i] );
 }
 
-void rocketnet_posix_client_create_destroy_1000()
+static void rocketnet_posix_client_create_destroy_1000()
 {
     struct posix_lifecycle_cell_t cells[8];
     const int count = posix_lifecycle_client_cells( cells );
@@ -554,29 +569,61 @@ void rocketnet_posix_client_create_destroy_1000()
         posix_lifecycle_client_create_destroy_cell( &cells[i] );
 }
 
-void rocketnet_posix_server_restart_same_port_100()
+static void rocketnet_posix_server_restart_same_port_100()
 {
     posix_lifecycle_run_combined( posix_lifecycle_server_restart_same_port_cell );
 }
 
-void rocketnet_posix_connect_disconnect_1000()
+static void rocketnet_posix_connect_disconnect_1000()
 {
     posix_lifecycle_run_combined( posix_lifecycle_connect_disconnect_cell );
 }
 
-void rocketnet_posix_destroy_under_traffic_100()
+static void rocketnet_posix_destroy_under_traffic_100()
 {
     posix_lifecycle_run_combined( posix_lifecycle_destroy_under_traffic_cell );
+}
+
+static bool posix_lifecycle_run_case( const char * name )
+{
+    static const struct
+    {
+        const char * name;
+        void ( *function )();
+    }
+    cases[] =
+    {
+        { "posix_init_term_1000", rocketnet_posix_init_term_1000 },
+        { "posix_server_create_destroy_1000", rocketnet_posix_server_create_destroy_1000 },
+        { "posix_client_create_destroy_1000", rocketnet_posix_client_create_destroy_1000 },
+        { "posix_server_restart_same_port_100", rocketnet_posix_server_restart_same_port_100 },
+        { "posix_connect_disconnect_1000", rocketnet_posix_connect_disconnect_1000 },
+        { "posix_destroy_under_traffic_100", rocketnet_posix_destroy_under_traffic_100 },
+    };
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        if ( strcmp( cases[i].name, name ) != 0 )
+            continue;
+        printf( "%s\n", name );
+        fflush( stdout );
+        cases[i].function();
+        return true;
+    }
+    return false;
 }
 
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // The suite builds on Windows too; the POSIX cases have nothing to count there.
-void rocketnet_posix_init_term_1000() {}
-void rocketnet_posix_server_create_destroy_1000() {}
-void rocketnet_posix_client_create_destroy_1000() {}
-void rocketnet_posix_server_restart_same_port_100() {}
-void rocketnet_posix_connect_disconnect_1000() {}
-void rocketnet_posix_destroy_under_traffic_100() {}
+static bool posix_lifecycle_run_case( const char * name )
+{
+    (void) name;
+    return false;
+}
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+bool rocketnet_posix_lifecycle_run_named( const char * name )
+{
+    return posix_lifecycle_run_case( name );
+}
