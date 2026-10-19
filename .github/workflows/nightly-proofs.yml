@@ -24,13 +24,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run the nightly proofs
+      - name: Check the pinned CBMC is present
+        shell: bash
         run: |
+          set -euo pipefail
           if ! command -v cbmc >/dev/null 2>&1; then
-            echo "cbmc is not on PATH on this runner" >&2
+            echo "TOOL-MISSING cbmc (any) (missing) on $RUNNER_NAME"
             exit 1
           fi
           cbmc --version
+
+      - name: Run the nightly proofs
+        run: |
           set -o pipefail
           make -C proofs/cbmc nightly 2>&1 | tee proofs/cbmc/nightly-output.txt
 
