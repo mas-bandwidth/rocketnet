@@ -18,7 +18,7 @@ SEQUENCE_BUFFERS_MEMLIMIT = 12g
 
 # harness:unwind:solver and extra flags (comma for space); every entry names
 # its solver. Z3 is the default solver;
-# Bitwuzla is named where Z3 does not finish (results.md). Every harness in
+# Bitwuzla is named where it is used instead (results.md, Solver). Every harness in
 # SEQUENCE_BUFFERS_HARNESSES proves its claim, so the nightly target is green
 # when the sdk is. The two loops are proved by their step harnesses plus the
 # induction argument in results.md.

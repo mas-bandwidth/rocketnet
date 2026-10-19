@@ -4,7 +4,7 @@ ESBMC 8.5.0, one bench core at nice 19. `make -C proofs/cbmc proofs-sequence_buf
 
 Each harness is one translation unit. `proof_sequence_buffers.c` includes the real `sdk/rocketnet_replay.cpp`, `sdk/rocketnet_ack.cpp` and `sdk/rocketnet_window_receive.cpp` through `proofs/cbmc/esbmc_shim.h`, so the ESBMC 8.5 merge of header statics across units cannot apply. Only the platform lock and atomic primitives are modelled, as sequential operations. Each claim is per call: one arbitrary sequence against one arbitrary state.
 
-Solver: Z3 (`--z3`), as the route note asks, except for the four nightly harnesses where Z3 does not finish and Bitwuzla does. Each list entry names its solver. `harness_ack_record_received`: Z3 took more than 12 minutes on the read-back claim (previous attempt); Bitwuzla takes 15 s. `harness_window_receive_accept_step`: Z3 spent more than 20 minutes on the unwinding assertion of the advance loop without an answer; Bitwuzla takes 10 s. The two bounded loop companions have thousands of claims, one per unwound iteration. The previous attempt chose Bitwuzla for them, and it finishes them in 140 s and 105 s. Z3 has no recorded time on them, so they are Bitwuzla by choice rather than by a measured Z3 failure.
+Solver: Z3 (`--z3`), as the route note asks, except four nightly harnesses, which use Bitwuzla: one where Z3 does not finish, and three by choice. Each list entry names its solver. `harness_ack_record_received`: Z3 took more than 12 minutes on the read-back claim (previous attempt); Bitwuzla takes 28 s. `harness_window_receive_accept_step`: Z3 proves it too, 167 of 167 in 604 s; Bitwuzla takes 16 s, so the nightly uses Bitwuzla. The two bounded loop companions have thousands of claims, one per unwound iteration. The previous attempt chose Bitwuzla for them, and it finishes them in 261 s and 232 s. Z3 has no recorded time on them, so they are Bitwuzla by choice rather than by a measured Z3 failure.
 
 CBMC is not a fallback here. CBMC 6.6.0 with `--cpp11 --external-sat-solver cadical` cannot parse `rocketnet_replay.cpp` (the `__builtin_offsetof` static_asserts at sdk/rocketnet_wire.h:150-151) or `rocketnet_ack.cpp` (`<initializer_list>`, and sdk/rocketnet_memory.h:24). Without `--cpp11` it cannot parse `rocketnet.h:71` either.
 
@@ -12,18 +12,18 @@ CBMC is not a fallback here. CBMC 6.6.0 with `--cpp11 --external-sat-solver cadi
 
 | harness | properties | bound proved | unwind | solver | time |
 | --- | ---: | --- | ---: | --- | ---: |
-| `harness_replay_already_received` | 21/21 | every nonzero `uint64_t` sequence, every high-water mark, every 4096-bit window | 65 | Z3 | 4 s |
-| `harness_replay_advance_step` | 42/42 | every sequence at or behind the high-water mark, every near skip up to 2, every far skip; with the induction below, the loop body's bounds, shift and overflow checks for every near skip | 65 | Z3 | 23 s |
-| `harness_replay_advance_near_bounded` | 42/42 | every sequence at or behind the high-water mark, every near skip up to 256, every far skip | 257 | Bitwuzla | 140 s |
-| `harness_replay_advance_far` | 42/42 | every far skip (at least 4096): the whole-window clear | 65 | Z3 | 12 s |
-| `harness_ack_record_received` | 21/21 | every nonzero `uint64_t` sequence against the 2048-entry received ring, with the written record pinned to its ring slot | 2 | Bitwuzla | 15 s |
-| `harness_ack_mark_keep_alive` | 23/23 | every nonzero `uint64_t` sequence against the 4096-entry sent ring: object-level bounds, alignment and the lock model only (ring-level containment is owed, below) | 2 | Z3 | 6 s |
-| `harness_window_receive_init` | 39/39 | every first number, every power-of-two W from 64 to 1 << 20 | 2 | Z3 | 7 s |
-| `harness_window_receive_accept_step` | 167/167 | every wire u24 number, every R, every power-of-two W from 64 to 1 << 20, every received bit except R + 1 and R + 2; with the induction below, the loop body's bounds and shift checks for every run of the advance loop | 4 | Bitwuzla | 10 s |
-| `harness_window_receive_accept_bounded` | 161/161 | every wire u24 number and arbitrary receiver state at W = 64, the whole advance loop unrolled | 65 | Bitwuzla | 105 s |
-| `harness_window_receive_release` | 50/50 | every `uint64_t` number, every power-of-two W from 64 to 1 << 20 | 2 | Z3 | 4 s |
+| `harness_replay_already_received` | 21/21 | every nonzero `uint64_t` sequence, every high-water mark, every 4096-bit window | 65 | Z3 | 8 s |
+| `harness_replay_advance_step` | 42/42 | every sequence at or behind the high-water mark, every near skip up to 2, every far skip; with the induction below, the loop body's bounds, shift and overflow checks for every near skip | 65 | Z3 | 39 s |
+| `harness_replay_advance_near_bounded` | 42/42 | every sequence at or behind the high-water mark, every near skip up to 256, every far skip | 257 | Bitwuzla | 261 s |
+| `harness_replay_advance_far` | 42/42 | every far skip (at least 4096): the whole-window clear | 65 | Z3 | 19 s |
+| `harness_ack_record_received` | 21/21 | every nonzero `uint64_t` sequence against the 2048-entry received ring, with the written record pinned to its ring slot | 2 | Bitwuzla | 28 s |
+| `harness_ack_mark_keep_alive` | 22/22 | every nonzero `uint64_t` sequence against the 4096-entry sent ring: object-level bounds, alignment and the lock model only (ring-level containment is owed, below) | 2 | Z3 | 8 s |
+| `harness_window_receive_init` | 39/39 | every first number, every power-of-two W from 64 to 1 << 20 | 2 | Z3 | 10 s |
+| `harness_window_receive_accept_step` | 167/167 | every wire u24 number, every R, every power-of-two W from 64 to 1 << 20, every received bit except R + 1 and R + 2; with the induction below, the loop body's bounds and shift checks for every run of the advance loop | 4 | Bitwuzla | 16 s |
+| `harness_window_receive_accept_bounded` | 161/161 | every wire u24 number and arbitrary receiver state at W = 64, the whole advance loop unrolled | 65 | Bitwuzla | 232 s |
+| `harness_window_receive_release` | 50/50 | every `uint64_t` number, every power-of-two W from 64 to 1 << 20 | 2 | Z3 | 7 s |
 
-All 10 harnesses verify, 608 of 608 properties, in 326 s from one run of the target at the head. So the nightly is green while the sdk is.
+All 10 harnesses verify, 607 of 607 properties, in 628 s from one run of the target at the head, on a bench at about 4 load per core. So the nightly is green while the sdk is.
 
 ## The two loops: step harness plus induction
 
