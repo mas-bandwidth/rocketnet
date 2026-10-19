@@ -446,6 +446,10 @@ if(ROCKETNET_BUILD_TESTS)
             add_custom_target(rocketnet_xdp_filter_object DEPENDS "${ROCKETNET_XDP_FILTER_OBJECT}")
             add_executable(test_xdp_filter test_xdp_filter.cpp)
             add_dependencies(test_xdp_filter rocketnet_xdp_filter_object)
+            # xdp_on_link_reply_reaches_the_peer runs bin/server and bin/client
+            if(TARGET server AND TARGET client)
+                add_dependencies(test_xdp_filter server client)
+            endif()
             target_compile_definitions(test_xdp_filter PRIVATE
                 "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
             target_include_directories(test_xdp_filter PRIVATE sdk)

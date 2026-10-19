@@ -585,6 +585,12 @@
     X( CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
+    /* A send the driver refused for want of a link-layer destination: the */ \
+    /* xdp driver on a segment with no default route, to an address with no */ \
+    /* learned MAC that answers no received frame (DRIVERS.md, xdp). Never */ \
+    /* sent and never counted as sent. appended: indices are the contract. */ \
+    X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE ) \
+    \
     /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
     /* too big for one packet's record is promoted to its reliable twin, as */ \
     /* RakNet's ReliabilityLayer does. EXPECTED: promotion is the normal path */ \

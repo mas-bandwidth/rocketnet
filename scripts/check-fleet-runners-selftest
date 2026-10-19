@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Selftest for scripts/check-fleet-runners.
+#
+# Plants a hosted label and an apt-get install in a temporary copy of a
+# workflow and requires the script to name both; and requires a clean copy to
+# pass. Exits non-zero if either assertion fails. Uses $TMPDIR only.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+check="$here/check-fleet-runners"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/check-fleet-runners-selftest.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+
+mkdir -p "$tmp/clean/wf" "$tmp/dirty/wf"
+
+# A clean workflow: fleet runner, guarded apt install, no hosted label.
+cat > "$tmp/clean/wf/clean.yml" <<'EOF'
+name: clean
+on: [push]
+jobs:
+  clean:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies (guarded)
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
+      - name: Run
+        run: make
+EOF
+
+# A dirty workflow: hosted label and an unguarded apt-get install.
+cat > "$tmp/dirty/wf/dirty.yml" <<'EOF'
+name: dirty
+on: [push]
+jobs:
+  dirty:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cbmc
+EOF
+
+# Clean copy must pass.
+if ROCKETNET_WF_DIR="$tmp/clean/wf" ROCKETNET_EXC_FILE="$tmp/exc" python3 "$check" > "$tmp/clean.out" 2>&1; then
+  :
+else
+  echo "SELFTEST FAIL: clean workflow did not pass" >&2
+  cat "$tmp/clean.out" >&2
+  exit 1
+fi
+
+# Dirty copy must fail naming both the hosted label and the apt-get install.
+if ROCKETNET_WF_DIR="$tmp/dirty/wf" ROCKETNET_EXC_FILE="$tmp/exc" python3 "$check" > "$tmp/dirty.out" 2>&1; then
+  echo "SELFTEST FAIL: dirty workflow passed but must fail" >&2
+  exit 1
+fi
+
+if ! grep -q "ubuntu-24.04" "$tmp/dirty.out"; then
+  echo "SELFTEST FAIL: hosted label not named" >&2
+  cat "$tmp/dirty.out" >&2
+  exit 1
+fi
+
+if ! grep -q "apt-get install" "$tmp/dirty.out"; then
+  echo "SELFTEST FAIL: apt-get install not named" >&2
+  cat "$tmp/dirty.out" >&2
+  exit 1
+fi
+
+echo "SELFTEST PASS"

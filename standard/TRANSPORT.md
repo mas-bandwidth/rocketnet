@@ -2026,6 +2026,7 @@ The registry of counters, in index order, is:
 | `CLIENT_DENIED_WRONG_SIZE` | `refusal` | `CLIENT_DENIED_RECEIVED` |
 | `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
+| `SEND_NO_LINK_ADDRESS` | `refusal` | `none` |
 | `MESSAGE_PROMOTED_UNRELIABLE` | `expected` | `none` |
 | `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` | `expected` | `none` |
 | `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT` | `expected` | `none` |
@@ -2143,8 +2144,8 @@ f7 fa 01 00 00 75 4f 7d 3a 00 00 00 b1 eb 07 8c
 d9 df bc 00 21 00 bd b0 38 5c 01 00 00 9f 8d 1d
 fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00 08 00
-bf 7a 1a af 01 00 00 9b 86 1b 95 01 00 00 79 87
-fe 4c 01 00 00
+8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00 9b 86
+1b 95 01 00 00 79 87 fe 4c 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
