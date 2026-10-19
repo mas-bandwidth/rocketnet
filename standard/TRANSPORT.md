@@ -1107,10 +1107,169 @@ server's state table.
 <a id="t13"></a>
 ## t13. Session: keep-alive, timeout, disconnect, slot reset
 
-Status: pending
+A connection enters the session when the server assigns its slot and sends
+the first keep-alive. It ends by a deliberate disconnect by either endpoint,
+by either endpoint's timeout, or by the server's stop.
 
-Scope: keep-alive generation, connection timeout from the token, the
-redundant disconnect, slot reset and what a reset clears.
+1. An endpoint MUST generate keep-alives as
+   [t13.1 Keep-alive generation](#t13.1) says, paced by elapsed time at the
+   `send rate` row of [t3 Constants and registries](#t3).
+2. An endpoint MUST refresh the connection's idle clock when it accepts an
+   opened session packet from the peer, whatever the packet type.
+3. Every path that ends a connection MUST run exactly one reset on each side
+   ([t13.4 Slot reset](#t13.4)).
+4. An endpoint MUST ignore a session event in a state whose row of the state
+   table does not list it.
+
+The table is one endpoint's view. `sending connection response` is a client
+state; a server holds a slot from the first keep-alive it sends.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| connected | keep-alive interval elapsed | this endpoint is a server, and no keep-alive it sent has been acknowledged | send a keep-alive and stamp the keep-alive clock | connected |
+| connected | keep-alive interval elapsed | this endpoint is a client, or a keep-alive has been acknowledged, and the interval has elapsed since the last send of anything | send a keep-alive | connected |
+| connected | any session packet sent | | stamp the send clock | connected |
+| connected | any session packet accepted from the peer | | refresh the idle clock | connected |
+| connected | idle timeout elapsed | the timeout is positive, and no packet has been accepted for the timeout | reset | disconnected |
+| connected | local disconnect | | send the redundant disconnect burst ([t13.3 Disconnect](#t13.3)) and reset | disconnected |
+| connected | disconnect opened | | reset | disconnected |
+| sending connection response | keep-alive opened | | store the client index and the client slot count, and refresh the idle clock | connected |
+| sending connection response | disconnect opened | | reset | disconnected |
+| sending connection response | local disconnect | | send the redundant disconnect burst ([t13.3 Disconnect](#t13.3)) and reset | disconnected |
+| disconnected | connection established | | assign the slot and send the first keep-alive | connected |
+
+<a id="t13.1"></a>
+### t13.1. Keep-alive generation
+
+A keep-alive is a sealed session packet of type `connection keep-alive
+packet` ([t3 Constants and registries](#t3)). Its type data names the client
+index and the client slot count.
+
+1. A server MUST send a keep-alive whenever the send rate interval has
+   elapsed since it last sent that peer a keep-alive, until a keep-alive it
+   sent to that peer has been acknowledged. Ordinary traffic MUST NOT
+   suppress this keep-alive.
+2. A server MUST send a keep-alive whenever the send rate interval has
+   elapsed since it last sent that peer anything, once a keep-alive it sent
+   to that peer has been acknowledged. Ordinary traffic suppresses this
+   keep-alive, which appears only while the connection is otherwise idle.
+3. A client in `connected` MUST send a keep-alive whenever the send rate
+   interval has elapsed since it last sent that peer anything. It keeps no
+   acknowledgement latch, so its own traffic always suppresses its
+   keep-alives. A client MUST NOT send a keep-alive in any other state.
+
+A client that receives a keep-alive in `sending connection response` MUST
+store the client index and the client slot count and MUST enter `connected`.
+A client that receives a keep-alive in `connected` MUST refresh its idle
+clock, as it does for any other accepted packet.
+
+An acknowledgement of a keep-alive is the peer's claim to have received it.
+A server MUST take the claim at face value and MUST NOT wait for any other
+evidence before entering the regime of rule 2.
+
+The type data of a keep-alive is:
+
+     0                   1                   2                   3
+     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                          client index                         |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                       client slot count                       |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| client index | 0 | 4 | u32 | the slot the server assigned this connection | 0 to one less than the client slot count |
+| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 or more |
+
+A keep-alive's type data is eight bytes and follows the ack block
+([t15 Acknowledgement](#t15)). A keep-alive carries no application bytes.
+
+The transcript below starts two clocks at 1000.0 with no keep-alive
+acknowledged, sends a payload at 1000.10, checks the keep-alive rule at
+1000.05, 1000.15, 1000.20 and 1000.30, acknowledges a keep-alive after
+1000.30, sends a payload at 1000.40, and checks the rule again at 1000.35,
+1000.45 and 1000.55. Each byte is one check: `01` sends a keep-alive, `00`
+suppresses one. The payload before the acknowledgement does not suppress the
+check at 1000.15; the payload after it suppresses the check at 1000.45.
+
+```vector t13.keep-alive-suppression
+input: send rate 10 hertz, both clocks at 1000.0, no keep-alive acknowledged
+input: payload sent at 1000.10
+input: due checks at 1000.05, 1000.15, 1000.20 and 1000.30
+input: keep-alive acknowledged after 1000.30
+input: payload sent at 1000.40
+input: due checks at 1000.35, 1000.45 and 1000.55
+input: one byte per due check, 01 sent and 00 suppressed
+00 01 00 01 00 00 01
+```
+
+<a id="t13.2"></a>
+### t13.2. Timeout
+
+An established connection times out at either end when no packet has been
+accepted from the peer for the connection timeout interval.
+
+The interval is the token's `timeout seconds` field ([t6 Connect token](#t6)).
+The server MUST refuse a connection request whose timeout is zero, MUST
+refuse a negative timeout unless a development mode explicitly permits one,
+and MUST clamp a positive timeout to the `server max_timeout_seconds` row of
+[t2.3 Configuration surface](#t2.3). A positive timeout is the interval; a
+negative timeout disables the timeout.
+
+A server whose connection times out MUST reset its slot
+([t13.4 Slot reset](#t13.4)) and MUST destroy the connection's encryption
+mapping. A client whose connection times out MUST enter `connection timed
+out` and MUST release its connection state.
+
+The timeout stands behind every lost disconnect: a peer that receives no
+disconnect still ends the connection when the interval has elapsed.
+
+<a id="t13.3"></a>
+### t13.3. Disconnect
+
+An endpoint that ends a connection deliberately MUST send the number of
+sealed disconnect packets named by the `server redundant disconnect packets`
+or `client redundant disconnect packets` row of
+[t3 Constants and registries](#t3), at consecutive session sequence numbers,
+each carrying the current ack block. It MUST then release its state
+immediately, without waiting for an acknowledgement.
+
+A client MUST send the burst only when it holds session keys: from `sending
+connection response` and `connected`. Outside those states it releases its
+state with no packet.
+
+A disconnect packet is never answered and never retransmitted. An endpoint
+that accepts one MUST treat the connection as ended and MUST reset.
+
+The type data of a disconnect is empty; its sealed plaintext holds only the
+ack block.
+
+<a id="t13.4"></a>
+### t13.4. Slot reset
+
+Every path that ends a connection MUST run exactly one slot reset on each
+side.
+
+A server slot reset MUST clear the slot's client id, user data, confirmed
+flag and mapping reference. It MUST destroy the associated encryption
+mapping, and with it both key phases, both send sequences and both replay
+windows. It MUST zero all key material rather than merely mark the slot
+free. The slot is immediately available for reuse, and a connection later
+assigned to it MUST start with fresh keys and sequences.
+
+A client reset MUST release its connection state and MUST zero its derived
+keys, its token keys and its ephemeral secret key. It ends in `disconnected`.
+
+A slot reset MUST keep the used-token history
+([t12 Handshake: server](#t12)). It MUST keep the disconnect reason until
+the slot's next connection is established, so an application can read why
+the previous connection ended.
+
+When a server stops it MUST disconnect every connected client with the
+redundant burst of [t13.3 Disconnect](#t13.3) and reset every slot. A server
+that starts again MUST begin with every slot free, no key or sequence from
+the previous run, and a fresh used-token history.
 
 <a id="t14"></a>
 ## t14. Replay protection
