@@ -86,10 +86,10 @@ Every sized entry point makes one of two calls (`sdk/rocketnet_abi.cpp`):
 
 The sized entry points, each declared beside its unsized form:
 
-| Struct | Sized defaults | Sized creates |
-| :--- | :--- | :--- |
-| `rocketnet_client_config_t` | `rocketnet_client_default_config_sized` | `rocketnet_client_create_sized` |
-| `rocketnet_server_config_t` | `rocketnet_server_default_config_sized` | `rocketnet_server_create_sized` |
+| Struct | Sized defaults | Sized queries | Sized creates |
+| :--- | :--- | :--- | :--- |
+| `rocketnet_client_config_t` | `rocketnet_client_default_config_sized` | `rocketnet_client_validate_config_sized`, `rocketnet_client_required_memory_sized` | `rocketnet_client_create_sized` |
+| `rocketnet_server_config_t` | `rocketnet_server_default_config_sized`, `rocketnet_server_dev_config_sized` | `rocketnet_server_validate_config_sized`, `rocketnet_server_required_memory_sized` | `rocketnet_server_create_sized` |
 
 Each sized create takes one config struct and its size, checked by the rule.
 A sized create refuses an unknown size before any other check: it
@@ -123,9 +123,13 @@ macOS arm64, Windows x86_64; `docs/PLATFORMS.md`). On any target,
 
 The client and server configs carry the message fields directly. A field added
 to one goes at the end of the struct; a caller compiled against an older header
-keeps the old size and reads the old prefix. The numeric sizes per revision are
-in the internal layer header and in `rocketnet_abi_type_size`, which is the
+keeps the old size and reads the old prefix. The frozen sizes per revision and oldest-first known-size lists are in the
+public header and in `rocketnet_abi_type_size`, which is the
 authority for a given build; this document does not repeat the numbers.
+
+Revision 2 appends the four development link-simulator controls to both the
+client and server configs. Their `BYTES_2` formulas end at
+`simulated_duplicate_percent` and remain frozen when later revisions grow.
 
 Revision 1 is the layout of the first release that carries the sized entry
 points. `time_callback` joins the client config before that release, so it is
@@ -174,13 +178,14 @@ declarations before its first call. They pin this rule three ways:
    `test_unit_sized_config.cpp` for the old size.
 5. Leave `ROCKETNET_ABI_VERSION` unchanged.
 
-## 7. Not Yet Sized
+## 7. Sized Queries
 
-The config-reading queries (`rocketnet_client_required_memory`,
-`rocketnet_server_required_memory`, `rocketnet_server_dev_config` and
-`rocketnet_client_validate_config`) have no sized forms yet. At revision 1 they
-read exactly the struct a caller has; the revision that first grows a config
-struct gives each of them a sized form by this rule, in the same change.
+The config-reading queries have sized forms alongside their revision-1
+unsized forms. The sized validation and required-memory calls accept each
+entry in the config's known-size list and refuse every other non-NULL size
+with the standard size-mismatch log. `rocketnet_server_dev_config_sized`
+applies the same rule before writing. A NULL config retains each call's
+existing default or counted-no-op behavior.
 
 The client and server creates return a handle or `NULL`; the sized forms take
 the config size and write no separate status code, a size refusal included. A
