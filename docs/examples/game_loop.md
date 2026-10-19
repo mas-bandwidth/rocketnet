@@ -12,8 +12,8 @@ budget, the server's tick, and message latency in frames.
    what arrived; (2) `*_receive` and `*_release` every message; (3) simulate;
    (4) queue this frame's messages with `*_start` and `*_finish`; (5)
    `*_send_packets` last, so this frame's messages leave this frame.
-3. Each client sends its position every frame (`ROCKETNET_UNRELIABLE_SEQUENCED`,
-   channel 0) and an event twice a second (`ROCKETNET_RELIABLE_ORDERED`, channel
+3. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
+   channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
    1); the server sends each client a snapshot every frame. Each message
    carries the frame it was queued in, and the receiver counts frames since.
 

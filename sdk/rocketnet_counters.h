@@ -462,7 +462,7 @@
     /* a connection's message memory (its region, docs/CHANNELS.md 4) was */ \
     /* exhausted: an operation found no room, the region took its sticky */ \
     /* exhausted state, and the connection is disconnected with the reason */ \
-    /* ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED (tla/RNConnectionMemory.tla, */ \
+    /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (tla/RNConnectionMemory.tla, */ \
     /* Exhaust). Counted once per exhausted connection, on the owner's */ \
     /* counters, beside the refusal's own counter (MESSAGE_SEND_STORE_FULL or */ \
     /* MESSAGE_SEND_QUEUE_FULL). appended: indices are the contract. */ \
@@ -514,7 +514,7 @@
     \
     /* RELIABLE_ORDERED's receive path (docs/CHANNELS.md 7.2, 8): each is a */ \
     /* wire violation, counted once per record, and each ends the */ \
-    /* connection with ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION. A record */ \
+    /* connection with ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION. A record */ \
     /* whose channel is at or past this end's count; a block fragment whose */ \
     /* count or index disagrees with the block's first-seen count, or whose */ \
     /* count is above ceil(max_message_bytes / F), or whose length is not F */ \

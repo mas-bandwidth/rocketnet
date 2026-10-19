@@ -26,7 +26,7 @@ do                                                                              
 
 int main()
 {
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
 
     struct rocketnet_server_transport_config_t server_config;
@@ -40,7 +40,7 @@ int main()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
     check( client );

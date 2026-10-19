@@ -112,7 +112,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        server_receive_backlog_require( rocketnet_write_dev_connect_token( server_address, (uint64_t) i + 1, 4102444800ull, token ) != 0 );
+        server_receive_backlog_require( rocketnet_write_dev_connect_token( server_address, (uint64_t) i + 1, 4102444800ull, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, time );
         server_receive_backlog_require( client != NULL );
         clients.push_back( client );

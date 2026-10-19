@@ -1697,10 +1697,10 @@ jobs:
       # protect. Release, because that is the build the selftest is written
       # against.
 
-      - name: Build soak_sim (Release)
+      - name: Build soak_sim and soak (Release)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target soak_sim --parallel
+          cmake --build build --target soak_sim soak --parallel
 
       # soak_sim's instruments, each driven against its own negative control
       # (#99). The audit legs corrupt the simulator's index on purpose and
@@ -1711,6 +1711,16 @@ jobs:
 
       - name: soak_sim instrument selftest
         run: bash scripts/soak-sim-selftest
+
+      # soak's command line and end-of-run summary: every argument refusal
+      # exits 2 without a run, a --seconds 3 run ends inside 3..15 s with
+      # every summary line, the positional iteration count keeps its meaning,
+      # and a planted verify failure (ROCKETNET_SOAK_FAULT_VERIFY=1) goes red.
+      # About 8 s of wall time.
+
+      - name: soak argument and summary selftest
+        timeout-minutes: 3
+        run: bash scripts/soak-args-selftest
 
       # the bench harnesses' failure states (#98). Building them here is the
       # only place bench/ is compiled by CI at all, which alone catches the
