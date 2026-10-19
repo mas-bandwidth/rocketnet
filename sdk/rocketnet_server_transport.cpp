@@ -345,7 +345,7 @@ static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_trans
                                                    int client_index, const rocketnet_address_t * address,
                                                    int packet_bytes )
 {
-    const uint64_t wire_bytes = (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    const uint64_t wire_bytes = (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( address->type ) );
     server_transport->server_stats.packets_sent++;
     server_transport->server_stats.bytes_sent += wire_bytes;
     if ( client_index >= 0 && client_index < server_transport->client_wire_totals_capacity )
@@ -372,9 +372,9 @@ static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_trans
 // touch it.
 
 static void rocketnet_server_wire_totals_add_sent_atomic( struct rocketnet_server_transport_t * server_transport,
-                                                          int client_index, int packet_bytes )
+                                                          int client_index, int address_type, int packet_bytes )
 {
-    const uint64_t wire_bytes = (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    const uint64_t wire_bytes = (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( address_type ) );
     rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &server_transport->server_stats.packets_sent, 1 );
     rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &server_transport->server_stats.bytes_sent, wire_bytes );
     if ( client_index >= 0 && client_index < server_transport->client_wire_totals_capacity )
@@ -389,7 +389,7 @@ static void rocketnet_server_wire_totals_add_received( struct rocketnet_server_t
                                                        int client_index, const rocketnet_address_t * address,
                                                        int packet_bytes )
 {
-    const uint64_t wire_bytes = (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    const uint64_t wire_bytes = (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( address->type ) );
     server_transport->server_stats.packets_received++;
     server_transport->server_stats.bytes_received += wire_bytes;
     if ( client_index >= 0 && client_index < server_transport->client_wire_totals_capacity )
@@ -605,7 +605,7 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
 
     const int stats_index = server_transport->current_stats_index;
     server_transport->stats_frames[stats_index].packets_sent++;
-    server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( frame->to.type ) );
 
     rocketnet_server_wire_totals_add_sent( server_transport, frame->client_index, &frame->to, packet_bytes );
 
@@ -644,18 +644,6 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport
 
 // rocketnet_server_transport_default_config lives in rocketnet_config.cpp,
 // written from the config table so every default is declared exactly once
-
-void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config )
-{
-    if ( !rocketnet_api_null_guard( config ) )
-        return;
-    rocketnet_assert( config );
-    rocketnet_server_transport_default_config_current( config );
-    config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
-}
 
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config )
 {
@@ -888,6 +876,12 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current(
                                                                                   const struct rocketnet_server_transport_config_t * config )
 {
     return rocketnet_server_transport_create_internal( context, address, config, 0.0, NULL );
+}
+
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address,
+                                                                                     const struct rocketnet_server_transport_config_t * config, int * status )
+{
+    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status );
 }
 
 static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
@@ -1408,9 +1402,26 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     memcpy( protocol->server_secret_key, config->server_secret_key, 32 );
 
     if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
+    {
         protocol->advertised_ipv4 = public_address;
+    }
     else
+    {
         protocol->advertised_ipv6 = public_address;
+        // a server created at the IPv6 wildcard is dual-stack: it serves
+        // IPv4 as well, so it also advertises its IPv4 wildcard and IPv4
+        // tokens for the loopback are accepted
+        int wildcard = 1;
+        for ( int i = 0; i < 8 && wildcard; i++ )
+            if ( public_address.data.ipv6[i] != 0 )
+                wildcard = 0;
+        if ( wildcard )
+        {
+            memset( &protocol->advertised_ipv4, 0, sizeof(protocol->advertised_ipv4) );
+            protocol->advertised_ipv4.type = ROCKETNET_ADDRESS_IPV4;
+            protocol->advertised_ipv4.port = public_address.port;
+        }
+    }
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     sodium_memzero( protocol->previous_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
@@ -1723,7 +1734,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     for ( int i = 0; i < received->num_packets; i++ )
     {
         server_transport->stats_frames[stats_index].packets_received++;
-        server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + rocketnet_wire_header_bytes( received->from[i].type ) );
 
         const int wire_client_before = rocketnet_server_wire_client_index( server_transport, &received->from[i] );
         rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &received->from[i], received->packet_bytes[i] );
@@ -1851,7 +1862,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             const int packet_bytes = receive_buffer->packet_bytes[i];
 
             server_transport->stats_frames[stats_index].packets_received++;
-            server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+            server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( from.type ) );
 
             const int wire_client_before = rocketnet_server_wire_client_index( server_transport, &from );
             rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &from, packet_bytes );
@@ -2342,8 +2353,8 @@ static void rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
         else
             rocketnet_server_driver_finish_packet( server_transport, frame->socket_packet_id, frame->data, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
-        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
-        rocketnet_server_wire_totals_add_sent_atomic( server_transport, frame->client_index, wire_bytes );
+        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( frame->to.type ) ) );
+        rocketnet_server_wire_totals_add_sent_atomic( server_transport, frame->client_index, frame->to.type, wire_bytes );
         return;
     }
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
@@ -2514,10 +2525,10 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
+        const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, context->client_index );
+        const rocketnet_address_t * to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         if ( server_transport->link_simulator )
         {
-            const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, context->client_index );
-            const rocketnet_address_t * to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
             rocketnet_server_link_send( server_transport, to,
                                         context->frame + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
             rocketnet_server_driver_abort_packet( server_transport, backend_id, context->frame );
@@ -2525,8 +2536,9 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         else
             rocketnet_server_driver_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
-        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
-        rocketnet_server_wire_totals_add_sent_atomic( server_transport, context->client_index, wire_bytes );
+        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( to ? to->type : ROCKETNET_ADDRESS_NONE ) ) );
+        rocketnet_server_wire_totals_add_sent_atomic( server_transport, context->client_index,
+                                                      to ? to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
     }
     else
     {
@@ -2609,7 +2621,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
             // holds every committed packet's wire size, so this costs nothing
 
             server_transport->stats_frames[stats_index].packets_sent++;
-            server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+            server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( ring->info[i].to.type ) );
             rocketnet_server_wire_totals_add_sent( server_transport, ring->info[i].client_index, &ring->info[i].to, ring->info[i].wire_bytes );
 
             sends[num_sends].to = &ring->info[i].to;

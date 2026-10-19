@@ -395,10 +395,10 @@ static int send_message( struct rocketnet_client_t * client, int mode, int chann
 {
     int len = rocketnet_live_generate( &st->cfg, 0, mode, channel, cycle, sequence, buf, cap );
     if ( len <= 0 ) return 0;
-    uint8_t * out = rocketnet_client_start( client, channel, mode, len );
+    uint8_t * out = rocketnet_client_start_message( client, channel, mode, len );
     if ( !out ) return -1;
     memcpy( out, buf, len );
-    rocketnet_client_finish( client, len );
+    rocketnet_client_finish_message( client, len );
     return len;
 }
 
@@ -441,9 +441,9 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
     {
         const uint8_t * data;
         int bytes;
-        while ( rocketnet_client_receive( client, channel, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, channel, &data, &bytes ) )
         {
-            if ( bytes < 1 ) { rocketnet_client_release( client, data ); continue; }
+            if ( bytes < 1 ) { rocketnet_client_release_message( client, data ); continue; }
             int tag = data[0];
             int mode = tag & 7;
             int recv_channel = ( mode == 0 || mode == 2 || mode == 5 || mode == 6 ) ? 0 : channel;
@@ -526,7 +526,7 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
                     }
                 }
             }
-            rocketnet_client_release( client, data );
+            rocketnet_client_release_message( client, data );
         }
     }
 }
@@ -603,15 +603,15 @@ static void over_maximum( matrix_state_t * st, struct rocketnet_client_t * clien
             const int channel = channels[k];
             const int counter = ( mode == 0 || mode == 1 ) ? ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED : ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED;
             const uint64_t before = rocketnet_counter_value( counters, counter );
-            uint8_t * out = rocketnet_client_start( client, channel, mode, max_m + 1 );
+            uint8_t * out = rocketnet_client_start_message( client, channel, mode, max_m + 1 );
             if ( out )
             {
-                rocketnet_client_finish( client, max_m + 1 );
+                rocketnet_client_finish_message( client, max_m + 1 );
                 char excerpt[96];
                 snprintf( excerpt, sizeof(excerpt), "start accepted %d bytes", max_m + 1 );
                 r_fail( st->res, st->o->label, window, 0, mode, channel, 0, "over-max-not-refused", max_m + 1, 0, "client", "-", excerpt );
                 st->fails++;
-                rocketnet_client_abort( client );
+                rocketnet_client_abort_message( client );
                 continue;
             }
             const uint64_t after = rocketnet_counter_value( counters, counter );
@@ -708,7 +708,12 @@ static void run_matrix( opts_t * o )
         cc.send_kbps = o->send_kbps;
         cc.max_packets_per_update = 64;     // the budget, section 2
 
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, &cc, NULL, 0 );
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0 );
+        if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+        {
+            rocketnet_client_destroy( client );
+            client = NULL;
+        }
         if ( !client )
         {
             r_fail( res, o->label, window, 0, 0, 0, 0, "client-create-failed", 0, 0, "client", "-", "create" );

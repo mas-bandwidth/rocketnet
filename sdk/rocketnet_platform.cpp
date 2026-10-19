@@ -63,6 +63,11 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
     return remaining > 0.0 && remaining <= ROCKETNET_PLATFORM_SLEEP_TAIL_SECONDS;
 }
 
+// test seam for the client bind-family choice: true unless a test turns it
+// off, in which case an IPv6 socket create behaves as it does on a host with
+// no IPv6 stack. the client's availability probe reads the same flag.
+static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
 // linux and the BSDs. one POSIX section: the sockets, threads and mutexes
@@ -294,6 +299,13 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     socket->type = socket_type;
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, socket );
+        return NULL;
+    }
 
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -1859,6 +1871,13 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     // create socket
 
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, socket );
+        return NULL;
+    }
+
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
     if ( socket->handle < 0 )
@@ -3218,21 +3237,6 @@ int rocketnet_platform_id()
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
-int rocketnet_set_socket_codepoint( SOCKET socket, QOS_TRAFFIC_TYPE trafficType, QOS_FLOWID flowId, PSOCKADDR addr ) 
-{
-    QOS_VERSION QosVersion = { 1 , 0 };
-    HANDLE qosHandle;
-    if ( QOSCreateHandle( &QosVersion, &qosHandle ) == FALSE )
-    {
-        return GetLastError();
-    }
-    if ( QOSAddSocketToFlow( qosHandle, socket, addr, trafficType, QOS_NON_ADAPTIVE_FLOW, &flowId ) == FALSE )
-    {
-        return GetLastError();
-    }
-    return 0;
-}
-
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
@@ -3248,6 +3252,13 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     // create socket
 
     s->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, s );
+        return NULL;
+    }
 
     s->handle = socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -3735,6 +3746,48 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 #endif // #if ROCKETNET_UNREAL_ENGINE
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// ----------------------------------------------------------------
+
+void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available )
+{
+    rocketnet_platform_ipv6_socket_available_for_testing = available;
+}
+
+bool rocketnet_platform_client_ipv6_available()
+{
+    if ( !rocketnet_platform_ipv6_socket_available_for_testing )
+        return false;
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe == INVALID_SOCKET )
+        return false;
+    closesocket( probe );
+    return true;
+#else
+    int probe = (int) ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe < 0 )
+        return false;
+    ::close( probe );
+    return true;
+#endif
+}
+
+int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_available, bool dual_stack )
+{
+    if ( !ipv6_available )
+    {
+        if ( server_address_type == ROCKETNET_ADDRESS_IPV6 )
+            return ROCKETNET_ADDRESS_NONE;
+        return ROCKETNET_ADDRESS_IPV4;
+    }
+
+    if ( server_address_type == ROCKETNET_ADDRESS_IPV6 || dual_stack )
+        return ROCKETNET_ADDRESS_IPV6;
+
+    return ROCKETNET_ADDRESS_IPV4;
+}
 
 // ----------------------------------------------------------------
 

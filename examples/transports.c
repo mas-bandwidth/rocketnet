@@ -21,7 +21,7 @@
 
 // The lifecycle card that lands after this one renames start, finish, receive,
 // release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_messages. The header at this
+// *_receive_message, *_release_message and *_send_packets. The header at this
 // base still declares the old names, so this example uses them.
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
@@ -42,7 +42,12 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     config.transport = "portable";   // the client side is portable; the server may be any driver
     if ( !rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) )
         return 0;
-    client = rocketnet_client_create( NULL, connect_token, &config, NULL, 0 );
+    client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     if ( !client )
         return 0;
     while ( rocketnet_time() - start < 5.0 )
@@ -56,16 +61,16 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
         for ( int i = 0; i < max_clients; i++ )
         {
             if ( !rocketnet_server_client_connected( server, i ) )
                 continue;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 received++;
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
             }
         }
         // (3) run the game simulation for the frame: nothing to simulate here
@@ -74,17 +79,16 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         {
             const char * message = "transports";
             const int message_bytes = (int) strlen( message );
-            uint8_t * buffer = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
             if ( !buffer )
                 break;
             memcpy( buffer, message, (size_t) message_bytes );
-            if ( !rocketnet_client_finish( client, message_bytes ) )
+            if ( !rocketnet_client_finish_message( client, message_bytes ) )
                 break;
             sent = 1;
         }
         // (5) send_packets is last, after this frame's messages are queued, so
-        // this frame's messages leave this frame (send_messages after the
-        // lifecycle rename)
+        // this frame's messages leave this frame
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && received > 0 )
@@ -111,6 +115,11 @@ static int create_and_prove( const char * label, const char * transport )
     config.max_clients = 2;
     config.transport = transport;
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     if ( !server )
         return 0;
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
@@ -142,7 +151,13 @@ int main( void )
     rocketnet_server_dev_config( &config );
     config.max_clients = 2;
     config.transport = "not-a-transport";
-    CHECK( rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 ) == NULL );
+    {
+        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+        const int started = refused ? (int) rocketnet_server_start( refused ) : -1;
+        if ( refused )
+            rocketnet_server_destroy( refused );
+        CHECK( started != ROCKETNET_STATUS_OK );
+    }
     printf( "refused as promised: the pin named no transport\n" );
     printf( "PASS\n" );
     result = 0;

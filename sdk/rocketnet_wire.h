@@ -13,8 +13,9 @@
 // The wire constants shared by every reader of raw packets: the sdk, the
 // tests, and the server_xdp kernel program, which is compiled as BPF C on
 // the target machine and cannot include anything else from the sdk. Only
-// preprocessor definitions live here, so the one file serves all three --
-// the kernel filter and the userspace prefilter can never drift apart.
+// preprocessor definitions and plain inline helpers live here, so the one
+// file serves all three -- the kernel filter and the userspace prefilter
+// can never drift apart.
 
 // packet types
 
@@ -62,6 +63,20 @@
 #define ROCKETNET_IPV4_HEADER_BYTES             20
 #define ROCKETNET_IPV6_HEADER_BYTES             40
 #define ROCKETNET_UDP_HEADER_BYTES              8
+
+// The IP and UDP header bytes on one datagram, from the peer's address family:
+// 28 for IPv4 and 48 for IPv6. The values are the rocketnet_address_t.type
+// families from rocketnet_layers.h (1 IPv4, 2 IPv6); an address with no family
+// has no headers.
+
+static inline int rocketnet_wire_header_bytes( int address_type )
+{
+    if ( address_type == 1 )    // ROCKETNET_ADDRESS_IPV4
+        return ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+    if ( address_type == 2 )    // ROCKETNET_ADDRESS_IPV6
+        return ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+    return 0;
+}
 
 // the receive ceiling: fixed for every receiver, whatever its send budget --
 // anything one 1500-MTU IPv4 datagram can carry, 1472 bytes
