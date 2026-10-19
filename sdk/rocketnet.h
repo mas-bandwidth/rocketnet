@@ -337,8 +337,8 @@ enum rocketnet_client_counter_t
 {
     ROCKETNET_CLIENT_COUNTER_PACKETS_SENT,          // packets: UDP datagrams sent, handshake included
     ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED,      // packets: UDP datagrams received, handshake included
-    ROCKETNET_CLIENT_COUNTER_BYTES_SENT,            // bytes: UDP payload bytes sent
-    ROCKETNET_CLIENT_COUNTER_BYTES_RECEIVED,        // bytes: UDP payload bytes received
+    ROCKETNET_CLIENT_COUNTER_BYTES_SENT,            // bytes: UDP payload plus the IP and UDP headers of the peer's family
+    ROCKETNET_CLIENT_COUNTER_BYTES_RECEIVED,        // bytes: UDP payload plus the IP and UDP headers of the peer's family
     ROCKETNET_CLIENT_COUNTER_PAYLOADS_RECEIVED,     // payloads: packets from the server that opened and carried messages
     ROCKETNET_CLIENT_COUNTER_MESSAGES_RESENT,       // records: reliable message records resent on the retransmit timer
     ROCKETNET_CLIENT_COUNTER_MESSAGES_DUPLICATE,    // messages: reliable messages received a second time and dropped
@@ -373,8 +373,8 @@ enum rocketnet_server_counter_t
 {
     ROCKETNET_SERVER_COUNTER_PACKETS_SENT,          // packets: UDP datagrams sent
     ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED,      // packets: UDP datagrams received
-    ROCKETNET_SERVER_COUNTER_BYTES_SENT,            // bytes: UDP payload bytes sent
-    ROCKETNET_SERVER_COUNTER_BYTES_RECEIVED,        // bytes: UDP payload bytes received
+    ROCKETNET_SERVER_COUNTER_BYTES_SENT,            // bytes: UDP payload plus the IP and UDP headers of the peer's family
+    ROCKETNET_SERVER_COUNTER_BYTES_RECEIVED,        // bytes: UDP payload plus the IP and UDP headers of the peer's family
     ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED,     // connections: clients that completed the handshake
     ROCKETNET_SERVER_COUNTER_CLIENTS_DENIED_FULL,   // requests: connect attempts refused because every client slot was taken
     ROCKETNET_SERVER_COUNTER_HANDSHAKES_OVER_BUDGET,// requests: connect attempts dropped by the per-update handshake budget
@@ -408,8 +408,8 @@ enum rocketnet_server_client_counter_t
 {
     ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT,       // packets: UDP datagrams sent to this client
     ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_RECEIVED,   // packets: UDP datagrams received from this client
-    ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_SENT,         // bytes: UDP payload bytes sent to this client
-    ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_RECEIVED,     // bytes: UDP payload bytes received from this client
+    ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_SENT,         // bytes: UDP payload plus the IP and UDP headers of this client's family
+    ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_RECEIVED,     // bytes: UDP payload plus the IP and UDP headers of this client's family
     ROCKETNET_SERVER_CLIENT_COUNTER_COUNT
 };
 

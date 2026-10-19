@@ -1136,15 +1136,16 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
         committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
 
     const int stats_index = client_transport->current_stats_index;
+    const int address_type = destination ? destination->type : client_transport->protocol.server_address.type;
 
     for ( uint64_t i = client_transport->stats_counted; i < committed; i++ )
     {
         if ( ring->info[i].wire_bytes > 0 )
         {
             client_transport->stats_frames[stats_index].packets_sent++;
-            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( address_type ) );
             client_transport->client_stats.packets_sent++;
-            client_transport->client_stats.bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+            client_transport->client_stats.bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( address_type ) );
         }
     }
     client_transport->stats_counted = committed;
@@ -1328,9 +1329,9 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     for ( int i = 0; receive_buffer && i < receive_buffer->num_packets; i++ )
     {
         client_transport->stats_frames[stats_index].packets_received++;
-        client_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + rocketnet_wire_header_bytes( receive_buffer->from[i].type ) );
         client_transport->client_stats.packets_received++;
-        client_transport->client_stats.bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->client_stats.bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + rocketnet_wire_header_bytes( receive_buffer->from[i].type ) );
 
         // only the I/O thread writes verdicts; the BASE receive thread's
         // records are raw
@@ -1371,9 +1372,9 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     else if ( packet_bytes > 0 )
     {
         client_transport->stats_frames[stats_index].packets_sent++;
-        client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
         client_transport->client_stats.packets_sent++;
-        client_transport->client_stats.bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->client_stats.bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
 
         rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address, packet, packet_bytes );
     }
@@ -1746,9 +1747,9 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
             // holds every committed packet's wire size, so this costs nothing
 
             client_transport->stats_frames[stats_index].packets_sent++;
-            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
             client_transport->client_stats.packets_sent++;
-            client_transport->client_stats.bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+            client_transport->client_stats.bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
 
             rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address,
                                         ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
@@ -1933,9 +1934,9 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     for ( int i = 0; i < burst_count; i++ )
     {
         client_transport->stats_frames[stats_index].packets_sent++;
-        client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( burst_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( burst_bytes + rocketnet_wire_header_bytes( server_address.type ) );
         client_transport->client_stats.packets_sent++;
-        client_transport->client_stats.bytes_sent += (uint64_t) ( burst_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+        client_transport->client_stats.bytes_sent += (uint64_t) ( burst_bytes + rocketnet_wire_header_bytes( server_address.type ) );
 
         rocketnet_client_link_send( client_transport, &server_address,
                                     burst + i * ROCKETNET_SEND_BUDGET,
