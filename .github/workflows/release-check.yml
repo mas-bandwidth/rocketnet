@@ -157,7 +157,7 @@ jobs:
           # unannounced in a sibling.
 
           wire_log=$(git log --oneline "$newest_tag"..HEAD -- \
-            STANDARD.md \
+            standard/TRANSPORT.md standard/MESSAGES.md \
             sdk/rocketnet_wire.h \
             sdk/rocketnet_protocol.h sdk/rocketnet_protocol.cpp \
             sdk/rocketnet_connect_token.h sdk/rocketnet_connect_token.cpp)

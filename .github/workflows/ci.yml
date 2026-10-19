@@ -65,7 +65,7 @@
 #   big-endian              the suite on real big-endian bytes (s390x), the
 #                           only leg that can see an endianness break before
 #                           a customer does
-#   conformance             STANDARD.md and standard/ against the implementation
+#   conformance             the standard in standard/ against the implementation
 #   platform-selftests      soak_sim's instruments and the bench harnesses'
 #                           abort paths, each against its own negative
 #                           control -- once per OS, on the Release build,
@@ -1099,18 +1099,13 @@ jobs:
           qemu-s390x-static ./bin/wire_check
           qemu-s390x-static ./bin/test_sodium
 
-  # STANDARD.md against the implementation, per serialize's tools/conformance.
-  # The checker reads the specification as a DOCUMENT -- its published tables,
-  # parsed as markdown, with no reference to the source tree -- and compares
-  # THE ROWS IT NAMES against the same constants as the compiler expands
-  # them. A row deleted from the document fails as loudly as a value that
-  # disagrees, because deleting the row would otherwise be the cheapest way
-  # to pass.
-  #
-  # It names the wire-format rows, not every row in the table: the timing and
-  # sizing rows, the magic and the KDF context strings are not compared, and
-  # the checker's own docstring lists exactly which and why. The count it
-  # prints on success is how many comparisons a green stands for.
+  # The standard in standard/ (RN-1, RN-2, RN-R), per serialize's
+  # tools/conformance. The checker reads each document as a DOCUMENT -- its
+  # published tables, parsed as markdown, with no reference to the source tree
+  # -- and compares every pinned row against the same constants as the
+  # compiler expands them. A row deleted from the document fails as loudly as
+  # a value that disagrees, because deleting the row would otherwise be the
+  # cheapest way to pass.
   #
   # A failure means the document and the code disagree. Decide which is wrong
   # and fix that one. A specification nothing verifies drifts, and a drifted
@@ -1118,14 +1113,11 @@ jobs:
   # it.
 
   conformance:
-    name: STANDARD.md conformance
+    name: standard conformance
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
     steps:
 
       - uses: actions/checkout@v4
-
-      - name: Verify STANDARD.md against the implementation
-        run: python3 tools/conformance/check_standard.py
 
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every
