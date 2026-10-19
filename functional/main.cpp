@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int rocketnet_functional_test_count();
 const char * rocketnet_functional_test_name( int index );
@@ -55,8 +56,16 @@ static int rocketnet_functional_worker( const char * name )
     return result;
 }
 
+int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
+
 int main( int argc, char ** argv )
 {
+    // the child client of the hard-killed peer cases
+    // (functional/posix_hard_killed_peer.cpp), started by posix_spawn and
+    // ended by the case with SIGKILL
+    if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
+        return rocketnet_posix_hard_killed_child_main( argc, argv );
+
 #if defined(_WIN32)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },

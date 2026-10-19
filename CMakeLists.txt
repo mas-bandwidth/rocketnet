@@ -502,6 +502,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
+        functional/posix_hard_killed_peer.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     target_compile_features(functional PRIVATE cxx_std_11)

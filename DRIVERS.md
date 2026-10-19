@@ -121,6 +121,22 @@ concurrently with sends; both calls borrow their buffers synchronously. Destroy
 runs after that thread has joined and must release any additional backend-owned
 work. Client fast-path I/O is not required by this interface.
 
+## ICMP errors
+
+A UDP send to a peer that died hard comes back as ICMP port or host
+unreachable. A BSD stack reports such an error to the next receive or send on a
+connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. The portable and
+msgx sockets are never connected, so on macOS the kernel does not route these
+errors to them. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
+ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather: they skip the
+error and keep draining. The error is never fatal, never ends a drain, and never
+pauses the msgx pump. EAGAIN ends a drain, because the queue is empty. Any other
+receive errno pauses the msgx pump with one warning per pause. The send side
+already classes the same errnos as weather. A backend's receive keeps the same
+contract: one peer's death never stalls or degrades another peer's traffic.
+The functional cases in functional/posix_hard_killed_peer.cpp hold this per
+transport cell, and an injected-errno seam covers each receive arm.
+
 ## Adding a backend without editing the transport
 
 For an in-tree driver, define a `const rocketnet_driver_backend_t`, add its row
