@@ -72,6 +72,12 @@ and attackers holding valid tokens are answered by the backend, not by this
 layer. Those sections are the authority; this file does not restate their
 reasoning.
 
+The connect-token create and expire checks read the application's clock: by
+default the wall clock, or with `game_clock_epoch` set, that epoch plus the time
+the caller passes. The application already supplies the clock every other
+deadline reads, so the token clock has the same trust; the expire check stays
+and only its clock source changes.
+
 The following are in scope for a report: packet parsing and generation, the
 connect handshake and token handling, replay and acknowledgement state, fragment
 reassembly, the public C API and ABI boundary, and the SDK's build and

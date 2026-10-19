@@ -253,15 +253,21 @@ struct rocketnet_client_transport_config_t
     /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
     uint8_t filter_value[4];
     /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PAYLOAD_BYTES through 305408. */
-    int max_payload_bytes;
+    int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
-    int num_reassembly_slots;
+    int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
-    char driver[ROCKETNET_DRIVER_STRING_LENGTH];
+    char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief Optional state transition callback; NULL disables it. It receives the create context and previous and current states. */
     void (*state_change_callback)( void * context, int previous_state, int current_state );
     /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
-    double (*time_callback)( void * context );
+    double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
+    uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
+    uint64_t step_driven;                           // 1: the caller's update and send_packets run the I/O step, no I/O thread; 0: today's thread
+    int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
+    int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
+    int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off
+    int simulated_duplicate_percent;                // development only: simulated duplicate 0..100, 0 off
 };
 
 // a NULL config is a counted no-op.
@@ -626,7 +632,7 @@ struct rocketnet_server_transport_config_t
 
     uint64_t protocol_id;
     /** @brief Maximum simultaneous clients; 1 through ROCKETNET_MAX_CLIENTS, default 1000. */
-    int max_clients;
+    int max_clients;                                // 1 .. ROCKETNET_MAX_CLIENTS; default 1000
     /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
     uint8_t filter_value[4];
     /** @brief 32-byte key used to verify connect-token signatures. */
@@ -634,23 +640,28 @@ struct rocketnet_server_transport_config_t
     /** @brief 32-byte public key used to seal server-bound token data. */
     uint8_t server_public_key[32];
     /** @brief 32-byte server secret key; override logs redact it. */
-    uint8_t server_secret_key[32];
+    uint8_t server_secret_key[32];                  // secret: logged redacted
     /** @brief Requested XDP/GSO queue count; zero selects the driver default, otherwise 1 through 1024. */
-    int num_xdp_queues;
+    int num_xdp_queues;                             // 1 .. 1024; 0 is the driver default
     /** @brief Cores reserved for the operating system by XDP; zero selects the driver default, otherwise 1 through 256. */
-    int num_os_cpus;
+    int num_os_cpus;                                // 1 .. 256; 0 is the driver default
     /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PAYLOAD_BYTES through 305408. */
-    int max_payload_bytes;
+    int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
-    int num_reassembly_slots;
+    int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
-    char driver[ROCKETNET_DRIVER_STRING_LENGTH];
+    char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief NUL-terminated advertised address; an empty string uses the create address. */
     char public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     /** @brief Maximum client inactivity in seconds; 1 through 3600, default 60. */
-    int max_timeout_seconds;
+    int max_timeout_seconds;                        // 1 .. 3600; default 60
     /** @brief Fixed handshake deadline in seconds; 1 through 60, default 5. */
-    int handshake_deadline_seconds;
+    int handshake_deadline_seconds;                 // 1 .. 60; default 5
+    uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
+    int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
+    int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
+    int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off
+    int simulated_duplicate_percent;                // development only: simulated duplicate 0..100, 0 off
 };
 
 // a NULL config is a counted no-op.
@@ -677,6 +688,7 @@ int rocketnet_server_transport_default_config_sized( struct rocketnet_server_tra
  * @details This helper selects the built-in development posture. It does not create a transport. Use only in builds that enable development support; the caller owns the resulting config and must supply production keys for production servers.
  */
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
+void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config );
 
 // Allocation-free constructor memory plan for one built-in driver name.
 // Includes SDK allocator requests (alignment/ownership overhead and transient
@@ -1275,39 +1287,39 @@ struct rocketnet_message_config_t
 {
     /** @brief Message channels; WIRE, 1 through ROCKETNET_MAX_CHANNELS, default 32. */
 
-    int num_channels;
+    int num_channels;                   // WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     /** @brief Reliable receive window; WIRE, power of two from 64 through 1<<20, default 1024. */
-    int window_messages;
+    int window_messages;                // WIRE, power of two; 64 .. 1 << 20; default 1024
     /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 262144. */
-    int receive_ring_bytes;
+    int receive_ring_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
     /** @brief Maximum message bytes; WIRE, at most receive_ring_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
-    int max_message_bytes;
+    int max_message_bytes;              // WIRE, <= receive_ring_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
     /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 800000. */
-    int send_buffer_bytes;
+    int send_buffer_bytes;              // 12288 .. 1 << 28; default 800000
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
-    int send_queue_messages;
+    int send_queue_messages;            // 16 .. 1 << 20; default 1024
     /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
-    int packets_in_flight;
+    int packets_in_flight;              // 16 .. 1 << 16; default 256
     /** @brief Packets emitted per send update; 1 through 256, default 4. */
-    int max_packets_per_update;
+    int max_packets_per_update;         // 1 .. 256; default 4
     /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
-    int unreliable_deliveries;
+    int unreliable_deliveries;          // per connection per update; 1 .. 1 << 16; default 256
     /** @brief Messages held for sequenced delivery; 0 through 4096, default 16. */
-    int sequenced_holds;
+    int sequenced_holds;                // 0 .. 4096; default 16
     /** @brief Receipt history entries; 16 through 1<<16, default 256; a full ring drops its oldest. */
-    int receipt_ring;
+    int receipt_ring;                   // 16 .. 1 << 16; default 256
     /** @brief Initial retransmit timeout in milliseconds; 10 through 60000, default 100. */
-    int rto_initial_ms;
+    int rto_initial_ms;                 // 10 .. 60000; default 100
     /** @brief Minimum retransmit timeout in milliseconds; 1 through 60000, default 10. */
-    int rto_min_ms;
+    int rto_min_ms;                     // 1 .. 60000; default 10
     /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 250. */
-    int rto_max_ms;
+    int rto_max_ms;                     // 10 .. 60000; default 250
     /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
-    int reliable_timeout_ms;
+    int reliable_timeout_ms;            // 1000 .. 600000; default 10000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
-    int client_send_kbps;
+    int client_send_kbps;                // client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
     /** @brief Default per-client server send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
-    int server_send_kbps;
+    int server_send_kbps;                // server per-client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
 };
 
 // a NULL config is a counted no-op.

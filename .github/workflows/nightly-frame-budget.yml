@@ -53,6 +53,8 @@ jobs:
 
   macos-frame-budget:
     name: frame budget (${{ matrix.ref }} / macos-15 msgx report-only)
+    # DISABLED: no darwin fleet runner registered for this repository; owed: a darwin runner registered for this repository
+    if: false
     runs-on: macos-15
     timeout-minutes: 10
     strategy:
@@ -76,6 +78,8 @@ jobs:
 
   windows-frame-budget:
     name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
+    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
+    if: false
     runs-on: windows-2025
     timeout-minutes: 10
     strategy:
