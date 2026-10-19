@@ -299,12 +299,12 @@ struct ip_pair_t
     double time;
 };
 
-static void ip_pair_setup( ip_pair_t * pair )
+static void ip_pair_setup( ip_pair_t * pair, int max_packets_per_update = 8 )
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.num_channels = 4;
-    config.max_packets_per_update = 8;
+    config.max_packets_per_update = max_packets_per_update;
     config.rto_initial_ms = 100;
     pair->net = new ip_net_t();
     pair->net->server.net = pair->net;
@@ -557,6 +557,36 @@ static void unreliable_over_fit_takes_the_message_buffer()
     ip_pair_teardown( &pair );
 }
 
+static void unreliable_packet_budget_is_shared_per_update()
+{
+    ip_pair_t pair;
+    ip_pair_setup( &pair, 1 );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                         // settle the initial CONFIG exchange
+
+    ip_end_t * client = &pair.net->client;
+    const size_t finished_before = client->finished.size();
+    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE, 1, 100, 90 );
+    check( client->finished.size() == finished_before + 1 ); // the in-place packet uses this update's one slot
+
+    rn_message_connection_t * connection = rn_message_object_connection( &pair.client->object, 0 );
+    uint8_t queued_bytes[100];
+    ip_fill( queued_bytes, 91, (int) sizeof( queued_bytes ) );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_UNRELIABLE, queued_bytes, (int) sizeof( queued_bytes ) ) != 0 );
+    check( connection->unreliable_count == 1 );  // shared cap routes the next fitting send to the queue
+
+    rocketnet_message_client_send_packets( pair.client );
+    rocketnet_message_client_send_packets( pair.client ); // another flush does not reset the update allowance
+    check( client->finished.size() == finished_before + 1 );
+
+    std::vector<ip_received_t> server_got;
+    ip_step( &pair, &server_got, NULL );                    // begin_update resets the shared allowance
+    check( client->finished.size() == finished_before + 2 );
+    check( ip_got( server_got, 0, 90, 100 ) );
+    check( ip_got( server_got, 0, 91, 100 ) );
+    ip_pair_teardown( &pair );
+}
+
 static void in_place_unreliable_keeps_acks_and_order()
 {
     ip_pair_t pair;
@@ -768,3 +798,4 @@ REGISTER_UNIT_TEST( unreliable_fit_in_place_every_transport );
 REGISTER_UNIT_TEST( unreliable_fit_has_no_message_copy );
 REGISTER_UNIT_TEST( unreliable_over_fit_takes_the_message_buffer );
 REGISTER_UNIT_TEST( in_place_unreliable_keeps_acks_and_order );
+REGISTER_UNIT_TEST( unreliable_packet_budget_is_shared_per_update );

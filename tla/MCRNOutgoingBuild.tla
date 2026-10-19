@@ -1,12 +1,10 @@
 ------------------------- MODULE MCRNOutgoingBuild -------------------------
 (***************************************************************************)
-(* The small instance of RNOutgoingBuild: six messages, two of each kind   *)
+(* The small instance of RNOutgoingBuild: six messages, two of each kind  *)
 (* (unreliable, sequenced, reliable), interleaved in send order, two       *)
-(* transport frames and two acks made due.  MCRNOutgoingBuild.cfg is the   *)
-(* design.  The reversed witness MCRNOutgoingBuildReversed.cfg sets        *)
-(* CopyStep <- CopyStepReversed, the build before this change (a fitting   *)
-(* unreliable message written into its region record and copied into the  *)
-(* frame at send_packets), and must fail NoCopy.                           *)
+(* transport frames, two acks made due and a one-packet update allowance. *)
+(* The shared packet quota resets only at BeginUpdate.                    *)
+(* MCRNOutgoingBuildReversed.cfg restores the pre-change copy step.        *)
 (***************************************************************************)
 EXTENDS RNOutgoingBuild
 

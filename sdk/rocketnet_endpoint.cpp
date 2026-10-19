@@ -97,7 +97,7 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     endpoint->in_place_serial = 0;
     endpoint->in_place_receipt = 0;
     endpoint->in_place_admitted = 0;
-    endpoint->in_place_written = 0;
+    endpoint->packets_this_update = 0;
     endpoint->unreliable_head = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_tail = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_count = 0;
@@ -368,11 +368,9 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
             return RN_ENDPOINT_IN_PLACE_NO;                     // refused, or the receipt twin's promotion
     }
 
-    // RNOutgoingBuild StartInPlace's ~UnreliableQueued: a message never
-    // overtakes an unreliable one queued before it; and in-place packets
-    // between two write passes are at most max_packets_per_update, the cap
-    // the write pass keeps for its own
-    if ( endpoint->unreliable_count > 0 || endpoint->in_place_written >= endpoint->config->max_packets_per_update )
+    // RNOutgoingBuild StartInPlace: a message never overtakes an unreliable
+    // one queued before it; direct and queued packets share the update cap.
+    if ( endpoint->unreliable_count > 0 || endpoint->packets_this_update >= endpoint->config->max_packets_per_update )
         return RN_ENDPOINT_IN_PLACE_QUEUED;
     return header;
 }
@@ -499,7 +497,7 @@ void rn_endpoint_in_place_sent( struct rn_endpoint_t * endpoint, uint64_t packet
         rn_window_ack_commit_receipt_packet( &endpoint->ordered.ack, packet_id, &endpoint->in_place_serial, 1, now );
     if ( endpoint->send_budget_enabled && endpoint->in_place_admitted > 0 )
         rocketnet_send_budget_settle( &endpoint->budget, endpoint->in_place_admitted, wire_bytes );
-    endpoint->in_place_written++;
+    endpoint->packets_this_update++;
     endpoint->in_place_receipt = 0;
     endpoint->in_place_admitted = 0;
 }
@@ -513,6 +511,7 @@ void rn_endpoint_in_place_failed( struct rn_endpoint_t * endpoint )
         rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, endpoint->in_place_serial );
     endpoint->in_place_receipt = 0;
     endpoint->in_place_admitted = 0;
+    endpoint->packets_this_update++;
 }
 
 uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data, int bytes,
@@ -603,6 +602,7 @@ uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 {
     // RNChannel EndUpdate: the last update's deliveries expire and their
     // receive descriptors return to the region (RNSlots Release's charge)
+    endpoint->packets_this_update = 0;
     const uint32_t delivered = endpoint->ordered.channels.deliveries;
     rn_ordered_end_update( &endpoint->ordered );
     rn_window_ack_receipt_begin_update( &endpoint->ordered.ack );
@@ -769,8 +769,8 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     // tla/RNEndpoint.tla WritePacket, the plan (9.3, RNChannel WritePacket
     // with RNSendBudget Send, Wait and Drop): ordered progress and
     // retransmits first, one packet at a time so a frame is started only for
-    // a packet that is written, then the unreliable records, under the
-    // connection's budget (R6), at most max_packets_per_update packets.
+    // a packet that is written, then unreliable records under the
+    // connection's budget (R6) and shared per-update packet allowance.
     if ( endpoint->packet_written )
         return 0;                                               // the written packet is not yet sent or failed
 
@@ -779,7 +779,6 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
         if ( endpoint->send_budget_enabled )
             rocketnet_send_budget_begin_update( &endpoint->budget, now );
         endpoint->written = 0;
-        endpoint->in_place_written = 0;
         // every resend waits the same delay, with no back-off (tla/RNResendTiming.tla)
         rn_window_ack_gaps_update( &endpoint->ordered.ack, now );   // the resend gap record (development builds only)
         endpoint->write_phase = RN_ENDPOINT_WRITE_RELIABLE;
@@ -789,7 +788,7 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 
     if ( endpoint->write_phase == RN_ENDPOINT_WRITE_RELIABLE )
     {
-        if ( endpoint->written < max_packets && rn_endpoint_ordered_due( endpoint, now ) )
+        if ( endpoint->packets_this_update < max_packets && endpoint->written < max_packets && rn_endpoint_ordered_due( endpoint, now ) )
         {
             endpoint->packet_kind = RN_ENDPOINT_PACKET_ORDERED;
             return ROCKETNET_MAX_PAYLOAD_BYTES;
@@ -799,7 +798,7 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 
     while ( endpoint->write_phase == RN_ENDPOINT_WRITE_UNRELIABLE )
     {
-        if ( endpoint->written >= max_packets || endpoint->unreliable_count == 0 )
+        if ( endpoint->packets_this_update >= max_packets || endpoint->written >= max_packets || endpoint->unreliable_count == 0 )
         {
             endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
             break;
@@ -1049,6 +1048,7 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
     }
 
     endpoint->written++;
+    endpoint->packets_this_update++;
     endpoint->packet_written = 0;
     endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
     endpoint->receipt_count = 0;
@@ -1077,6 +1077,7 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
         case RN_ENDPOINT_PACKET_ORDERED:
             rn_ordered_packet_failed( &endpoint->ordered, 0, now );     // 6.4 Failed send: resent first next update
             endpoint->written++;
+            endpoint->packets_this_update++;
             rn_endpoint_end_reliable( endpoint );
             break;
 
@@ -1085,12 +1086,14 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
             for ( uint32_t i = 0; i < endpoint->receipt_count; i++ )
                 rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, endpoint->receipt_serials[i] );
             endpoint->written++;
+            endpoint->packets_this_update++;
             break;
 
         case RN_ENDPOINT_PACKET_SEQUENCED_LARGE:
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
             rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor, RN_DESCRIPTOR_NONE );
             endpoint->written++;
+            endpoint->packets_this_update++;
             break;
 
         default:

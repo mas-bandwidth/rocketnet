@@ -101,10 +101,13 @@ and stages the packet; `send_packets` flushes it with everything else.
   there, counted the same (a receipt-bearing one takes its LOSS), and still
   returns its serial. The settle refunds the difference between the admitted
   maximum and the sealed size.
-- **The per-update packet cap.** `max_packets_per_update` caps the write
-  pass in send_packets, and separately the in-place packets between two
-  passes: once that many are out, the next fitting message takes the queued
-  path (counted as a fallback). An uncapped connection is so still bounded.
+- **The per-update packet cap.** `max_packets_per_update` is one allowance
+  shared by queued and in-place packet attempts. `begin_update` resets it;
+  another `send_packets` flush in the same update does not. Once the allowance
+  is spent, a fitting in-place message takes the queued path (counted as a
+  fallback), and queued packets wait for the next update. Failed transport
+  attempts consume a slot, matching the queued write path. An uncapped
+  connection is still bounded.
 
 ## Option (b): written into the connection's current outgoing packet
 

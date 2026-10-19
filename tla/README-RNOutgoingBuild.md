@@ -16,14 +16,15 @@ Code: `sdk/rocketnet_message_server.cpp` (`rn_message_object_start`,
   `regionData`), buffer identities (frames `1..NumFrames`, region record
   `NumFrames + m`) and the buffer start handed out (`handed`), the frames
   the transport can hand out, the queued path, the staged and sent packets,
-  the acks due and made, the finish order.
+  the acks due and made, the finish order, and the shared packet-attempt
+  counter since `BeginUpdate`.
 - Actions: `StartInPlace`, `StartQueued` (a reliable or oversize message, or
   a fitting one that falls back: no frame, unreliable queued ahead, a
   refusal), `Write`, `FinishInPlace`, `FinishInPlaceOverBudget`,
   `FinishQueued`, `Abort`, `SendPackets` (one packet of the write pass; a
   packet holding fewer than the whole queue is the packet full),
-  `TransportSend`, `AckDue`.
-- Invariants: `TypeOK`, `BytesUnchangedInPlace`, `NoCopy` (buffer identity
+  `TransportSend`, `AckDue`, `BeginUpdate` (the sole packet-quota reset).
+- Invariants: `TypeOK`, `PacketQuota` (queued and in-place attempts share one per-update allowance), `BytesUnchangedInPlace`, `NoCopy` (buffer identity
   for every fitting unreliable message that did not fall back),
   `AcksNeverLost`, `ModeOrder` (per kind, what the transport has is a prefix
   of the finish order less drops; nothing lost or duplicated).
@@ -33,7 +34,7 @@ Code: `sdk/rocketnet_message_server.cpp` (`rn_message_object_start`,
 
 | Case | Expected | Instance |
 |---|---|---|
-| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R), two frames, one ack, one fault |
+| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R), two frames, one packet per update, one ack, one fault |
 | `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before this change |
 
 The reversed witness's counterexample: message 1 (UNRELIABLE, fitting) is
