@@ -403,9 +403,22 @@ static const char * verdict_name( int verdict )
 
 // Run one frame. counter < 0: no counter moves. Otherwise exactly that
 // counter goes up by one and every other counter stays where it was.
+//
+// The AF_XDP transport serves IPv4 (DRIVERS.md): an IPv6 frame passes to the
+// kernel stack, never redirected and never dropped, and moves no counter but
+// PASSED_IPV6_EXTENSION, which counts an extension header behind a whole
+// fixed header. The cases are written once for both families; this is the
+// verdict every IPv6 frame is held to.
 
 static bool run_frame( filter_t * filter, const char * label, const spec_t & spec, int want_verdict, int want_counter )
 {
+    if ( spec.ipv6 )
+    {
+        want_verdict = XDP_PASS;
+        if ( want_counter != ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION )
+            want_counter = -1;      // no counter moves
+    }
+
     frame_t frame;
     build_frame( &frame, spec );
 

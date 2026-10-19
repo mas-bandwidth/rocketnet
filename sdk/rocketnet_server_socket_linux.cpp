@@ -134,6 +134,11 @@ struct rocketnet_server_xdp_socket_t
 
     uint64_t receive_counter;
 
+    // frames the receive loop dropped because their ethertype is not IPv4
+    // (rocketnet_xdp_frame_receive_ipv4); written by this queue's xdp thread
+    // under receive_mutex
+    uint64_t receive_dropped_not_ipv4;
+
     uint8_t padding_5[4096];
 
     rocketnet_send_handoff_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
@@ -2454,7 +2459,10 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 const int packet_bytes = desc->len;
 
-                if ( packet_bytes >= header_bytes + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+                // the AF_XDP transport serves IPv4: a frame that is not IPv4
+                // is dropped and counted here, never read at the IPv4 offsets
+
+                if ( rocketnet_xdp_frame_receive_ipv4( packet_data, (size_t) packet_bytes, &socket->receive_dropped_not_ipv4 ) )
                 {
                     const int index = receive_buffer->num_packets;
 
