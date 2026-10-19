@@ -2099,7 +2099,8 @@ The payload's **last** byte, the _form byte_, says how the bytes before it are
 laid out. Putting it last is what makes the zero-copy form possible: a SINGLE
 message starts at payload offset 0, which is the transport's 16-aligned
 payload root, so an application writes it in place in the frame and a
-receiver reads it in place in the delivered batch.
+receiver reads it in place in the delivered batch. The public send is
+zero-copy only: start, finish and abort, with no copying send form.
 
 ```
 payload := body form            L = len(payload) >= 2
@@ -2732,7 +2733,13 @@ In this exact order, on a _connection request packet_:
   exactly the key-recurrence hazard the nonce exists to prevent. A mapping is
   created once, answered identically for as long as it lives, and replaced
   never — a different token from the same address waits until the mapping
-  expires. The resend costs no crypto and is smaller than the request that
+  expires. **The request's connection salt is not consulted:** a request from
+  that address with a new salt is answered with the same stored challenge,
+  under the mapping's original salt and nonce. A client that retried with a new
+  salt therefore receives a challenge it cannot open; it gives up at its
+  deadline, and only a request from that address after the mapping expires can
+  create a new one. The resend costs no crypto and is smaller than the request
+  that
   provoked it, so it is safe this early; it is placed after the
   already-connected check so an established client's address cannot be made to
   emit anything.

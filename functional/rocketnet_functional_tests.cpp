@@ -3215,8 +3215,14 @@ void rocketnet_test_public_client_server_queries()
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const uint8_t payload[16] = { 1, 2, 3 };
-            rocketnet_check( rocketnet_client_send( client, 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, payload, sizeof( payload ) ) != 0 );
-            rocketnet_check( rocketnet_server_send( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, payload, sizeof( payload ) ) != 0 );
+            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            rocketnet_check( out != NULL );
+            memcpy( out, payload, sizeof( payload ) );
+            rocketnet_check( rocketnet_client_finish( client, (int) sizeof( payload ) ) != 0 );
+            out = rocketnet_server_start( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            rocketnet_check( out != NULL );
+            memcpy( out, payload, sizeof( payload ) );
+            rocketnet_check( rocketnet_server_finish( server, rocketnet_client_index( client ), (int) sizeof( payload ) ) != 0 );
             exchanged++;
         }
         const uint8_t * data = NULL;

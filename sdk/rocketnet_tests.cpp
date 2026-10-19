@@ -2559,14 +2559,18 @@ void rocketnet_test_challenge_resend_checks_salt()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    uint8_t stored[ROCKETNET_RECEIVE_CEILING];
+    memcpy( stored, response, (size_t) response_bytes );
+    const int stored_bytes = response_bytes;
 
     const uint8_t different_salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 8, 7, 6, 5, 4, 3, 2, 1 };
     memcpy( request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, different_salt, sizeof(different_salt) );
     response_bytes = 0;
     const struct rocketnet_counters_t before = test.counters;
-    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( response_bytes == 0 );
-    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_MAPPING_SALT_MISMATCH );
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == stored_bytes );
+    rocketnet_check( memcmp( response, stored, (size_t) stored_bytes ) == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -7399,6 +7403,9 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_sleep",
     "rocketnet_allocator",
     "rocketnet_allocator_ex",
+    "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_server_keypair",
+    "rocketnet_write_production_connect_token",
     "rocketnet_client_default_config",
     "rocketnet_client_default_config_sized",
     "rocketnet_client_validate_config",
@@ -7417,7 +7424,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_start",
     "rocketnet_client_finish",
     "rocketnet_client_abort",
-    "rocketnet_client_send",
     "rocketnet_client_receive",
     "rocketnet_client_release",
     "rocketnet_client_receipts",
@@ -7445,7 +7451,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_start",
     "rocketnet_server_finish",
     "rocketnet_server_abort",
-    "rocketnet_server_send",
     "rocketnet_server_broadcast",
     "rocketnet_server_receive",
     "rocketnet_server_release",
@@ -7465,6 +7470,9 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_abi_field_size",
     "rocketnet_allocator",
     "rocketnet_allocator_ex",
+    "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_server_keypair",
+    "rocketnet_write_production_connect_token",
     "rocketnet_client_default_config",
     "rocketnet_client_default_config_sized",
     "rocketnet_client_create",
@@ -7479,7 +7487,6 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_start",
     "rocketnet_client_finish",
     "rocketnet_client_abort",
-    "rocketnet_client_send",
     "rocketnet_client_receive",
     "rocketnet_client_release",
     "rocketnet_client_receipts",
@@ -7504,7 +7511,6 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_server_start",
     "rocketnet_server_finish",
     "rocketnet_server_abort",
-    "rocketnet_server_send",
     "rocketnet_server_broadcast",
     "rocketnet_server_receive",
     "rocketnet_server_release",
@@ -7914,6 +7920,7 @@ void rocketnet_test_public_api_null()
     struct rocketnet_client_config_t client_config;
     struct rocketnet_server_config_t server_config;
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES] = { 0 };
+    const char * production_address[] = { "127.0.0.1:40000" };
 
     RN_TEST_ONE_MISUSE( rocketnet_abi_type_size( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_abi_field_count( NULL ) );
@@ -7921,6 +7928,11 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_abi_field_size( NULL, NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_allocator( NULL, NULL ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_allocator_ex( NULL, NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_server_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_write_production_connect_token( token, token, 1, production_address, 1,
+                                                                                  1, 0, 1, 10, NULL, NULL,
+                                                                                  ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
 
     RN_TEST_ONE_MISUSE( rocketnet_client_default_config( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_sized( NULL, sizeof( client_config ) ) == 0 ) );
@@ -7936,7 +7948,6 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start( NULL, 0, ROCKETNET_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_abort( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_send( NULL, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive( NULL, 0, &view, &bytes ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_release( NULL, data ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receipts( NULL, receipts, 2 ) == 0 ) );
@@ -7964,7 +7975,6 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL, 0, 0, ROCKETNET_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish( NULL, 0, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_abort( NULL, 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_send( NULL, 0, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_broadcast( NULL, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive( NULL, 0, 0, &view, &bytes ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_release( NULL, 0, data ) );
