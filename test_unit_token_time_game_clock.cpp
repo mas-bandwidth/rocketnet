@@ -157,7 +157,7 @@ static void token_time_game_clock_admits_a_fixed_token()
     const uint64_t expire = create + TOKEN_LIFETIME;
 
     check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY == offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ) );
-    check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 == sizeof( struct rocketnet_client_transport_config_t ) );
+    check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_transport_config_t ) );
     {
         static const size_t known[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };
         struct rocketnet_client_transport_config_t defaults, old_caller, read;
