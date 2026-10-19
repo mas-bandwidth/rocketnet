@@ -409,37 +409,44 @@ void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t 
  */
 int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
- * @brief Takes the platform's count of dropped sends since the last take.
+ * @brief Counts the datagrams this socket's sends dropped.
  *
- * Every sendto, sendmmsg and sendmsg_x that answers -1 with a packet not
- * delivered increments the count, including the test seam's injected errors.
- * The transport adds the returned count to its PLATFORM_SEND_FAILED counter.
- * @return Number of dropped sends since the previous call.
+ * Every sendto, sendmmsg and per-packet tail of a sendmsg_x batch that
+ * answers -1 drops its datagram and increments the count, including the test
+ * seam's injected errors. Monotonic for the socket's life.
+ * @param socket Live socket; must be non-NULL.
+ * @return Number of dropped datagrams since the socket was created.
  */
-uint64_t rocketnet_platform_take_send_failures( void );
+uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
- * @brief Test-only seam: makes the next sends report a chosen error.
+ * @brief Test-only seam: makes the next sends on one socket report an error.
  *
  * Compiled into the development library only. The next count calls to sendto
- * and sendmsg_x on any socket return -1 with error set, without reaching the
- * kernel. A non-positive count clears the seam. Development builds only.
- * @param count Number of sends to fail.
- * @param error errno value each failed send reports.
+ * and sendmsg_x on the socket return -1 with error set, without reaching the
+ * kernel. A non-positive count clears the seam.
+ * @param socket Live socket; must be non-NULL.
+ * @param count Number of send calls to fail.
+ * @param error errno value each failed call reports.
  * @return None.
  */
-void rocketnet_platform_socket_fail_next_sends( int count, int error );
+void rocketnet_platform_socket_fail_next_sends( struct rocketnet_platform_socket_t * socket, int count, int error );
 
 /**
- * @brief Test-only seam: how many sends the seam has failed so far.
+ * @brief Test-only: the live sockets, oldest first.
  *
- * Development builds only.
- * @return The number of injected failures since the seam was last set.
+ * Development builds only. Lets a functional case find the socket a
+ * transport created.
+ * @param sockets Caller-owned output array.
+ * @param max_sockets Capacity of sockets.
+ * @return Number of sockets written.
  */
-int rocketnet_platform_socket_send_failures();
-#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t ** sockets, int max_sockets );
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // the name of the pump path live behind the seam ("portable", "msgx"), for
 // logging and for tests that pin the degradation contract
@@ -776,6 +783,8 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         bool ipv6;
         /** @brief Native socket descriptor owned by this object. */
         rocketnet_platform_socket_handle_t handle;
+        /** @brief Datagrams a failed send dropped; atomic, monotonic. */
+        uint64_t send_failures;
     };
 
     /** @brief Holds a native thread and its allocator context. */
@@ -819,6 +828,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (probed at create, macOS only)
         double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
         rocketnet_platform_socket_handle_t handle;
+        uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     };
 
     struct rocketnet_platform_thread_t
