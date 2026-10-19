@@ -79,16 +79,30 @@ def find_library(build, config, name):
 
 
 def shared_family(library):
-    """The shared library and its SONAME aliases, as the one library to stage."""
+    """The shared library and its SONAME aliases, as the one library to stage.
+
+    The link name carries the platform suffix (libfoo.so on Linux,
+    libfoo.dylib on macOS) while the SONAME files insert their version before
+    that suffix (libfoo.so.1, libfoo.1.dylib). Strip the suffix first, or the
+    darwin aliases never match and the staged loader name cannot be opened.
+    """
     directory = library.parent
-    prefix = library.name
-    if not library.is_symlink() and not any(directory.glob(prefix + ".*")):
+    name = library.name
+    if name.endswith(".dylib"):
+        stem = name[: -len(".dylib")]
+        def is_alias(candidate):
+            return candidate.name == name or (candidate.name.startswith(stem + ".")
+                                              and candidate.name.endswith(".dylib"))
+    elif name.endswith(".so"):
+        def is_alias(candidate):
+            return candidate.name == name or candidate.name.startswith(name + ".")
+    else:
         return [library]
-    names = {prefix}
+    names = {name}
     for candidate in directory.iterdir():
-        if candidate.name == prefix or candidate.name.startswith(prefix + "."):
+        if is_alias(candidate):
             names.add(candidate.name)
-    return [directory / name for name in sorted(names)]
+    return [directory / alias for alias in sorted(names)]
 
 
 def stage_shared(library, directory):
