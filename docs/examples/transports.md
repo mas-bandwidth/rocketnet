@@ -35,11 +35,13 @@ failure prints one `FAIL: ...` line and exits 1.
 
 ## What the output means
 ```
-0.125699: info: server transport ladder granted gso after refusals: xdp
+warning: server transport xdp refused: a port-zero public address ...
+warning: server transport xdp refused. trying the next candidate
+info: server transport ladder granted gso after refusals: xdp
 auto chose gso
 pin chose portable
 list chose gso
-0.303337: error: unknown transport "not-a-transport" in transport list ...
+error: unknown transport "not-a-transport" in transport list ... (valid names: ...)
 refused as promised: the pin named no transport
 PASS
 ```

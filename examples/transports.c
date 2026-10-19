@@ -132,7 +132,10 @@ int main( void )
     CHECK( create_and_prove( "auto", NULL ) );
     // a pin: exactly this transport, or a loud failure
     CHECK( create_and_prove( "pin", "portable" ) );
-    // a list: tried left to right; the first candidate granted wins
+    // a list: tried left to right; the first candidate granted wins. Here the
+    // ladder starts with xdp, which the library refuses (a port-zero public
+    // address is not a port xdp can bind), so gso is granted and the log
+    // lines print both the refusal and the grant.
     CHECK( create_and_prove( "list", "xdp,gso,portable" ) );
     // an impossible pin: a name no transport has, refused loudly by the
     // library, with the valid names in its error line
