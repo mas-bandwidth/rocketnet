@@ -16,10 +16,13 @@
 # line CXX=... still overrides this, so the nightly job's direct clang++
 # invocation is unaffected.
 #
-# ROCKETNET_FUZZ_CXX names the compiler that links libFuzzer. Apple clang
-# ships no libFuzzer runtime, so on a Mac point it at an LLVM toolchain that
-# does: make ROCKETNET_FUZZ_CXX="$$(brew --prefix llvm)/bin/clang++".
-CXX      := $(if $(ROCKETNET_FUZZ_CXX),$(ROCKETNET_FUZZ_CXX),clang++)
+# ROCKETNET_FUZZ_CXX names the compiler that links libFuzzer, and
+# ROCKETNET_FUZZ_CC names it alone when CXX is unset; clang drives a .cpp
+# through the C++ front end and links the C++ runtime, so either LLVM driver
+# works here. Apple clang ships no libFuzzer runtime, so on a Mac point one of
+# them at an LLVM toolchain that does:
+# make ROCKETNET_FUZZ_CXX="$$(brew --prefix llvm)/bin/clang++".
+CXX      := $(if $(ROCKETNET_FUZZ_CXX),$(ROCKETNET_FUZZ_CXX),$(if $(ROCKETNET_FUZZ_CC),$(ROCKETNET_FUZZ_CC),clang++))
 SANITIZE ?= -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 FLAGS     = -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEVELOPMENT=1 -I../sodium -I../sdk -I../test
 BUILD    ?= ../build

@@ -513,8 +513,9 @@ pressure measurements are required for this changed XDP path.
 Apple clang ships no libFuzzer runtime, so `-fsanitize=fuzzer` fails there with
 `libclang_rt.fuzzer_osx.a not found`. Fuzz on a Mac with an LLVM toolchain that
 carries it: an official LLVM release tree such as `$HOME/sdk/llvm`, or
-Homebrew's `llvm` formula. Name that compiler once in `ROCKETNET_FUZZ_CC` and
-`ROCKETNET_FUZZ_CXX` and both the library build and `fuzz/Makefile` pick it up.
+Homebrew's `llvm` formula. Name that compiler in `ROCKETNET_FUZZ_CXX` and
+`ROCKETNET_FUZZ_CC`; the CMake commands below pass both, and `fuzz/Makefile`
+accepts either (`ROCKETNET_FUZZ_CXX` wins when both are set).
 `ROCKETNET_FUZZ_LLVM_HOME` names the tree the nightly leg searches first; it
 defaults to `$HOME/sdk/llvm`. The runtime sits beside the compiler at
 `<prefix>/lib/clang/<version>/lib/darwin/libclang_rt.fuzzer_osx.a`.
