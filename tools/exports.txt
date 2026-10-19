@@ -34,6 +34,7 @@ rocketnet_client_transport_name
 rocketnet_client_update
 rocketnet_client_validate_config
 rocketnet_generate_backend_keypair
+rocketnet_generate_backend_keypair_from_seed
 rocketnet_generate_server_keypair
 rocketnet_get_log_level
 rocketnet_init
