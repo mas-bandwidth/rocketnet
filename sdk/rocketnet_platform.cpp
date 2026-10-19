@@ -1097,7 +1097,10 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         }
 
         errno = 0;
-        int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT, NULL );
+        // MSG_TRUNC: a datagram past the stride reports its true size, as
+        // the per-packet path does, so the transport's prefilter drops and
+        // counts it as PREFILTER_TOO_LARGE instead of it vanishing here
+        int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT | MSG_TRUNC, NULL );
         if ( result < 0 )
         {
             if ( errno == EINTR )
@@ -1114,16 +1117,16 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         if ( result == 0 )
             return total;
 
-        // walk the chunk in place. a truncated datagram or a family the
-        // transport does not speak (the per-packet path delivers neither)
-        // is compacted out: the next kept message's bytes move down to the
-        // gap. rare by nature and bounded by the chunk.
+        // walk the chunk in place. a family the transport does not speak
+        // (the per-packet path delivers none) and a zero-length datagram are
+        // compacted out: the next kept message's bytes move down to the gap.
+        // a truncated datagram is kept at its true size, the per-packet
+        // path's semantic: only its stride-sized prefix is in the slot, and
+        // the prefilter refuses it on size before reading a byte past it.
 
         int kept = 0;
         for ( int i = 0; i < result; i++ )
         {
-            if ( msg[i].msg_hdr.msg_flags & MSG_TRUNC )
-                continue;
             rocketnet_address_t parsed;
             if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
                 continue;
@@ -1134,7 +1137,7 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
             uint8_t * target = packet_data + (size_t) ( chunk_base + kept ) * (size_t) packet_stride;
             if ( target != source )
             {
-                memmove( target, source, (size_t) bytes );
+                memmove( target, source, (size_t) ( bytes < packet_stride ? bytes : packet_stride ) );
             }
             from[chunk_base + kept] = parsed;
             packet_bytes[chunk_base + kept] = bytes;

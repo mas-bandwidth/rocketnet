@@ -6733,8 +6733,10 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 
     rocketnet_check( rocketnet_platform_socket_receive_packets_mmsg( receiver, from, receive_data[0], stride, packet_bytes, 64 ) == 0 );
 
-    // One recvmmsg result with a truncated datagram followed by two kept
-    // datagrams exercises both chunk indexing and rejection compaction.
+    // One recvmmsg result with a truncated datagram followed by two more
+    // exercises chunk indexing: the truncated one reports its true size
+    // with its stride-sized prefix in the slot, as the per-packet path does,
+    // so the prefilter counts it as too large.
     uint8_t truncated_data[16];
     memset( truncated_data, 'T', sizeof(truncated_data) );
     uint8_t kept_data[2] = { 0xA1, 0xB2 };
@@ -6755,9 +6757,12 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
     rocketnet_address_t compact_from[3];
     int compact_bytes[3];
     const int compact_received = rocketnet_platform_socket_receive_packets_mmsg( receiver, compact_from, compact_receive_data[0], sizeof(compact_receive_data[0]), compact_bytes, 3 );
-    rocketnet_check( compact_received == 2 );
-    rocketnet_check( rocketnet_address_equal( &compact_from[0], &sender_bind ) && compact_bytes[0] == 1 && compact_receive_data[0][0] == kept_data[0] );
-    rocketnet_check( rocketnet_address_equal( &compact_from[1], &sender_bind ) && compact_bytes[1] == 1 && compact_receive_data[1][0] == kept_data[1] );
+    rocketnet_check( compact_received == 3 );
+    rocketnet_check( rocketnet_address_equal( &compact_from[0], &sender_bind ) && compact_bytes[0] == (int) sizeof(truncated_data) );
+    for ( int j = 0; j < (int) sizeof(compact_receive_data[0]); j++ )
+        rocketnet_check( compact_receive_data[0][j] == 'T' );
+    rocketnet_check( rocketnet_address_equal( &compact_from[1], &sender_bind ) && compact_bytes[1] == 1 && compact_receive_data[1][0] == kept_data[0] );
+    rocketnet_check( rocketnet_address_equal( &compact_from[2], &sender_bind ) && compact_bytes[2] == 1 && compact_receive_data[2][0] == kept_data[1] );
 
     // A kernel-refused entry drops by itself and the unsent suffix is retried.
     uint8_t retry_byte = 0x5A;
