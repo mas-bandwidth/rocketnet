@@ -13275,16 +13275,16 @@ void rocketnet_test_log_level_refuses_out_of_range()
     // storing it, so a caller cannot silence the library by accident
 
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_set_log_level( -1 );
+    rocketnet_set_log_level( (enum rocketnet_log_level_t) -1 );
     rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_set_log_level( 6 );
+    rocketnet_set_log_level( (enum rocketnet_log_level_t) 6 );
     rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
 
     // every defined level round-trips
 
     for ( int level = ROCKETNET_LOG_LEVEL_NONE; level <= ROCKETNET_LOG_LEVEL_SPAM; level++ )
     {
-        rocketnet_set_log_level( level );
+        rocketnet_set_log_level( (enum rocketnet_log_level_t) level );
         rocketnet_check( rocketnet_get_log_level() == level );
     }
 
