@@ -3216,6 +3216,47 @@ void rocketnet_test_transport_ipv6_loopback()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
+void rocketnet_test_transport_dual_stack_ipv4_client()
+{
+    // a server bound to the IPv6 wildcard is dual-stack: it serves IPv4 as
+    // well, so a connect token naming its IPv4 loopback is accepted and the
+    // handshake completes over the v4-mapped path, on every driver
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 16;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::]", &server_config);
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
 void rocketnet_test_server_handshake_deadline_from_config()
 {
     struct rocketnet_test_env_guard_t deadline_guard, driver_guard;
@@ -8035,6 +8076,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
     { "test_transport_ipv6_loopback", rocketnet_test_transport_ipv6_loopback },
+    { "test_transport_dual_stack_ipv4_client", rocketnet_test_transport_dual_stack_ipv4_client },
     { "max_size_packet_crosses_a_1500_mtu_link_ipv4", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4 },
     { "max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6 },
     { "xdp_max_size_both_ways_ipv4", rocketnet_test_xdp_max_size_both_ways_ipv4 },

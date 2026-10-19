@@ -1396,9 +1396,26 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     memcpy( protocol->server_secret_key, config->server_secret_key, 32 );
 
     if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
+    {
         protocol->advertised_ipv4 = public_address;
+    }
     else
+    {
         protocol->advertised_ipv6 = public_address;
+        // a server created at the IPv6 wildcard is dual-stack: it serves
+        // IPv4 as well, so it also advertises its IPv4 wildcard and IPv4
+        // tokens for the loopback are accepted
+        int wildcard = 1;
+        for ( int i = 0; i < 8 && wildcard; i++ )
+            if ( public_address.data.ipv6[i] != 0 )
+                wildcard = 0;
+        if ( wildcard )
+        {
+            memset( &protocol->advertised_ipv4, 0, sizeof(protocol->advertised_ipv4) );
+            protocol->advertised_ipv4.type = ROCKETNET_ADDRESS_IPV4;
+            protocol->advertised_ipv4.port = public_address.port;
+        }
+    }
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     sodium_memzero( protocol->previous_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
