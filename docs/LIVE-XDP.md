@@ -1046,3 +1046,14 @@ server is used only for the steps of RULINGS (c), as non-interactive
 `sudo -n <script>` on the copied script file after `sudo -n true`. The
 example inventory holds placeholder hosts only; the real one lives outside
 the repository and is named by `ROCKETNET_LIVE_INVENTORY`.
+
+Live run attempt 2 (`rocketnet-live-xdp-fleet-run.w2`, staged at `4d58844`)
+was not run: the companion runner card that adds `--matrix` mode to
+`client.c`/`server.c` (invoked by `scripts/live-xdp-fleet-remote start`) and
+lands `scripts/live-xdp-fleet-merge` (invoked at the end of
+`scripts/live-xdp-fleet`) has not landed on `sprint/rocketnet-proof`. The
+dry run passes and shows every XDP SAFETY step with the plan inside the
+RULINGS (d) bounds, but the real run cannot start (the server and client
+start commands pass `--matrix` to binaries without it) and the merge step
+cannot run, so the results section of the DONE-WHEN gate cannot be
+produced. The card is reported not-done with this reason.
