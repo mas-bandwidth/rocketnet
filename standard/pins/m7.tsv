@@ -1,0 +1,7 @@
+# The rows of RN-2 m7 (MESSAGES.md): document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+#include "rocketnet_channel.h"
+none	ROCKETNET_CHANNEL_DISPATCH_NONE	0
+delivered	ROCKETNET_CHANNEL_DISPATCH_DELIVERED	1
+held	ROCKETNET_CHANNEL_DISPATCH_HELD	2
+stale	ROCKETNET_CHANNEL_DISPATCH_STALE	3

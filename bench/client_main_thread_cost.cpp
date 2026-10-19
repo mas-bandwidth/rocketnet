@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API per-frame main-thread cost microbenchmark. See client_main_thread_cost.md.
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include <algorithm>
 #include <chrono>
 #include <stdio.h>
@@ -34,7 +34,7 @@ int main(int argc, char ** argv)
     CHECK(frames > 0);
     CHECK(strlen(driver) < sizeof(rocketnet_server_transport_config_t().driver));
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init());
+    CHECK(rocketnet_init( NULL ));
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);

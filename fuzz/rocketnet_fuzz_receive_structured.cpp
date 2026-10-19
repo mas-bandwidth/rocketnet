@@ -39,7 +39,7 @@
 // flow every run. The simulator's own delivery order is fully determined by
 // its seed, which is taken from the input.
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"
@@ -161,7 +161,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         struct rocketnet_connect_token_private_t private_fields;
         memset( &signed_fields, 0, sizeof(signed_fields) );
         memset( &private_fields, 0, sizeof(private_fields) );
-        signed_fields.version = ROCKETNET_VERSION;
+        signed_fields.version = ROCKETNET_WIRE_VERSION;
         signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
         signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
         signed_fields.expire_timestamp = ROCKETNET_TEST_CREATE_TS + 300;

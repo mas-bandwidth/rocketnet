@@ -8,7 +8,7 @@
 #include "rocketnet_read_write.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>
@@ -163,7 +163,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     uint8_t flags = client->signed_fields.address_flags;
     if ( flags == 0 || ( flags & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) != 0 ||
          client->signed_fields.create_timestamp > client->signed_fields.expire_timestamp ||
-         client->signed_fields.version != ROCKETNET_VERSION )
+         client->signed_fields.version != ROCKETNET_WIRE_VERSION )
     {
         rocketnet_debug( "client connect failed. invalid connect token" );
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
@@ -450,6 +450,14 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED]++;
 
+    // STANDARD.md Reading packets: the per-type size check runs before the state gate.
+    if ( packet_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
+    {
+        rocketnet_spam( "client ignored challenge. wrong size" );
+        counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_SIZE]++;
+        return 0;
+    }
+
     // processed in sending connection request only: past it the client no
     // longer sends requests, so a genuine retransmitted challenge has no
     // question left to answer
@@ -458,14 +466,6 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     {
         rocketnet_spam( "client ignored challenge. wrong state" );
         counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_STATE]++;
-        return 0;
-    }
-
-    if ( packet_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
-    {
-        rocketnet_spam( "client ignored challenge. wrong size" );
-        counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN]++;
-        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
@@ -577,19 +577,19 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     counters[ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED]++;
 
+    // STANDARD.md Reading packets: the per-type size check runs before the state gate.
+    if ( packet_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
+    {
+        rocketnet_spam( "client ignored denied. wrong size" );
+        counters[ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_SIZE]++;
+        return 0;
+    }
+
     if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST &&
          client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
         rocketnet_spam( "client ignored denied. wrong state" );
         counters[ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_STATE]++;
-        return 0;
-    }
-
-    if ( packet_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
-    {
-        rocketnet_spam( "client ignored denied. wrong size" );
-        counters[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN]++;
-        rocketnet_client_integrity_failure( client );
         return 0;
     }
 

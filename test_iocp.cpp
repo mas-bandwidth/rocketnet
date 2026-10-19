@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. */
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
 #include <atomic>
@@ -395,7 +395,7 @@ int main()
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     rocketnet_allocator(allocate, release);
-    CHECK(rocketnet_init());
+    CHECK(rocketnet_init( NULL ));
     test_create_cleanup();
     test_completion_owns_frames();
     test_uso_run_owns_frames();

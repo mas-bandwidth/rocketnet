@@ -10,7 +10,8 @@
 */
 
 #include "serialize.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
+#include "rocketnet.hpp"                  // the serialize stream forms of the send and receive calls
 #include <stdio.h>
 #include <string.h>
 #include <time.h>

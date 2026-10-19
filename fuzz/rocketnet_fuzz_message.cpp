@@ -44,7 +44,7 @@
 //   ./bin/fuzz_message fuzz/corpus_message/*                     # the replay gate
 //   ./bin/fuzz_message corpus fuzz/corpus_message -dict=fuzz/rocketnet.dict
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 
 #include <stdint.h>

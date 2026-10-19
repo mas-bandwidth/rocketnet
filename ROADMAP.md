@@ -30,9 +30,11 @@ The secure connect from STANDARD.md: netcode 1.02 rebuilt on public keys, with e
 | Release builds do not export development token minting | ✅ |
 | Public API is NULL-safe at the boundary | ✅ |
 | Refusal decisions agree with netcode 1.02 | ✅ |
-| The token is bound at response open | ❌ |
+| The token is bound at response open | ✅ |
+| Development keys are off by default and warn on every start | ✅ |
+| An unauthenticated reply is never larger than its request | ✅ |
 | Session layer: identity auth with a backend, rolling magic, keyed filter value (later) | ❌ |
-| complete | 90% |
+| complete | 95% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -50,6 +52,7 @@ The unreliable transport the message layer runs over: connection state, slots, k
 | Redundant disconnect burst, from the client or the server | ✅ |
 | Large payloads fragmented and reassembled | ✅ |
 | Fragments accepted only on a connected slot | ✅ |
+| Server transport entries carry a connection id | ✅ |
 | Per-packet acks with delivery notification | ✅ |
 | Ack history that survives a long lossy path | ✅ |
 | Frame sync: a fixed-rate server loop with priority and drop detection | ✅ |
@@ -89,29 +92,30 @@ The message layer of docs/CHANNELS.md: channels, priorities, budgets and one fix
 | Four send priorities, round robin across channels | ✅ |
 | Small messages aggregated into packets | ✅ |
 | Send budget in kbps per connection | ✅ |
+| Resend delay from the measured round trip, block chunks paced by it, no backoff | ✅ |
 | A 1400-byte game message fits one packet | ✅ |
 | One fixed region per connection, no allocation after create | ✅ |
 | Caller-supplied memory block | ✅ |
 | Memory exhaustion kicks only that connection | ✅ |
 | Hostile records and chunks refused | ✅ |
-| Endpoint and slots as pure machines (CHANNELS.md layer 7) | ❌ |
-| CONFIG announcement: both ends prove the same configuration | ❌ |
+| Endpoint and slots as pure machines (CHANNELS.md layer 7) | ✅ |
+| CONFIG announcement: both ends prove the same configuration | ✅ |
 | Message layer soaked at full configured load | ❌ |
-| Broadcast send (later) | ❌ |
+| Broadcast send | ✅ |
 | Flows: server-side subscription groups (later) | ❌ |
-| complete | 70% |
+| complete | 88% |
 
 [Source data](docs/roadmap.sexp)
 
 ## Drivers
 
-The server socket drivers below the transport, selected at runtime by the per-endpoint ROCKETNET_SERVER_DRIVER and ROCKETNET_CLIENT_DRIVER; the process-wide ROCKETNET_DRIVER is refused aloud (sdk/rocketnet_config.cpp). Loopback is pin-only.
+The server socket drivers below the transport, selected at runtime by the per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT; the old names ROCKETNET_DRIVER, ROCKETNET_TRANSPORT, ROCKETNET_SERVER_DRIVER and ROCKETNET_CLIENT_DRIVER are refused aloud and never applied (sdk/rocketnet_config.cpp). Loopback is pin-only.
 
-| feature | portable | gso | msgx | iocp | xdp | io_uring | loopback |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Server driver | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Selectable by pin at runtime | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| complete | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
+| feature | portable | gso | msgx | iocp | xdp | io_uring | loopback | rio |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Server driver | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Selectable by pin at runtime | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| complete | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -122,12 +126,12 @@ The driver and client work carded today, and the later milestones behind it.
 | feature | done |
 |---|:---:|
 | Linux UDP_GRO receive coalescing | ✅ |
-| Windows Registered I/O (RIO) server driver | ❌ |
-| Windows USO and URO in the IOCP driver, probed with fallback | ❌ |
-| Client socket I/O off the main thread, gated by the measured main-thread cost per frame | ❌ |
+| Windows Registered I/O (RIO) server driver | ✅ |
+| Windows USO and URO in the IOCP driver, probed with fallback | ✅ |
+| Client socket I/O off the main thread, gated by the measured main-thread cost per frame | ✅ |
 | Console client drivers (PS4, PS5, Switch, Xbox GDK) | ❌ |
-| XDP/AF_XDP on AWS GameLift fleets: research | ❌ |
-| complete | 16% |
+| XDP/AF_XDP on AWS GameLift fleets: research | ✅ |
+| complete | 83% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -169,11 +173,12 @@ The XDP server transport. Further XDP work comes later, separately, by the owner
 | IPv6 in the kernel program and the userspace path | ✅ |
 | Kernel filter counters through the transport counter surface | ✅ |
 | Kernel replay protection with a read-only high-water map | ✅ |
-| STANDARD.md states the kernel replay map is sized apart from the userspace replay window | ❌ |
+| STANDARD.md states the kernel replay map is sized apart from the userspace replay window | ✅ |
+| AF_XDP bind requests zero-copy | ✅ |
 | Packet blaster and simulated-client harnesses at line rate | ❌ |
 | Ownership and retry paths regression-validated against the 10 Gbps baseline | ❌ |
 | Privileged syscall-failure coverage in its own lab | ❌ |
-| complete | 60% |
+| complete | 72% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -205,15 +210,18 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | Functional suite over simulated lossy links | ✅ |
 | Seeded network simulator | ✅ |
 | Fuzz targets for packets, tokens and messages | ✅ |
+| Captured pcapng corpus replayed per commit and seeding the fuzzers | ✅ |
+| Wycheproof vectors for ChaCha20-Poly1305, Ed25519 and X25519 | ✅ |
+| Happy-path end to end: the real server and client binaries as separate processes | ✅ |
 | CBMC proofs of bounded readers and fragment bounds | ✅ |
 | TLA+ models: connection, security, replay, channels, window, scheduler, slots, receipts | ✅ |
 | Sanitizers: ASan, UBSan, TSan, MSan, LSan | ✅ |
 | Big-endian (s390x) runs | ✅ |
-| TLA+ model of transport fragments and acks | ❌ |
-| TLA+ models of blocks and the endpoint | ❌ |
+| TLA+ model of transport fragments and acks | ✅ |
+| TLA+ models of blocks and the endpoint | ✅ |
 | Every modelled transition cites its module and action | ❌ |
 | Connection and security machines as pure modules | ❌ |
-| complete | 66% |
+| complete | 86% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -225,8 +233,8 @@ Where RocketNet builds and passes.
 |---|:---:|:---:|:---:|
 | Per-commit CI, Debug and Release | ✅ | ✅ | ✅ |
 | Shared export list compared | ✅ | ✅ | ✅ |
-| Nightly soak | ✅ | ✅ | ❌ |
-| complete | 100% | 100% | 66% |
+| Nightly soak | ✅ | ✅ | ✅ |
+| complete | 100% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -237,16 +245,19 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | feature | done |
 |---|:---:|
 | Transport C surface: rocketnet_client_transport_* and rocketnet_server_transport_* | ✅ |
-| Root header pure C: the two transport types with functions, the address type, nothing else | ❌ |
+| Root header pure C: the client and server with their functions, the address type, nothing else | ✅ |
 | Message objects in C: rocketnet_message_client_* and rocketnet_message_server_* | ✅ |
 | ABI revision and layout queries | ✅ |
 | Installable CMake package with C and C++ consumers | ✅ |
 | Vendored sodium, no system libsodium | ✅ |
-| Structured create errors and FFI-safe logging | ❌ |
-| Sized APIs for compatible struct evolution | ❌ |
-| Whole-transport memory estimates and operator budgets (#155) | ❌ |
-| C++ ClientTransport and ServerTransport interfaces | ❌ |
-| complete | 50% |
+| Structured create errors and FFI-safe logging | ✅ |
+| Sized APIs for compatible struct evolution | ✅ |
+| Whole-transport memory estimates and operator budgets (#155) | ✅ |
+| C++ ClientTransport and ServerTransport interfaces | ✅ |
+| Shared library build, checked exports, callable from C and C++ | ✅ |
+| API reference generated by MrDocs | ✅ |
+| USAGE.md: the client and server API, with worked usage | ✅ |
+| complete | 100% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -257,10 +268,12 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Release hardening flags | ✅ |
 | Reproducible vendored sources | ✅ |
 | First integrating game vendors the SDK and proves it (release gate) | ❌ |
-| Supported-platform policy | ❌ |
-| Security disclosure and release process | ❌ |
+| Supported-platform policy | ✅ |
+| Security disclosure and release process | ✅ |
+| The example server runs out of the box | ✅ |
+| The normative standard in standard/, a conformance vector per section | ✅ |
 | Independent review of the transport repair diff, received | ❌ |
 | The old to-do and readiness files retired into this roadmap | ✅ |
-| complete | 42% |
+| complete | 77% |
 
 [Source data](docs/roadmap.sexp)
