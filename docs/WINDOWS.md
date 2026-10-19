@@ -224,8 +224,7 @@ an elevated prompt:
     netsh advfirewall firewall delete rule name="RocketNet UDP 40000"
 
 `add rule` prints `Ok.` and `delete rule` prints `Deleted 1 rule(s).` then
-`Ok.`. Without elevation `add rule` prints `The requested operation requires
-elevation (Run as administrator).` and changes nothing. In production, narrow
+`Ok.`. In production, narrow
 the rule with `program=` to the server executable and `profile=` to the
 networks clients connect from.
 
@@ -239,12 +238,16 @@ Windows builds with CMake and Visual Studio 18 (MSVC x64);
 
 The build makes the static library `rocketnet` and the DLL
 `rocketnet_shared`, plus `_dev` variants of each that the tests and examples
-link (`CMakeLists.txt`). The CMake package exports `RocketNet::rocketnet` and
-`RocketNet::rocketnet_shared`; `BUILDING.md` ("Installing and embedding the
-SDK") shows the install and the `target_link_libraries` line. The libraries
-land in `bin\Release\`:
+link (`CMakeLists.txt`). The DLL is written as `rocketnet.dll` with the import
+library `rocketnet_import.lib`, so it never collides with the static
+`rocketnet.lib` (`CMakeLists.txt`). The CMake package exports
+`RocketNet::rocketnet` and `RocketNet::rocketnet_shared`; `BUILDING.md`
+("Installing and embedding the SDK") shows the install and the
+`target_link_libraries` line. In a build tree the DLLs land in `bin\Release\`
+and the libraries in `build\Release\`:
 
-    dir /b bin\Release\rocketnet*
+    dir /b bin\Release\rocketnet*.dll
+    dir /b build\Release\rocketnet*.lib
 
 [PLATFORMS.md](PLATFORMS.md) is the support claim. Windows x86_64 with MSVC is
 supported, with `portable`, `iocp` and `rio`. clang-cl is not named there, so
