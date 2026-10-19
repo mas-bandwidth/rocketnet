@@ -536,7 +536,7 @@ REGISTER_UNIT_TEST( connection_reset_client_reconnect_delivers );
 // 0 .. max_clients - 1 round-trip through every index-taking function as
 // uint64_t.
 static int lifecycle_flow_logs = 0;
-static void lifecycle_log_callback( void *, int, const char * message, size_t )
+static void lifecycle_log_callback( void *, enum rocketnet_log_level_t, const char * message, size_t )
 {
     if ( strstr( message, "FLOW_ID_RESERVED" ) )
         lifecycle_flow_logs++;

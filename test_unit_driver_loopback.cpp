@@ -447,7 +447,7 @@ static void driver_loopback_holds_max_clients_plus_server()
 static char g_loopback_refusal_log[1024];
 static int g_loopback_refusal_log_count;
 
-static void loopback_refusal_log_capture( void *, int, const char * message, size_t length )
+static void loopback_refusal_log_capture( void *, enum rocketnet_log_level_t, const char * message, size_t length )
 {
     g_loopback_refusal_log_count++;
     const size_t copy = length < sizeof( g_loopback_refusal_log ) - 1 ? length : sizeof( g_loopback_refusal_log ) - 1;
