@@ -89,6 +89,13 @@ static bool server_receive_backlog_all_connected( const std::vector<struct rocke
     return server_receive_backlog_connected_clients( clients ) == (int) clients.size();
 }
 
+// The server under test takes this many clients and every slot is filled, so the
+// case keeps its meaning (receive keeps up with every slot full and every client
+// sending) inside the functional runner's per-case peak-RSS bound: a client
+// transport is a fixed ~7.5 MB, so ROCKETNET_MAX_CLIENTS clients in one process
+// cost gigabytes. Scale to ROCKETNET_MAX_CLIENTS belongs to the load suite.
+#define SERVER_RECEIVE_BACKLOG_MAX_CLIENTS 48
+
 void rocketnet_test_server_receive_keeps_up_with_max_clients()
 {
     server_receive_backlog_env_t driver_env( "ROCKETNET_DRIVER" );
@@ -100,7 +107,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
-    server_config.max_clients = ROCKETNET_MAX_CLIENTS;
+    server_config.max_clients = SERVER_RECEIVE_BACKLOG_MAX_CLIENTS;
     snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
 
     int status = -1;
@@ -116,8 +123,8 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
 
     std::vector<struct rocketnet_client_transport_t*> clients;
-    clients.reserve( ROCKETNET_MAX_CLIENTS );
-    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
+    clients.reserve( SERVER_RECEIVE_BACKLOG_MAX_CLIENTS );
+    for ( int i = 0; i < SERVER_RECEIVE_BACKLOG_MAX_CLIENTS; ++i )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         server_receive_backlog_require( rocketnet_write_dev_connect_token( server_address, (uint64_t) i + 1, 4102444800ull, token ) != 0 );
@@ -141,7 +148,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
             time += frame_step;
 
         if ( server_receive_backlog_all_connected( clients ) &&
-             rocketnet_server_transport_num_connected_clients( server ) == ROCKETNET_MAX_CLIENTS )
+             rocketnet_server_transport_num_connected_clients( server ) == SERVER_RECEIVE_BACKLOG_MAX_CLIENTS )
         {
             connected = true;
             break;
@@ -216,7 +223,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
             int payload_bytes = 0;
             uint8_t * payload = rocketnet_server_transport_payload( server, payload_index, &client_index, &payload_bytes );
             server_receive_backlog_require( payload != NULL );
-            server_receive_backlog_require( client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS );
+            server_receive_backlog_require( client_index >= 0 && client_index < SERVER_RECEIVE_BACKLOG_MAX_CLIENTS );
             server_receive_backlog_require( payload_bytes == 8 );
         }
 
@@ -258,12 +265,12 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
         time += frame_step;
     }
 
-    if ( payload_total != (uint64_t) ROCKETNET_MAX_CLIENTS * 299 )
+    if ( payload_total != (uint64_t) SERVER_RECEIVE_BACKLOG_MAX_CLIENTS * 299 )
         accounting_mismatch = true;
     const double read_mean = (double) read_sum / 300.0;
     const bool failed = growing || dropped != 0 || accounting_mismatch;
     printf( "server_receive_backlog clients=%d frames=300 packets_read_min=%d packets_read_mean=%.2f packets_read_max=%d queue_depth_last=%llu dropped=%llu growing=%d accounting_ok=%d status=%s\n",
-            ROCKETNET_MAX_CLIENTS, read_min, read_mean, read_max,
+            SERVER_RECEIVE_BACKLOG_MAX_CLIENTS, read_min, read_mean, read_max,
             (unsigned long long) queue_depth, (unsigned long long) dropped, growing ? 1 : 0,
             accounting_mismatch ? 0 : 1, failed ? "FAIL" : "PASS" );
     fflush( stdout );
