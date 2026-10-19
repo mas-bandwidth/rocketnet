@@ -3393,7 +3393,167 @@ int rocketnet_platform_id()
     return ROCKETNET_PLATFORM_WINDOWS;
 }
 
+// A Windows UDP send does not wait in the driver. Each socket owns a fixed
+// pool of staging slots; a send copies the datagram into a free slot and
+// submits it with overlapped WSASendTo, which returns at once, and the slot
+// is released when its completion is reaped by a later send. The caller's
+// send ring may therefore be reused as soon as this call returns. A full pool
+// drops the datagram and counts the drop; it never sleeps or spins.
+#define ROCKETNET_PLATFORM_WINDOWS_SEND_SLOTS 512
+
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
+
+static bool rocketnet_windows_send_slot_reap( rocketnet_platform_socket_t * socket, rocketnet_platform_socket_send_slot_t * slot )
+{
+    if ( !slot->in_use )
+        return true;
+    DWORD bytes = 0;
+    DWORD flags = 0;
+    if ( WSAGetOverlappedResult( (SOCKET) socket->handle, &slot->overlapped, &bytes, FALSE, &flags ) )
+    {
+        WSAResetEvent( slot->event );
+        slot->in_use = false;
+        return true;
+    }
+    const int error = WSAGetLastError();
+    if ( error != WSA_IO_INCOMPLETE )
+    {
+        if ( error != WSA_OPERATION_ABORTED )
+            socket->send_drops++;
+        WSAResetEvent( slot->event );
+        slot->in_use = false;
+        return true;
+    }
+    return false;
+}
+
+static void rocketnet_windows_send_reap( rocketnet_platform_socket_t * socket )
+{
+    for ( int i = 0; i < socket->num_send_slots; i++ )
+        rocketnet_windows_send_slot_reap( socket, &socket->send_slots[i] );
+}
+
+static rocketnet_platform_socket_send_slot_t * rocketnet_windows_send_acquire( rocketnet_platform_socket_t * socket )
+{
+    for ( int i = 0; i < socket->num_send_slots; i++ )
+    {
+        const int index = ( socket->next_send_slot + i ) % socket->num_send_slots;
+        if ( !socket->send_slots[index].in_use )
+        {
+            socket->next_send_slot = ( index + 1 ) % socket->num_send_slots;
+            return &socket->send_slots[index];
+        }
+    }
+    rocketnet_windows_send_reap( socket );
+    for ( int i = 0; i < socket->num_send_slots; i++ )
+    {
+        const int index = ( socket->next_send_slot + i ) % socket->num_send_slots;
+        if ( !socket->send_slots[index].in_use )
+        {
+            socket->next_send_slot = ( index + 1 ) % socket->num_send_slots;
+            return &socket->send_slots[index];
+        }
+    }
+    return NULL;
+}
+
+static void rocketnet_windows_socket_send( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to,
+    const void * packet_data, int packet_bytes )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( input_to );
+    rocketnet_assert( input_to->type == ROCKETNET_ADDRESS_IPV6 || input_to->type == ROCKETNET_ADDRESS_IPV4 );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_bytes > 0 );
+
+    if ( packet_bytes <= 0 || packet_bytes > ROCKETNET_MAX_PACKET_BYTES )
+    {
+        socket->send_drops++;
+        return;
+    }
+
+    rocketnet_address_t to = *input_to;
+    sockaddr_storage address;
+    memset( &address, 0, sizeof( address ) );
+    int address_length = 0;
+
+    if ( socket->ipv6 )
+    {
+        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        sockaddr_in6 * socket_address = (sockaddr_in6*) &address;
+        socket_address->sin6_family = AF_INET6;
+        for ( int i = 0; i < 8; i++ )
+            ( (uint16_t*) &socket_address->sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
+        socket_address->sin6_port = rocketnet_platform_htons( to.port );
+        address_length = (int) sizeof( sockaddr_in6 );
+    }
+    else
+    {
+        if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+        {
+            rocketnet_error( "invalid address type. could not send packet" );
+            return;
+        }
+        sockaddr_in socket_address;
+        rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
+        memcpy( &address, &socket_address, sizeof( socket_address ) );
+        address_length = (int) sizeof( sockaddr_in );
+    }
+
+    rocketnet_platform_socket_send_slot_t * slot = rocketnet_windows_send_acquire( socket );
+    if ( !slot )
+    {
+        socket->send_drops++;
+        return;
+    }
+
+    if ( !slot->event )
+    {
+        slot->event = WSACreateEvent();
+        if ( slot->event == WSA_INVALID_EVENT )
+        {
+            slot->event = NULL;
+            socket->send_drops++;
+            return;
+        }
+    }
+
+    memcpy( slot->data, packet_data, (size_t) packet_bytes );
+    memcpy( &slot->to, &address, (size_t) address_length );
+    slot->to_length = address_length;
+    slot->buffer.buf = (char*) slot->data;
+    slot->buffer.len = (ULONG) packet_bytes;
+    memset( &slot->overlapped, 0, sizeof( slot->overlapped ) );
+    slot->overlapped.hEvent = slot->event;
+    WSAResetEvent( slot->event );
+
+    DWORD bytes_sent = 0;
+    const int result = WSASendTo( (SOCKET) socket->handle, &slot->buffer, 1, &bytes_sent, 0,
+        (sockaddr*) &slot->to, slot->to_length, &slot->overlapped, NULL );
+
+    if ( result == SOCKET_ERROR )
+    {
+        const int error = WSAGetLastError();
+        if ( error == WSA_IO_PENDING )
+        {
+            slot->in_use = true;
+            return;
+        }
+        slot->in_use = false;
+        socket->send_drops++;
+        if ( error != WSAEWOULDBLOCK )
+        {
+            char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+            rocketnet_address_to_string( &to, address_string );
+            rocketnet_debug( "WSASendTo (%s) failed with error %d", address_string, error );
+        }
+        return;
+    }
+
+    // The operation may already have completed; the next send reaps it.
+    slot->in_use = true;
+}
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
@@ -3403,6 +3563,10 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         return NULL;
 
     s->context = context;
+    s->send_slots = NULL;
+    s->num_send_slots = 0;
+    s->next_send_slot = 0;
+    s->send_drops = 0;
 
     rocketnet_assert( address );
     rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
@@ -3426,6 +3590,16 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         rocketnet_free( context, s );
         return NULL;
     }
+
+    s->send_slots = (rocketnet_platform_socket_send_slot_t*) rocketnet_malloc( context,
+        sizeof( rocketnet_platform_socket_send_slot_t ) * ROCKETNET_PLATFORM_WINDOWS_SEND_SLOTS );
+    if ( !s->send_slots )
+    {
+        rocketnet_platform_socket_destroy( s );
+        return NULL;
+    }
+    s->num_send_slots = ROCKETNET_PLATFORM_WINDOWS_SEND_SLOTS;
+    memset( s->send_slots, 0, sizeof( rocketnet_platform_socket_send_slot_t ) * s->num_send_slots );
 
     // IMPORTANT: tell windows we don't want to receive any connection reset messages
     // for this socket, otherwise recvfrom errors out when client sockets disconnect hard
@@ -3575,73 +3749,58 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
 
-    if ( socket->handle != 0 )
+    bool send_storage_done = true;
+    if ( socket->send_slots )
     {
-        closesocket( socket->handle );
+        // Destroy is not the send path: let the last datagrams (the disconnect
+        // burst) leave before the socket closes, so a close never turns them
+        // into a silent loss. Reap what is already done, then wait on the
+        // rest with one overall bound.
+        for ( int i = 0; i < socket->num_send_slots; i++ )
+            rocketnet_windows_send_slot_reap( socket, &socket->send_slots[i] );
+
+        const double deadline = rocketnet_platform_time() + 5.0;
+        for ( int i = 0; i < socket->num_send_slots; i++ )
+        {
+            if ( !socket->send_slots[i].in_use )
+                continue;
+            const double remaining = deadline - rocketnet_platform_time();
+            const DWORD wait_ms = remaining > 0.0 ? (DWORD) ceil( remaining * 1000.0 ) : 0;
+            if ( WaitForSingleObject( socket->send_slots[i].event, wait_ms ) == WAIT_OBJECT_0 )
+                socket->send_slots[i].in_use = false;
+            else
+                send_storage_done = false;
+        }
+    }
+
+    if ( socket->handle != 0 && socket->handle != (rocketnet_platform_socket_handle_t) INVALID_SOCKET )
+    {
+        closesocket( (SOCKET) socket->handle );
         socket->handle = 0;
     }
+
+    if ( socket->send_slots )
+    {
+        if ( send_storage_done )
+        {
+            for ( int i = 0; i < socket->num_send_slots; i++ )
+                if ( socket->send_slots[i].event )
+                    WSACloseEvent( socket->send_slots[i].event );
+            rocketnet_free( socket->context, socket->send_slots );
+        }
+        // A slot still pending after the bound keeps its staging memory: the
+        // kernel may still own it. The array is abandoned with the socket.
+    }
+
+    if ( socket->send_drops > 0 )
+        rocketnet_debug( "windows overlapped send dropped %llu datagrams", (unsigned long long) socket->send_drops );
 
     rocketnet_free( socket->context, socket );
 }
 
 void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
 {
-    rocketnet_assert( socket );
-    rocketnet_assert( input_to );
-    rocketnet_assert( input_to->type == ROCKETNET_ADDRESS_IPV6 || input_to->type == ROCKETNET_ADDRESS_IPV4 );
-    rocketnet_assert( packet_data );
-    rocketnet_assert( packet_bytes > 0 );
-
-    rocketnet_address_t to = *input_to;
-
-    if ( socket->ipv6 )
-    {
-        // socket is dual stack ipv4 and ipv6
-
-        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
-        {
-            rocketnet_address_convert_ipv4_to_ipv6( &to );
-        }
-
-        sockaddr_in6 socket_address;
-        memset( &socket_address, 0, sizeof(socket_address) );
-        socket_address.sin6_family = AF_INET6;
-        for ( int i = 0; i < 8; i++ )
-        {
-            ( (uint16_t*) &socket_address.sin6_addr)[i] = rocketnet_platform_htons( to.data.ipv6[i] );
-        }
-        socket_address.sin6_port = rocketnet_platform_htons( to.port );
-        int result = sendto( socket->handle, (char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in6) );
-        if ( result < 0 )
-        {
-            char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-            rocketnet_address_to_string( &to, address_string );
-            char error_string[256] = { 0 };
-            strerror_s( error_string, sizeof(error_string), errno );
-            rocketnet_debug( "sendto (%s) failed: %s", address_string, error_string );
-        }
-    }
-    else
-    {
-        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
-        {
-            sockaddr_in socket_address;
-            rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
-            int result = sendto( socket->handle, (const char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in) );
-            if ( result < 0 )
-            {
-                char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-                rocketnet_address_to_string( &to, address_string );
-                char error_string[256] = { 0 };
-                strerror_s( error_string, sizeof(error_string), errno );
-                rocketnet_debug( "sendto (%s) failed: %s", address_string, error_string );
-            }
-        }
-        else
-        {
-            rocketnet_error( "invalid address type. could not send packet" );
-        }
-    }
+    rocketnet_windows_socket_send( socket, input_to, packet_data, packet_bytes );
 }
 
 int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )

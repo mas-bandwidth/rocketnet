@@ -407,6 +407,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
     static uint8_t seen[TOTAL];
     memset( seen, 0, sizeof(seen) );
     int received = 0;
+    int start_refusals = 0;
 
     for ( int frame = 0; frame < FRAMES; frame++ )
     {
@@ -424,7 +425,9 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
                     // ring-full backpressure: the Filling ring is full (256
                     // slots) while the I/O thread is behind, so a start is
                     // deferred; update so a handed-off ring is retried with
-                    // the same frame tag (RNClientIo Write, Defer)
+                    // the same frame tag (RNClientIo Write, Defer). Each
+                    // refused start counts SEND_RING_FULL once.
+                    start_refusals++;
                     rocketnet_client_transport_update( client, rocketnet_platform_time() );
                     rocketnet_server_transport_update( server, rocketnet_platform_time() );
                     rocketnet_server_transport_send_packets( server );
@@ -533,7 +536,17 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
     // destroy), and destroy runs Stop, Join, close, free (docs/CLIENT-IO.md
     // Stop and destroy order). The server must still read the disconnect.
     rocketnet_client_transport_disconnect( client );
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+
+    // ring-full backpressure is a counted refusal, not a loss: every refused
+    // start above was retried with its tag and every payload arrived. The
+    // counter covers at least those refusals; it may also count a protocol
+    // packet an update committed while the ring was full, which carries no
+    // payload. Every other counter stays clean.
+    const uint64_t ring_full = rocketnet_counter_value( rocketnet_client_transport_counters( client ),
+        ROCKETNET_COUNTER_SEND_RING_FULL );
+    printf( "%s start_refusals=%d send_ring_full=%llu\n", name, start_refusals, (unsigned long long) ring_full );
+    rocketnet_check( ring_full >= (uint64_t) start_refusals );
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
 
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
@@ -572,6 +585,209 @@ void rocketnet_test_client_io_windows_handoff_round_trip()
     // HandOff, Defer, IoSend, IoReceive, IoWait); the same round trip as the
     // Linux case, every payload byte-exact and none lost to a deferral.
     rocketnet_test_client_io_handoff_round_trip( "portable", "client_io_windows_handoff_round_trip" );
+}
+
+// Windows only: eight client I/O threads send at once to one server. The
+// regression is the ring a client's I/O thread holds in SENDING; the case
+// refuses to wait five seconds for a free slot when the thread is stuck in
+// the driver's send. A send that returns inside the frame budget keeps the
+// fill below one second on every client; a driver send that parks the I/O
+// thread for seconds trips it. The case repeats the Windows round trip's
+// byte-exact delivery check, so a fast send that loses datagrams also fails.
+void rocketnet_test_client_send_parallel_windows()
+{
+    const int NUM_CLIENTS = 8;
+    const int FRAMES = 120;
+    const int PACKETS_PER_FRAME = 8;
+    const int PAYLOAD_BYTES = 200;
+    const int TOTAL_PER_CLIENT = FRAMES * PACKETS_PER_FRAME;
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = NUM_CLIENTS;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    struct rocketnet_client_transport_t * clients[NUM_CLIENTS];
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
+    {
+        uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+        struct rocketnet_client_transport_config_t client_config;
+        rocketnet_client_transport_default_config( &client_config );
+        snprintf( client_config.driver, sizeof(client_config.driver), "%s", "portable" );
+
+        clients[c] = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+        rocketnet_check( clients[c] );
+        // every client runs the I/O thread design (docs/CLIENT-IO.md), so its
+        // sends are off the main thread and eight of them run at once
+        rocketnet_check( rocketnet_client_transport_client_io( clients[c] ) != NULL );
+    }
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        for ( int c = 0; c < NUM_CLIENTS; c++ )
+            rocketnet_client_transport_update( clients[c], rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        bool connected = rocketnet_server_transport_num_connected_clients( server ) == NUM_CLIENTS;
+        for ( int c = 0; c < NUM_CLIENTS; c++ )
+            connected = connected && rocketnet_client_transport_state( clients[c] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+        if ( connected )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == NUM_CLIENTS );
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
+        rocketnet_check( rocketnet_client_transport_state( clients[c] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    static uint8_t seen[NUM_CLIENTS][FRAMES * PACKETS_PER_FRAME];
+    memset( seen, 0, sizeof(seen) );
+    int received = 0;
+    int start_refusals = 0;
+
+    for ( int frame = 0; frame < FRAMES; frame++ )
+    {
+        for ( int c = 0; c < NUM_CLIENTS; c++ )
+        {
+            for ( int i = 0; i < PACKETS_PER_FRAME; i++ )
+            {
+                const int tag = frame * PACKETS_PER_FRAME + i;
+                struct rocketnet_packet_context_t context;
+                uint8_t * payload = NULL;
+
+                // a client send that parks the I/O thread shows up here as a
+                // Filling ring that cannot be reused; the base case let this
+                // wait run to five seconds
+                const double fill_deadline = rocketnet_platform_time() + 1.0;
+                while ( !payload && rocketnet_platform_time() < fill_deadline )
+                {
+                    payload = rocketnet_client_transport_start_packet( clients[c], PAYLOAD_BYTES, &context );
+                    if ( !payload )
+                    {
+                        start_refusals++;
+                        rocketnet_client_transport_update( clients[c], rocketnet_platform_time() );
+                        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+                        rocketnet_server_transport_send_packets( server );
+                        rocketnet_platform_sleep( 0.001 );
+                    }
+                }
+                rocketnet_check( payload );
+                payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
+                payload[context.payload_index + 1] = (uint8_t) ( ( tag >> 8 ) & 0xFF );
+                payload[context.payload_index + 2] = (uint8_t) ( ( tag >> 16 ) & 0xFF );
+                payload[context.payload_index + 3] = (uint8_t) ( ( tag >> 24 ) & 0xFF );
+                for ( int j = 4; j < PAYLOAD_BYTES; j++ )
+                    payload[context.payload_index + j] = (uint8_t) ( tag * 31 + j );
+                rocketnet_check( rocketnet_client_transport_finish_packet( clients[c], &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
+            }
+            rocketnet_client_transport_send_packets( clients[c] );
+            rocketnet_client_transport_update( clients[c], rocketnet_platform_time() );
+        }
+
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index >= 0 && payload_client_index < NUM_CLIENTS );
+            rocketnet_check( payload_bytes == PAYLOAD_BYTES );
+            const int tag = payload[0] | ( payload[1] << 8 ) | ( payload[2] << 16 ) | ( payload[3] << 24 );
+            rocketnet_check( tag >= 0 && tag < TOTAL_PER_CLIENT );
+            for ( int j = 4; j < PAYLOAD_BYTES; j++ )
+                rocketnet_check( payload[j] == (uint8_t) ( tag * 31 + j ) );
+            if ( !seen[payload_client_index][tag] )
+            {
+                seen[payload_client_index][tag] = 1;
+                received++;
+            }
+        }
+
+        for ( int c = 0; c < NUM_CLIENTS; c++ )
+        {
+            static uint8_t drain[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+            int drain_bytes;
+            while ( ( drain_bytes = rocketnet_client_transport_receive_packet( clients[c], drain, (int) sizeof(drain) ) ) > 0 )
+                rocketnet_check( drain_bytes == PAYLOAD_BYTES );
+        }
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    const int total = NUM_CLIENTS * TOTAL_PER_CLIENT;
+    start = rocketnet_platform_time();
+    while ( received < total && rocketnet_platform_time() - start < 5.0 )
+    {
+        for ( int c = 0; c < NUM_CLIENTS; c++ )
+            rocketnet_client_transport_update( clients[c], rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index >= 0 && payload_client_index < NUM_CLIENTS );
+            rocketnet_check( payload_bytes == PAYLOAD_BYTES );
+            const int tag = payload[0] | ( payload[1] << 8 ) | ( payload[2] << 16 ) | ( payload[3] << 24 );
+            rocketnet_check( tag >= 0 && tag < TOTAL_PER_CLIENT );
+            if ( !seen[payload_client_index][tag] )
+            {
+                seen[payload_client_index][tag] = 1;
+                received++;
+            }
+        }
+
+        for ( int c = 0; c < NUM_CLIENTS; c++ )
+        {
+            static uint8_t drain[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+            int drain_bytes;
+            while ( ( drain_bytes = rocketnet_client_transport_receive_packet( clients[c], drain, (int) sizeof(drain) ) ) > 0 )
+                rocketnet_check( drain_bytes == PAYLOAD_BYTES );
+        }
+
+        if ( received < total )
+            rocketnet_platform_sleep( 0.001 );
+    }
+
+    rocketnet_check( received == total );
+
+    // every start this case retried as ring-full backpressure is counted
+    uint64_t ring_full = 0;
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
+        ring_full += rocketnet_counter_value( rocketnet_client_transport_counters( clients[c] ), ROCKETNET_COUNTER_SEND_RING_FULL );
+    printf( "client_send_parallel_windows clients=%d frames=%d packets_per_frame=%d received=%d/%d start_refusals=%d send_ring_full=%llu\n",
+        NUM_CLIENTS, FRAMES, PACKETS_PER_FRAME, received, total, start_refusals, (unsigned long long) ring_full );
+    rocketnet_check( ring_full >= (uint64_t) start_refusals );
+
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
+    {
+        rocketnet_client_transport_disconnect( clients[c] );
+        ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( clients[c], ROCKETNET_COUNTER_SEND_RING_FULL );
+    }
+
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
 static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * server, int completion_capacity )
@@ -6992,6 +7208,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_mmsg_batch_
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_apple_handoff_round_trip, "client_io_apple_handoff_round_trip", "mac and ios only: the msgx client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_send_parallel_windows, "client_send_parallel_windows", "windows only: the overlapped client send is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -8242,8 +8459,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "client_io_windows_handoff_round_trip", rocketnet_test_client_io_windows_handoff_round_trip },
+    { "client_send_parallel_windows", rocketnet_test_client_send_parallel_windows },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "client_io_windows_handoff_round_trip", rocketnet_functional_skip_client_io_windows_handoff_round_trip },
+    { "client_send_parallel_windows", rocketnet_functional_skip_client_send_parallel_windows },
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
