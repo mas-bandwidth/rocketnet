@@ -16,8 +16,9 @@
 // verifies drifts, and a drifted specification is worse than none,
 // because independent implementations are built on it.
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_message.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_fragment.h"
@@ -112,7 +113,7 @@ int main()
 {
     const uint8_t test_filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
-    printf( "ROCKETNET_VERSION 0x%08X\n", (unsigned int) ROCKETNET_VERSION );
+    printf( "ROCKETNET_WIRE_VERSION 0x%08X\n", (unsigned int) ROCKETNET_WIRE_VERSION );
 
     printf( "ROCKETNET_TEST_FILTER_VALUE" );
     for ( int i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; i++ )
@@ -149,6 +150,14 @@ int main()
     print_int( "ROCKETNET_MAX_PAYLOAD_BYTES", ROCKETNET_MAX_PAYLOAD_BYTES );
     print_int( "ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES", ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES );
     print_int( "ROCKETNET_MESSAGE_SINGLE_BYTES", ROCKETNET_MESSAGE_SINGLE_BYTES );
+    print_int( "ROCKETNET_MESSAGE_RECORD_FIXED_BYTES", ROCKETNET_MESSAGE_RECORD_FIXED_BYTES );
+    // the largest unreliable message one packet's record holds (STANDARD.md _Messages_)
+    print_int( "ROCKETNET_MESSAGE_UNRELIABLE_RECORD_BYTES",
+               ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES );
+    print_int( "ROCKETNET_MESSAGE_SEQUENCED_RECORD_BYTES_NARROW",
+               ROCKETNET_MAX_PAYLOAD_BYTES - ( 3 + 3 + 3 + 1 ) - 1 );
+    print_int( "ROCKETNET_MESSAGE_SEQUENCED_RECORD_BYTES_WIDE",
+               ROCKETNET_MAX_PAYLOAD_BYTES - ( 3 + 3 + 3 + 2 ) - 1 );
     print_int( "ROCKETNET_MAX_FRAGMENT_BYTES", ROCKETNET_MAX_FRAGMENT_BYTES );
     print_int( "ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES", ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES );
 

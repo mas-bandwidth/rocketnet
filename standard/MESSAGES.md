@@ -143,7 +143,7 @@ When the connection layer's payload capacity is below the row `maximum payload s
 
 A sender MUST promote an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to its reliable twin: code 0 to code 2, code 1 to code 4, and code 5 to its reliable receipt twin (reliability 6, wire code 2) with the ACKED receipt kept. The receiver observes the twin's wire code. The sender MUST count each promotion once per send in `MESSAGE_PROMOTED_UNRELIABLE`, `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` or `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT`, according to the reliability the application chose.
 
-A sender MUST refuse a message above the row `record maximum message`, above the configured maximum message size, or, for UNRELIABLE_SEQUENCED, above the row `record maximum message` in wire length; a refused message MUST NOT be promoted. A receiver MUST accept a reliable or CONTROL record only in a payload no longer than the row `maximum payload size`.
+A sender MUST refuse a message above the configured maximum message size. For UNRELIABLE, UNRELIABLE_SEQUENCED and UNRELIABLE_WITH_ACK_RECEIPT that is the only refusal by size: a message at or below the configured maximum and above its one-record limit MUST be promoted, never refused by size, and a refused message MUST NOT be promoted. The row `record maximum message` bounds the data length of one record, not of a message: a message above its one-record limit travels as a block, and no record carries more than the row `record maximum message`. A receiver MUST accept a reliable or CONTROL record only in a payload no longer than the row `maximum payload size`.
 
 <a id="m2.2"></a>
 ### m2.2. Constants
@@ -2185,9 +2185,9 @@ last three are the long path's resend counts.
 ```vector m9.budget-trace
 clock: 1000.0
 rate: the client default
-trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, written whole and committed
+trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, promoted to reliable sequenced and its first packet written
 00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
-01 01 01 01
+00 01 01 01
 ```
 
 The first fourteen bytes are the decision for each offer in order: SEND,
@@ -2196,9 +2196,10 @@ the reliable item, the seven unreliable items that fit, the unreliable item
 that is dropped, the reliable item that waits, the unreliable item behind it
 that is dropped, the refill's reliable item, the setter and the new-rate
 reliable item. The last six bytes are, in order, the setter to 0 returning
-success, a packet request of more than zero, the item written larger than one
-maximum packet, the queue drained, no bytes charged to the budget and no
-unreliable item dropped.
+success, a packet request of more than zero, the first packet written larger
+than one maximum packet (0: the promoted item is a reliable block, sent one
+maximum packet at a time), the unreliable queue empty, no bytes charged to the
+budget and no unreliable item dropped.
 
 <a id="m10"></a>
 ## m10. Channels and priorities
@@ -2265,10 +2266,195 @@ configuration: build-specific maximum at least 301; num_channels 301
 <a id="m11"></a>
 ## m11. CONFIG control record
 
-Status: pending
+1. Each endpoint MUST send exactly one CONFIG record for each connection and
+   MUST NOT send another.
+2. An endpoint MUST send the CONFIG record before any other reliable record of
+   that connection, and MUST resend it until the connection layer acknowledges
+   it ([m7 Delivery: reliable codes 2, 3 and 4](#m7)).
+3. An endpoint MUST start its CONFIG wait at the first update at which its
+   connection layer reports the connection established.
+4. An endpoint MUST end the connection with `RELIABLE_TIMEOUT` when an update
+   is at or after the start of the CONFIG wait plus the reliable timeout
+   ([m9 Acknowledgement mapping, resend and send budget](#m9)) and it has not
+   accepted the peer's CONFIG.
+5. An endpoint MUST accept a CONFIG record only when its body length is the
+   body size row of [m11.2 Constants and defaults](#m11.2), its kind is its kind row, and, when its
+   version is its version row, both reserved fields are zero.
+6. An endpoint MUST refuse every other CONFIG record as `MESSAGE_BAD_CONTROL`,
+   and MUST end the connection with `PROTOCOL_VIOLATION` when it does.
+7. An endpoint MUST read a body whose version it does not know and MUST
+   compare it; such a body is a CONFIG mismatch and never
+   `MESSAGE_BAD_CONTROL`.
+8. An endpoint MUST compare the `version`, `enabled`, `num_channels`,
+   `window_messages`, `receive_ring_bytes`, `max_message_bytes` and
+   `fragment_bytes` fields of the body with its own values.
+9. An endpoint MUST end the connection with `CONFIG_MISMATCH` when any
+   compared field differs.
+10. An endpoint MAY receive message records before the peer's CONFIG, and
+    when it does it MUST process them against its own configuration.
 
-Scope: the one CONFIG record each endpoint sends, its 28-byte body, the
-fields compared, mismatch handling; the defaults of the wire fields; vectors.
+<a id="m11.1"></a>
+### m11.1. Wire layout
+
+The CONFIG record is a code 2 record with the CONTROL flag set, inside a
+payload of the RECORDS form. Its record header carries the connection's first
+reliable number. The payload is 35 bytes:
+
+```
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |     flags     |            length             |    number     |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |            number             |     kind      |    version    |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |    enabled    |     zero      |         num_channels          |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |         num_channels          |        window_messages        |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |        window_messages        |      receive_ring_bytes       |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |      receive_ring_bytes       |       max_message_bytes       |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |       max_message_bytes       |        fragment_bytes         |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |        fragment_bytes         |             zero              |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |             zero              |     form      |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| flags | 0 | 1 | u8 | the record's code and flags | `0x22` |
+| length | 1 | 2 | u16 | the body length | `28` |
+| number | 3 | 3 | u24 | the connection's first reliable number | the first reliable number |
+| kind | 6 | 1 | u8 | the record kind | `1` |
+| version | 7 | 1 | u8 | the body version | `1` |
+| enabled | 8 | 1 | u8 | bit r set: reliability r may be sent by the application | a mask of enabled reliabilities |
+| reserved byte | 9 | 1 | zero[1] | reserved | `0` |
+| num_channels | 10 | 4 | u32 | the count of channels | the sender's configured count |
+| window_messages | 14 | 4 | u32 | the reliable window W | the sender's configured window |
+| receive_ring_bytes | 18 | 4 | u32 | the receive ring B | the sender's configured ring size |
+| max_message_bytes | 22 | 4 | u32 | the largest message | the sender's configured maximum |
+| fragment_bytes | 26 | 4 | u32 | the block stride F | the fragment bytes row of [m5 Message numbering and the reliable window](#m5) |
+| reserved tail | 30 | 4 | zero[4] | reserved | `0` |
+| form | 34 | 1 | u8 | the payload form | `1` |
+
+<a id="m11.2"></a>
+### m11.2. Constants and defaults
+
+The library's default configuration is the one below, with the window and
+ring defaults and the fragment stride in the [m5 Message numbering and the reliable window](#m5)
+rows window messages default, receive ring bytes default and fragment bytes. Every field of the
+body except the reserved fields is compared, so two ends whose configurations
+differ in any compared field end the connection with `CONFIG_MISMATCH`.
+
+| Name | Value | Unit |
+|---|---|---|
+| flags | `0x22` | none |
+| body size | `28` | bytes |
+| kind | `1` | none |
+| version | `1` | none |
+| enabled default | `0xFF` | mask |
+| num channels default | `32` | channels |
+| max message bytes default | `262144` | bytes |
+| form | `1` | none |
+
+`enabled` with bit r set permits the application to send reliability r; the
+default mask sets every one of the eight reliabilities
+([m1.3 Reliability types](#m1.3)).
+
+<a id="m11.3"></a>
+### m11.3. States
+
+An endpoint has one CONFIG state per connection.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| Waiting | CONFIG body accepted | every compared field is equal | the CONFIG wait ends | Verified |
+| Waiting | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
+| Waiting | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |
+| Waiting | update | at or after the start of the CONFIG wait plus the reliable timeout | end the connection with `RELIABLE_TIMEOUT` | none |
+| Verified | CONFIG body accepted | every compared field is equal | no change | Verified |
+| Verified | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
+| Verified | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |
+
+An event that a state does not list is ignored in that state.
+
+<a id="m11.4"></a>
+### m11.4. Vectors
+
+Each vector is the full payload, before the connection layer seals it. An
+implementation MUST reproduce each one from the CONFIG record and MUST parse
+each one back to the same record and body. The first vector is the CONFIG
+record at the library's defaults, with number 0. Each later vector is the
+defaults with exactly one field changed; a receiver at the defaults MUST
+accept the first vector and MUST end the connection with `CONFIG_MISMATCH`
+for each of the others.
+
+```vector m11.config-defaults
+config: library defaults
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.version-mismatch
+field: version
+value: 2
+22 1c 00 00 00 00 01 02 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.enabled-mismatch
+field: enabled
+value: 0x01
+22 1c 00 00 00 00 01 01 01 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.num-channels-mismatch
+field: num_channels
+value: 16
+22 1c 00 00 00 00 01 01 ff 00 10 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.window-messages-mismatch
+field: window_messages
+value: 512
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 02
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.receive-ring-bytes-mismatch
+field: receive_ring_bytes
+value: 131072
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 02 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.max-message-bytes-mismatch
+field: max_message_bytes
+value: 131072
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 02 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.fragment-bytes-mismatch
+field: fragment_bytes
+value: 1024
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 00 04 00 00 00 00
+00 00 01
+```
 
 <a id="m12"></a>
 ## m12. Receipts
@@ -2345,47 +2531,6 @@ within the message layer of a sealed connection.
 <a id="ma"></a>
 ## ma. Appendix A: test vectors
 
-This appendix indexes every vector of RN-2 by the section that defines it.
-It is generated; the bytes are in the sections.
-
-<!-- vector-index:begin -->
-| Section | Vector |
-|---|---|
-| [m2 Payload forms and sender size rules](#m2) | `m2.code0-at-limit` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.code0-over` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.code1-1404` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.code1-1405` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.code1-1406` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-1407` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-1408` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-1409` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-ordered-1400` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-ordered-1401` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-ordered-1402` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-sequenced-1398` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-sequenced-1399` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.reliable-sequenced-1400` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.single-limit` |
-| [m2 Payload forms and sender size rules](#m2) | `m2.single-over` |
-| [m3 Record format](#m3) | `m3.block-wide-last` |
-| [m3 Record format](#m3) | `m3.code0` |
-| [m3 Record format](#m3) | `m3.code1` |
-| [m3 Record format](#m3) | `m3.code2` |
-| [m3 Record format](#m3) | `m3.code3` |
-| [m3 Record format](#m3) | `m3.code4` |
-| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-at-half-range` |
-| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-at-wrap` |
-| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-duplicate` |
-| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-stale-copy-at-depth` |
-| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code0-delivery-trace` |
-| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code1-hold-full-trace` |
-| [m6 Delivery: unreliable codes 0 and 1](#m6) | `m6.code1-sequenced-trace` |
-| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-loss-reorder` |
-| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-ordered-hold-drain` |
-| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-sequenced-hold-drain` |
-| [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.budget-trace` |
-| [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.resend-trace` |
-| [m10 Channels and priorities](#m10) | `m10.narrow-channel` |
-| [m10 Channels and priorities](#m10) | `m10.wide-channel` |
-| [m12 Receipts](#m12) | `m12.promotion` |
-<!-- vector-index:end -->
+The index of the vectors of RN-2 by section is printed by
+`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
+in the sections.

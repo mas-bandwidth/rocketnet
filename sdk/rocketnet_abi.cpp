@@ -1,6 +1,14 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include <string.h>
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 == offsetof( struct rocketnet_client_config_t, simulated_loss_percent ), "client public revision 1 must end before simulator fields" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 < ROCKETNET_CLIENT_CONFIG_BYTES_2, "client public config revisions must grow" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_config_t ), "client public config current revision must match its struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 == offsetof( struct rocketnet_server_config_t, simulated_loss_percent ), "server public revision 1 must end before simulator fields" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2, "server public config revisions must grow" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_2 == sizeof( struct rocketnet_server_config_t ), "server public config current revision must match its struct" );
 
 struct abi_field_t { const char * name; size_t offset; size_t size; };
 struct abi_type_t { const char * name; size_t size; const abi_field_t * fields; int count; };
@@ -12,12 +20,49 @@ struct abi_type_t { const char * name; size_t size; const abi_field_t * fields; 
 #define BYTES_FIELD(name, size, def, flags) FIELD(name)
 #define STRING_FIELD(name, capacity, def, flags) FIELD(name)
 
+#define ABI_TYPE rocketnet_client_config_t
+static const abi_field_t client_config_fields[] =
+{
+    FIELD(filter_value) FIELD(max_payload_bytes) FIELD(num_reassembly_slots) FIELD(transport)
+    FIELD(state_change_callback) FIELD(time_callback) FIELD(step_driven) FIELD(send_kbps)
+    FIELD(num_channels) FIELD(window_messages) FIELD(receive_ring_bytes) FIELD(max_message_bytes)
+    FIELD(send_buffer_bytes) FIELD(send_queue_messages) FIELD(packets_in_flight) FIELD(max_packets_per_update)
+    FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(rto_initial_ms)
+    FIELD(rto_min_ms) FIELD(rto_max_ms) FIELD(reliable_timeout_ms)
+    FIELD(simulated_loss_percent) FIELD(simulated_latency_ms) FIELD(simulated_jitter_ms) FIELD(simulated_duplicate_percent)
+};
+#undef ABI_TYPE
+
+#define ABI_TYPE rocketnet_server_config_t
+static const abi_field_t server_config_fields[] =
+{
+    FIELD(protocol_id) FIELD(max_clients) FIELD(filter_value) FIELD(backend_public_key) FIELD(server_public_key)
+    FIELD(server_secret_key) FIELD(num_xdp_queues) FIELD(num_os_cpus) FIELD(max_payload_bytes)
+    FIELD(num_reassembly_slots) FIELD(max_timeout_seconds) FIELD(handshake_deadline_seconds)
+    FIELD(transport) FIELD(public_address) FIELD(per_client_send_kbps)
+    FIELD(num_channels) FIELD(window_messages) FIELD(receive_ring_bytes) FIELD(max_message_bytes)
+    FIELD(send_buffer_bytes) FIELD(send_queue_messages) FIELD(packets_in_flight) FIELD(max_packets_per_update)
+    FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(rto_initial_ms)
+    FIELD(rto_min_ms) FIELD(rto_max_ms) FIELD(reliable_timeout_ms)
+    FIELD(simulated_loss_percent) FIELD(simulated_latency_ms) FIELD(simulated_jitter_ms) FIELD(simulated_duplicate_percent)
+};
+#undef ABI_TYPE
+
+#define ABI_TYPE rocketnet_receipt_t
+static const abi_field_t receipt_fields[] =
+{
+    FIELD(serial)
+    FIELD(status)
+};
+#undef ABI_TYPE
+
 #define ABI_TYPE rocketnet_client_transport_config_t
 static const abi_field_t client_transport_config_fields[] =
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE(INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD)
     FIELD(state_change_callback)
     FIELD(time_callback)
+    FIELD(step_driven)
 };
 #undef ABI_TYPE
 
@@ -97,6 +142,9 @@ static const abi_field_t frame_sync_stats_fields[] =
 #define TYPE(name) { "rocketnet_" #name "_t", sizeof(rocketnet_##name##_t), name##_fields, int(sizeof(name##_fields)/sizeof(abi_field_t)) },
 static const abi_type_t types[] =
 {
+    TYPE(client_config)
+    TYPE(server_config)
+    TYPE(receipt)
     TYPE(client_transport_config)
     TYPE(server_transport_config)
     TYPE(client_transport_stats)
@@ -127,6 +175,12 @@ static const abi_field_t * find_field(const char * type_name, const char * field
 }
 
 uint32_t rocketnet_abi_version(void) { return ROCKETNET_ABI_VERSION; }
+
+const char * rocketnet_abi_field_name(const char * type_name, int index)
+{
+    const auto * type = find_type(type_name);
+    return type && index >= 0 && index < type->count ? type->fields[index].name : NULL;
+}
 size_t rocketnet_abi_type_size(const char * name)
 {
     if ( !rocketnet_api_null_guard( name ) )
@@ -174,8 +228,8 @@ size_t rocketnet_abi_field_size(const char * type_name, const char * field_name)
 // layout has, and the latest must equal sizeof, or a size formula is wrong for
 // this target.
 
-static_assert( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 == sizeof( struct rocketnet_client_transport_config_t ), "client transport config revision 1 size" );
-static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 1 size" );
+static_assert( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_transport_config_t ), "client transport config revision 2 size" );
+static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 2 size" );
 static_assert( ROCKETNET_MESSAGE_CONFIG_BYTES_2 == sizeof( struct rocketnet_message_config_t ), "message config revision 2 size" );
 
 static const size_t rocketnet_client_transport_config_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };
@@ -222,7 +276,7 @@ int rocketnet_client_transport_default_config_sized( struct rocketnet_client_tra
     if ( !rocketnet_api_null_guard( config ) )
         return 0;
     struct rocketnet_client_transport_config_t defaults;
-    rocketnet_client_transport_default_config( &defaults );
+    rocketnet_client_transport_default_config_current( &defaults );
     return rocketnet_config_write_sized( "rocketnet_client_transport_config_t", config, config_bytes, &defaults, sizeof( defaults ), ROCKETNET_KNOWN_BYTES( rocketnet_client_transport_config_known_bytes ) );
 }
 
@@ -231,7 +285,7 @@ int rocketnet_server_transport_default_config_sized( struct rocketnet_server_tra
     if ( !rocketnet_api_null_guard( config ) )
         return 0;
     struct rocketnet_server_transport_config_t defaults;
-    rocketnet_server_transport_default_config( &defaults );
+    rocketnet_server_transport_default_config_current( &defaults );
     return rocketnet_config_write_sized( "rocketnet_server_transport_config_t", config, config_bytes, &defaults, sizeof( defaults ), ROCKETNET_KNOWN_BYTES( rocketnet_server_transport_config_known_bytes ) );
 }
 
@@ -252,7 +306,7 @@ static const struct rocketnet_client_transport_config_t * rocketnet_client_trans
     if ( config == NULL )
         return NULL;
     struct rocketnet_client_transport_config_t defaults;
-    rocketnet_client_transport_default_config( &defaults );
+    rocketnet_client_transport_default_config_current( &defaults );
     if ( !rocketnet_config_read_sized( "rocketnet_client_transport_config_t", read, &defaults, sizeof( defaults ), config, config_bytes, ROCKETNET_KNOWN_BYTES( rocketnet_client_transport_config_known_bytes ) ) )
         *refused = true;
     return read;
@@ -263,7 +317,7 @@ static const struct rocketnet_server_transport_config_t * rocketnet_server_trans
     if ( config == NULL )
         return NULL;
     struct rocketnet_server_transport_config_t defaults;
-    rocketnet_server_transport_default_config( &defaults );
+    rocketnet_server_transport_default_config_current( &defaults );
     if ( !rocketnet_config_read_sized( "rocketnet_server_transport_config_t", read, &defaults, sizeof( defaults ), config, config_bytes, ROCKETNET_KNOWN_BYTES( rocketnet_server_transport_config_known_bytes ) ) )
         *refused = true;
     return read;
@@ -287,7 +341,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_sized( v
     const struct rocketnet_client_transport_config_t * effective = rocketnet_client_transport_config_read_sized( &read, config, config_bytes, &refused );
     if ( refused )
         return NULL;
-    return rocketnet_client_transport_create( context, connect_token, effective, time );
+    return rocketnet_client_transport_create_current( context, connect_token, effective, time );
 }
 
 // the server config carries the secret key: the stack copy is wiped on every path
@@ -296,7 +350,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_sized( v
     bool refused = false;
     struct rocketnet_server_transport_config_t read;
     const struct rocketnet_server_transport_config_t * effective = rocketnet_server_transport_config_read_sized( &read, config, config_bytes, &refused );
-    struct rocketnet_server_transport_t * server_transport = refused ? NULL : rocketnet_server_transport_create( context, public_address_string, effective );
+    struct rocketnet_server_transport_t * server_transport = refused ? NULL : rocketnet_server_transport_create_current( context, public_address_string, effective );
     sodium_memzero( &read, sizeof( read ) );
     return server_transport;
 }

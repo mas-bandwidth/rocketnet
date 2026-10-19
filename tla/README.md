@@ -108,6 +108,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnriodriver` | 3 | Windows RIO server driver design: control with two liveness properties and two invariant witnesses |
 | `rnlivefleetrun` | 3 | Live fleet run lifecycle (docs/LIVE-XDP.md): control with one liveness property and two invariant witnesses |
 | `rnoutgoingbuild` | 2 | The outgoing build (docs/OUTGOING-BUILD.md): control and the reversed copy-step witness (`NoCopy`) |
+| `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew (docs/DST.md section 7): control with one liveness and one action property, and two invariant witnesses |
 
 The 47-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh

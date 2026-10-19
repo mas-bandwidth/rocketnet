@@ -72,7 +72,7 @@ static void rocketnet_handshake_fill_vector_fields( struct rocketnet_signed_conn
                                                     struct rocketnet_connect_token_private_t * private_fields )
 {
     memset( signed_fields, 0, sizeof(*signed_fields) );
-    signed_fields->version = ROCKETNET_VERSION;
+    signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
     signed_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -765,8 +765,8 @@ static void TestKeepAliveClockCountsOnlyKeepAlives()
 
 // ---------------------------------------------------------------------------
 // Create-skew refusal: a connect token created more than five seconds in the
-// future is refused as CONNECTION_REQUEST_TOKEN_EXPIRED, and only while
-// max_token_lifetime_seconds > 0
+// future is refused as CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, and only
+// while max_token_lifetime_seconds > 0
 // (sdk/rocketnet_server_protocol.cpp,
 // rocketnet_server_protocol_process_connection_request)
 // ---------------------------------------------------------------------------
@@ -782,7 +782,7 @@ static void token_created_past_skew_is_refused()
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
-    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
+    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE];
 
     int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                         request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
@@ -790,7 +790,7 @@ static void token_created_past_skew_is_refused()
                                                                         response, &response_bytes );
     rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( response_bytes == 0 );
-    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before + 1 );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE] == before + 1 );
     rocketnet_unit_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
 
     rocketnet_handshake_server_teardown( &test );

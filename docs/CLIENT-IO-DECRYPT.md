@@ -3,7 +3,7 @@
 The gate for the client transport is total main-thread time per frame:
 **total_us_p99 at most 100 us at P = 32** (docs/CLIENT-IO.md, The gate). The
 I/O thread design in docs/CLIENT-IO.md takes the send walk and the receive
-mutex off the main thread and leaves in `rocketnet_client_transport_update` the
+mutex off the main thread and leaves in `rocketnet_client_update` the
 per-reply work: the checks, the decrypt and the protocol. This note measures
 where that work goes at P = 1, 8 and 32, at `sprint/rocketnet-proof` `b0b4527`
 (the landing of rocketnet-client-io-design), with scratch timers that are not
@@ -32,7 +32,7 @@ outside, floor; then the next P; three rounds):
   unchanged.
 - **lock**: BASE plus the scratch timers below.
 - **outside**: lock plus the receive recipe of rocketnet-client-receive-outside-lock
-  in `rocketnet_client_receive_packets` (the driver's receive runs with the
+  in `rocketnet_client_receive_packets` (the transport's receive runs with the
   mutex released; the mutex is held only to check for room and to append one
   datagram), so the receive thread's hold does not show up as update's wait.
 - **floor**: outside plus a scratch acknowledged floor in
@@ -54,9 +54,9 @@ p50 and p99 over the 2000 measured frames of each run:
 | decrypt | `rocketnet_open_sealed_packet` in `rocketnet_client_open_session_packet` (`crypto_aead_chacha20poly1305_ietf_decrypt`) |
 | protocol | the rest of the per-datagram loop: the replay advance, the ack block read, `rocketnet_ack_endpoint_record_received`, `rocketnet_ack_endpoint_process_block`, the payload copy, the loss and jitter trackers |
 | block walk | `rocketnet_ack_endpoint_process_block` alone (inside protocol) |
-| protocol update, protocol send | `rocketnet_client_protocol_update`, and the driver send of its packet inside update |
+| protocol update, protocol send | `rocketnet_client_protocol_update`, and the transport send of its packet inside update |
 | stats | `rocketnet_client_update_stats` |
-| ack stats | `rocketnet_ack_endpoint_update_stats` alone (inside stats) |
+| ack stats | the internal ack statistics update (`sdk/rocketnet_layers.h`) alone (inside stats) |
 | rest | update minus all of the above |
 | update CPU | `CLOCK_THREAD_CPUTIME_ID` around update: the main thread's CPU time, without time it spent descheduled |
 | block-walk visits | the change of `g_ack_visit_count` (`sdk/rocketnet_ack.cpp`) across update |
@@ -72,7 +72,7 @@ at P = 1 20.6 against 19.1 us.
 x86-64, 32 cores with 2-way SMT (64 hardware threads), 3.0 GHz maximum, 64 MiB
 L3, 125 GiB, Linux 6.8.0-142-generic, g++ 13.3.0, Release build
 (`cmake -DCMAKE_BUILD_TYPE=Release`, `cmake --build build -j8`), portable
-driver, 2000 measured frames per run after 200 discarded.
+transport, 2000 measured frames per run after 200 discarded.
 
 The machine was not quiet, and no quiet Linux member was available in this
 attempt: the one-minute load average was 155 to 197 during set 1 and 96 to 138
@@ -631,10 +631,10 @@ What else update needs, measured:
   `MCFragmentsAndAcksWitClearOnDefer.cfg` (the bit cleared on a deferral:
   `OpenedSurfacesOrLaps`) and `MCFragmentsAndAcksWitNoSetOnAlias.cfg` (a
   write over an old record that leaves the bit clear: `BitsMatchRing`).
-- **The ack statistics (every frame, every P).** `rocketnet_ack_endpoint_update_stats`
+- **The ack statistics (every frame, every P).** the internal ack statistics update (`sdk/rocketnet_layers.h`)
   is 17 to 24 us at the median at every P: it walks the 2048-entry rtt
   history twice and half the sent ring every update, and on the client only
-  `rocketnet_client_transport_stats` reads what it computes (`ack.rtt`). It
+  `rocketnet_client_stat` reads what it computes (`ack.rtt`). It
   moves to that getter.
 - **The send walk and the lock.** The send window is 390 us at the median at
   P = 32 and the lock wait 3120 us at p99; the I/O thread cards
@@ -644,14 +644,18 @@ What else update needs, measured:
   19 us at P = 32 with a cheap walk; protocol update under 1 us at the median;
   rest about 1 us.
 
+The name `rocketnet_ack_endpoint_update_stats` in this note is an internal
+function (`sdk/rocketnet_layers.h`); a game reads the public client stats
+with `rocketnet_client_stat`.
+
 ## Cards
 
 | id | tier | one line | red at BASE |
 |---|---|---|---|
 | rocketnet-ack-walk-unacked-only | pro | extend `tla/FragmentsAndAcks.tla` with the held and unacknowledged bitmaps and their two witnesses first, then give `sdk/rocketnet_ack.cpp` the bitmaps so a block's runs visit only held unacknowledged records; unit test `ack_block_walk_visits_only_unacknowledged` (a block restating 4096 acknowledged sequences makes zero record visits, a deferred record still surfaces from the next block); the meter at P = 32, BASE and head interleaved | `./bin/test ack_block_walk_visits_only_unacknowledged` prints `unknown unit test ack_block_walk_visits_only_unacknowledged`, exit 2 |
-| rocketnet-client-ack-stats-on-read | flash | call `rocketnet_ack_endpoint_update_stats` from `rocketnet_client_transport_stats` instead of every update; unit test `client_ack_stats_computed_on_read` (the stats a getter returns are unchanged, and update does not recompute them); the meter at P = 1 | `./bin/test client_ack_stats_computed_on_read` prints `unknown unit test client_ack_stats_computed_on_read`, exit 2 |
+| rocketnet-client-ack-stats-on-read | flash | call the internal ack statistics update (`sdk/rocketnet_layers.h`) from `rocketnet_client_stat` instead of every update; unit test `client_ack_stats_computed_on_read` (the stats a getter returns are unchanged, and update does not recompute them); the meter at P = 1 | `./bin/test client_ack_stats_computed_on_read` prints `unknown unit test client_ack_stats_computed_on_read`, exit 2 |
 | rocketnet-client-io-decrypt-model | heavy | write `tla/RNClientIoDecrypt.tla` as If decrypt moves names it, with the four reversed witnesses, checked with TLC on a bench, a `tla/COVERAGE.tsv` row and its README | `ls tla/RNClientIoDecrypt.tla` prints `ls: cannot access 'tla/RNClientIoDecrypt.tla': No such file or directory`, exit 2 |
-| rocketnet-client-io-decrypt | pro | after rocketnet-client-io-transport, rocketnet-client-io-linux and the model: the I/O thread opens session datagrams before `IoPublish` with its own key copy and window, verdicts in the records, update consumes them; unit tests (step-driven, fake driver, clock from 1000.0) `client_io_decrypt_opens_before_publish`, `client_io_decrypt_replay_refused_before_open` (the crypto tally's `aead_open` does not move for a duplicate), `client_io_decrypt_no_open_after_retire`, `client_io_decrypt_verdicts_counted_in_order`; the gate row of docs/CLIENT-IO.md at P = 32 | `./bin/test client_io_decrypt_opens_before_publish` prints `unknown unit test client_io_decrypt_opens_before_publish`, exit 2 |
+| rocketnet-client-io-decrypt | pro | after rocketnet-client-io-transport, rocketnet-client-io-linux and the model: the I/O thread opens session datagrams before `IoPublish` with its own key copy and window, verdicts in the records, update consumes them; unit tests (step-driven, fake transport, clock from 1000.0) `client_io_decrypt_opens_before_publish`, `client_io_decrypt_replay_refused_before_open` (the crypto tally's `aead_open` does not move for a duplicate), `client_io_decrypt_no_open_after_retire`, `client_io_decrypt_verdicts_counted_in_order`; the gate row of docs/CLIENT-IO.md at P = 32 | `./bin/test client_io_decrypt_opens_before_publish` prints `unknown unit test client_io_decrypt_opens_before_publish`, exit 2 |
 
 Each red was run at BASE `b0b4527` on the Linux bench of this note.
 rocketnet-client-receive-outside-lock and the client I/O cards of

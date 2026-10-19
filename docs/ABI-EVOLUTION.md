@@ -46,6 +46,11 @@ revision 1 prefix (so a binary built before the sized forms existed keeps
 working against a newer library), and a caller that wants a later field uses
 the sized forms.
 
+This document names public client and server types and entry points from
+`sdk/rocketnet.h`. Where it refers to internal transport or message-layer
+details, those names live in `sdk/rocketnet_layers.h`; a game does not call
+them.
+
 ## 2. The Choice: A Size Argument, Not a Leading Size Field
 
 Two forms are common for this. The SDK uses the size argument.
@@ -55,7 +60,7 @@ Two forms are common for this. The SDK uses the size argument.
 | Today's layout | Unchanged: every config struct keeps its revision 1 layout | Changes: a `size` member goes first and every offset moves, an incompatible change at revision 1 |
 | Existing callers | Compile and run unchanged on the unsized entry points | Must be rebuilt, and must set the field |
 | Forgetting it | Not possible on a sized call: the size is a parameter | A zeroed or stale `size` reads as an unknown size, or worse, as a wrong known one |
-| C | `rocketnet_client_transport_default_config_sized( &config, sizeof( config ) )` | `config.size = sizeof( config );` before every use |
+| C | `rocketnet_client_default_config_sized( &config, sizeof( config ) )` | `config.size = sizeof( config );` before every use |
 | C#, other FFI | The binding passes `Marshal.SizeOf<T>()` (or the language's equivalent) as one more integer argument; the struct marshals as a plain blittable struct | The binding sets a field the marshaller does not know is special; a struct copied or defaulted by the runtime carries `size = 0` |
 | One struct, two calls | The default call and the create call each carry the size, so neither depends on what the other left in the struct | The size travels in the struct, so a struct defaulted by one library revision and passed to another carries the first one's size |
 
@@ -81,23 +86,20 @@ Every sized entry point makes one of two calls (`sdk/rocketnet_abi.cpp`):
 
 The sized entry points, each declared beside its unsized form:
 
-| Struct | Sized defaults | Sized creates |
-| :--- | :--- | :--- |
-| `rocketnet_client_transport_config_t` | `rocketnet_client_transport_default_config_sized` | `rocketnet_client_transport_create_sized`, `rocketnet_message_client_create_sized` |
-| `rocketnet_server_transport_config_t` | `rocketnet_server_transport_default_config_sized` | `rocketnet_server_transport_create_sized`, `rocketnet_message_server_create_sized` |
-| `rocketnet_message_config_t` | `rocketnet_message_default_config_sized` | `rocketnet_message_client_create_sized`, `rocketnet_message_server_create_sized` |
+| Struct | Sized defaults | Sized queries | Sized creates |
+| :--- | :--- | :--- | :--- |
+| `rocketnet_client_config_t` | `rocketnet_client_default_config_sized` | `rocketnet_client_validate_config_sized`, `rocketnet_client_required_memory_sized` | `rocketnet_client_create_sized` |
+| `rocketnet_server_config_t` | `rocketnet_server_default_config_sized`, `rocketnet_server_dev_config_sized` | `rocketnet_server_validate_config_sized`, `rocketnet_server_required_memory_sized` | `rocketnet_server_create_sized` |
 
-The message creates take two configs and so two sizes, each checked by the
-rule. A sized create refuses an unknown size before any other check: it
+Each sized create takes one config struct and its size, checked by the rule.
+A sized create refuses an unknown size before any other check: it
 returns `NULL` with the log line, and the API misuse count does not move (a
 size mismatch is a build mismatch, not a NULL misuse). The sized defaults
 return 1 when they write and 0 when they refuse; a `NULL` config there is a
 counted no-op that returns 0, as every NULL at the boundary.
 
-The known sizes are in the header, oldest first, so the library and a caller
-read one list: `ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES`,
-`ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES` and
-`ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES`. Each revision's size is written as the
+The known sizes are in the internal layer header, oldest first, so the library
+and a caller read one list. Each revision's size is written as the
 end of that revision's last field rounded up to that revision's alignment
 (`ROCKETNET_CONFIG_REVISION_BYTES`), never as `sizeof`, so the entry for an old
 revision keeps its value when the struct grows past it.
@@ -108,27 +110,26 @@ Sizes are bytes on every supported target (64-bit Linux x86_64 and s390x,
 macOS arm64, Windows x86_64; `docs/PLATFORMS.md`). On any target,
 `rocketnet_abi_type_size` is the authority.
 
-| Struct | Direction | Revision 1 | Revision 2 | Latest last field | Sized |
-| :--- | :--- | ---: | ---: | :--- | :--- |
-| `rocketnet_client_transport_config_t` | in | 96 | - | `time_callback` | yes |
-| `rocketnet_server_transport_config_t` | in | 456 | - | `handshake_deadline_seconds` | yes |
-| `rocketnet_message_config_t` | in | 60 | 68 | `server_send_kbps` | yes |
-| `rocketnet_client_transport_stats_t` | out | 28 | - | `bandwidth_received_kbps` | no |
-| `rocketnet_server_transport_stats_t` | out | 24 | - | `bandwidth_received_kbps` | no |
-| `rocketnet_server_transport_client_stats_t` | out | 24 | - | `bandwidth_acked_kbps` | no |
-| `rocketnet_packet_context_t` | in and out | 40 | - | `client_index` | no |
-| `rocketnet_frame_sync_stats_t` | out | 40 | - | `wakeup_error_seconds` | no |
-| `rocketnet_message_receipt_t` | out, in an array | 8 | - | `status` | no |
+| Struct | Direction | Sized |
+| :--- | :--- | :--- |
+| `rocketnet_client_config_t` | in | yes |
+| `rocketnet_server_config_t` | in | yes |
+| the client stat enum | out | no |
+| the server stat enum | out | no |
+| the per-client stat enum | out | no |
+| `rocketnet_packet_context_t` | in and out | no |
+| `rocketnet_frame_sync_stats_t` | out | no |
+| `rocketnet_receipt_t` | out, in an array | no |
 
-The client transport config's table (`ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE`)
-is followed by `state_change_callback` and `time_callback`, pointers outside
-the table. A field added to that config goes after `time_callback`, never into
-the table in front of it, because the table's fields are not the end of the
-struct.
+The client and server configs carry the message fields directly. A field added
+to one goes at the end of the struct; a caller compiled against an older header
+keeps the old size and reads the old prefix. The frozen sizes per revision and oldest-first known-size lists are in the
+public header and in `rocketnet_abi_type_size`, which is the
+authority for a given build; this document does not repeat the numbers.
 
-The message config's revision 2 appends `client_send_kbps` and
-`server_send_kbps` after `reliable_timeout_ms`; a revision 1 caller reads both
-at their defaults (1000 and 10000).
+Revision 2 appends the four development link-simulator controls to both the
+client and server configs. Their `BYTES_2` formulas end at
+`simulated_duplicate_percent` and remain frozen when later revisions grow.
 
 Revision 1 is the layout of the first release that carries the sized entry
 points. `time_callback` joins the client config before that release, so it is
@@ -138,7 +139,7 @@ layout that a release has already shipped with the sized entry points.
 The structs marked "no" have no sized entry points, so their revision 1 layout
 is frozen: a field added to one of them is an incompatible change until its
 calls get sized forms by this rule (for an out struct, the library writes only
-the caller's known prefix). `rocketnet_message_receipt_t` is also the element
+the caller's known prefix). `rocketnet_receipt_t` is also the element
 of an array the library hands out, so its stride is part of the ABI and it
 does not grow.
 
@@ -177,21 +178,43 @@ declarations before its first call. They pin this rule three ways:
    `test_unit_sized_config.cpp` for the old size.
 5. Leave `ROCKETNET_ABI_VERSION` unchanged.
 
-## 7. Not Yet Sized
+## 7. Sized Queries
 
-The config-reading queries (`rocketnet_client_transport_required_memory`,
-`rocketnet_server_transport_required_memory`,
-`rocketnet_server_transport_dev_config`, `rocketnet_message_validate_config`,
-`rocketnet_message_connection_bytes`, `rocketnet_message_connection_sizing`,
-`rocketnet_message_print_connection_sizing`,
-`rocketnet_message_client_required_memory` and
-`rocketnet_message_server_required_memory`) have no sized forms yet. At
-revision 1 they read exactly the struct a caller has; the revision that first
-grows a config struct gives each of them a sized form by this rule, in the
-same change.
+The config-reading queries have sized forms alongside their revision-1
+unsized forms. The sized validation and required-memory calls accept each
+entry in the config's known-size list and refuse every other non-NULL size
+with the standard size-mismatch log. `rocketnet_server_dev_config_sized`
+applies the same rule before writing. A NULL config retains each call's
+existing default or counted-no-op behavior.
 
-The status-reporting creates (`rocketnet_client_transport_create_ex` and
-`rocketnet_server_transport_create_ex`) have no sized form either: the sized
-creates write no status code, a size refusal included, and
-`rocketnet_server_transport_create_sized` creates at time 0.0 as the unsized
-create does. A sized `_ex` form follows the same rule when a caller needs both.
+The client and server creates return a handle or `NULL`; the sized forms take
+the config size and write no separate status code, a size refusal included. A
+game that needs both a handle and a status uses the log line and
+`rocketnet_api_misuse_count`.
+
+## 8. The Public Counter and Stat Enums
+
+A public enum that ends in a `_COUNT` value is an enum whose members are read
+one at a time through a query, not a struct that travels as a block. The
+`_COUNT` member is its end marker: `ROCKETNET_CLIENT_COUNTER_COUNT`,
+`ROCKETNET_SERVER_COUNTER_COUNT`, `ROCKETNET_CLIENT_STAT_COUNT`,
+`ROCKETNET_SERVER_STAT_COUNT`, `ROCKETNET_SERVER_CLIENT_COUNTER_COUNT` and
+`ROCKETNET_SERVER_CLIENT_STAT_COUNT`.
+
+The rule is the enum form of section 1's append-only rule:
+
+1. **A new member goes immediately before `_COUNT`.** Every earlier member
+   keeps its value, and `_COUNT` moves up by one so it still names the number
+   of members.
+2. **A member is never removed, reordered or renamed.** A retired member keeps
+   its value and its query returns its documented zero, the same way a retired
+   counter keeps its index in `sdk/rocketnet_counters.h`.
+3. **`_COUNT` is never a query argument.** A query given `_COUNT`, or any other
+   value outside the enum, returns its documented zero.
+4. **The enums need no sized entry points.** A query names one member and
+   returns one value, so there is no block whose layout a revision changes;
+   an older caller that does not know a new member simply never asks for it.
+
+A counter member is wired to the internal counter of the same meaning in
+`sdk/rocketnet_counters.h`; the query is the public face of that internal
+count, and a member with no internal counter and no code path is not admitted.

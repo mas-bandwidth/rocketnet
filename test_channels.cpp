@@ -19,7 +19,7 @@
     one test alone.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 #include "rocketnet_read_write.h"
 

@@ -227,7 +227,7 @@ static void test_buffered_driver()
 int main()
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init());
+    CHECK(rocketnet_init( NULL ));
     rocketnet_forbid_xdp_commit();
     test_route_prefixes();
 #if defined(__linux__)

@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_CONFIG_H
 #define ROCKETNET_CONFIG_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
 
 // The config engine (#106): the machinery behind the per-transport config
@@ -44,12 +44,46 @@ const struct rocketnet_config_field_t * rocketnet_client_transport_config_fields
 
 const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields( int * num_fields );
 
-// the mechanical env var derivation: "driver" -> "ROCKETNET_DRIVER". this
+// the mechanical env var derivation: "driver" -> "ROCKETNET_TRANSPORT". this
 // is the pre-ruling process-wide spelling; it is kept only to NAME the old
 // variable a create refuses aloud (see rocketnet_config_apply_env). returns
 // false when the buffer cannot hold the derived name.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
+
+// the public configs' send budget fields (sdk/rocketnet_api.cpp), one int
+// each: send_kbps for the client, per_client_send_kbps for the server. with
+// the transport tables and the message table they are every env-backed field
+// of rocketnet_client_config_t and rocketnet_server_config_t.
+
+const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( int * num_fields );
+
+const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( int * num_fields );
+
+// the name of a public struct's field by its index in the ABI descriptors
+// (sdk/rocketnet_abi.cpp), NULL past the end: the walk the env completeness
+// test takes over rocketnet_client_config_t and rocketnet_server_config_t.
+
+const char * rocketnet_abi_field_name( const char * type_name, int index );
+
+// the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
+// the defaults, into the transport config, the message config and the send
+// budget the layers take. read_env applies the message fields', the budget's
+// and the server's max_clients overrides, as create does; the other transport
+// fields take theirs at the transport's create. false, with a log line, for a
+// string too long for its layer field or a budget out of range.
+
+struct rocketnet_client_transport_config_t;
+struct rocketnet_server_transport_config_t;
+struct rocketnet_message_config_t;
+struct rocketnet_client_config_t;
+struct rocketnet_server_config_t;
+
+bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
+                                     struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+
+bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
+                                     struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 // the per-endpoint derivation (ruling 11): "server" + "max_payload_bytes" ->
 // "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" and "client" + "max_payload_bytes" ->
@@ -92,7 +126,35 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
 // termination. refuses loudly, never clamps. driver list content is
 // validated by the ladder parse below, at create.
 
+void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_driver_operations_t * operations, void * driver_context );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
+void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
+void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config );
+
 bool rocketnet_config_validate( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields );
+
+// The public link simulator fields (simulated_loss_percent,
+// simulated_latency_ms, simulated_jitter_ms, simulated_duplicate_percent) are
+// a development and test instrument. A production library refuses a nonzero
+// value at create with CONFIG_OUT_OF_RANGE and one error line naming the
+// field; the same walk is exposed here so a unit suite that links only the
+// development library can pin the refusal. development is the caller's build
+// posture, normally ROCKETNET_DEVELOPMENT.
+
+bool rocketnet_config_validate_public_link_simulator( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields, bool development );
+
+// Whether the public link simulator is honoured: true in a development
+// library, and, only in a build carrying the unit suite's test hooks, when
+// the suite has explicitly enabled it. A production library never answers
+// true.
+
+bool rocketnet_public_link_simulator_development( void );
+
+#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+void rocketnet_public_link_simulator_test_development( int enabled );
+#endif
 
 // ----------------------------------------------------------------
 //                        the driver ladder

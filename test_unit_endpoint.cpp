@@ -505,7 +505,7 @@ static void endpoint_never_allocates_or_reads_a_clock()
 {
     rocketnet_term();
     check( rocketnet_allocator( ep_malloc, ep_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 
     rocketnet_message_config_t config;
     ep_config( &config );
@@ -567,7 +567,7 @@ static void endpoint_never_allocates_or_reads_a_clock()
 
     rocketnet_term();
     check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 }
 
 // R6 (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
@@ -601,7 +601,8 @@ static void endpoint_uncapped_large_sequenced_skips_the_bucket()
         memset( p, 0x5a, (size_t) bytes );
         check( rn_endpoint_finish( &endpoint, bytes, 0 ) != 0 );
     }
-    check( endpoint.unreliable_count == 1 );
+    check( endpoint.unreliable_count == 0 );
+    check( endpoint.ordered.channels.ready_head != RN_DESCRIPTOR_NONE );
 
     rn_endpoint_begin_update( &endpoint );
     rn_endpoint_tick( &endpoint, now );
@@ -609,6 +610,7 @@ static void endpoint_uncapped_large_sequenced_skips_the_bucket()
     static uint8_t frame[4 * ROCKETNET_MAX_PAYLOAD_BYTES];
     uint64_t packet_id = 1;
     int large_written = 0;
+    int bounded_packets_written = 0;
     for ( int i = 0; i < 16; i++ )
     {
         const int request = rn_endpoint_next_packet_bytes( &endpoint, now );
@@ -618,7 +620,10 @@ static void endpoint_uncapped_large_sequenced_skips_the_bucket()
         const int written = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), packet_id, now );
         if ( written > ROCKETNET_MAX_PAYLOAD_BYTES )
             large_written++;
-        // the large state is the sum of its fragments on the wire: more than its payload
+        else if ( written > 0 )
+            bounded_packets_written++;
+        // An oversized code-1 send has been promoted and fragmented across
+        // ordinary bounded reliable packets; uncapped budget still charges none.
         if ( written > ROCKETNET_MAX_PAYLOAD_BYTES )
             rn_endpoint_packet_sent( &endpoint, packet_id, written + 64, now );
         else if ( written > 0 )
@@ -626,7 +631,8 @@ static void endpoint_uncapped_large_sequenced_skips_the_bucket()
         packet_id++;
     }
 
-    check( large_written == 1 );                                       // the whole state, in one payload the transport fragments
+    check( large_written == 0 );
+    check( bounded_packets_written > 1 );                              // reliable fragmentation, not a wide unreliable record
     check( endpoint.unreliable_count == 0 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 0 );
     check( endpoint.budget.refusals == 0 );                            // no settle against a bucket it does not hold

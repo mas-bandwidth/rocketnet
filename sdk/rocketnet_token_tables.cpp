@@ -5,7 +5,7 @@
 
 #include "rocketnet_memory.h"
 #include "rocketnet_token_tables.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <sodium.h>
 #include <string.h>
