@@ -786,8 +786,9 @@ ROCKETNET_EXPORT int rocketnet_allocator_ex( void * (*malloc_function)( void * c
 //
 // Sized configs (docs/ABI-EVOLUTION.md): the _sized entry points take
 // sizeof the struct the caller was compiled against, so a struct can grow at
-// its end without breaking a program built against an older header. An
-// unknown size is refused with a log line and nothing is read or written.
+// its end without breaking a program built against an older header. For a
+// non-NULL config, an unknown size is refused with a log line and nothing is
+// read or written.
 
 /** @brief Client transport and message settings, copied at rocketnet_client_create. */
 struct rocketnet_client_config_t
@@ -1084,8 +1085,8 @@ ROCKETNET_EXPORT int rocketnet_write_dev_connect_token( const char * server_addr
  */
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, void * memory, uint64_t memory_bytes );
 
-// create with a config config_bytes long; an unknown size is refused with a
-// log line and returns NULL before any other check.
+// create with a config config_bytes long; if config is non-NULL, an unknown
+// size is refused with a log line before any other check.
 /**
  * @brief Create a client with an ABI-sized config.
  * @param context Allocator and callback context supplied at create.
@@ -1346,8 +1347,8 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory( const struct rocketn
  */
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes );
 
-// create with a config config_bytes long; an unknown size is refused with a
-// log line and returns NULL before any other check.
+// create with a config config_bytes long; if config is non-NULL, an unknown
+// size is refused with a log line before any other check.
 /**
  * @brief Create a server with an ABI-sized config.
  * @param context Allocator and callback context supplied at create.
