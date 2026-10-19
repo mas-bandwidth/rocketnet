@@ -869,9 +869,18 @@
 enum
 {
 #define ROCKETNET_COUNTER_ENUM_ROW( name, klass, family ) ROCKETNET_COUNTER_##name,
+    /**
+     * @brief The index of one cumulative protocol counter, ROCKETNET_COUNTER_ followed by its row name.
+     *
+     * One value per ROCKETNET_COUNTER_ROWS row, in row order. The row's own
+     * comment in ROCKETNET_COUNTER_ROWS gives its meaning, unit, class and
+     * family; rocketnet_counter_name returns the row name and
+     * rocketnet_counter_class its class.
+     */
     ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_ENUM_ROW )
 #undef ROCKETNET_COUNTER_ENUM_ROW
 
+    /** @brief The number of cumulative protocol counters: one past the last counter index. */
     ROCKETNET_NUM_COUNTERS
 };
 
