@@ -137,7 +137,7 @@ rocketnet_pcapng_list(std::__cxx11::basic_string<char, std::char_traits<char>, s
 std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::append(char const*) (/lib/x86_64-linux-gnu/libstdc++.so.6+0x16a0b8)
 # origin: Uninitialized value was created by an allocation of 'read' in the stack frame
 # origin: pcapng_wire(unsigned char const*, int, int) test_unit_prefilter_counters.cpp:325:5
-# origin: 
+# origin:
 std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:782:9
 # origin: Uninitialized value was created by a heap allocation
 # origin: operator new(unsigned long) (bin/test)
