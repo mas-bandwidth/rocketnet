@@ -82,7 +82,10 @@ int main( void )
 
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            CHECK( rocketnet_client_send( client, 0, ROCKETNET_RELIABLE_ORDERED, (const uint8_t *) client_message, (int) sizeof( client_message ) ) != 0 );
+            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( client_message ) );
+            CHECK( out != NULL );
+            memcpy( out, client_message, sizeof( client_message ) );
+            CHECK( rocketnet_client_finish( client, (int) sizeof( client_message ) ) != 0 );
             client_sent = 1;
         }
 
@@ -98,7 +101,10 @@ int main( void )
 
         if ( server_got && !server_sent )
         {
-            CHECK( rocketnet_server_send( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, (const uint8_t *) server_message, (int) sizeof( server_message ) ) != 0 );
+            uint8_t * out = rocketnet_server_start( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( server_message ) );
+            CHECK( out != NULL );
+            memcpy( out, server_message, sizeof( server_message ) );
+            CHECK( rocketnet_server_finish( server, 0, (int) sizeof( server_message ) ) != 0 );
             server_sent = 1;
         }
 
