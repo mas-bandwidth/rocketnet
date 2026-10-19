@@ -139,8 +139,9 @@ jobs:
 
   # macOS Apple silicon on the fleet's darwin member, the same runner label
   # ci.yml's macOS rows use. Apple clang carries no libFuzzer runtime, so this
-  # leg names a Homebrew LLVM clang through ROCKETNET_FUZZ_CC/CXX: the same
-  # flags and the same darwin link set as fuzz/Makefile.
+  # leg names the LLVM toolchain unpacked at $HOME/sdk/llvm through
+  # ROCKETNET_FUZZ_CC/CXX: the same flags and the same darwin link set as
+  # fuzz/Makefile (CoreFoundation and SystemConfiguration).
   fuzz-macos:
     name: nightly fuzz macOS (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
@@ -166,9 +167,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          LLVM_PREFIX="$(brew --prefix llvm 2>/dev/null || true)"
-          if [ -z "$LLVM_PREFIX" ] || [ ! -x "$LLVM_PREFIX/bin/clang++" ]; then
-            echo "TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a (any) (brew --prefix llvm failed) on $RUNNER_NAME"
+          LLVM_PREFIX="$HOME/sdk/llvm"
+          if [ ! -x "$LLVM_PREFIX/bin/clang++" ] || ! ls "$LLVM_PREFIX"/lib/clang/*/lib/darwin/libclang_rt.fuzzer_osx.a >/dev/null 2>&1; then
+            echo "TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a (any) ($LLVM_PREFIX) on $RUNNER_NAME"
             exit 1
           fi
           "$LLVM_PREFIX/bin/clang++" --version
@@ -218,11 +219,16 @@ jobs:
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
             -lpthread \
+            -framework CoreFoundation -framework SystemConfiguration \
             -o "bin/${{ fromJSON(matrix.leg).target }}"
 
+      # libFuzzer starts its own RSS-polling thread before main and does not
+      # tear it down, so LeakSanitizer reports that thread's frame on macOS
+      # whatever the product does. Leaks stay on in the Linux leg; on this
+      # leg they would turn every clean run red, so leak detection is off.
       - name: Fuzz ${{ fromJSON(matrix.leg).target }}
         env:
-          ASAN_OPTIONS: detect_leaks=1
+          ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           set -euo pipefail

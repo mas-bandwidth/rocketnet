@@ -512,14 +512,14 @@ pressure measurements are required for this changed XDP path.
 
 Apple clang ships no libFuzzer runtime, so `-fsanitize=fuzzer` fails there with
 `libclang_rt.fuzzer_osx.a not found`. Fuzz on a Mac with an LLVM toolchain that
-carries it; Homebrew's `llvm` formula is one. Name that compiler once in
-`ROCKETNET_FUZZ_CC` and `ROCKETNET_FUZZ_CXX` and both the library build and
-`fuzz/Makefile` pick it up. Apple silicon (arm64) is the supported macOS host.
+carries it; the official LLVM macOS ARM64 release unpacked at
+`$HOME/sdk/llvm` is one. Name that compiler once in `ROCKETNET_FUZZ_CC` and
+`ROCKETNET_FUZZ_CXX` and both the library build and `fuzz/Makefile` pick it
+up. Apple silicon (arm64) is the supported macOS host.
 
 ```
-brew install llvm
-export ROCKETNET_FUZZ_CC="$(brew --prefix llvm)/bin/clang"
-export ROCKETNET_FUZZ_CXX="$(brew --prefix llvm)/bin/clang++"
+export ROCKETNET_FUZZ_CC="$HOME/sdk/llvm/bin/clang"
+export ROCKETNET_FUZZ_CXX="$HOME/sdk/llvm/bin/clang++"
 export CC="$ROCKETNET_FUZZ_CC" CXX="$ROCKETNET_FUZZ_CXX"
 
 cmake -B build -DCMAKE_BUILD_TYPE=Debug \
@@ -535,12 +535,17 @@ make -C fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
 That builds `rocketnet_fuzz`, `rocketnet_fuzz_message`,
 `rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` in
 `fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
-`-ffp-contract=off` floor as the library. Run one for fifteen minutes from its
-seed corpus and the persisted corpus, with the wire dictionary:
+`-ffp-contract=off` floor as the library. On macOS the link adds
+`-framework CoreFoundation -framework SystemConfiguration`, which the platform
+layer's interface lookup uses, as `CMakeLists.txt` does. Run one for fifteen
+minutes from its seed corpus and the persisted corpus, with the wire
+dictionary, and keep leak detection off: libFuzzer starts its own RSS-polling
+thread and never joins it, so LeakSanitizer reports that frame on macOS
+whatever the product does.
 
 ```
 mkdir -p corpus/rocketnet_fuzz
-./fuzz/rocketnet_fuzz corpus/rocketnet_fuzz fuzz/corpus \
+ASAN_OPTIONS=detect_leaks=0 ./fuzz/rocketnet_fuzz corpus/rocketnet_fuzz fuzz/corpus \
   -dict=fuzz/rocketnet.dict -max_total_time=900 -print_final_stats=1
 ```
 
@@ -552,8 +557,8 @@ with `fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
 belongs in the target's seed corpus as `regress_<name>` together with its
 pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
 workflow's `fuzz-macos` job runs this same build for each target; it fails fast
-with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when no `brew
---prefix llvm` clang is installed on the runner, before any build runs.
+with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when
+`$HOME/sdk/llvm` carries no libFuzzer runtime, before any build runs.
 `ci.yml`'s
 `Replay the fuzz corpora without libFuzzer` step stays the gate for the four
 committed corpora: build `fuzz_replay_rocketnet_fuzz`,
