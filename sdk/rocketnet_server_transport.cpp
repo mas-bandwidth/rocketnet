@@ -1083,22 +1083,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     else
         memset( bind_address.data.ipv6, 0, sizeof(bind_address.data.ipv6) );
 
-    // the AF_XDP transport serves IPv4 (DRIVERS.md): for an IPv6 address the
-    // xdp rung leaves the list before anything allocates, so "auto" falls to
-    // the next transport, and a list that named only xdp is refused here
-
-    if ( rocketnet_driver_ladder_drop_ipv4_only( &ladder, public_address.type ) > 0 )
-    {
-        if ( ladder.num_candidates == 0 )
-        {
-            if ( status )
-                *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
-            rocketnet_error( "server transport xdp refused for IPv6 address %s: the AF_XDP transport serves IPv4. use the gso, io_uring or portable transport for IPv6", public_address_string );
-            return NULL;
-        }
-        rocketnet_warn( "server transport xdp skipped for IPv6 address %s: the AF_XDP transport serves IPv4. trying the next candidate", public_address_string );
-    }
-
     // the operator memory budget (#155): each candidate's pre-allocation plan
     // is compared to the budget before any allocation, and a candidate whose
     // plan exceeds it is refused exactly as a refusing driver is -- logged with
