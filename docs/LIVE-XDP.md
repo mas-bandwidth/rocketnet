@@ -1,7 +1,7 @@
 # The live XDP fleet run: a stress test of the internal protocol
 
 This document is the design of one live run. One server runs on the
-dedicated test server with the xdp driver. One client runs on each fleet
+dedicated test server with the xdp transport. One client runs on each fleet
 bench, all at the same time. The run drives every message type and every
 channel, crosses every size boundary, cycles reconnects, and verifies every
 message in both directions. It is a design: nothing here is built yet. Three
@@ -15,10 +15,13 @@ at `sprint/rocketnet-proof` `20d8b35`; `client.c`, `server.c`, `soak.c`,
 differ, the rulings win, and section 15 lists each difference. The base tip
 this design lands on, `962e3a4`, has since raised the `max_clients` default
 to 1,000 (`rocketnet-max-clients-defaults-to-1000`, the same line 923) and
-added a Windows server driver row to `sdk/rocketnet_drivers.inc`; no other
+added a Windows server transport row to `sdk/rocketnet_drivers.inc`; no other
 cited line moves.
 
 The run's lifecycle is modelled in `tla/RNLiveFleetRun.tla` (section 13).
+
+The name `rocketnet_random_uint64` is an internal helper (`sdk/rocketnet_internal.h`);
+a game uses the public client and server entry points in `sdk/rocketnet.h`.
 
 ## 1. Framing
 
@@ -49,18 +52,18 @@ with its mechanism and an exact expected count.
 The run uses the repository's example programs, extended. It adds no
 separate harness.
 
-**Server: `server.c`, with the driver pinned to xdp.** `server_xdp/server_xdp.c`
+**Server: `server.c`, with the transport pinned to xdp.** `server_xdp/server_xdp.c`
 is the kernel XDP program, not a server. The library embeds and loads it
 itself (`CMakeLists.txt:75-89`; `sdk/rocketnet_server_socket_linux.cpp:1302-1352`).
-It is read-only for every card of this run. The xdp driver is a runtime
-choice. The config's `driver` field (`sdk/rocketnet.h:933`) or
+It is read-only for every card of this run. The xdp transport is a runtime
+choice. The config's `transport` field (`sdk/rocketnet.h`) or
 `ROCKETNET_SERVER_TRANSPORT` gives the candidate list, and a one-element list is
-a pin: that driver or a loud failure, never a silent fall to gso or portable
-(`sdk/rocketnet_server_transport.cpp:54-67`; registry row
+a pin: that transport or a loud failure, never a silent fall to gso or portable
+(the server transport implementation; registry row
 `sdk/rocketnet_drivers.inc:7`). The run starts `server` with
 `ROCKETNET_SERVER_TRANSPORT=xdp`. It also passes `--driver xdp`, so the config
-records the pin. It reads `rocketnet_server_transport_driver`
-(`sdk/rocketnet.h:1062`) after create and refuses to continue unless it
+records the pin. It reads the transport name query
+(`sdk/rocketnet.h`) after create and refuses to continue unless it
 reads `xdp`.
 
 **Client: `client.c`.** `soak.c` stays the loopback soak. It owns both ends
@@ -68,10 +71,10 @@ in one process (`soak.c:115`, `soak.c:164`) and cannot be split across
 machines.
 
 Today both programs exchange transport payloads, not messages: `client.c`
-calls `rocketnet_client_transport_send_packet` (`client.c:91`), and
+calls `rocketnet_client_send` (`client.c:91`), and
 `server.c` echoes payloads back (`server.c:76-82`). Each gains a `--matrix`
-mode built on the message objects (`rocketnet_message_client_create`,
-`rocketnet_message_server_create`, `sdk/rocketnet.h:1756-1878`). Without
+mode built on the client and server API (`rocketnet_client_create`,
+`rocketnet_server_create`, `sdk/rocketnet.h`). Without
 `--matrix`, each program behaves exactly as it does today; it is the
 out-of-the-box example. The new flags, on both programs unless marked:
 
@@ -97,7 +100,7 @@ out-of-the-box example. The new flags, on both programs unless marked:
 That library is compiled with `ROCKETNET_DEVELOPMENT=1` (`CMakeLists.txt:159-163`,
 `:220-221`), and only that build carries `rocketnet_write_dev_connect_token`
 (`sdk/rocketnet_connect_token.h:186-191`) and the published development keys
-`rocketnet_server_transport_dev_config` fills (`server.c:41`). The run uses
+`rocketnet_server_dev_config` fills (`server.c:41`). The run uses
 those development keys. The run is a protocol test on a dedicated machine
 with its own filter value, not a deployment.
 
@@ -362,7 +365,7 @@ flags alone. Each client's first message on every connection is a HELLO: one
 RELIABLE_ORDERED message on channel 31, tag nibble `0xD`, carrying the bench
 label and the path's cap in kbps from the inventory. Under RULINGS (d) the
 server creates with the lowest cap, 500 kbps, and on HELLO calls
-`rocketnet_message_server_set_send_kbps( server, client_index, cap )`
+`rocketnet_server_set_send_kbps( server, client_index, cap )`
 (`sdk/rocketnet.h:1879`), raising the slot only to that slot's inventory cap.
 So no studio client is ever sent more than its cap, even before its HELLO
 arrives. The server logs the label and cap per slot, which is also how the
@@ -432,7 +435,7 @@ near 0 on the LAN. The run injects no loss: the paths are the test.
   (`sdk/rocketnet_constants.h:122`): at least 4 full wraps each. No counter
   gives packets sent, so each end counts its own: the message objects hand
   every packet through the transport's start and finish
-  (`sdk/rocketnet_message_server.cpp:550-580`), and the runner reads the
+  (the server message layer), and the runner reads the
   per-second rate from the stats each second and integrates it. The figure
   is labelled approximate, and the pass row uses a margin of 2: at least
   8 x 4,096 packets estimated per window per direction.
@@ -454,13 +457,13 @@ near 0 on the LAN. The run injects no loss: the paths are the test.
 
 The disconnect kind alternates, starting with clean:
 
-- **Clean:** `rocketnet_client_transport_disconnect` on the message client's
+- **Clean:** `rocketnet_client_disconnect` on the client's
   transport (`sdk/rocketnet.h:814`, `:1774`). Its redundant disconnect burst
   frees the server's slot at once. If the whole burst is lost, the timeout
   frees it.
 - **Silent drop:** destroy the message client without a disconnect call.
   Destroy hands off the payloads already committed and sends no disconnect
-  packet (`sdk/rocketnet_client_transport.cpp:705`, `rocketnet_client_transport_destroy`).
+  packet (the client transport implementation, `rocketnet_client_destroy`).
   The server's timeout path frees the slot (`CLIENT_TIMED_OUT`,
   `sdk/rocketnet_counters.h:190`). The merge checks the server's event log:
   every silent drop is followed by a timeout of that slot, every clean
@@ -501,8 +504,8 @@ missing and out-of-order (reliable, both 0), duplicate (0), refused-on-send
 **Per bench:**
 
 - connect successes and times;
-- RTT p50 and p99 and loss, from `rocketnet_client_transport_stats` each
-  second (`sdk/rocketnet.h:830-842`);
+- RTT p50 and p99 and loss, from `rocketnet_client_stat` each
+  second (`sdk/rocketnet.h`);
 - cycles by disconnect kind;
 - reconnect successes and times (p50, p99, max);
 - every denial and every full result;
@@ -564,7 +567,7 @@ run, on every bench:
 | P7 | Conservation holds on both sides at every snapshot. |
 | P8 | Every nonzero counter is explained by one row of the table below. Every refusal-class counter not in that table reads 0. |
 | P9 | Coverage: each (direction, mode, bucket) cell sent at least once per window. Each boundary value of B sent at least once per (direction, mode) over the run. 10 x W numbers and 4 history wraps (estimated, section 6) per window per direction. |
-| P10 | The server's driver read back `xdp`, and `max_clients` read back 1,000. |
+| P10 | The server's transport read back `xdp`, and `max_clients` read back 1,000. |
 
 **The nonzero counters expected, with their mechanism and size:**
 
@@ -587,7 +590,7 @@ run, on every bench:
   inventory row and refuse any other.
 - **Clients** run on every Linux bench, on the Windows side of the
   Linux-on-Windows bench (a native build, driven through interop), and on the
-  macOS bench. Each client uses its platform's default client driver: gso is
+  macOS bench. Each client uses its platform's default client transport: gso is
   server-only, so Linux and Windows clients run portable, and the macOS
   client runs msgx (`sdk/rocketnet_drivers.inc:5-9`; `USAGE.md:541`).
 - **The inventory.** This document names platform shapes only. Hosts come
@@ -611,10 +614,10 @@ went dark) forbade XDP on the uplink. This run is the deliberate exception,
 under the safety procedure below. The line, for the owner: **NIC: the
 uplink, by the 2026-10-18 ruling; not blocked.**
 
-**How the driver finds the NIC.** It looks up the interface that carries the
+**How the transport finds the NIC.** It looks up the interface that carries the
 server's public IPv4 address (`sdk/rocketnet_server_socket_linux.cpp:444-475`).
 The address must be IPv4: the pre-flight refuses anything else (`:706-718`).
-The driver binds that interface and no other. The attach is native, falling
+The transport binds that interface and no other. The attach is native, falling
 back to SKB mode (`:1335-1352`). Each queue binds an AF_XDP socket. The bind
 asks for no explicit mode, so the kernel gives zero copy where the driver
 supports it and copy otherwise (`:1487-1493`, see section 15). The run
@@ -705,7 +708,7 @@ file run over ssh under a timeout (section 12):
    connection, no shared control master) and run `true`. If it fails, the
    orchestrator stops sending heartbeats, and the watchdog detaches inside
    30 s. The dead-man timer covers a watchdog that never ran.
-6. **Wait for `listening`** in the status file. Check the driver read-back
+6. **Wait for `listening`** in the status file. Check the transport read-back
    `xdp`, `max_clients` 1,000, and one LAN client connecting, before the
    other clients start.
 7. **Teardown, on every exit path (trap):**
@@ -728,11 +731,11 @@ file run over ssh under a timeout (section 12):
   UDP port 40000. The token carries it (`sdk/rocketnet_connect_token.cpp:288-302`),
   and it is the address XDP matches (`server_xdp/server_xdp.c:277`).
 - **No tailnet or private address.** Overlay traffic arrives on the overlay
-  interface, not on the address the driver binds. A token naming it would be
+  interface, not on the address the transport binds. A token naming it would be
   refused.
 - **LAN benches** reach the public address across the local network.
   **Internet benches** reach it across the internet.
-- **Replies go through the gateway.** The xdp driver addresses every frame
+- **Replies go through the gateway.** The xdp transport addresses every frame
   it sends to the default gateway's MAC address
   (`sdk/rocketnet_server_socket_linux.cpp:1141-1158`; override
   `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`, `:255-274`, `USAGE.md:446`). A LAN
@@ -904,7 +907,7 @@ matrix code, and a loopback functional test that CI runs on every platform.
     duplicate, wrong-cycle and wrong-channel failures. No socket, no clock,
     time starting at 1000.0.
   - `functional/live_matrix.cpp`: both message objects in one process over
-    the loopback driver, with time passed as an argument. It runs the full
+    the loopback transport, with time passed as an argument. It runs the full
     matrix for two windows (one clean disconnect, one silent drop), the
     over-maximum refusals, and the E_m and receive-channel assertions of
     sections 4 and 5.
@@ -989,7 +992,7 @@ mode and the orchestration script.
 8. **The provision script.** `rocketnet-provision` in provision mode mutates
    the NIC, so on the uplink the run uses verify only. If verify fails (the
    pre-flight refuses without R4 to R7), the run stops for the owner.
-9. **Root on the test server.** The xdp driver needs root
+9. **Root on the test server.** The xdp transport needs root
    (`sdk/rocketnet_server_socket_linux.cpp:697-701`). The workers' standing
    rule is no sudo. RULINGS (c) grants root for exactly three steps and no
    other: loading and unloading the XDP program, arming and cancelling the
