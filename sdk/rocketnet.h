@@ -857,20 +857,22 @@ struct rocketnet_server_config_t
 //
 // The update order, on the main thread: update (messages in, acks into the
 // channels, received messages into deliveries, then the checks that
-// disconnect), receive and release, send (or start message, write, finish message), then
-// send_packets (each connection's messages, the queued messages included in
-// them, under its send budget, out to the wire).
+// disconnect), receive and release, start message, write, finish message
+// (or abort message), then send_packets (each connection's messages, the
+// queued messages included in them, under its send budget, out to the wire).
 //
 // Sending: start message, write in place, finish message is the only send
-// path. start message returns a pointer into the connection's region for the message, write the message
-// there once (copy it in when the caller already holds a buffer), and
+// path. start message returns a pointer into the connection's region for the
+// message, write the message there once (copy it in when the caller already
+// holds a buffer), and
 // finish message (bytes_written) queues it and returns its receipt serial,
 // nonzero; a NULL start message is a refused send, 0. The pointer is valid
 // until finish message or abort message; abort message gives the room back.
 // One start message is pending per object at a time.
 // reliability is a rocketnet_reliability_t. An unreliable send too
 // big for one packet's record is promoted to its reliable twin, as RakNet's
-// ReliabilityLayer does, and counted (MESSAGE_PROMOTED_UNRELIABLE,
+// ReliabilityLayer does, and counted in the internal counter set, not the
+// public counter enums (MESSAGE_PROMOTED_UNRELIABLE,
 // MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED,
 // MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT); the receiver sees the twin's
 // wire code. Plain UNRELIABLE is one record in one packet up to 1411 bytes
