@@ -299,6 +299,17 @@ jobs:
             gso portable
             io_uring portable
             loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
+          TRANSPORT_MATRIX_MACOS: |
+            portable portable
+            portable msgx
+            msgx portable
+            msgx msgx
+            loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
+          TRANSPORT_MATRIX_WINDOWS: |
+            portable portable
+            iocp portable
+            rio portable
+            loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
         run: |
           set +e -uo pipefail
           case "$RUNNER_OS" in
