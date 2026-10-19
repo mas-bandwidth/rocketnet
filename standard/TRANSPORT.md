@@ -1124,11 +1124,13 @@ It is generated; the bytes are in the sections.
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
 | [t10 Receive processing](#t10) | `t10.already-received` |
 | [t10 Receive processing](#t10) | `t10.bad-ack-block` |
+| [t10 Receive processing](#t10) | `t10.client-cookie-state-before-size` |
 | [t10 Receive processing](#t10) | `t10.client-session-wrong-size` |
 | [t10 Receive processing](#t10) | `t10.client-wrong-direction` |
 | [t10 Receive processing](#t10) | `t10.client-wrong-state` |
 | [t10 Receive processing](#t10) | `t10.did-not-open` |
 | [t10 Receive processing](#t10) | `t10.fragment-zero-payload-id` |
+| [t10 Receive processing](#t10) | `t10.keep-alive-invalid-index` |
 | [t10 Receive processing](#t10) | `t10.prefilter-too-large` |
 | [t10 Receive processing](#t10) | `t10.prefilter-too-short` |
 | [t10 Receive processing](#t10) | `t10.prefilter-wrong-epoch` |
