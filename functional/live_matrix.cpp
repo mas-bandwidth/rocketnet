@@ -12,8 +12,7 @@
     modes for exactly one receipt per serial, and the over-maximum start is
     refused with its named counter. Codes 0 and 1 one past their
     single-record maxima start as their reliable twins (promotion, as
-    RakNet's ReliabilityLayer does); their over-maximum is max_message_bytes
-    (and the u16 record length for code 1).
+    RakNet's ReliabilityLayer does); their over-maximum is max_message_bytes.
 
     One window on one connection, ending in a clean disconnect the server
     sees: every mode at once on every channel the config allows, both
@@ -862,13 +861,12 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
                 {
                     if ( direction == 0 ) rocketnet_message_client_abort( m->client ); else rocketnet_message_server_abort( m->server, 0 );
                 }
-                // the refusal boundary left: max_message_bytes, and the u16
-                // record length for code 1
-                const uint32_t mmb = m->live.max_message_bytes;
-                over = ( mode == 1 && ROCKETNET_LIVE_MAX_RECORD_BYTES < mmb ? ROCKETNET_LIVE_MAX_RECORD_BYTES : mmb ) + 1;
+                // the refusal boundary left: max_message_bytes
+                over = m->live.max_message_bytes + 1;
             }
-            const int counter = mode <= 1 ? ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED : ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED;
-            const int other = mode <= 1 ? ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED : ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED;
+            const int unreliable = mode <= 1 || mode == 5;
+            const int counter = unreliable ? ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED : ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED;
+            const int other = unreliable ? ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED : ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED;
             const uint64_t before = live_matrix_counter( live_matrix_sender_counters( m, direction ), counter );
             const uint64_t before_other = live_matrix_counter( live_matrix_sender_counters( m, direction ), other );
             uint8_t * p = direction == 0 ? rocketnet_message_client_start( m->client, channel, mode, (int) over )

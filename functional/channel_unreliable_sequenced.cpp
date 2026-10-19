@@ -123,8 +123,11 @@ void large_unreliable_sequenced_uses_transport_fragments()
     sequenced_functional_check( promoted != NULL, "oversize unreliable start promotes" );
     if ( promoted )
         rocketnet_message_client_abort( client );
-    sequenced_functional_check( rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED, 65536 ) == NULL,
-                                "u16 record maximum refused before enqueue" );
+    rocketnet_message_config_t default_config;
+    rocketnet_message_default_config( &default_config );
+    sequenced_functional_check( rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED,
+                                                                 (int) default_config.max_message_bytes + 1 ) == NULL,
+                                "configured message maximum refused before enqueue" );
 
     int received = 0;
     const double send_start = rocketnet_platform_time();
