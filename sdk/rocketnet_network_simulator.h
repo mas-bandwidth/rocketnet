@@ -47,6 +47,17 @@ void rocketnet_network_simulator_config( struct rocketnet_network_simulator_t * 
                                          float packet_loss_percent,
                                          float duplicate_percent );
 
+// Deterministic loss and reorder patterns, adjustable at any time.
+// drop_every_nth: 0 = disabled, 2..1000000 = drop every Nth send on this link.
+// reverse_window: 0 = disabled, 2..64 = buffer every W surviving packets and
+// emit them into the wire slots in reversed order (W-1 down to 0).
+
+void rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t * simulator,
+                                           int drop_every_nth,
+                                           int reverse_window );
+
+void rocketnet_network_simulator_flush_window( struct rocketnet_network_simulator_t * simulator );
+
 // Sends a packet into the wire. Loss is rolled here; delivery time is
 // current_time + latency + random jitter; a duplicate may follow with its
 // own delivery time. A full queue drops the packet -- the wire is lossy by

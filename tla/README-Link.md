@@ -34,6 +34,7 @@ Actions, one per operation and per outside event:
 | `Drop(i)` | the path | removes copy `i`; enabled only under `Pattern = "arbitrary"` |
 | `Duplicate(i)` | the path | appends a second copy of copy `i` with its own `due`; disabled at `Capacity` |
 | `Reorder(i)` | the path | swaps copies `i` and `i+1` |
+| `ReverseWindow(w)` | the path | reverses the trailing `w` copies on the wire in place |
 | `Delay(i)` | the path | adds one tick of jitter to copy `i`, up to `MaxDelay` |
 | `Age` | time | every `due` counts down one tick; conjoin into the model's `Tick` |
 
@@ -60,6 +61,7 @@ terrain at a time as well as the arbitrary one:
 | `"first"` | the first send on this link |
 | `"alternate"` | the 1st, 3rd, 5th ... sends; even ones arrive ("first packet dropped, second packet comes through") |
 | `"burst"` | sends `BurstStart .. BurstStart + BurstLen - 1` |
+| `"everynth"` | every `BurstLen`-th send (`BurstLen`, `2 * BurstLen`, ...) |
 | `"arbitrary"` | nothing at send; `Drop(i)` may remove any copy at any time |
 
 A pattern counts sends on this link instance, whatever the packet. A model with two
@@ -236,3 +238,9 @@ original parameters and is not a completed proof.
 | 9 | `MCLinkWireFairBurst.cfg` | pass |
 | 10 | `MCLinkWireFairArbitraryWitness.cfg` | temporal / LinkDelivers |
 | 11 | `MCLinkWireFairAlternateResent.cfg` | temporal / ResentIsDelivered |
+| 12 | `MCLinkSpecEveryNth.cfg` | pass |
+| 13 | `MCLinkWireFairEveryNth.cfg` | pass |
+| 14 | `MCLinkEveryNth.cfg` | pass |
+| 15 | `MCLinkEveryNthBrokenPeriod.cfg` | invariant / EveryNthDropped |
+| 16 | `MCLinkReverseWindow.cfg` | pass |
+| 17 | `MCLinkReverseWindowBrokenOrder.cfg` | invariant / WindowOrderReversed |

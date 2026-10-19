@@ -31,3 +31,9 @@ uint64_t rocketnet_loopback_endpoint_dropped( void * instance );
 
 // The number of live endpoints in the process-wide table.
 int rocketnet_loopback_endpoints_live();
+
+// Deterministic loss (drop every Nth packet, 0 or 2..1000000) and window
+// reversal (reverse every W surviving packets, 0 or 2..64) for loopback.
+void rocketnet_loopback_set_patterns( int drop_every_nth, int reverse_window );
+void rocketnet_loopback_get_patterns( int * out_drop_every_nth, int * out_reverse_window );
+bool rocketnet_loopback_validate_patterns( const char * transport_name, const char * driver, int drop_every_nth, int reverse_window, bool development );

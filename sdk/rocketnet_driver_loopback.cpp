@@ -42,6 +42,8 @@ struct rocketnet_loopback_state_t
     rocketnet_platform_mutex_t mutex;
     rocketnet_loopback_endpoint_t endpoints[ROCKETNET_LOOPBACK_MAX_ENDPOINTS];
     uint16_t next_port;
+    int drop_every_nth;
+    int reverse_window;
 };
 
 struct rocketnet_loopback_state_init_t
@@ -331,4 +333,50 @@ int rocketnet_loopback_endpoints_live()
         if ( state.endpoints[i].live )
             ++live;
     return live;
+}
+
+void rocketnet_loopback_set_patterns( int drop_every_nth, int reverse_window )
+{
+    rocketnet_loopback_state_t & state = loopback_state();
+    rocketnet_platform_mutex_guard( &state.mutex );
+    state.drop_every_nth = drop_every_nth;
+    state.reverse_window = reverse_window;
+}
+
+void rocketnet_loopback_get_patterns( int * out_drop_every_nth, int * out_reverse_window )
+{
+    rocketnet_loopback_state_t & state = loopback_state();
+    rocketnet_platform_mutex_guard( &state.mutex );
+    if ( out_drop_every_nth )
+        *out_drop_every_nth = state.drop_every_nth;
+    if ( out_reverse_window )
+        *out_reverse_window = state.reverse_window;
+}
+
+bool rocketnet_loopback_validate_patterns( const char * transport_name, const char * driver, int drop_every_nth, int reverse_window, bool development )
+{
+    if ( drop_every_nth != 0 && ( drop_every_nth < 2 || drop_every_nth > 1000000 ) )
+    {
+        rocketnet_error( "%s config simulated_drop_every_nth %d is out of range (2 to 1000000, or zero for the default)", transport_name, drop_every_nth );
+        return false;
+    }
+    if ( reverse_window != 0 && ( reverse_window < 2 || reverse_window > 64 ) )
+    {
+        rocketnet_error( "%s config simulated_reverse_window %d is out of range (2 to 64, or zero for the default)", transport_name, reverse_window );
+        return false;
+    }
+    if ( drop_every_nth != 0 || reverse_window != 0 )
+    {
+        if ( !development )
+        {
+            rocketnet_error( "%s config simulated loss/reorder is development only: the public link simulator is not available in a production library", transport_name );
+            return false;
+        }
+        if ( !driver || strcmp( driver, "loopback" ) != 0 )
+        {
+            rocketnet_error( "%s config simulated_drop_every_nth and simulated_reverse_window require the loopback transport", transport_name );
+            return false;
+        }
+    }
+    return true;
 }

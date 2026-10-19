@@ -39,7 +39,7 @@ MCDeliver ==
         /\ UNCHANGED everSent
 
 MCEnvironment ==
-    /\ Environment
+    /\ (Environment \/ ReverseWindow(BurstLen))
     /\ UNCHANGED <<everSent, everDelivered>>
 
 MCNext == MCSend \/ MCDeliver \/ MCEnvironment

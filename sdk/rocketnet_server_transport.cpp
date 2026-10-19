@@ -36,6 +36,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
 #include "rocketnet_network_simulator.h"
+#include "rocketnet_driver_loopback.h"
 #include "rocketnet_memory.h"
 
 #include <sodium.h>
@@ -490,6 +491,9 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
 {
     if ( !transport->link_simulator )
         return;
+    rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+    rocketnet_network_simulator_flush_window( transport->link_simulator );
+    rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
     for (;;)
     {
         rocketnet_address_t from, to;
@@ -1371,8 +1375,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_RUNNING;
     server_transport->link_simulator_from = public_address;
 
+    int lb_drop_every_nth = 0;
+    int lb_reverse_window = 0;
+    rocketnet_loopback_get_patterns( &lb_drop_every_nth, &lb_reverse_window );
     if ( config->simulated_loss_percent || config->simulated_latency_ms ||
-         config->simulated_jitter_ms || config->simulated_duplicate_percent )
+         config->simulated_jitter_ms || config->simulated_duplicate_percent ||
+         lb_drop_every_nth || lb_reverse_window )
     {
         server_transport->link_simulator = rocketnet_network_simulator_create( context, 4096, UINT64_C(0x5345525645525349) );
         if ( !server_transport->link_simulator )
@@ -1394,6 +1402,9 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                             config->simulated_jitter_ms / 1000.0,
                                             (float) config->simulated_loss_percent,
                                             (float) config->simulated_duplicate_percent );
+        rocketnet_network_simulator_patterns( server_transport->link_simulator,
+                                              lb_drop_every_nth,
+                                              lb_reverse_window );
     }
 
     // the protocol, on the configured identity, advertised at the public
@@ -2606,6 +2617,13 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     // The disconnect_client header promise: buffered control frames leave on
     // the next flush even when this fill phase sent no payload-ring packet.
     rocketnet_server_flush_control_buffer( server_transport );
+
+    if ( server_transport->link_simulator )
+    {
+        rocketnet_platform_mutex_acquire( &server_transport->link_simulator_mutex );
+        rocketnet_network_simulator_flush_window( server_transport->link_simulator );
+        rocketnet_platform_mutex_release( &server_transport->link_simulator_mutex );
+    }
 
     rocketnet_send_arena_reset( server_transport->send_arena );
 }

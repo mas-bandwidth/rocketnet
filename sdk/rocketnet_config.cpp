@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_config.h"
+#include "rocketnet_driver_loopback.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"
@@ -752,6 +753,23 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
     rocketnet_assert( config );
     rocketnet_assert( fields );
 
+    int lb_drop = 0;
+    int lb_rev = 0;
+    rocketnet_loopback_get_patterns( &lb_drop, &lb_rev );
+    if ( lb_drop != 0 || lb_rev != 0 )
+    {
+        const char * driver_str = "";
+        for ( int i = 0; i < num_fields; i++ )
+        {
+            if ( fields[i].kind == ROCKETNET_CONFIG_KIND_STRING && strcmp( fields[i].name, "driver" ) == 0 )
+            {
+                driver_str = (const char*) config + fields[i].offset;
+                break;
+            }
+        }
+        if ( !rocketnet_loopback_validate_patterns( transport_name, driver_str, lb_drop, lb_rev, development ) )
+            return false;
+    }
     if ( development )
         return true;
 
@@ -760,7 +778,9 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
         "simulated_loss_percent",
         "simulated_latency_ms",
         "simulated_jitter_ms",
-        "simulated_duplicate_percent"
+        "simulated_duplicate_percent",
+        "simulated_drop_every_nth",
+        "simulated_reverse_window"
     };
 
     for ( int i = 0; i < num_fields; i++ )
