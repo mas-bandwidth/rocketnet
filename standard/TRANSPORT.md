@@ -921,10 +921,541 @@ input: key derivation label = "RKTNSESC"
 <a id="t8"></a>
 ## t8. Packet formats
 
-Status: pending
+Every packet begins with the 6-byte prefilter header of [t5 Prefilter header](#t5): the packet type at offset 0, the filter epoch at offset 1, and the filter value at offsets 2 to 5. A sender MUST set the packet type byte to one of the ten types below. A receiver MUST drop a packet whose type is 10 or above.
 
-Scope: the layout of each packet type, its fixed size or size range,
-and the maximum packet size rule for senders; assembled vectors.
+A sender MUST emit a packet of the size its type and fields give, and MUST NOT emit a packet larger than the send budget. A receiver MUST drop a packet whose size is below its type's minimum or above the receive ceiling before it examines any field inside the packet ([t10 Receive processing](#t10)).
+
+Types 0 (connection request) and 7 (connection cookie) are not sealed. Types 1 to 6, 8 and 9 are sealed: after the prefilter header and the 4-byte sequence, their bytes are the sealed data of [t9 Packet protection](#t9). Types 1 and 2 place the 8-byte session nonce in the clear between the sequence and the sealed data. The session types 4, 5, 6, 8 and 9 open their sealed plaintext with the ack block of [t15 Acknowledgement](#t15), and the type data follows it.
+
+Every integer is little-endian, every structure is packed with no padding, and every size is in bytes ([t1.4 Conventions](#t1.4)). The offsets below count from the first byte of the packet, the packet type.
+
+<a id="t8.1"></a>
+### t8.1. Connection request packet (type 0)
+
+The connection request is not sealed. It carries the client's per-attempt salt and ephemeral key, and the signed connect data and signature taken verbatim from the connect token ([t6 Connect token](#t6)).
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    return cookie (bytes[24])                  |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|              connection salt (bytes[8])                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|         client ephemeral public key (bytes[32])               |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|            signed connect data (bytes[576])                   |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                 signature (bytes[64])                         |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `0` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| return cookie | 6 | 24 | bytes[24] | the cookie expire timestamp followed by the cookie MAC, echoed from a type 7 packet | all zero on the first request of an attempt |
+| connection salt | 30 | 8 | bytes[8] | the client's salt for this attempt | any |
+| client ephemeral public key | 38 | 32 | bytes[32] | the client's X25519 ephemeral public key | any |
+| signed connect data | 70 | 576 | bytes[576] | bytes 0 to 575 of the connect token | any |
+| signature | 646 | 64 | bytes[64] | the token's Ed25519 signature | any |
+
+<a id="t8.2"></a>
+### t8.2. Connection denied packet (type 1)
+
+The connection denied packet is sealed and carries no type data.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   session nonce (bytes[8])                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `1` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| session nonce | 10 | 8 | bytes[8] | the server's session nonce for this mapping, in the clear | any |
+| AEAD tag | 18 | 16 | bytes[16] | the tag over an empty plaintext | any |
+
+<a id="t8.3"></a>
+### t8.3. Connection challenge packet (type 2)
+
+The connection challenge is sealed. Its cleartext session nonce lets a client that has not yet derived handshake keys open it.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   session nonce (bytes[8])                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          server ephemeral public key (bytes[32])              |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `2` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| session nonce | 10 | 8 | bytes[8] | the server's session nonce for this mapping, in the clear | any |
+| server ephemeral public key | 18 | 32 | bytes[32] | the server's X25519 ephemeral public key, sealed | any |
+| AEAD tag | 50 | 16 | bytes[16] | the tag over the server ephemeral public key | any |
+
+<a id="t8.4"></a>
+### t8.4. Connection response packet (type 3)
+
+The connection response is sealed and carries 24 zero bytes of padding.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     padding (zero[24])                        |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `3` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| padding | 10 | 24 | zero[24] | zero bytes, sealed | all zero |
+| AEAD tag | 34 | 16 | bytes[16] | the tag over the padding | any |
+
+<a id="t8.5"></a>
+### t8.5. Connection keep-alive packet (type 4)
+
+The keep-alive is a session packet. Its sealed plaintext is the ack block followed by the keep-alive fields.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      client index (u32)                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      max clients (u32)                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `4` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| client index | 10 plus the ack block size | 4 | u32 | the slot that holds this connection | below max clients |
+| max clients | 14 plus the ack block size | 4 | u32 | the server's slot count | any |
+| AEAD tag | 18 plus the ack block size | 16 | bytes[16] | the tag over the ack block and the keep-alive fields | any |
+
+<a id="t8.6"></a>
+### t8.6. Connection payload packet (type 5)
+
+The payload packet is a session packet. Its sealed plaintext is the ack block followed by one payload.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      payload data (bytes[n])                  |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `5` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| payload data | 10 plus the ack block size | 1 to the send budget less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
+| AEAD tag | 16 plus the ack block size and the payload size | 16 | bytes[16] | the tag over the ack block and the payload | any |
+
+<a id="t8.7"></a>
+### t8.7. Connection disconnect packet (type 6)
+
+The disconnect packet is a session packet with no type data.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `6` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| AEAD tag | 10 plus the ack block size | 16 | bytes[16] | the tag over the ack block | any |
+
+<a id="t8.8"></a>
+### t8.8. Connection cookie packet (type 7)
+
+The connection cookie is not sealed.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|              connection salt (bytes[8])                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                  cookie expire timestamp (u64)                |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    cookie MAC (bytes[16])                     |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `7` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| connection salt | 6 | 8 | bytes[8] | the salt echoed from the request | any |
+| cookie expire timestamp | 14 | 8 | u64 | the time at which the cookie expires | any |
+| cookie MAC | 22 | 16 | bytes[16] | the MAC over the client address, the salt and the expire timestamp | any |
+
+<a id="t8.9"></a>
+### t8.9. Connection ack packet (type 8)
+
+The standalone ack packet is a session packet whose ack block is its whole type data.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `8` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| AEAD tag | 10 plus the ack block size | 16 | bytes[16] | the tag over the ack block | any |
+
+<a id="t8.10"></a>
+### t8.10. Connection payload fragment packet (type 9)
+
+The fragment packet is a session packet. Its sealed plaintext is the ack block, the fragment header, and the fragment data ([t16 Fragmentation and reassembly](#t16)).
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  packet type  | filter epoch  |        filter value           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       sequence (u32)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               ack block (bytes[7] to bytes[1027])            |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      payload id (u32)                         |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| fragment index|fragment count |      fragment data ...        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    fragment data (bytes[n])                   |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     AEAD tag (bytes[16])                      |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | selects this layout | `9` |
+| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
+| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
+| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
+| payload id | 10 plus the ack block size | 4 | u32 | the fragmented payload's identifier | nonzero |
+| fragment index | 14 plus the ack block size | 1 | u8 | this fragment's index | below the fragment count |
+| fragment count minus one | 15 plus the ack block size | 1 | u8 | the fragment count less one | 1 to 255 |
+| fragment data | 16 plus the ack block size | 1 to the send budget less 32 and the ack block size | bytes[n] | this fragment's bytes | at least 1 byte |
+| AEAD tag | 16 plus the ack block size and the fragment size | 16 | bytes[16] | the tag over the ack block, the header and the fragment data | any |
+
+<a id="t8.11"></a>
+### t8.11. Packet sizes
+
+The wire size of each type is the sum of its fields. The handshake types have a fixed size; the session types have a minimum and a receive maximum, because the ack block and the type data vary.
+
+| Name | Value | Unit | Composition |
+|---|---|---|---|
+| connection request packet wire size | `710` | bytes | 6 + 704 |
+| connection denied packet wire size | `34` | bytes | 6 + 4 + 8 + 16 |
+| connection challenge packet wire size | `66` | bytes | 6 + 4 + 8 + 32 + 16 |
+| connection response packet wire size | `50` | bytes | 6 + 4 + 24 + 16 |
+| connection keep-alive packet minimum wire size | `41` | bytes | 6 + 4 + 7 + 8 + 16 |
+| connection payload packet minimum wire size | `34` | bytes | 6 + 4 + 7 + 1 + 16 |
+| connection disconnect packet minimum wire size | `33` | bytes | 6 + 4 + 7 + 16 |
+| connection cookie packet wire size | `38` | bytes | 6 + 8 + 8 + 16 |
+| connection ack packet minimum wire size | `33` | bytes | 6 + 4 + 7 + 16 |
+| connection fragment packet minimum wire size | `40` | bytes | 6 + 4 + 7 + 6 + 1 + 16 |
+
+A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than its send budget. The unfragmented payload capacity, the receive payload maximum and the fragment stride are rows of [t3 Constants and registries](#t3).
+
+<a id="t8.12"></a>
+### t8.12. Vectors
+
+Each vector below is one assembled packet, from its packet type byte to its last tag byte.
+
+```vector t8.request
+input: packet type 0, filter value b7 59 01 00
+input: return cookie 24 zero bytes
+input: connection salt bytes 30 31 32 33 34 35 36 37
+input: client ephemeral public key bytes 20 to 3f
+input: signed connect data byte i is i, for i 0 to 575
+input: signature byte i is ff minus i, for i 0 to 63
+00 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 31
+32 33 34 35 36 37 20 21 22 23 24 25 26 27 28 29
+2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
+3a 3b 3c 3d 3e 3f 00 01 02 03 04 05 06 07 08 09
+0a 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19
+1a 1b 1c 1d 1e 1f 20 21 22 23 24 25 26 27 28 29
+2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
+3a 3b 3c 3d 3e 3f 40 41 42 43 44 45 46 47 48 49
+4a 4b 4c 4d 4e 4f 50 51 52 53 54 55 56 57 58 59
+5a 5b 5c 5d 5e 5f 60 61 62 63 64 65 66 67 68 69
+6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 78 79
+7a 7b 7c 7d 7e 7f 80 81 82 83 84 85 86 87 88 89
+8a 8b 8c 8d 8e 8f 90 91 92 93 94 95 96 97 98 99
+9a 9b 9c 9d 9e 9f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9
+aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
+ba bb bc bd be bf c0 c1 c2 c3 c4 c5 c6 c7 c8 c9
+ca cb cc cd ce cf d0 d1 d2 d3 d4 d5 d6 d7 d8 d9
+da db dc dd de df e0 e1 e2 e3 e4 e5 e6 e7 e8 e9
+ea eb ec ed ee ef f0 f1 f2 f3 f4 f5 f6 f7 f8 f9
+fa fb fc fd fe ff 00 01 02 03 04 05 06 07 08 09
+0a 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19
+1a 1b 1c 1d 1e 1f 20 21 22 23 24 25 26 27 28 29
+2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
+3a 3b 3c 3d 3e 3f 40 41 42 43 44 45 46 47 48 49
+4a 4b 4c 4d 4e 4f 50 51 52 53 54 55 56 57 58 59
+5a 5b 5c 5d 5e 5f 60 61 62 63 64 65 66 67 68 69
+6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 78 79
+7a 7b 7c 7d 7e 7f 80 81 82 83 84 85 86 87 88 89
+8a 8b 8c 8d 8e 8f 90 91 92 93 94 95 96 97 98 99
+9a 9b 9c 9d 9e 9f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9
+aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
+ba bb bc bd be bf c0 c1 c2 c3 c4 c5 c6 c7 c8 c9
+ca cb cc cd ce cf d0 d1 d2 d3 d4 d5 d6 d7 d8 d9
+da db dc dd de df e0 e1 e2 e3 e4 e5 e6 e7 e8 e9
+ea eb ec ed ee ef f0 f1 f2 f3 f4 f5 f6 f7 f8 f9
+fa fb fc fd fe ff 00 01 02 03 04 05 06 07 08 09
+0a 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19
+1a 1b 1c 1d 1e 1f 20 21 22 23 24 25 26 27 28 29
+2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
+3a 3b 3c 3d 3e 3f ff fe fd fc fb fa f9 f8 f7 f6
+f5 f4 f3 f2 f1 f0 ef ee ed ec eb ea e9 e8 e7 e6
+e5 e4 e3 e2 e1 e0 df de dd dc db da d9 d8 d7 d6
+d5 d4 d3 d2 d1 d0 cf ce cd cc cb ca c9 c8 c7 c6
+c5 c4 c3 c2 c1 c0
+```
+
+```vector t8.denied
+input: packet type 1, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 1
+input: session nonce bytes 40 to 47
+input: handshake server-to-client key bytes 80 to 9f
+input: sealed data empty
+01 00 b7 59 01 00 01 00 00 00 40 41 42 43 44 45
+46 47 9c c7 b0 41 7c 4d 93 52 f9 a1 98 ef 49 ad
+6f cb
+```
+
+```vector t8.challenge
+input: packet type 2, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 1
+input: session nonce bytes 40 to 47
+input: server ephemeral public key bytes 40 to 5f
+input: client ephemeral public key bytes 20 to 3f
+input: handshake server-to-client key bytes 80 to 9f
+02 00 b7 59 01 00 01 00 00 00 40 41 42 43 44 45
+46 47 a3 50 36 4e 3a 3a 61 a1 2a 4c 90 5d c6 39
+c8 a5 49 1e 7e 8d 4b 7c 58 51 98 cd 4b 94 4e e9
+d1 90 f4 2a d8 21 0f ab 19 e4 1a 3b 96 dc 06 08
+3d 31
+```
+
+```vector t8.response
+input: packet type 3, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 1
+input: padding 24 zero bytes
+input: client ephemeral public key bytes 20 to 3f
+input: handshake client-to-server key bytes 60 to 7f
+03 00 b7 59 01 00 01 00 00 00 f6 0f fd 9b d3 d8
+bd e8 c3 8b e5 af 01 f3 eb a1 47 55 ea 1a 6a ff
+0c 04 71 79 8c f7 4a 64 66 7d bc d6 ea 5f 4c a5
+b9 97
+```
+
+```vector t8.keep-alive
+input: packet type 4, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 1
+input: ack block 00 00 00 00 00 00 00
+input: client index 3, max clients 1000
+input: session server-to-client key bytes c0 to df
+04 00 b7 59 01 00 01 00 00 00 93 f3 ae 3f 05 4a
+38 d0 41 ec 2f 98 38 7a ff bf 5e 31 4c df 50 0e
+03 e1 28 04 ec 28 00 1b 99
+```
+
+```vector t8.payload
+input: packet type 5, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 3
+input: ack block 00 00 00 00 00 00 00
+input: payload bytes 68 65 6c 6c 6f
+input: session client-to-server key bytes a0 to bf
+05 00 b7 59 01 00 03 00 00 00 d2 ca 22 7d 0d e1
+9a dc 82 7d ea d4 4a 38 fd 84 26 82 9a 5d b6 7b
+80 e5 85 fe 54 0c
+```
+
+```vector t8.disconnect
+input: packet type 6, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 4
+input: ack block 00 00 00 00 00 00 00
+input: no type data
+input: session client-to-server key bytes a0 to bf
+06 00 b7 59 01 00 04 00 00 00 17 e7 37 e8 c4 f6
+f2 25 6f b7 76 70 25 43 e9 59 d3 09 27 85 70 ed
+91
+```
+
+```vector t8.cookie
+input: packet type 7, filter value b7 59 01 00
+input: connection salt bytes 30 31 32 33 34 35 36 37
+input: cookie expire 0x0102030405060708, little-endian on the wire
+input: cookie mac bytes d0 to df
+07 00 b7 59 01 00 30 31 32 33 34 35 36 37 08 07
+06 05 04 03 02 01 d0 d1 d2 d3 d4 d5 d6 d7 d8 d9
+da db dc dd de df
+```
+
+```vector t8.ack
+input: packet type 8, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 5
+input: ack block 00 00 00 00 00 00 00
+input: no type data
+input: session client-to-server key bytes a0 to bf
+08 00 b7 59 01 00 05 00 00 00 18 11 d7 e6 43 54
+2c 6e a6 b4 9e e8 de 56 b3 3d ba 0d 4f 61 7e 85
+b5
+```
+
+```vector t8.fragment
+input: packet type 9, filter value b7 59 01 00
+input: protocol id 0x1122334455667788
+input: connection salt bytes 30 to 37
+input: sequence 6
+input: ack block 00 00 00 00 00 00 00
+input: payload id 1, fragment index 0, fragment count 2
+input: fragment data bytes 68 65 6c 6c 6f
+input: session client-to-server key bytes a0 to bf
+09 00 b7 59 01 00 06 00 00 00 c2 9e 52 06 da d5
+b3 e8 ab a8 f1 4c cb 35 88 29 3a 74 2f 39 e4 00
+ad c5 bd df c7 8f aa 2a 94 fb 2b 78
+```
 
 <a id="t9"></a>
 ## t9. Packet protection
