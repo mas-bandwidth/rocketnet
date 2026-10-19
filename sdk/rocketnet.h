@@ -712,6 +712,7 @@ struct rocketnet_client_config_t
     int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    uint64_t game_clock_epoch;                      // ROCKETNET_CLIENT_GAME_CLOCK_EPOCH: unix seconds at the game clock's time zero, for the connect-token expiry check; 0 (the default) reads the wall clock as before
 };
 
 // The server is configured explicitly: rocketnet_server_default_config gives
@@ -759,6 +760,7 @@ struct rocketnet_server_config_t
     int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    uint64_t game_clock_epoch;                      // ROCKETNET_SERVER_GAME_CLOCK_EPOCH: unix seconds at the game clock's time zero, for the connect-token expiry check; 0 (the default) reads the wall clock as before
 };
 
 // -----------------------------------------
