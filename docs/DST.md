@@ -458,6 +458,13 @@ checks and the trace, about 40 µs.
 A process per seed would add about 43 ms each (measured above), which is why every seed of a range
 runs in one process.
 
+**Measured per seed** (the harness core, Release `-O2` at the bounded build, on the Linux member,
+twenty seeds in one process, three repeats): `./bin/dst --seeds 1-20 --shape push` took 1.88, 1.88
+and 1.88 s, 94 ms a seed; `./bin/dst --seeds 1-20 --shape full` took 4.77, 4.76 and 4.86 s, 239 ms a
+seed. The estimates above are 0.24 s and 0.80 s, so the core measures about 2.5x and 3.3x cheaper;
+the difference is that this core carries the simulator's four knobs but neither the fault injectors
+nor the invariant checks, which later cards add.
+
 **The per-push shard.** `ci.yml` gains a `dst` job with a matrix of 4 shards on the fleet's Linux
 runner label (`[self-hosted, Linux, X64, fleet]`, as the other Linux jobs). Each shard builds only
 the `dst` target, then `scripts/dst-sweep --shape push --seeds <a>-<b> --jobs 16` splits its 1,024
