@@ -582,8 +582,132 @@ static void unreliable_packet_budget_is_shared_per_update()
     std::vector<ip_received_t> server_got;
     ip_step( &pair, &server_got, NULL );                    // begin_update resets the shared allowance
     check( client->finished.size() == finished_before + 2 );
+    ip_step( &pair, &server_got, NULL );                    // the server reads the queued packet
     check( ip_got( server_got, 0, 90, 100 ) );
     check( ip_got( server_got, 0, 91, 100 ) );
+    ip_pair_teardown( &pair );
+}
+
+// the message on any receive channel: the receive channel follows the wire
+// code, which these cases do not pin
+static bool ip_got_any( const std::vector<ip_received_t> & got, uint32_t id, int bytes )
+{
+    for ( int channel = 0; channel < 4; channel++ )
+        if ( ip_got( got, channel, id, bytes ) )
+            return true;
+    return false;
+}
+
+// one update boundary on both ends, with nothing received or sent: the
+// shared per-update packet allowance starts again here and only here
+static void ip_update_only( ip_pair_t * pair, std::vector<ip_received_t> * server_got )
+{
+    pair->time += 0.01;
+    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_client_update( pair->client, pair->time ) == ROCKETNET_MESSAGE_OK );
+    for ( int channel = 0; channel < 4; channel++ )
+    {
+        const uint8_t * data;
+        int bytes;
+        while ( rocketnet_message_server_receive( pair->server, 0, channel, &data, &bytes ) )
+        {
+            if ( server_got )
+            {
+                ip_received_t r;
+                r.channel = channel;
+                r.bytes.assign( data, data + bytes );
+                server_got->push_back( r );
+            }
+            rocketnet_message_server_release( pair->server, 0, data );
+        }
+    }
+}
+
+// RNOutgoingBuild PacketCap: in-place packets and the queued packets
+// send_packets writes draw on one per-update count, so mixing the two in
+// one update never puts more than max_packets_per_update packets on the
+// transport
+static void mixed_in_place_and_queued_respect_packet_cap()
+{
+    const int cap = 2;
+    ip_pair_t pair;
+    ip_pair_setup( &pair, cap );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                                         // settle the initial CONFIG exchange
+
+    ip_end_t * client = &pair.net->client;
+    std::vector<ip_received_t> server_got;
+    ip_update_only( &pair, &server_got );
+    const size_t finished_before = client->finished.size();
+
+    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE, 1, 100, 60 );
+    ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE_SEQUENCED, 2, 100, 61 );
+
+    // two reliable messages too big to share a packet, and one more unreliable
+    // message: all of them wait for send_packets
+    uint8_t bytes[1000];
+    ip_fill( bytes, 62, 1000 );
+    check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, bytes, 1000 ) != 0 );
+    ip_fill( bytes, 63, 1000 );
+    check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, bytes, 1000 ) != 0 );
+    ip_fill( bytes, 64, 1000 );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_UNRELIABLE, bytes, 1000 ) != 0 );
+
+    rocketnet_message_client_send_packets( pair.client );
+    check( client->finished.size() - finished_before <= (size_t) cap );   // the update's packets, in place and queued
+
+    // the next updates carry the rest, each under the same cap
+    for ( int i = 0; i < 20; i++ )
+    {
+        const size_t before = client->finished.size();
+        rocketnet_message_server_send_packets( pair.server );
+        rocketnet_message_client_send_packets( pair.client );
+        check( client->finished.size() - before <= (size_t) cap );
+        ip_update_only( &pair, &server_got );
+    }
+    check( ip_got_any( server_got, 60, 100 ) );
+    check( ip_got_any( server_got, 61, 100 ) );
+    check( ip_got_any( server_got, 62, 1000 ) );
+    check( ip_got_any( server_got, 63, 1000 ) );
+    ip_pair_teardown( &pair );
+}
+
+// RNOutgoingBuild PacketCap: the count resets at the update boundary only,
+// so filling and flushing several times in one update never resets it
+static void repeated_fill_flush_respects_packet_cap()
+{
+    const int cap = 2;
+    ip_pair_t pair;
+    ip_pair_setup( &pair, cap );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                                         // settle the initial CONFIG exchange
+
+    ip_end_t * client = &pair.net->client;
+    std::vector<ip_received_t> server_got;
+    ip_update_only( &pair, &server_got );
+    const size_t finished_before = client->finished.size();
+
+    for ( int k = 0; k < 4; k++ )
+    {
+        uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_UNRELIABLE, 100 );
+        check( p != NULL );
+        ip_fill( p, 70 + (uint32_t) k, 100 );
+        check( rocketnet_message_client_finish( pair.client, 100 ) != 0 );
+        rocketnet_message_client_send_packets( pair.client );               // a flush after every fill
+        check( client->finished.size() - finished_before <= (size_t) cap );
+    }
+
+    for ( int i = 0; i < 4; i++ )
+    {
+        const size_t before = client->finished.size();
+        rocketnet_message_server_send_packets( pair.server );
+        rocketnet_message_client_send_packets( pair.client );
+        rocketnet_message_client_send_packets( pair.client );
+        check( client->finished.size() - before <= (size_t) cap );
+        ip_update_only( &pair, &server_got );
+    }
+    for ( int k = 0; k < 4; k++ )
+        check( ip_got_any( server_got, 70 + (uint32_t) k, 100 ) );
     ip_pair_teardown( &pair );
 }
 
@@ -720,7 +844,7 @@ static int ip_write_connect_token( const char * server_address_string, uint64_t 
         return 0;
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = current_timestamp;
     signed_fields.expire_timestamp = current_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;
@@ -799,3 +923,5 @@ REGISTER_UNIT_TEST( unreliable_fit_has_no_message_copy );
 REGISTER_UNIT_TEST( unreliable_over_fit_takes_the_message_buffer );
 REGISTER_UNIT_TEST( in_place_unreliable_keeps_acks_and_order );
 REGISTER_UNIT_TEST( unreliable_packet_budget_is_shared_per_update );
+REGISTER_UNIT_TEST( mixed_in_place_and_queued_respect_packet_cap );
+REGISTER_UNIT_TEST( repeated_fill_flush_respects_packet_cap );
