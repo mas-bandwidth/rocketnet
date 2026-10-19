@@ -29,22 +29,36 @@
 #define ROCKETNET_CONFIG_DEFAULT_BYTES( name, size, def, flags )        { static const uint8_t rocketnet_default_##name[size] = def; memcpy( config->name, rocketnet_default_##name, size ); }
 #define ROCKETNET_CONFIG_DEFAULT_STRING( name, capacity, def, flags )   snprintf( config->name, capacity, "%s", def );
 
+void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config )
+{
+    memset( config, 0, sizeof(*config) );
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+}
+
 void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return;
-    rocketnet_assert( config );
-    memset( config, 0, sizeof(struct rocketnet_client_transport_config_t) );
-    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+    struct rocketnet_client_transport_config_t defaults;
+    rocketnet_client_transport_default_config_current( &defaults );
+    memset( config, 0, sizeof(*config) );
+    memcpy( config, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR );
+}
+
+void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config )
+{
+    memset( config, 0, sizeof(*config) );
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
 }
 
 void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return;
-    rocketnet_assert( config );
-    memset( config, 0, sizeof(struct rocketnet_server_transport_config_t) );
-    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+    struct rocketnet_server_transport_config_t defaults;
+    rocketnet_server_transport_default_config_current( &defaults );
+    memset( config, 0, sizeof(*config) );
+    memcpy( config, &defaults, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
 }
 
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
@@ -69,6 +83,7 @@ void rocketnet_message_default_config( struct rocketnet_message_config_t * confi
 static const struct rocketnet_config_field_t rocketnet_client_config_fields[] =
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
+    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 0, 0 },
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
@@ -95,12 +110,19 @@ static const struct rocketnet_config_field_t rocketnet_message_config_field_tabl
 // must name a public field at the same offset with the same size, and the two
 // structs must have the same size, so the header and the tables cannot drift.
 
+#define ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64( name, def, flags )                                           \
+    void (*state_change_callback)( void * context, int previous_state, int current_state );                 \
+    double (*time_callback)( void * context );                                                              \
+    uint64_t name;
+
 struct rocketnet_client_transport_config_table_t
 {
-    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
-    void (*state_change_callback)( void * context, int previous_state, int current_state );
-    double (*time_callback)( void * context );
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    uint64_t step_driven;
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
+
+#undef ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64
 
 struct rocketnet_server_transport_config_table_t
 {
@@ -126,6 +148,9 @@ struct rocketnet_message_config_table_t
 ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
 ROCKETNET_CONFIG_LAYOUT_FIELD( state_change_callback )
 ROCKETNET_CONFIG_LAYOUT_FIELD( time_callback )
+ROCKETNET_CONFIG_LAYOUT_FIELD( step_driven )
+static_assert( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, "client revision 1 ends at step_driven" );
+static_assert( offsetof( struct rocketnet_client_transport_config_t, simulated_loss_percent ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, "client revision 2 appends after revision 1" );
 static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h client transport config matches its table" );
 #undef ROCKETNET_CONFIG_LAYOUT_PUBLIC
 #undef ROCKETNET_CONFIG_LAYOUT_TABLE
@@ -698,6 +723,70 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
                 rocketnet_error( "%s config field \"%s\" has an unknown kind %d", transport_name, field->name, field->kind );
                 return false;
             }
+        }
+    }
+
+    return true;
+}
+
+#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+static bool rocketnet_public_link_simulator_test_hook = false;
+void rocketnet_public_link_simulator_test_development( int enabled )
+{
+    rocketnet_public_link_simulator_test_hook = enabled != 0;
+}
+#endif
+
+bool rocketnet_public_link_simulator_development( void )
+{
+#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+    return ROCKETNET_DEVELOPMENT != 0 || rocketnet_public_link_simulator_test_hook;
+#else
+    return ROCKETNET_DEVELOPMENT != 0;
+#endif
+}
+
+bool rocketnet_config_validate_public_link_simulator( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields, bool development )
+{
+    rocketnet_assert( transport_name );
+    rocketnet_assert( config );
+    rocketnet_assert( fields );
+
+    if ( development )
+        return true;
+
+    static const char * simulator_names[] =
+    {
+        "simulated_loss_percent",
+        "simulated_latency_ms",
+        "simulated_jitter_ms",
+        "simulated_duplicate_percent"
+    };
+
+    for ( int i = 0; i < num_fields; i++ )
+    {
+        const struct rocketnet_config_field_t * field = &fields[i];
+        if ( field->kind != ROCKETNET_CONFIG_KIND_INT )
+            continue;
+
+        bool simulator_field = false;
+        for ( int j = 0; j < (int) ( sizeof(simulator_names) / sizeof(simulator_names[0]) ); j++ )
+        {
+            if ( strcmp( field->name, simulator_names[j] ) == 0 )
+            {
+                simulator_field = true;
+                break;
+            }
+        }
+        if ( !simulator_field )
+            continue;
+
+        int value;
+        memcpy( &value, (const uint8_t*) config + field->offset, sizeof(value) );
+        if ( value != 0 )
+        {
+            rocketnet_error( "%s config %s %d is development only: the public link simulator is not available in a production library", transport_name, field->name, value );
+            return false;
         }
     }
 

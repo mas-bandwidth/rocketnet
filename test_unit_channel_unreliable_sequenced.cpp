@@ -226,7 +226,7 @@ static void sequenced_large_send_packets( void * )
 {
 }
 
-static void large_state_over_budget_drops_whole_payload()
+static void large_state_promotes_to_reliable_sequenced()
 {
     rn_message_link_t link = {};
     link.max_payload_bytes = sequenced_large_max_payload;
@@ -235,20 +235,20 @@ static void large_state_over_budget_drops_whole_payload()
     link.send_packets = sequenced_large_send_packets;
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0, 1, 0.0 );
     rocketnet_unit_check( object != NULL );
-    rocketnet_unit_check( rn_message_object_start( object, 0, 0, ROCKETNET_UNRELIABLE_SEQUENCED,
-                                                    ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES ) == NULL );
-    rocketnet_unit_check( object->connections[0].unreliable_count == 0 );
-    uint8_t payload[2000] = {};
-    rocketnet_unit_check( rn_message_object_send( object, 0, 0, ROCKETNET_UNRELIABLE_SEQUENCED, payload, (int) sizeof( payload ) ) != 0 );
+    // An oversize unreliable send is promoted to its reliable twin (RakNet
+    // ReliabilityLayer), never dropped as unreliable.
+    uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_UNRELIABLE_SEQUENCED,
+                                                  ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_unit_check( pointer != NULL );
+    if ( pointer )
+    {
+        memset( pointer, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+        rocketnet_unit_check( rn_message_object_finish( object, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES ) != 0 );
+    }
     rn_message_connection_t * connection = &object->connections[0];
-    rocketnet_unit_check( connection->unreliable_count == 1 );
-    const uint64_t over_budget = object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET];
-    sequenced_large_start_calls = 0;
-    rn_message_object_send_packets( object );
-    rocketnet_unit_check( sequenced_large_start_calls == 1 );                     // the connection's CONFIG is offered first (CHANNELS.md 10.3)
+    rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] == 1 );
     rocketnet_unit_check( connection->unreliable_count == 0 );
-    rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == over_budget + 1 );
-    rocketnet_unit_check( connection->budget.bytes_spent == 0 );
+    rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 0 );
     rn_message_object_destroy( object );
 }
 
@@ -310,6 +310,6 @@ REGISTER_UNIT_TEST( reliable_sequenced_uses_shared_watermark );
 REGISTER_UNIT_TEST( hold_full_drops_and_counts );
 REGISTER_UNIT_TEST( large_future_state_drops_without_violation );
 REGISTER_UNIT_TEST( never_takes_a_reliable_number );
-REGISTER_UNIT_TEST( large_state_over_budget_drops_whole_payload );
+REGISTER_UNIT_TEST( large_state_promotes_to_reliable_sequenced );
 REGISTER_UNIT_TEST( rnchannel_sequenced_witness_replays );
 REGISTER_UNIT_TEST( sequenced_no_allocation_after_create );
