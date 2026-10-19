@@ -15,9 +15,12 @@ told apart by what the sender knows:
 | unacked, and `largest_acked_sequence >= seq + Threshold` | `SEND_HISTORY_LOST` | known path loss (RFC 9002 6.1.1, packet threshold 3), an outcome |
 | unacked, no such later ack | `SEND_HISTORY_OVERFLOW` | unknown fate: a silent peer, or a window too small for the path; a refusal of history that reads zero on a healthy path |
 
-The write never refuses the send (standard/TRANSPORT.md "Replay window sizing": an
-implementation MUST NOT throttle sends to preserve history). The sum of the two
-counts is the count of overwritten unacknowledged records the standard names.
+The write never refuses the send: every caller of
+`rocketnet_ack_endpoint_record_sent_classified` counts the result and still
+transmits. The two counters are classed in
+[t18 Error handling and counters](../standard/TRANSPORT.md#t18):
+`SEND_HISTORY_LOST` as path loss, `SEND_HISTORY_OVERFLOW` as a refusal. Their
+sum is the count of overwritten unacknowledged records.
 
 ## What the model has
 
@@ -71,7 +74,7 @@ Each is the committed configuration with one defect switch flipped. TLC must
 fail each on its named property; a witness that passes is a model defect.
 
 **`MCRNSentHistoryBrokenCountEveryUnacked.cfg`** (`CountEveryUnacked = TRUE`:
-the rule before the split, every unacked eviction is overflow) fails
+a single class, every unacked eviction counted overflow) fails
 `NoOverflowUnderBoundedLoss`, exit 12, in twelve states:
 
 1. `Send 1`, `Send 2`: both in flight.
@@ -82,12 +85,15 @@ the rule before the split, every unacked eviction is overflow) fails
    peer has acknowledged 3 >= 1 + 2, and `healthy` is still true (every send was at
    most 2 ahead). The eviction is counted `overflowSet = {1}`.
 
-This is the w3 finding: a packet the path lost (or delayed past the threshold)
-is never acknowledged, so one lap later the base rule counts it as overflow
-while the peer is acknowledging everything else. By hand against the code: at
-the base, `rocketnet_ack_endpoint_record_sent` returns `!record->sequence || record->acked` for the replaced record, false for every unacked eviction, and
-all eight callers count that false as `SEND_HISTORY_OVERFLOW`. The fixed model
-counts sequence 1 lost (`3 >= 1 + 2`) and `overflowSet` stays empty.
+This is why the classification has two classes: a packet the path lost (or
+delayed past the threshold) is never acknowledged, so one lap later a
+single-class rule counts it as overflow while the peer is acknowledging
+everything else. By hand against the code:
+`rocketnet_ack_endpoint_record_sent_classified` returns
+`ROCKETNET_ACK_SENT_EVICTED_LOST` for the record of sequence 1
+(`largest_acked_sequence` 3 >= 1 + 2), and `rocketnet_ack_count_sent_result`
+counts it `SEND_HISTORY_LOST`. The committed model counts sequence 1 lost and
+`overflowSet` stays empty.
 
 **`MCRNSentHistoryBrokenRefuseWhenFull.cfg`** (`RefuseWhenFull = TRUE`: `Send`
 disabled while every record is unacked) fails `SendNeverRefused`, exit 12, in

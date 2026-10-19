@@ -1,19 +1,21 @@
 # RNEndpoint: two endpoints end to end, with CONFIG
 
-`RNEndpoint` is the model `standard/MESSAGES.md` section 15 plans for layer 7:
-two message endpoints, one at each end of a connection, joined by two
-instances of `tla/Link.tla` (`AB` carries a's packets to b, `BA` carries b's
-to a), with the transport's ack semantics and the CONFIG announcement of
-sections 10.3 and 13.4. It is written before the code: it is the spec the
-CONFIG announcement and the endpoint implement, and its actions carry the names of
-the planned functions of section 10.1. No code implements it yet, so
-`tla/COVERAGE.tsv` holds its row as owed by the implementation.
+`RNEndpoint` models two message endpoints, one at each end of a connection,
+joined by two instances of `tla/Link.tla` (`AB` carries a's packets to b, `BA`
+carries b's to a), with the transport's ack semantics of
+[m1.4 What RN-2 requires of RN-1](../standard/MESSAGES.md#m1.4) and the CONFIG announcement of
+[m11 CONFIG control record](../standard/MESSAGES.md#m11). Its actions carry the names of the
+endpoint functions in `sdk/rocketnet_endpoint.cpp` (`rn_endpoint_reset`,
+`rn_endpoint_send`, `rn_endpoint_write_packet`, `rn_endpoint_packet_failed`,
+`rn_endpoint_on_acked`, `rn_endpoint_on_payload`, `rn_endpoint_tick`).
+`tla/COVERAGE.tsv` lists the model's row as owed: no conformance check ties
+its actions to those functions.
 
 ## What is modelled
 
-- **Reset** (`rn_endpoint_reset`): both ends start a connection. Each queues
-  CONFIG (record 0) at the head of IMMEDIATE with the first reliable number,
-  so the first packet an end writes carries it.
+- **Reset** (`rn_endpoint_reset`, with `rn_endpoint_announce_config`): both
+  ends start a connection. Each queues CONFIG (record 0) at the head of
+  IMMEDIATE with the first reliable number, so the first packet an end writes carries it.
 - **Send** (`rn_endpoint_send`): the application sends messages 1..N in index
   order. A message on a channel outside the sender's own `num_channels` is
   refused. A reliable or reliable-ordered message takes the next reliable
@@ -29,10 +31,10 @@ the planned functions of section 10.1. No code implements it yet, so
   that the peer opened are acked.
 - **OnPayload** (`rn_endpoint_on_payload`): an end opens a packet from its
   peer. The transport acks the packet's reliable records whatever follows
-  (P2). CONFIG, first in the packet, goes through **ConfigCompare**; a
+  (m1.4 rule 2). CONFIG, first in the packet, goes through **ConfigCompare**; a
   mismatch is `CONFIG_MISMATCH` and parsing stops. Data records are checked
   against the receiver's own `num_channels`: a channel outside it is a
-  `VIOLATION` and parsing stops (R6). Otherwise a fresh reliable message is
+  `VIOLATION` and parsing stops (m4 rule 5). Otherwise a fresh reliable message is
   received once, an ordered one is held until its channel predecessors are
   received and then delivered with every hold it releases, and an unreliable
   one is delivered at once. An end in error opens and discards.
@@ -41,16 +43,16 @@ the planned functions of section 10.1. No code implements it yet, so
   `RELIABLE_TIMEOUT`.
 - The transport's own steps: **WriteAck** sends pending acks with no message
   records (a keepalive); **AckSilence** drops pending acks unsent (ack history
-  overflow, P5).
+  overflow; m1.4 rule 4, silence is not loss).
 
-An end in error does nothing more: the object disconnects it (section 11).
+An end in error does nothing more: the message object disconnects it.
 
 ## What is abstracted, and why
 
 - **Packet ids.** An ack names the records of the opened packet, not a packet
   id. The map from an acked id to the records it carried, its eviction and
   the never-repeating id are `RNWindow`'s sent map, checked there. Taking
-  the records directly keeps "acked implies opened" (P2) exact at record
+  the records directly keeps "acked implies opened" (m1.4 rule 2) exact at record
   level: every acked record was in a packet the peer opened.
 - **Numbering, the window and the receiver's slots** are taken at the level
   `RNWindow` and `RNChannelTypes` check: the count bound `U + W`, a received
@@ -69,8 +71,8 @@ An end in error does nothing more: the object disconnects it (section 11).
   `RNResendTiming`'s `AttemptsBeforeTimeout`.
 - **A configuration** is its `num_channels`, the field the instances vary.
   ConfigCompare compares the whole configuration value, which stands for the
-  field-by-field comparison of section 13.4 (version, enabled mask,
-  `window_messages`, `receive_ring_bytes`, `max_message_bytes`,
+  field-by-field comparison of m11 rule 8 (version, enabled mask,
+  `num_channels`, `window_messages`, `receive_ring_bytes`, `max_message_bytes`,
   `fragment_bytes`): any differing field is the same mismatch.
 - **Duplicated packets** are the transport replay window's to drop
   (`ReplayWindow`), so the instances run Link with `Duplication = FALSE`.
@@ -78,7 +80,8 @@ An end in error does nothing more: the object disconnects it (section 11).
   safety cases, and the receiver's dedupe is what keeps them exactly once.
 - **Inside one packet** the records are processed CONFIG first, then data; a
   data record outside the receiver's bounds refuses the packet's data as a
-  whole. The order of records inside a packet beyond that is section 9.3's.
+  whole. The order of records inside a packet beyond that is
+  `rn_endpoint_write_packet`'s.
 - **Bytes, the ring, blocks, receipts and priorities below IMMEDIATE** are
   other modules' (`RNRing`, `RNSendSpans`, `RNReceipts`, `RNScheduler`).
 - `WriteAll = TRUE` makes a packet carry every due record and every waiting
@@ -98,14 +101,14 @@ Safety (every case lists them):
 | Invariant | Meaning |
 |---|---|
 | `TypeOK` | variable domains; each link within its capacity |
-| `ConfigFirstReliable` | CONFIG takes the first reliable number (10.3) |
-| `WindowBounded` | no more than `W` reliable records are ever writable (6.2) |
-| `AckedImpliesOpened` | an acked record was in a packet the peer opened (P2) |
+| `ConfigFirstReliable` | CONFIG takes the first reliable number (m11 rule 2) |
+| `WindowBounded` | no more than `W` reliable records are ever writable (m5.1 rule 3) |
+| `AckedImpliesOpened` | an acked record was in a packet the peer opened (m1.4 rule 2) |
 | `ReliableExactlyOnce` | a reliable message is delivered at most once, and only if the peer's application sent it and Send accepted it; with `EveryReliableDelivered`, exactly once |
 | `UnreliableAtMostOnce` | an unreliable message is delivered at most once, and only if sent |
 | `OrderedInOrder` | an ordered message is delivered only after every ordered message before it on its channel |
 | `MismatchErrorsBothEnds` | an end that takes the peer's CONFIG takes an equal one, and `CONFIG_MISMATCH` means a real difference: every end that opens a differing CONFIG errors |
-| `NoViolationWhenEqual` | with equal configurations, data records before CONFIG never trip the receiver's bounds (R6) |
+| `NoViolationWhenEqual` | with equal configurations, data records before CONFIG never trip the receiver's bounds (m4 rule 5, m11 rule 10) |
 
 Liveness (`MCRNEndpointLive.cfg`, under `LiveSpec`):
 
@@ -207,20 +210,20 @@ loaded bench may need a quieter one.
 
 ## Reversed witnesses, each checked by hand
 
-The traces were read by hand against `standard/MESSAGES.md` 10.3 and 13.4.
-No code implements CONFIG or the endpoint yet (`sdk/` defines only the
-error code), so the check is against the design, which is the spec the
-code implements.
+The traces were read by hand against [m11](../standard/MESSAGES.md#m11) and
+[m7](../standard/MESSAGES.md#m7) of `standard/MESSAGES.md`. In the code, CONFIG is queued by
+`rn_endpoint_announce_config` in `sdk/rocketnet_endpoint.cpp` and compared by
+`rn_ordered_take_config` in `sdk/rocketnet_channel.cpp`.
 
 **`MCRNEndpointBrokenConfigNotCompared.cfg`** (`ConfigCompared = FALSE`,
 invariant `MismatchErrorsBothEnds`, 3 states). Init picks the differing
 configurations, `num_channels` 2 at a and 1 at b. a writes its first packet,
 `[rel |-> {0}, unrel |-> {}, acks |-> {}]`: CONFIG alone, at the head of
-IMMEDIATE with reliable number 0 (10.3). b opens it with no comparison and
-records `peerCfg[b] = 2` while its own `cfg[b] = 1`, with no error. Section
-13.4 requires "any difference is ERROR_CONFIG_MISMATCH"; without the
-comparison b goes on as if both ends were configured the same, so the
-"identical and verified" model of 10.3 is lost on the first CONFIG.
+IMMEDIATE with reliable number 0 (m11 rule 2). b opens it with no comparison and
+records `peerCfg[b] = 2` while its own `cfg[b] = 1`, with no error. m11 rule 9
+requires the connection to end with `CONFIG_MISMATCH` when any compared
+field differs; without the comparison b goes on as if both ends were
+configured the same, and the check is lost on the first CONFIG.
 
 **`MCRNEndpointBrokenConfigUnreliable.cfg`** (`ConfigReliable = FALSE`,
 temporal `ConfigVerifiedDespiteFirstLoss`, 14 states then stuttering).
@@ -231,9 +234,9 @@ unreliable CONFIG records are gone after their single write. The rest runs
 normally: both applications send, the reliable ordered message 1 is
 delivered at each end, acks return, the unreliable message 2 travels; then
 nothing is enabled that changes `peerCfg`, and the behaviour stutters with
-`peerCfg = [a |-> 0, b |-> 0]`: neither end ever verifies. Section 10.3 rules
-this out by giving CONFIG the first reliable number, "so it is resent until
-acked"; with that rule the same first losses are followed by a resend, which
+`peerCfg = [a |-> 0, b |-> 0]`: neither end ever verifies. m11 rule 2 rules
+this out: CONFIG goes before any other reliable record and is resent until
+the connection layer acknowledges it; with that rule the same first losses are followed by a resend, which
 the model's `WriteOldest` fairness carries.
 
 **`MCRNEndpointBrokenOrderIgnored.cfg`** (`OrderChecked = FALSE`,
@@ -247,21 +250,21 @@ the window is now numbers 1 and 2. a writes a packet carrying message 2
 and not message 1 (with `WriteAll = FALSE` a packet carries any subset of
 the due records). b opens it: message 2 is fresh, and with no predecessor
 check it is released at once, `deliv[b] = <<2>>` while message 1 has never
-arrived. Section 7.2 holds a RELIABLE_ORDERED message until every earlier
+arrived. m7.2 holds a RELIABLE_ORDERED message until every earlier
 message on its channel is received; with that check, message 2 waits in
 `held[b]` until message 1 arrives and both are then delivered in order.
 
 ## Action-to-section map
 
-| Action / operator | Planned function (10.1) | Design section |
+| Action / operator | Function | MESSAGES section |
 |---|---|---|
-| `Reset` | `rn_endpoint_reset` | 10.1; 10.3 (CONFIG queued at the head of IMMEDIATE, first reliable number) |
-| `Send(e)` | `rn_endpoint_send` | 10.1; 6.2 (late numbering); 7.1 (channel bound) |
-| `WritePacket(e, S, Us)` | `rn_endpoint_write_packet` | 9.3 (packet writing); 6.2 (count bound `U + W`); 6.4 (resend until acked) |
-| `PacketFailed(e, S, Us)` | `rn_endpoint_packet_failed` | 6.4 (a failed send marks its records due); P5 |
-| `OnAcked(e, as)` | `rn_endpoint_on_acked` | 6.4 (ack marks records); P2, P4 |
-| `OnPayload(e, p)` | `rn_endpoint_on_payload` | 13.3 (receiver's checks in order); 6.5 (duplicates); 7.2 (dispatch, holds); R6 |
-| `ConfigCompare(e)` | the CONFIG comparison inside `rn_endpoint_on_payload` | 10.3; 13.4 (every field compared, mismatch is `ERROR_CONFIG_MISMATCH`) |
-| `Tick(e)` | `rn_endpoint_tick` | 10.3 (no CONFIG within `reliable_timeout` is `RELIABLE_TIMEOUT`); 6.4 |
-| `err` | `rn_endpoint_error` | 10.1; 12 (`ROCKETNET_MESSAGE_ERROR_*`) |
-| `WriteAck(e)`, `AckSilence(e)` | the transport (not the endpoint) | section 2, P2 and P5 |
+| `Reset` | `rn_endpoint_reset`, `rn_endpoint_announce_config` | m11 rules 1 and 2 (CONFIG queued at the head of IMMEDIATE, first reliable number) |
+| `Send(e)` | `rn_endpoint_send` | m5.1 rule 1 (late numbering); m10 rule 1 (channel bound) |
+| `WritePacket(e, S, Us)` | `rn_endpoint_write_packet` | m5.1 rule 3 (count bound `U + W`); m9.3 (resend until acked) |
+| `PacketFailed(e, S, Us)` | `rn_endpoint_packet_failed` | m9.3 (a failed send leaves its records due); m1.4 rule 4 |
+| `OnAcked(e, as)` | `rn_endpoint_on_acked` | m9.1 (ack marks records); m1.4 rules 2 and 5 |
+| `OnPayload(e, p)` | `rn_endpoint_on_payload` | m4 (receiver's checks in order, rule 5 the channel bound); m5.2 rule 8 (duplicates); m7.2 (dispatch, holds) |
+| `ConfigCompare(e)` | `rn_ordered_take_config` (`sdk/rocketnet_channel.cpp`), reached from `rn_endpoint_on_payload` | m11 rules 8 and 9 (every field compared, a mismatch is `CONFIG_MISMATCH`) |
+| `Tick(e)` | `rn_endpoint_tick` | m11 rule 4 (no CONFIG within the reliable timeout is `RELIABLE_TIMEOUT`); m9.3 |
+| `err` | `rn_endpoint_error` | `ROCKETNET_MESSAGE_ERROR_*` in `sdk/rocketnet.h` |
+| `WriteAck(e)`, `AckSilence(e)` | the transport (not the endpoint) | m1.4 rules 2 and 4 |

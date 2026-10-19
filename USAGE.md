@@ -86,16 +86,23 @@ line; nothing is ever clamped**. The message fields (`num_channels` through
 environment override and are checked at create, which returns NULL on a
 refusal. Every other field is read and checked when the transport starts, in
 `rocketnet_client_connect` or `rocketnet_server_start`, which return the status
-code and leave the client `DISCONNECTED` or the server stopped. A secret key logs redacted, on both the
-old and the new value. The `_sized` create and default calls accept a struct
-size so a program built against an older header keeps working; an unknown size
-is refused before anything is read or written.
+code and leave the client `DISCONNECTED` or the server stopped. A secret key
+logs redacted, on both the old and the new value. The `_sized` default,
+validate, required-memory and create calls take the struct size the program
+was compiled against, so a program built against an older header keeps
+working; an unknown size is refused before anything is read or written. The
+unsized calls read and write the revision 1 prefix of each struct, which ends
+at `reliable_timeout_ms` ([docs/ABI-EVOLUTION.md](docs/ABI-EVOLUTION.md)).
 
 Both `rocketnet_client_config_t` and `rocketnet_server_config_t` also carry four
 development-only link-simulator fields (`simulated_loss_percent`,
 `simulated_latency_ms`, `simulated_jitter_ms`, `simulated_duplicate_percent`),
 with matching `ROCKETNET_CLIENT_SIMULATED_*` and `ROCKETNET_SERVER_SIMULATED_*`
-environment variables. These apply only in `ROCKETNET_DEVELOPMENT` builds; any
+environment variables. They follow `reliable_timeout_ms`, so only the `_sized`
+calls read them: fill the struct with `rocketnet_client_default_config_sized`
+or `rocketnet_server_default_config_sized` and create with
+`rocketnet_client_create_sized` or `rocketnet_server_create_sized`, passing
+`sizeof` the struct. These apply only in `ROCKETNET_DEVELOPMENT` builds; any
 nonzero value in a production build is refused.
 
 ```c
@@ -120,9 +127,11 @@ void configure( struct rocketnet_client_config_t * client, struct rocketnet_serv
 at client connect and server start. The first candidate that starts wins, and a list that every
 candidate refuses fails loudly. `"auto"` (the default, also NULL or the empty
 string) is the platform's recommended order; a one-element list is a pin. A
-known name this endpoint does not have is skipped with one log line; a name
-that is no transport anywhere is a typo and fails loudly. The accessor on each
-end reports the transport that won.
+known name this endpoint does not have is skipped with one log line, and a
+list whose every name is skipped falls back to the endpoint's `"auto"` order
+with a warning; a name that is no transport anywhere is a typo and fails
+loudly. `rocketnet_client_transport_name` and `rocketnet_server_transport_name`
+report the transport that won.
 
 Every transport serves IPv4 and IPv6, the AF_XDP server transport (`xdp`)
 included: a server serves the family of its public address, and `"auto"`
@@ -146,7 +155,7 @@ row per field of both public structs.
 | filter_value | ROCKETNET_CLIENT_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refused |
 | max_payload_bytes | ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES | int | `0` (16384) | refused unless `0` or `1416..305408` |
 | num_reassembly_slots | ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refused unless `0` or `1..256` |
-| transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refused |
+| transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name: refused; a list whose every candidate fails to start: refused at connect or start |
 | state_change_callback | none | `void (*)( void *, int, int )` | `NULL` | no environment form |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | no environment form |
 | step_driven | ROCKETNET_CLIENT_STEP_DRIVEN | uint64_t | `0` (I/O thread) | refused unless `0` or `1` and a transport with a non-blocking step |
@@ -182,7 +191,7 @@ row per field of both public structs.
 | num_reassembly_slots | ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refused unless `0` or `1..256` |
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refused unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refused unless `1..60` |
-| transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refused |
+| transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name: refused; a list whose every candidate fails to start: refused at connect or start |
 | public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refused |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refused; `0` or less disables the budget in this direction (not recommended) |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refused unless `1..32` |
@@ -205,8 +214,20 @@ row per field of both public structs.
 | simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..60000` (`0` in production) |
 | simulated_duplicate_percent | ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..100` (`0` in production) |
 
-The message fields marked WIRE must be identical on both ends; the connection
-verifies them. The cross rules are in [standard/MESSAGES.md](standard/MESSAGES.md).
+`num_channels`, `window_messages`, `receive_ring_bytes` and
+`max_message_bytes` are WIRE fields: they must be identical on both ends, and
+the connection verifies them. The ranges above are per field; validation and
+create also apply these cross rules, each refused with one error line:
+
+- `max_message_bytes` is no larger than `receive_ring_bytes`.
+- `window_messages` is at least the number of 1152-byte fragments a
+  `max_message_bytes` message takes.
+- `send_buffer_bytes` holds every fragment of one `max_message_bytes` message.
+- `rto_min_ms` is at most `rto_max_ms`, and `rto_initial_ms` lies between them.
+- `reliable_timeout_ms` is at least four times the larger of 100 ms and
+  `rto_initial_ms`.
+
+The message layer's rules are in [standard/MESSAGES.md](standard/MESSAGES.md).
 
 ## Create, connect, start, stop and destroy
 
@@ -265,8 +286,11 @@ void stop( struct rocketnet_client_t * client, struct rocketnet_server_t * serve
 
 `rocketnet_client_validate_config` and `rocketnet_server_validate_config`
 report whether the struct's own values are accepted; the environment is not
-read. Destroying a client ends its connection from any state. Destroying a
-server stops it first when it is running, which disconnects every client.
+read. Destroying a client from a handshake state or `CONNECTED` sends the
+disconnect packets first, as `rocketnet_client_disconnect` does, then frees it.
+Destroying a server stops it first when it is running, which disconnects every
+client. `rocketnet_server_running` returns `1` while the server is running and
+`0` while it is stopped.
 
 ## Frame loop
 
@@ -547,4 +571,6 @@ void end_server_client( struct rocketnet_server_t * server, uint64_t client_inde
 
 Destroy every client and server before `rocketnet_term`. A server destroy
 stops a running server, which disconnects every client, and frees it; a client
-destroy ends its connection, from any state, and frees the client.
+destroy sends the disconnect packets from a live state, as disconnect does, and
+frees the client. Call `rocketnet_client_disconnect` alone to keep the client
+and connect it again with a new token.

@@ -11,14 +11,15 @@ counters through the public query calls and enums.
 2. Mint a development connect token and connect a client.
 3. Run frames until the client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
 4. Exchange traffic for about one and a half seconds: the client sends a
-   reliable-ordered message each frame and the server echoes one back, so both
-   directions have traffic to measure.
+   32-byte reliable-ordered message each frame and the server echoes each one
+   back, so both directions have traffic to measure.
 5. Print the client's state name, RTT, jitter, packet loss, bandwidth sent and
    received, and a few counters through `rocketnet_client_stat` and
    `rocketnet_client_counter`.
 6. Print the server's per-client view of the same connection through
    `rocketnet_server_client_stat` and `rocketnet_server_client_counter`.
-7. Disconnect, then print the disconnect reason on both ends through
+7. Disconnect, run frames until the client reports disconnected (up to two
+   seconds), then print the numeric disconnect reason on both ends through
    `rocketnet_client_disconnect_reason` and
    `rocketnet_server_disconnect_reason`.
 
@@ -40,12 +41,24 @@ one `FAIL: ...` line and exits 1.
 
 ## What the output means
 
+```
+client state connected
+client rtt 2.09 ms, jitter 0.09 ms, loss 0.00%, bandwidth 737.0 kbps sent 737.0 kbps received
+client bytes sent 139132 received 137595
+server client 0 rtt 2.09 ms, jitter 0.28 ms, loss 0.08%, bandwidth 539.2 kbps sent 533.8 kbps received
+server client 0 bytes sent 137701 received 139026
+client after disconnect state disconnected reason 0
+server client 0 disconnect reason 0
+PASS
+```
+
 The output prints the client's state and connection quality, then the server's
-per-client view, then the disconnect reasons, then `PASS`. The check passes
-when the numbers are present and sane: RTT, jitter, loss and bandwidth are
-never negative, and bytes sent are above zero after the traffic exchange. `PASS`
-means the client connected, traffic flowed both ways, and the disconnect was
-seen on both ends. The informational log lines before the output come from the
+per-client view, then the disconnect reasons (0 is a clean disconnect), then
+`PASS`. The numbers vary from run to run. The check passes when the numbers
+are sane: the client's RTT, jitter, loss and bandwidth are never negative, the
+server's RTT is never negative, and bytes sent are above zero on both ends
+after the traffic exchange. `PASS` means the client connected and traffic
+flowed both ways; the disconnect lines are printed, not checked. The informational log lines before the output come from the
 library and are not part of the check.
 
 ## Public calls it uses

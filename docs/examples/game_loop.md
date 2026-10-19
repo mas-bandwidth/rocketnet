@@ -34,9 +34,9 @@ From the repository root, after the normal build:
 ```
 
 The full-scale run holds 1000 clients in one process, all in memory over the
-loopback transport. `--clients` outside 1..1000 prints a usage line and exits
-1. On Windows the binary is `bin\Release\example_game_loop.exe`. The default
-run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
+loopback transport. `--clients` outside 1..1000 or `--seconds` outside
+1..3600 prints a usage line and exits 1. On Windows the binary is
+`bin\Release\example_game_loop.exe`. The default run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
 ## What the output means
 
@@ -53,7 +53,8 @@ PASS
 A `[1s]` line prints every second and `[end]` covers the run. `client frame`
 is one client's update, receive, queue and send calls in one frame: p50 is the
 typical frame, p99 the slow one in a hundred. The budget verdict never fails
-the run, because scheduler and platform noise is not the library's cost. `server tick` is the server's frame over all clients.
+the run, because scheduler and platform noise is not the library's cost.
+`server tick` is the server's frame over all clients.
 
 The two `latency ... frames` lines give each direction's min, mean and max.
 Clients run their frames before the server's, so the server reads a message in
@@ -68,9 +69,9 @@ and at least 1 in the wrong one.
 ## Public calls it uses
 
 - `rocketnet_init`, `_term`, `_time`, `_sleep`, `_write_dev_connect_token` (development library only)
-- `rocketnet_server_dev_config`, `_create`, `_port`, `_transport_name`,
+- `rocketnet_server_dev_config`, `_create`, `_start`, `_port`, `_transport_name`,
   `_update`, `_client_connected`, `_receive_message`, `_release_message`,
   `_start_message`, `_finish_message`, `_send_packets`, `_destroy`
-- `rocketnet_client_default_config`, `_create`, `_update`, `_state`,
+- `rocketnet_client_default_config`, `_create`, `_connect`, `_update`, `_state`,
   `_receive_message`, `_release_message`, `_start_message`, `_finish_message`,
   `_send_packets`, `_destroy`

@@ -2,10 +2,13 @@
 
 `RNReceipts.tla` models receipt generation for types 5, 6 and 7. It is a
 standalone module over transport packet events, with no dependency on
-`RNChannel`. The channel draft is not on origin at staging; the interface
-names are aligned with the local draft for later composition. This is a
-model of the design in `standard/MESSAGES.md` 7.4, not a claim that the message
-layer implementation exists.
+`RNChannel`. The rule is [m12 Receipts](../standard/MESSAGES.md#m12) of the message
+standard. The code is `sdk/rocketnet_window_ack.cpp` (`rn_window_ack_commit`,
+`rn_window_ack_commit_packet`, `rn_window_ack_receipt_begin_update`,
+`rn_window_ack_receipt_emit`, `rn_window_ack_receipt_end_update` and
+`rn_window_ack_receipts`) with the receipt dispatch of
+`rn_channels_dispatch_receipt` and `rn_channels_reliable_receipt_base`
+(`sdk/rocketnet_channel_receipts.cpp`).
 
 ## Interface and state
 
@@ -14,8 +17,8 @@ layer implementation exists.
   in the state graph. A nonreceipt send is followed by two single-record receipt sends or one
   two-fragment receipt block.
 - `WritePacket(n,pid)` associates a number/fragment with a transport packet.
-  `smap` contains bounded `[id, nums, unrel]` entries, matching the channel
-  draft. Reliable numbers remain in `Unacked` after map eviction or loss.
+  `smap` contains bounded `[id, nums, unrel]` entries, the sent map's
+  entries. Reliable numbers remain in `Unacked` after map eviction or loss.
   Reliable retransmission is an abstract choice of any unacked number;
   scheduling/backoff is outside this model. Unreliable records write once.
 - `OpenPacket(pid)` is a peer transport open. `ReceiveAck(pid)` consumes
@@ -39,7 +42,7 @@ layer implementation exists.
   twin mapping for every source mode.
 - `outcomes` is a ghost history of generated events, separate from `ring`.
   A full ring drops its oldest event and increments `ringDropped`, as
-  standard/MESSAGES.md m12 specifies. Draining or overflowing the ring does not allow a
+  USAGE.md ("Receipts") states for the receipt ring. Draining or overflowing the ring does not allow a
   second outcome. Progress refers to generation or connection end, not a
   guarantee that an application which ignores a full ring reads every event.
 
@@ -101,7 +104,8 @@ that prunes transitions or hides violations.
   is weaker than fair Link delivery. Fairness also applies to packet writes,
   eviction under actual send pressure, update ticks,
   receipt processing and timeout handling. No safety property relies on
-  fairness. The reliable timeout is part of the design, not a spontaneous
+  fairness. The reliable timeout is the rule of
+  [m9.3](../standard/MESSAGES.md#m9), not a spontaneous
   end transition added solely to satisfy liveness.
 
 ## Reversed witnesses
@@ -127,8 +131,8 @@ property, plus `TypeOK`. They must exit 12 and identify that property.
   at 2. Actual types 6 and 7 share this checked rule; the enumerated witness
   selects the promoted type first.
 
-The measured traces and their exact state counts are recorded with the run
-records and the task's raw TLC evidence. No witness uses an unrelated type
+The measured traces and their exact state counts are recorded in the
+`rnreceipts` rows of `tla/RUNS.tsv`. No witness uses an unrelated type
 error or a different safety violation as a substitute for its named property.
 
 ## Reference behavior and differences
@@ -143,23 +147,22 @@ record, and never emit reliable LOSS. Types 5/6/7 dispatch as base wire types
 The deliberate receipt differences are:
 
 1. A block waits for all fragment numbers, rather than firing on the
-   highest-index fragment alone (study 7.3).
+   highest-index fragment alone.
 2. Sent-map eviction explicitly produces unreliable LOSS in addition to
    the RTO sweep; the reference receipt history is separate from its
-   datagram history (study 6.1 and 7.3).
+   datagram history.
 3. The fixed receipt ring drops/counts its oldest event when full. The
    reference puts five-byte notification messages on its output queue;
    this model exposes structured `(serial,status)` events instead.
 4. Receipt identity uses the send descriptor's issued serial. The reference
-   loopback path reads the global counter and may report the wrong serial
-   (study 7.4). Loopback itself is not modeled here.
+   loopback path reads the global counter and may report the wrong serial. Loopback itself is not modeled here.
 5. The transport owns packet IDs, loss detection and ack production. This
    module does not recreate the reference reliability layer's datagram
    ACK/NAK machinery. Reliable first-send timeout maps to the documented
    endpoint error/disconnect path.
 
 Ordering, sequencing, wire encoding, bandwidth scheduling, allocator and
-zero-copy implementation differences remain in their own designs and models.
+zero-copy implementation differences are covered by their own models.
 This receipt module does not claim to validate those unrelated semantics.
 
 ## Reproduction

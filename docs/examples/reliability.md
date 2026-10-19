@@ -17,17 +17,16 @@ needs.
 1. Start a server and a step-driven client over the in-memory `loopback`
    transport with `simulated_loss_percent = 25`, `simulated_latency_ms = 20`,
    and `simulated_jitter_ms = 35`.
-2. Send a numbered run of eight messages (`1..8`) in each of the eight
-   reliability modes (one channel per mode), one message per frame so each send
-   faces independent simulated loss and jitter.
-3. Receive messages across all channels, collect resolved receipts from
-   `rocketnet_server_receipts`, print one summary line per mode, and check each
-   mode's delivery, ordering, and receipt promise.
+2. The server sends the client a numbered run of eight messages (`1..8`) in
+   each of the eight reliability modes (one channel per mode), one message per
+   frame so each send faces independent simulated loss and jitter.
+3. The client receives on all channels; the server collects resolved receipts
+   from `rocketnet_server_receipts`. The program then prints one summary line
+   per mode and checks each mode's delivery, ordering, and receipt promise.
 
-Each frame runs in standard order: `update`, receive message and release
-message (plus `receipts`), simulation, start message and finish message, and
-`send_packets` last so
-queued messages leave in the same frame.
+Each frame runs in the standard order: `update`, receive and release messages
+(plus `receipts`), simulate, `start_message` and `finish_message`, and
+`send_packets` last so queued messages leave in the same frame.
 
 ## Run it
 
@@ -45,14 +44,14 @@ unreliable_sequenced     sent=8 arrived=5 order=[1,3,6,7,8] gaps=3 duplicates=0 
 reliable                 sent=8 arrived=8 order=[1,3,2,4,5,6,7,8] gaps=0 duplicates=0 receipts=0/0
 reliable_ordered         sent=8 arrived=8 order=[1,2,3,4,5,6,7,8] gaps=0 duplicates=0 receipts=0/0
 reliable_sequenced       sent=8 arrived=5 order=[1,2,4,7,8] gaps=3 duplicates=0 receipts=0/0
-unreliable_receipt       sent=8 arrived=6 order=[3,2,4,5,7,8] gaps=2 duplicates=0 receipts=6/2
+unreliable_receipt       sent=8 arrived=5 order=[3,2,4,5,8] gaps=3 duplicates=0 receipts=5/3
 reliable_receipt         sent=8 arrived=8 order=[1,2,3,6,8,7,4,5] gaps=0 duplicates=0 receipts=8/0
 reliable_ordered_receipt sent=8 arrived=8 order=[1,2,3,4,5,6,7,8] gaps=0 duplicates=0 receipts=8/0
 PASS
 ```
 
 Unreliable modes drop lost packets; `unreliable_receipt` shows jitter delivering
-`3` before `2` and reports `6` acked / `2` lost receipts. Sequenced modes never
+`3` before `2` and reports `5` acked / `3` lost receipts. Sequenced modes never
 step backwards, and `reliable_sequenced` guarantees the final message `8`.
 `reliable` and `reliable_receipt` deliver all `8` messages without head-of-line
 stalls, while `reliable_ordered` and `reliable_ordered_receipt` deliver `1..8`

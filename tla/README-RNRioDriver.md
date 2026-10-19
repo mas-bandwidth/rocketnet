@@ -1,9 +1,8 @@
 # RNRioDriver
 
-The Windows Registered I/O (RIO) server driver, modelled from its design
-before its code exists. The driver is `sdk/rocketnet_server_rio_windows.cpp`
-(owed); its region layout and request contexts are
-`sdk/rocketnet_rio_layout.h`. The driver opens one UDP socket with
+The Windows Registered I/O (RIO) server driver,
+`sdk/rocketnet_server_rio_windows.cpp`; its region layout and request
+contexts are `sdk/rocketnet_rio_layout.h`. The driver opens one UDP socket with
 `WSA_FLAG_REGISTERED_IO`, registers one region with one
 `RIORegisterBuffer`, and polls one send completion queue and one receive
 completion queue, with no notification and no worker thread: everything
@@ -31,9 +30,9 @@ runs on the main thread.
 - **Socket.** `Running`, `Closing` (after `closesocket`) or `Freed` (queues
   closed, buffer deregistered, region freed).
 
-## Each action against the design
+## Each action against the code
 
-| Action | Design sentence it models |
+| Action | What the driver does |
 |---|---|
 | `Reserve` | start_packet reserves the next slot of the fill phase with one fetch_add; past the last slot it returns NULL (SEND_FULL, no state change) |
 | `Finish(s)` | finish records the bytes |
@@ -50,6 +49,19 @@ runs on the main thread.
 | `Drain` | destroy dequeues both CQs; nothing is re-posted |
 | `Free` | RIOCloseCompletionQueue, RIODeregisterBuffer and VirtualFree, only once every posted send and receive is accounted for |
 | `Done` | the driver is gone; the run stutters, so a freed driver is not a deadlock |
+
+In `sdk/rocketnet_server_rio_windows.cpp`, `Reserve` is
+`rocketnet_server_rio_start_packet`, `Finish(s)` is
+`rocketnet_server_rio_finish_packet`, `Abort(s)` is
+`rocketnet_server_rio_abort_packet`, `Post` and `SwitchPhase` are
+`rocketnet_server_rio_send_packets`, `DequeueSend(p, s)` is
+`rocketnet_rio_dequeue_send` and `rocketnet_rio_retire_send`,
+`DequeueReceive(i)` is `rocketnet_rio_complete_receive` and
+`rocketnet_rio_post_receive`, `Swap` is `rocketnet_server_rio_receive_packets`,
+`TransportReads` is `rocketnet_server_rio_process_packets`, and `Close`,
+`Drain` and `Free` are `rocketnet_server_rio_destroy`. A region the kernel has
+not given back by the drain deadline is leaked, never freed under it, so
+`Free` is not reached on that branch.
 
 The fill-thread actions (`Reserve`, `Finish`, `Abort`) and the main-thread
 receive actions run only outside `send_packets` (`FillOpen`). `DequeueSend`
@@ -108,7 +120,7 @@ not committed.
 
 ## How to run it
 
-With the pinned runner and JAR of `tla/README.md`, from the checkout, one
+With the pinned `tlacheck` and JAR of `tla/README.md`, from the checkout, one
 shard per case:
 
 ```sh
@@ -160,16 +172,17 @@ ignores the other phase's outstanding count.
      which has nothing finished.
   4. `SwitchPhase` back to phase 0 while its count is still 1, and
      `Reserve` returns slot 1 of phase 0, the slot the kernel still owns.
-- **Against the design, by hand:** two `send_packets` calls in a row with
+- **Against the code, by hand:** two `send_packets` calls in a row with
   no send completion in between are an ordinary schedule (the kernel
   completes sends when it does, and the first call's post may not have
   completed by the second). The second call switches back to phase 0. If it
   does not wait for phase 0's outstanding count, phase 0's reservation
   index starts again at slot 1, and the next `start_packet` hands a fill
   thread the frame whose RIOSendEx is still in flight, so the fill thread
-  writes over a datagram the kernel is sending. The design's sentence "A
-  phase is opened to fill threads only when its outstanding count is zero"
-  is exactly what the witness removes. The counterexample is real for that
+  writes over a datagram the kernel is sending.
+  `rocketnet_server_rio_send_packets` opens the other phase to fill threads
+  only when its outstanding count is zero, polling the send completion queue
+  until it is; that wait is exactly what the witness removes. The counterexample is real for that
   defect.
 
 ### `MCRNRioDriverBrokenFreeBeforeDrain.cfg`
@@ -182,21 +195,21 @@ The committed instance with `FreeWaitsDrain = FALSE`: `Free` follows
   2. `Close`: both slices complete with an error; the receive completion
      queue holds two failed completions.
   3. `Free`: the region is freed with both completions still queued.
-- **Against the design, by hand:** every receive slice is posted at create,
+- **Against the code, by hand:** every receive slice is posted at create,
   so an outstanding RIOReceiveEx exists from the first moment. closesocket
   completes those requests with an error, but the completions are queued,
   not consumed. Freeing at once runs RIOCloseCompletionQueue and
   RIODeregisterBuffer while completions that reference the registered
   slices are still queued and before the driver has accounted for them, and
-  VirtualFree releases memory the kernel's requests were bound to. The
-  design's sentence "dequeue both CQs until every posted send and receive is
-  accounted for; only then RIOCloseCompletionQueue, RIODeregisterBuffer and
-  VirtualFree" is exactly what the witness removes. The counterexample is
+  VirtualFree releases memory the kernel's requests were bound to.
+  `rocketnet_server_rio_destroy` dequeues both completion queues until every
+  posted send and receive is accounted for, and only then runs
+  RIOCloseCompletionQueue, RIODeregisterBuffer and VirtualFree; that wait is
+  exactly what the witness removes. The counterexample is
   real for that defect.
 
-## Citation owed
+## Citation
 
-The driver code in
-`sdk/rocketnet_server_rio_windows.cpp` cites this model from its send
-switch and its destroy, and moves the `rio-driver` row of
-`tla/COVERAGE.tsv` from `owed` to `current`.
+`sdk/rocketnet_server_rio_windows.cpp` cites `tla/RNRioDriver.tla` at the top
+of the file, and each function that implements one of its actions names the
+action, the send switch and the destroy included.

@@ -104,8 +104,8 @@
 #define ROCKETNET_LOOPBACK_MAX_ENDPOINTS          ( ROCKETNET_MAX_CLIENTS + 1 )
 
 // The packet size: the UDP payload of one datagram on a 1500-byte MTU link,
-// the number every other size limit derives from (standard/TRANSPORT.md _Packet
-// sizes_). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
+// the number every other size limit derives from (standard/TRANSPORT.md t8.11,
+// _Packet sizes_). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
 // over IPv6 it is 1500 - 40 - 8 = 1452 bytes, the send budget, so a maximum
 // packet crosses a 1500-MTU path unfragmented on either family.
 
@@ -687,8 +687,8 @@ ROCKETNET_EXPORT bool rocketnet_allocator( void * (*malloc_function)( void * con
 // at client connect and server start; the first transport that starts wins, and a list that every
 // candidate refuses fails loudly. "auto" (the default, also NULL or the empty
 // string) is this platform's recommended order: a linux server tries
-// xdp,gso,portable, a macOS server msgx,portable, and everything else
-// portable (clients: portable everywhere, plus msgx on macOS). A one-element
+// xdp,gso,io_uring,portable, a macOS server msgx,portable, and a windows
+// server portable,iocp,rio (clients: portable everywhere, plus msgx on macOS). A one-element
 // list is a pin: that transport or loud failure. A known name that this
 // platform or this endpoint does not have (xdp for a client) is skipped with
 // one log line, so one config line deploys to mixed machines; a name that is
@@ -716,7 +716,7 @@ struct rocketnet_client_config_t
     const char * transport;                         // ROCKETNET_CLIENT_TRANSPORT: the candidate list; NULL is "auto"
     void (*state_change_callback)( void * context, int previous_state, int current_state );   // no env form; NULL is none
     double (*time_callback)( void * context );      // no env form: the receive stamp clock, read once at create; NULL is the platform clock
-    uint64_t step_driven;                           // ROCKETNET_CLIENT_STEP_DRIVEN: 1 runs the client I/O step inside update and send_packets on the caller's thread, with no I/O thread; 0 (the default) keeps today's thread
+    uint64_t step_driven;                           // ROCKETNET_CLIENT_STEP_DRIVEN: 1 runs the client I/O step inside update and send_packets on the caller's thread, with no I/O thread; 0 (the default) runs it on the client's I/O thread
     int send_kbps;                                  // ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; 0 or less disables the budget in this direction (client to server), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               // ROCKETNET_CLIENT_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            // ROCKETNET_CLIENT_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
@@ -1210,7 +1210,7 @@ ROCKETNET_EXPORT int rocketnet_server_disconnect_reason( const struct rocketnet_
 //         serial = rocketnet_server_finish_message( server, destination_id, bytes );
 //     }
 //
-// destination_id is a client index today. An id with ROCKETNET_FLOW_ID_BIT
+// destination_id is a client index. An id with ROCKETNET_FLOW_ID_BIT
 // set is a flow id, reserved for a future flow feature and refused for now
 // (NULL, 0 or nothing, counted; ROCKETNET_STATUS_FLOW_ID_RESERVED in the log).
 // To send to every connected client, loop over the slots. The pointer is

@@ -12,8 +12,8 @@ calls through the vendored sodium subset:
   `rocketnet_verify_signed_connect_data` performs
   (sdk/rocketnet_connect_token.cpp).
 
-Source: C2SP/wycheproof, commit `3fa63dd0344abb611f1fb1d77e119938603ea230`
-(2026-09-02). License: Apache-2.0 (beside these files, `LICENSE`).
+Source: C2SP/wycheproof, commit `3fa63dd0344abb611f1fb1d77e119938603ea230`.
+License: Apache-2.0 (beside these files, `LICENSE`).
 
 The fetch (run from `test/wycheproof/`):
 

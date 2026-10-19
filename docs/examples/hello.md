@@ -13,12 +13,13 @@ over the in-memory `loopback` transport, which needs no socket and no network.
    update both ends until the client reports
    `ROCKETNET_CLIENT_STATE_CONNECTED`.
 5. Send one `ROCKETNET_RELIABLE_ORDERED` message from the client to the
-   server with `rocketnet_client_start_message`, a `memcpy` into the returned buffer,
-   and `rocketnet_client_finish_message`.
-6. Receive and print it on the server, release the view, disconnect the
-   client, and destroy both ends.
+   server with `rocketnet_client_start_message`, a `memcpy` into the returned
+   buffer, and `rocketnet_client_finish_message`.
+6. Receive and print it on the server, release the message, then disconnect
+   and destroy the client.
 7. Connect a second client with a second development token, then disconnect
-   it, showing that a server keeps serving after one client leaves.
+   it, showing that a server keeps serving after one client leaves. Destroy
+   the server last.
 
 Each frame runs the calls in the order a game does: update, receive and
 release, simulate, queue, then send last. Sending last is what makes this
@@ -32,9 +33,9 @@ From the repository root, after the normal build:
 ./bin/example_hello
 ```
 
-On Windows the binary is `bin\Release\example_hello.exe`. The program finishes
-well inside five seconds and prints `PASS` as its last line; any failure
-prints one `FAIL: ...` line and exits 1.
+On Windows the binary is `bin\Release\example_hello.exe`. Each connection has a
+five-second deadline; the program prints `PASS` as its last line, and any
+failure prints one `FAIL: ...` line and exits 1.
 
 ## What the output means
 
@@ -44,8 +45,8 @@ PASS
 ```
 
 The first line is the message the server received. `PASS` means the client
-connected, the message arrived, and the client reconnected with a second
-token and disconnected cleanly. The informational log lines before it come
+connected, the message arrived, and a second client connected with a second
+token. The informational log lines before it come
 from the library and are not part of the check.
 
 ## Public calls it uses

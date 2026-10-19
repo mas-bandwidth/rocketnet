@@ -1,16 +1,19 @@
 # RNClientIo
 
-The client transport with its socket I/O on one I/O thread, as
-the client I/O design designs it. The design replaces code in
-`sdk/rocketnet_client_transport.cpp` at the base of the design: the payload
-ring filled by `rocketnet_client_transport_start_packet` (line 697), the
-per-packet send walk of `rocketnet_client_transport_send_packets` (line 987,
-the walk at lines 1001-1017), which `rocketnet_client_transport_send_packet`
-calls after every packet, the receive thread (created at line 407, its loop
-at line 1275, the 1 ms sleep at line 1283), and the receive buffers swapped
-under a mutex by `rocketnet_client_update_swap_receive_buffers` (line 515)
-and filled by `rocketnet_client_receive_packets` (line 1234). No code
-implements the design yet; `tla/COVERAGE.tsv` marks the machine owed.
+The client transport with its socket I/O on one I/O thread: the path
+`sdk/rocketnet_client_transport.cpp` takes when the granted driver has wait
+and wake (`rocketnet_client_transport_uses_io_thread`), and the step-driven
+mode. The model checks the I/O core of `sdk/rocketnet_client_io.h`
+(`rocketnet_client_io_hand_off`, `rocketnet_client_io_expose`,
+`rocketnet_client_io_return`, `rocketnet_client_io_step`,
+`rocketnet_client_io_thread_function` and `rocketnet_client_io_stop`), the
+two send rings of `sdk/rocketnet_client_send_rings.h`, the receive handshake
+of `sdk/rocketnet_client_receive_handshake.h`, and the transport wiring in
+`sdk/rocketnet_client_transport.cpp` (`rocketnet_client_transport_io_hand_off`,
+`rocketnet_client_transport_io_commit_packet`, and the I/O thread path of
+update, send_packets, disconnect, create and destroy). A driver without wait
+and wake keeps the receive thread of `rocketnet_client_thread_function`,
+whose quit handshake `RNClientReceiveQuit` models.
 
 - **The two send rings.** Game threads write slots of the ring that is
   Filling (`Write`, then `Commit`). A hand-off (`send_packets`, `send_packet`
@@ -31,7 +34,9 @@ implements the design yet; `tla/COVERAGE.tsv` marks the machine owed.
   exposes the Ready buffer when there is one (`Expose`), and at its end,
   every update, it returns the buffer it holds as Free and wakes the I/O
   thread when the owed flag is set (`Return`). Each action is one atomic
-  step, which is the seq_cst store-then-load pairing of the client I/O design.
+  step, which is the seq_cst store-then-load pairing of
+  `rocketnet_client_receive_handshake_io_owe` and
+  `rocketnet_client_receive_handshake_update_return`.
 - **The wake.** `IoWait` blocks only when nothing is visible to do: never
   while a publish is possible, with an unpublished batch only once it is
   owed, and with datagrams in the socket only when the buffer is full. It
@@ -160,15 +165,14 @@ depth 10 (3,697 states generated, 1,388 distinct).
   3. The I/O thread sends slot 1 of A (A Sending, the I/O thread owns A).
   4. The main thread reopens A while it is Sending, hands B off and switches
      to A; a game thread writes slot 1 of A while the I/O thread still owns A.
-- **Against the design, by hand:** this is the reuse the design forbids. In
-  the client I/O design the main thread reopens a ring only after an acquire
-  load sees Sent, which the I/O thread stores after its last send of that
-  ring; in the trace the reopen reads Sending. With the rule, step 4's
-  `Reopen` is disabled until `IoFinishRing`, the hand-off of B defers, and no
-  game thread writes A while the I/O thread reads it. In the code at the
-  base this cannot happen yet, because the main thread sends the ring itself
-  and resets it after the walk (line 1017); the hazard is the design's, and
-  the rule is what the transport must keep.
+- **Against the code, by hand:** this is the reuse the code forbids. The
+  main thread reopens a ring (`rocketnet_client_send_rings_reopen`, and the
+  reopen inside `rocketnet_client_send_rings_hand_off`) only after an acquire
+  load sees Sent, which the I/O thread stores with release
+  (`rocketnet_client_send_rings_finish`) after its last send of that ring; in
+  the trace the reopen reads Sending. With the rule, step 4's `Reopen` is
+  disabled until `IoFinishRing`, the hand-off of B defers, and no game thread
+  writes A while the I/O thread reads it.
 
 ### `MCRNClientIoBrokenSwapWhileReading.cfg`
 
@@ -183,20 +187,19 @@ distinct).
   3. `update` exposes buffer 0 (one datagram, `Expose`) and processes it.
   4. A second datagram arrives and the I/O thread writes it into buffer 0,
      the exposed one: it now holds two while `update` read one.
-- **Against the design, by hand:** in the design the I/O thread writes only
-  its own Fill buffer, and a buffer becomes Fill only when `update` has
-  returned it as Free. A swap made by `update` alone, without the I/O
-  thread's publish, has exactly this effect: the I/O thread can have chosen
-  its target before the swap and write it after, into the buffer `update`
-  now reads. The code at the base avoids it with the mutex held across the
-  whole drain (lines 1238 and 1272), which is the lock wait
-  the client I/O design measures; the handshake removes the lock without
-  reopening the race.
+- **Against the code, by hand:** the I/O thread writes only its own Fill
+  buffer, and a buffer becomes Fill only when `update` has returned it as
+  Free (`rocketnet_client_receive_handshake_update_return`). A swap made by
+  `update` alone, without the I/O thread's publish, has exactly this effect:
+  the I/O thread can have chosen its target before the swap and write it
+  after, into the buffer `update` now reads. The receive-thread path avoids
+  it with a mutex shared by the drain (`rocketnet_client_receive_packets`)
+  and the swap (`rocketnet_client_update_swap_receive_buffers`); the
+  handshake removes the lock without reopening the race.
 
 ### `MCRNClientIoBrokenReceiveStall.cfg`
 
-`SwapNeedsReady = TRUE`: the one-step swap of the first draft of the design,
-where `update` returns the buffer it exposed only in the step that exposes a
+`SwapNeedsReady = TRUE`: a one-step swap, where `update` returns the buffer it exposed only in the step that exposes a
 Ready one, and `Return` does not exist. TLC exits 12: **`Invariant NoReceiveStall is violated`**, at depth 7 (781 states generated, 362
 distinct).
 
@@ -208,10 +211,10 @@ distinct).
      Now buffer 0 is Exposed and buffer 1 is Fill with one datagram:
      `IoPublish` needs a Free buffer, the swap needs a Ready one, the I/O
      thread is not blocked, and no other action changes a buffer's state.
-- **Against the design, by hand:** this is the deadlock found in the first
-  draft: with two buffers, nothing after the first exposed batch ever
-  reaches `update`. In the design as written, `update` returns buffer 0 at
-  its end whatever it exposed (`Return`), so the I/O thread publishes buffer
+- **Against the code, by hand:** this is a deadlock: with two buffers,
+  nothing after the first exposed batch ever reaches `update`. In the code,
+  `update` returns buffer 0 at its end whatever it exposed (`Return`,
+  `rocketnet_client_io_return`), so the I/O thread publishes buffer
   1 at its next batch end, or, if it blocked first, after the return's wake
   (it stored owed before blocking).
 
@@ -224,8 +227,8 @@ prevent.
 
 ### `MCRNClientIoBrokenHandOffWaits.cfg`
 
-`HandOffWaits = TRUE`: the hand-off of the second draft, which waits for the
-other ring to be Sent. TLC exits 12: **`Invariant HandOffNeverWaits is violated`**, at depth 7 (415 states generated, 216 distinct).
+`HandOffWaits = TRUE`: a hand-off that waits for the other ring to be
+Sent. TLC exits 12: **`Invariant HandOffNeverWaits is violated`**, at depth 7 (415 states generated, 216 distinct).
 
 - **The trace:**
   1. A game thread writes and commits slot 1 of ring A; the hand-off (here
@@ -236,9 +239,10 @@ other ring to be Sent. TLC exits 12: **`Invariant HandOffNeverWaits is violated`
   3. The next hand-off (the second `send_packet`, or the end of `update`)
      finds A still HandedOff, because the I/O thread has not run yet, and
      the main thread blocks on the I/O thread.
-- **Against the design, by hand:** nothing in the trace is overload: two
-  hand-offs in one frame before the I/O thread is scheduled. In the design as
-  written the third step is `Defer`: slot 1 of B stays in the Filling ring,
+- **Against the code, by hand:** nothing in the trace is overload: two
+  hand-offs in one frame before the I/O thread is scheduled. In the code the
+  third step is `Defer` (`rocketnet_client_send_rings_hand_off` returns
+  `ROCKETNET_CLIENT_RINGS_LATE`): slot 1 of B stays in the Filling ring,
   `CLIENT_SEND_DEFERRED` moves, the call returns, and the slot leaves with
   the next hand-off that finds A Sent. `CommittedEventuallyHandedOff` holds
   in the committed run because `update` retries every frame. Two scratch
@@ -250,8 +254,8 @@ other ring to be Sent. TLC exits 12: **`Invariant HandOffNeverWaits is violated`
 
 ### `MCRNClientIoBrokenFullWaitReadable.cfg`
 
-`FullWaitReadable = TRUE`: the wait of the second draft, which returns on
-socket readable or the wake whatever the buffer holds. TLC exits 12:
+`FullWaitReadable = TRUE`: a wait that returns on socket readable or the
+wake whatever the buffer holds. TLC exits 12:
 **`Invariant FullWaitsOnWake is violated`**, at depth 8 (1,576 states
 generated, 672 distinct).
 
@@ -264,13 +268,13 @@ generated, 672 distinct).
      stores owed.
   4. The I/O thread blocks in a wait that also returns on readable, with its
      buffer full.
-- **Against the design, by hand:** the next datagram to arrive makes that
+- **Against the code, by hand:** the next datagram to arrive makes that
   wait return at once; the thread cannot read it (no room), cannot publish
   (no Free buffer), and waits again, which returns at once again: a spin
   until `update` exposes buffer 0 and returns it, about a frame of a busy
   core for any hitch of more than `ROCKETNET_NUM_CLIENT_PACKETS` replies. In
-  the design as written the fourth step is `wait( driver, false, timeout )`:
-  the full buffer waits on the wake alone, and the `Return` at the end of the
+  `rocketnet_client_io_step` the fourth step is the driver's wait with
+  `readable` false: the full buffer waits on the wake alone, and the `Return` at the end of the
   next `update` wakes it because owed is set.
 
 ## Runs
@@ -303,7 +307,7 @@ core actions fair on their executor, `StepBegin` and `StepEnd` weakly fair
 (the game calls `update` every frame), and the main thread's reopen,
 hand-off, expose, return and join and the receive strongly fair, since a
 caller step disables them intermittently. The committed instance is one slot
-and two datagrams, which fits the runner's 110 s budget. At two slots and
+and two datagrams, which fits the 110 s budget of `tlacheck run`. At two slots and
 three datagrams, the size of `MCRNClientIo.cfg`, the same check passes when
 run by hand with TLC 2.19 (exit 0, about six minutes on a 16-core bench),
 outside the budget, so it has no row in `RUNS.tsv`.

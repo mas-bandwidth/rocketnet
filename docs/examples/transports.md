@@ -3,37 +3,47 @@
 How a server picks its transport, and how to read the choice: automatic
 selection, a pin, and a candidate list. Each server that starts is proved with
 a client exchange over the loopback interface, `127.0.0.1`.
+
 ## What it shows
 
 Three kinds of `transport` setting, each tried in turn on a server:
+
 - **auto** (`NULL`): the platform's recommended ladder. A Linux server tries
-  `xdp`, then `gso`, then `portable`; macOS tries `msgx`, then `portable`;
-  Windows uses its own order. The first transport that starts wins.
+  `xdp`, then `gso`, then `io_uring`, then `portable`; macOS tries `msgx`,
+  then `portable`; a Windows server tries `portable`, then `iocp`, then `rio`.
+  The first transport that starts wins.
 - **a pin**: one name. The server gets exactly that transport or
   `rocketnet_server_start` fails loudly; there is no fallback.
 - **a list**: comma-separated names tried left to right. The first one granted
   wins, and the library logs each refusal, so `xdp,gso,portable` lands on the
   best transport this machine and this user can actually have.
+
 The example then pins a name no transport has. The library refuses it with one
 error line listing the valid names, and the program prints that the refusal was
-expected. Every successful server is proved with a client that connects, sends
-one reliable-ordered message, and disconnects.
+expected. Every successful server is proved with a client, pinned to `portable`, that
+connects, sends one reliable-ordered message, and disconnects.
+
 Each frame runs the calls in the order a game does: update, receive and
 release, simulate, queue, then send last. Sending last is what makes this
 frame's messages leave this frame instead of waiting a frame.
 
 ## Run it
+
 From the repository root, after the normal build:
 
 ```sh
 ./bin/example_transports
 ```
 
-On Windows the binary is `bin\Release\example_transports.exe`. It finishes well
-inside five seconds per exchange and prints `PASS` as its last line; any
-failure prints one `FAIL: ...` line and exits 1.
+On Windows the binary is `bin\Release\example_transports.exe`. Each exchange
+has a five-second deadline; the program prints `PASS` as its last line, and
+any failure prints one `FAIL: ...` line and exits 1.
 
 ## What the output means
+
+On Linux, with the timestamps, the memory-plan and connection log lines, and
+the list's repeat of the auto server's `xdp` refusal left out:
+
 ```
 warning: server transport xdp refused: a port-zero public address ...
 warning: server transport xdp refused. trying the next candidate
@@ -46,11 +56,13 @@ refused as promised: the pin named no transport
 PASS
 ```
 
-The `info:` and `error:` lines before each `chose` line are the library's own
-log lines: they say which candidate was granted and why the others were
-skipped or refused. The `chose` line is the public query
-(`rocketnet_server_transport_name`). `PASS` means all three starts behaved as
-their kind promises and every started server completed the exchange.
+The `info:`, `warning:` and `error:` lines are the library's own log lines,
+which the example turns on with `rocketnet_log_level`: they say which
+candidate was granted and why the others were skipped or refused. The `chose` line is the public query
+(`rocketnet_server_transport_name`). Here `xdp` is refused because the server
+asks for an ephemeral port (`127.0.0.1:0`), which `xdp` cannot discover. `PASS`
+means all three starts behaved as their kind promises, every started server
+completed the exchange, and the unknown name was refused.
 
 ## Selecting a transport in a deployment
 

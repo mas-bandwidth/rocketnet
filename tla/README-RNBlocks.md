@@ -1,7 +1,7 @@
 # RNBlocks: a block split, numbered, placed by index and delivered whole
 
-`tla/RNBlocks.tla` is layer 5 of standard/MESSAGES.md (section 8, blocks) and section
-15's `RNBlocks` row: the split at the fixed stride, the consecutive numbering, the
+`tla/RNBlocks.tla` models blocks, [m8 Blocks](../standard/MESSAGES.md#m8) of `standard/MESSAGES.md`:
+the split at the fixed stride, the consecutive numbering, the
 one contiguous ring span, and the receiver's placement by index with whole
 delivery at one ordering slot. `tla/MCRNBlocks.tla` and `tla/MCRNBlocks.cfg` are
 the small instance; `tla/MCRNBlocksBrokenPlaceByArrival.cfg` is the reversed
@@ -26,11 +26,11 @@ State the sender owns:
 
 State the receiver owns:
 
-- `rcvd`: the numbers layer 3 has accepted (a second arrival is a duplicate and
-  writes nothing, 6.5).
+- `rcvd`: the numbers the receive window has accepted (a second arrival is a
+  duplicate and writes nothing, m5.2 rule 8).
 - `anchor[b]`: the block whose first number is `b`: chunks in (`have`), `k`, the
   ordering index and the span's base, opened by whichever fragment arrives first
-  (section 8, "No start packet").
+  (the `collecting` rows of the m8 state table).
 - `ring`: the receive ring, unit to tag.
 - `ordRead`: the channel's ordered read index.
 - `log`: the deliveries in order (a ghost): the ordering index and the bytes read
@@ -41,7 +41,7 @@ function cites its action):
 
 | Action | Who | What | Code |
 |---|---|---|---|
-| `NumberMessage` | the sender | the FIFO head is numbered: a message of at most `Small` units is one record; a larger one is `k = ceil(Units / F)` fragments taking `next .. next+k-1` at once and one span `[p, p + (k-1)F + last)`, fragment `i` at `p + iF`, both bounds of 6.2 checked once; every record carries ordering index `m - 1` | `rn_channels_finish` (the count `k`), `rn_ordered_write` calling `rn_window_send_first_write_block` (`sdk/rocketnet_window_send.cpp`) |
+| `NumberMessage` | the sender | the FIFO head is numbered: a message of at most `Small` units is one record; a larger one is `k = ceil(Units / F)` fragments taking `next .. next+k-1` at once and one span `[p, p + (k-1)F + last)`, fragment `i` at `p + iF`, both bounds of m5.1 checked once; every record carries ordering index `m - 1` | `rn_channels_finish` (the count `k`), `rn_ordered_write` calling `rn_window_send_first_write_block` (`sdk/rocketnet_window_send.cpp`) |
 | `SendRecord(n)` | the sender | a numbered record is written into a packet: a first send or a resend, each fragment on its own; the RTO is abstract | `rn_ordered_item` (index, `k - 1`, ring offset `ring_start % B`), `rn_ordered_walk` |
 | `Receive(r)` | the receiver | a duplicate number writes nothing; otherwise the anchor is found or opened by `b = n - index`, the fragment is copied to its own offset `ring + index·F` and `have` counts it | `rn_channels_dispatch_chunk` (the copy to `record->ring * 16`, `anchor->block_have++`); a single record is `rn_channels_dispatch_ordered` |
 | `Deliver(b)` | the receiver | the message at the read index is complete: one view of its span read at stride `F`, and the read index moves by one | `rn_channels_dispatch_chunk` (`have == count`, `delta == 0`), `rn_channels_deliver_ordered`, `rn_channels_drain` |

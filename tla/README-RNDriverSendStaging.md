@@ -81,14 +81,15 @@ under weak fairness of `send_packets`.
 
 `MCRNDriverSendStagingBrokenDisconnect.cfg` is the committed cfg with
 `DisconnectAdvancesStaged = FALSE`: `disconnect_client` seals its burst into
-the send buffer and calls `send_packets` without advancing the staged counter
-or flushing the send buffer. TLC must reject it, and does:
+the send buffer without advancing the staged counter, and the same step
+stands for the next `send_packets` (`ranSend`), which does not flush the send
+buffer. TLC must reject it, and does:
 
 - **`Invariant StagedDisconnectFlushed is violated`**, at depth 3.
   - **The trace:**
     1. A frame is reserved through the seam (frame 1 outstanding).
-    2. `disconnect_client` seals frame 2 into the send buffer and runs
-       `send_packets`. The staged and flushed counters are both 0, so
+    2. `disconnect_client` seals frame 2 into the send buffer, and the next
+       `send_packets` runs. The staged and flushed counters are both 0, so
        nothing flushes.
     3. Frame 2 is still owed after `send_packets` has run
        (`discOwed = {2}`, `sent = {}`).

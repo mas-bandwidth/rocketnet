@@ -18,8 +18,8 @@ open with `rocketnet_open_sealed_packet`, `rocketnet_replay_advance` right
 after it), `rocketnet_client_consume_session_record` (`UpdateConsume`),
 `rocketnet_client_integrity_failure` (the limit, the state change and the
 zeroing of `client->keys`) and `rocketnet_client_process_challenge` (where the
-session keys are derived and published). `tla/COVERAGE.tsv` marks the
-client-io-decrypt row current.
+session keys are derived and published). `tla/COVERAGE.tsv` marks this
+module current.
 
 ## What is modelled
 

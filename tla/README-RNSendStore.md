@@ -1,16 +1,14 @@
 # RNSendStore
 
-One class of the message layer's send store: standard/MESSAGES.md sections 4 and 15,
-implemented by `rn_send_store_alloc` and `rn_send_store_free_checked` in
-`sdk/rocketnet_allocator.cpp`. The three classes share no state, so one class is
+One class of the message layer's send store in `sdk/rocketnet_allocator.cpp`.
+The three classes share no state, so one class is
 the whole model.
 
-The module was written with layer 1 on its attempt branch (`a7758f3`) and is here
-unchanged. The code it is checked against below is main at `3ad4179`:
-`rn_send_store_alloc` (`sdk/rocketnet_allocator.cpp:211-248`, the all-or-none test
-at line 222) and `rn_send_store_free_checked` (lines 250-280, the `IN_USE | HEAD`
-test at line 265), and the unit test `test_channels_allocator_send_store`
-(`test_channels.cpp:1195-1332`).
+The code it is checked against below is `rn_send_store_alloc` in
+`sdk/rocketnet_allocator.cpp` (the all-or-none test `free_count < needed` comes
+before any chunk is popped), `rn_send_store_free_checked` (the
+`RN_LINK_IN_USE | RN_LINK_HEAD` test), and the unit test
+`test_channels_allocator_send_store` in `test_channels.cpp`.
 
 - **The free list** is a stack threaded through the chunks' links. Alloc pops from
   the head, and free pushes each chunk of a chain back onto the head.
@@ -33,10 +31,10 @@ test at line 265), and the unit test `test_channels_allocator_send_store`
 A second free is modelled only while none of the chain's chunks has been
 reallocated. Once a chunk has been reallocated, a free through the old handle
 looks exactly like the new owner's own free, and no check inside the allocator
-can tell them apart. The layers above own that case:
+can tell them apart. The callers own that case:
 
-- At its free, the descriptor drops its handle (layer 1).
-- The per-number table never names a freed descriptor (layer 3).
+- At its free, the descriptor drops its handle.
+- The per-number table never names a freed descriptor.
 
 ## How to run it
 
@@ -80,11 +78,11 @@ sed -e 's/AllOrNone       = TRUE/AllOrNone       = FALSE/' MCRNSendStore.cfg > /
         `free_count` becomes 5 of 4.
      3. The next two allocations both get chunk 1.
    - **With the guard:** the second free finds `IN_USE | HEAD` clear and returns
-     false, changing nothing (`sdk/rocketnet_allocator.cpp:265-266`). On main,
+     false, changing nothing (`rn_send_store_free_checked`).
      `test_channels_allocator_send_store` pins exactly this: it allocates one
      chunk, frees it, then checks that `rn_send_store_free_checked` on the same
      handle returns false and leaves the class's free count unchanged
-     (`test_channels.cpp:1321-1329`, "a refused double free changes nothing").
+     (its check "a refused double free changes nothing").
 2. **`AllOrNone = FALSE`**: `Invariant NoLeak is violated`, at depth 4.
    - **The trace:**
      1. s1 holds chunk 1, and s2 holds chunk 2.
@@ -92,24 +90,22 @@ sed -e 's/AllOrNone       = TRUE/AllOrNone       = FALSE/' MCRNSendStore.cfg > /
      3. s3 takes those 2 chunks, then reports the refusal.
      4. Chunks 3 and 4 are now in use and in no chain.
    - **Against the code, by hand:** suppose `free_count < needed`
-     (`sdk/rocketnet_allocator.cpp:222`) is not tested first, and the pop stops at
+     (in `rn_send_store_alloc`) is not tested first, and the pop stops at
      the end of the list. The chunks popped before the refusal are marked
      `IN_USE` and returned to no one. That is the accounting
-     `rn_soak_check_accounting` asserts on main (`test_channels.cpp:1589-1607`:
-     free plus used equals total, for each class and for the descriptor pool),
+     `rn_soak_check_accounting` asserts in `test_channels.cpp` (free plus used
+     equals total, for each class and for the descriptor pool),
      run inside `test_channels_allocator_no_live_allocation`.
-   - **On main the rule is pinned** by `test_channels_allocator_send_store`
-     (`test_channels.cpp:1298-1306`, "a block bigger than what is left takes
-     nothing"): a request one chunk larger than the free count returns
-     `RN_CHUNK_NONE` and the free count is unchanged. The rule-removed probe that
-     fails that check was run on the attempt branch, not on main.
+   - **The rule is pinned** by `test_channels_allocator_send_store` (its check
+     "a block bigger than what is left takes nothing"): a request one chunk
+     larger than the free count returns `RN_CHUNK_NONE` and the free count is
+     unchanged.
 
 ## Runs
 
-The three rows are not in `tla/RUNS.tsv` on main (it holds only the
-`MCClientConnection` and `MCLink` rows); they are owed, and they are these, from
-the rerun on Linux (TLC 2.19, `-workers 4` for the committed run, 1 for each
-witness):
+The committed run is a row of `tla/RUNS.tsv`. The two witnesses are the `sed`
+variants above, so they are not rows there. The three runs on Linux (TLC 2.19,
+one worker for each witness):
 
 ```
 MCRNSendStore	MCRNSendStore.cfg (GuardDoubleFree, AllOrNone TRUE; TypeOK, NoDoubleAllocate, NoLeak, RefuseOnlyWhenFull, ChainsBounded)	47407249	4941552	pass
@@ -117,7 +113,5 @@ MCRNSendStore	MCRNSendStore.cfg with GuardDoubleFree = FALSE (reversed witness)	
 MCRNSendStore	MCRNSendStore.cfg with AllOrNone = FALSE (reversed witness)	36	36	fail as expected: NoLeak violated at depth 4, a refused block took the last two chunks
 ```
 
-The committed run took 20 s at depth 28, the same counts as the run on Linux
-recorded with `a7758f3` (47,407,249 states, 4,941,552 distinct). The witness
-counts differ from that record (149/136 and 34/34 there: how many states were on
-the queue when TLC stopped), with the same violations at the same depth.
+The committed run reaches depth 28. A witness's state counts depend on how many
+states were on the queue when TLC stopped; its violation and depth do not.

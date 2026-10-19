@@ -16,7 +16,7 @@
 ; macOS and Windows. A document, a model or a proof is checked on Linux and is
 ; - on macOS and Windows.
 (:title "RocketNet roadmap"
- :text ("Every feature RocketNet has, and every one still to come, by area: a column per transport where a feature is per transport, and a column per platform where it is not. ✅ is done and tested there; ❌ is not done, or not yet proven there; — does not apply. Each table's complete row is the share of ✅ among the cells that apply. Items marked (later) are deliberately after the current work, by the owner's call. An area marked (next milestone) is the next milestone, by the owner's call.")
+ :text ("Every feature RocketNet has, and every one still to come, by area: a column per transport where a feature is per transport, and a column per platform where it is not. ✅ is done and tested there; ❌ is not done, or not yet proven there; — does not apply. Each table's complete row is the share of ✅ among the cells that apply. Items marked (later) are planned after v1.0.0. An area marked (next milestone) is planned for the next release.")
  :areas
  ((:id "handshake" :title "Connect handshake and security"
    :text "The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys, with every refusal counted."
@@ -86,10 +86,10 @@
    :text "The server socket transports, selected at runtime by the per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT. Loopback is pin-only."
    :columns transports
    :rows
-   ((:feature "Server transport available" :cells (y y y y y y y y) :evidence ((xdp "the xdp rows of the transport matrix") (msgx "the msgx row runs on macOS") (gso "test_server_gso_wire_ipv6, test_server_gso_wire_dual_stack") (io_uring "test_server_uring_probe, test_server_uring_wire_ipv4") (portable "ci.yml runs ./bin/functional with the portable transport") (iocp "test_server_iocp_probe") (rio "rocketnet_test_server_rio_probe, rocketnet_test_server_rio_wire_ipv4") (loopback "the loopback rows of the transport matrix")))
+   ((:feature "Server transport available" :cells (y y y y y y y y) :evidence ((xdp "the xdp rows of the transport matrix") (msgx "the msgx row runs on macOS") (gso "test_server_gso_wire_ipv6, test_server_gso_wire_dual_stack") (io_uring "test_server_uring_probe, test_server_uring_wire_ipv4") (portable "ci.yml runs ./bin/functional with the portable transport") (iocp "rocketnet_test_server_iocp_uso_uro_probe, test_iocp") (rio "rocketnet_test_server_rio_probe, rocketnet_test_server_rio_wire_ipv4") (loopback "the loopback rows of the transport matrix")))
     (:feature "Selectable by pin at runtime" :cells (y y y y y y y y) :evidence ((xdp "rocketnet_test_server_driver_pin_xdp") (msgx "rocketnet_test_server_driver_pin_msgx") (gso "rocketnet_test_server_driver_pin_gso") (io_uring "test_server_driver_pin_io_uring") (portable "rocketnet_test_server_driver_pin_portable") (iocp "rocketnet_test_server_driver_pin_iocp") (rio "rocketnet_test_server_driver_pin_rio") (loopback "test_driver_pin_only, test_driver_env_pins_loopback")))
     (:feature "IPv6 and dual-stack binds" :cells (n n y y y n y n) :evidence ((gso "test_server_gso_wire_ipv6, test_server_gso_wire_dual_stack") (io_uring "test_server_uring_wire_ipv6, test_server_uring_wire_dual_stack") (portable "test_transport_ipv6_loopback") (rio "rocketnet_test_server_rio_wire_ipv6, rocketnet_test_server_rio_wire_dual_stack")))
     (:feature "Receive coalescing by the kernel, split by stride" :cells (- n y n n y n -) :evidence ((gso "the gso transport enables UDP_GRO per socket") (iocp "rocketnet_test_server_iocp_uso_uro_probe")))
     (:feature "Registered I/O (RIO) on Windows" :cells (- - - - - - y -) :evidence ((rio "rocketnet_test_server_rio_wire_ipv4, rocketnet_test_server_rio_wire_ipv6")))
     (:feature "Kernel filter counters through the transport counter surface" :cells (y - - - - - - -) :evidence ((xdp "prefilter_counters_map_each_kernel_counter, prefilter_counters_xdp_driver_reports_them")))
-    (:feature "Kernel replay and host replay map" :cells (y - - - - - - -) :evidence ((xdp "test_unit_xdp_host_replay_table")))))))
+    (:feature "Kernel replay and host replay map" :cells (y - - - - - - -) :evidence ((xdp "xdp_host_replay_drops_behind_the_window, xdp_host_replay_never_writes_the_map")))))))

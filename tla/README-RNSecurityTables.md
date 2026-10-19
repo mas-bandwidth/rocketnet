@@ -4,17 +4,18 @@ The security tables at the table grain: the used-token history
 (`sdk/rocketnet_token_tables.cpp`) and the one-live-connection rule (with an
 admitted-token set as its reversed witness), the cookie gate
 and its key generation, and the per-update verify budget, as
-`sdk/rocketnet_server_protocol.cpp` drives them and standard/TRANSPORT.md
-specifies them. The module works at the grain of the token and cookie
-tables: the full handshake, the lossy link and the replay window are outside
+`sdk/rocketnet_server_protocol.cpp` drives them and
+[t12 Handshake: server](../standard/TRANSPORT.md#t12) specifies them. The
+module works at the grain of the token and cookie tables: the full handshake, the lossy link and the replay window are outside
 it, and a request past the cookie gate, a response that opens under its
 mapping, another client taking a slot, a disconnect and a tick are the only
 events. The attacker is the quantification itself: any address
 presents any token under any cookie generation it has seen. Only an
 address in `Holds[t]` holds token `t`'s keys, so only it can open a
 response under `t`; the instance has `tf` held at `A` alone, so `B`
-replaying `tf` is the on-path attacker of standard/TRANSPORT.md's replay
-paragraph.
+replaying `tf` is an attacker that has captured a token and replays it from
+another address, which t12 refuses by binding the token to the source address
+whose connection response first opened under it.
 
 - **The history.** Per token: absent, or bound to an address with an
   expiry, an insert order and a ghost `opened` (whether a response that
@@ -153,7 +154,7 @@ Each reversed witness has a committed configuration registered in
 | `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
 | `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
 
-Refresh all eleven cases through the pinned `tlacheck` runner and merge with
+Refresh all eleven cases through the pinned `tlacheck` and merge with
 `--keep tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
 one row per configuration; `RUNS-HISTORY.tsv` holds the older seven-column
 records.

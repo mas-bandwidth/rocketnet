@@ -22,10 +22,9 @@ Binaries and libraries land in `bin/`. Run the unit suite with:
 state machines and the in-memory network simulator. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). A test over
 60 seconds prints a warning line. A test over 120 seconds is killed and the
-suite fails. The ten slowest are printed at the end. Those timing lines use
-the `test_timing_* [SKIPPED ...]` spelling because `tools/check_test_environment.py`
-accepts only test-name lines on a passing `./bin/test` run, and that checker
-is shared with the unit suite.
+suite fails. The ten slowest are printed at the end, as
+`test_timing_* [SKIPPED ...]` lines, because `tools/check_test_environment.py`
+accepts only test-name lines on a passing `./bin/test` run.
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
 IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,
@@ -191,8 +190,9 @@ verifies that the XDP archive contains the current sources. These checks are in 
 ## ABI compatibility
 
 The current public layouts are stable. The allocation-free `rocketnet_abi_*`
-queries expose the SDK revision, compiler-derived struct sizes, field counts,
-offsets and widths for both configs, packet context and all four stats structs.
+queries expose the SDK revision and the compiler-derived struct sizes, field
+counts, offsets and widths of the public structs `rocketnet_client_config_t`,
+`rocketnet_server_config_t` and `rocketnet_receipt_t`.
 They are safe before init and write no caller-owned struct. Unknown names return
 `SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
 these before calling struct-writing functions.
@@ -202,8 +202,9 @@ An incompatible layout or calling-contract change must increment
 do not require a revision change. Changes to public fields must also update the
 ABI metadata and native regression checks. The existing unsized C entry points still
 require matching headers and library; this does not make an old native binary
-safe to use with an arbitrary newer library. The `_sized` entry points are
-part of this release.
+safe to use with an arbitrary newer library. The `_sized` entry points carry
+the struct size, so a program built against an older header keeps working
+against a newer library ([docs/ABI-EVOLUTION.md](docs/ABI-EVOLUTION.md)).
 
 ## History memory budget
 
@@ -344,8 +345,8 @@ everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
 Unknown names refuse loudly at client connect and server start. The granted transport is reported by
 the transport name query on each client and server, and the start log line. Queue-count bounds are per transport, refused loudly and never
-clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport refuses
-past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
+clamped: the xdp transport takes `num_xdp_queues` from 1 to 1024, and the gso
+transport refuses more than 32 queues. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
 batch pump's live-refusal pause. Queue and core counts are set with
@@ -435,17 +436,17 @@ Cold, on a fresh box, as root:
     #    the servers. Leftovers are inert -- a colliding create refuses
     #    loudly and names this sweep.
 
-    # (scripts/rocketnet-provision selftest holds the script's IRQ-name
-    #  matcher to the C test's case set and drives the R3/R7 enforcement
-    #  functions end to end in both modes, against stubs replaying captured
-    #  xdp-tools output (R3) and real-shaped ethtool output (R7). It runs
-    #  without root and touches only a private temp directory it creates and
-    #  removes; CI runs it on every push.)
+    # 6. Check the script itself (no root needed):
+    scripts/rocketnet-provision selftest
+    #    It runs the script's IRQ-name matcher against the C test's cases and
+    #    drives the exclusive-XDP-slot (R3) and queue-count (R7) checks end to
+    #    end against recorded xdp-tools and ethtool output. It touches only a
+    #    private temporary directory that it creates and removes.
 
-This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
-the busy-poll pair — is the 10 Gbps reference configuration on a provisioned
-Linux server; the magnitude belongs to that machine, and the claim attaches to a
-verified-provisioned box, never to the library alone. The isolated-core mask, the
+This configuration (isolated cores 1-15, seven queues, per-queue IRQ pinning,
+the busy-poll pair) is the 10 Gbps reference configuration for a provisioned
+Linux server. Throughput depends on the provisioned machine and its NIC, not
+on the library alone. The isolated-core mask, the
 queue count and the IRQ pinning scale together with NIC bandwidth: one queue
 wants one isolated core, and higher-bandwidth NICs need more cores (the script
 takes the range as a parameter; 1-15 is the default, not a constant). `isolcpus`
@@ -481,8 +482,8 @@ build rocketnet itself:
   - MSVC: `/fp:precise`.
 
 rocketnet's float wire encoding is a bit copy (no arithmetic), so no flag is required of consumers
-for correct wire bytes today. The strict build is the family floor: contraction is
-architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-64 one), so
+for correct wire bytes. The strict build keeps float arithmetic identical across
+architectures: contraction is architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-64 one), so
 float arithmetic near a wire diverges bit-wise between architectures without it. If you
 compile rocketnet's sources into your own build rather than linking the library, carry the same
 flag. The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform

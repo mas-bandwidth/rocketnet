@@ -16,8 +16,8 @@ The version lives in one file, `sdk/rocketnet.h`, in two branches selected by
 
 These are the version sites that the `version-consistency` job in
 [.github/workflows/release-check.yml](../.github/workflows/release-check.yml)
-reads. That job checks both branches, because the branch that is not compiled
-today is the one that drifts. In the shipping branch, `ROCKETNET_VERSION_FULL`
+reads. That job checks both branches, because the branch a build does not
+compile is the one that drifts. In the shipping branch, `ROCKETNET_VERSION_FULL`
 must equal `MAJOR.MINOR.PATCH`; in the development branch, the full version must
 be `dev` and the integers must be `255.255.255`. On a `v*` tag push, the part of
 the tag after the `v` must equal the shipping `ROCKETNET_VERSION_FULL`.
@@ -97,7 +97,9 @@ later merge.
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it. Push the tag and let Release Check's
    `version-consistency` job confirm it against the header.
-7. Publish the GitHub release for that tag.
+7. Publish the GitHub release for that tag. The release commit carries the
+   version's entry in [CHANGELOG.md](../CHANGELOG.md), with the release date in
+   its heading.
 
 ## Release notes
 

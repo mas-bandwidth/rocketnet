@@ -10,8 +10,8 @@ as far as it drives the client. `tla/MCClientConnection.tla` and
 
 ## What the model covers
 
-**States** are the standard's numbers (standard/TRANSPORT.md, _Client State Machine_;
-`sdk/rocketnet.h:398-409`): -7 token expired, -5 connection timed out, -4 response
+**States** are the standard's numbers ([t11 Handshake: client](../standard/TRANSPORT.md#t11);
+the `ROCKETNET_CLIENT_STATE_*` values in `sdk/rocketnet.h`): -7 token expired, -5 connection timed out, -4 response
 timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disconnected,
 1 requesting cookie, 2 sending connection request, 3 sending connection response,
 4 connected. -6 (invalid token) is decided before anything is sent and is not modelled.
@@ -72,13 +72,13 @@ Safety, checked under every loss pattern with no fairness:
 | Property | The rule |
 |---|---|
 | `ConnectedMeansHandshake` | never connected without a completed handshake: state 4 holds a cookie, this attempt's committed keys, the index from a keep-alive, and no ephemeral |
-| `StepsForwardOrFails` | the machine climbs one rung at a time or fails; 1 is entered only by a connect  |
+| `StepsForwardOrFails` | the machine climbs one rung at a time or fails; 1 is entered only by a connect |
 | `DisconnectIsTerminal` | a disconnect is terminal until the application reconnects: the only way out of a non-positive state is a fresh attempt |
 | `AcceptedUnderLiveKeys` | no packet is accepted outside the live session's keys: an accepted session packet opened under the held keys in state 3 or 4 |
 | `AtMostOneLiveSession` | the client accepts under at most one key pair, which is this attempt's; a slot the server holds for this attempt is under those keys or the client has thrown its keys away |
-| `TimeoutPairing` | a timeout from waiting state N lands in -(N+1)  |
+| `TimeoutPairing` | a timeout from waiting state N lands in -(N+1) |
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the total deadline fire when due |
-| `NoSendOnArrival` | no receive sends  |
+| `NoSendOnArrival` | no receive sends |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -94,7 +94,7 @@ Liveness, under the fairness described below:
 Findings, each in its own run and expected to fail (see below): `TerminalAbsorbing`
 (F8), `EphemeralErasedOutsideHandshake` (F4), `KeysErasedWhenDown` (an observation).
 
-### The hang the request named
+### The hang: a packet sent once and lost
 
 The class: a peer moves to a new state, sends the packet announcing it once, the packet
 is lost, and nobody ever sends it again. `Connects` and `ServerNotStranded` together
@@ -108,8 +108,8 @@ Two constants reproduce the class, as reversed witnesses:
  response, and no more until the client acknowledges one. This is the protocol
  without netcode's rule.
 - `KeepAliveClock = "anysend"`: the keep-alive is paced off the last send of anything,
- so a payload stream suppresses it. This is the keep-alive suppression regression the server's comment
- at `rocketnet_server_protocol_write_keep_alive_if_due` records.
+ so a payload stream suppresses it. This is the suppression the comment in
+ `rocketnet_server_protocol_write_keep_alive_if_due` rules out.
 
 The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`.
 
@@ -126,8 +126,8 @@ The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`
  replay and no older copy with that id can exist; a copy whose id is in `cSeen` is the
  replay `rocketnet_replay_already_received` refuses. The window's 4096-sequence width
  is above any instance here. Client session packets carry no id: the server's replay
- window belongs to the server's models. The inventory's `SequenceMonotone` is therefore
- not checked here; `RNReplayWindow` owns sequences.
+ window belongs to the server's models. Sequence monotonicity is therefore not
+ checked here; `tla/ReplayWindow.tla` owns sequences.
 - **The cookie** is a flag echoing the attempt. The cookie gate (MAC, lifetime, key
  rotation) is the security module's. A cookie never expires here.
 - **The ack block** is one bit: a client session packet accepted by a connected mapping
@@ -155,8 +155,8 @@ The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`
  disconnect bursts;
 - strong fairness on `ClientSendThrough` and `ServerKeepAliveThrough`: a timer-driven
  send that is enabled with the pattern letting it through, infinitely often, goes
- through infinitely often. This is Link's `EventualDelivery` ("a packet re-sent
- without bound is delivered without bound") stated on the sender. It is what a
+ through infinitely often. This is Link's `EventualDelivery` (a packet re-sent
+ without bound is delivered without bound) stated on the sender. It is what a
  deterministic pattern could otherwise defeat (every re-send landing on a lost index,
  README-Link.md caution 2) and what the real path does not do;
 - strong fairness on delivering the head of each wire (`ClientRecvHead`,
@@ -174,8 +174,7 @@ The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`
 
 Link's `Fairness` was tried first and does not fit this model: with forty packet values
 over two links, the per-value `EventualDelivery` implication makes TLC's tableau
-degenerate (`Temporal formula is a tautology`, from the first run, recorded in
-RUNS.tsv), and the per-value strong fairness runs the liveness graph out of a 16 GB
+degenerate (`Temporal formula is a tautology`), and the per-value strong fairness runs the liveness graph out of a 16 GB
 heap. The restatement is weaker in one place: a copy of one value can be starved
 behind other copies of its type by `Reorder`. No property here depends on a particular
 value arriving. Liveness runs use a FIFO link without latency or duplication
@@ -206,7 +205,7 @@ client reassembly state (`cReasm`) only in state 4 (connected), and
 mapping holding its slot. The invariant `FragmentOnlyWhenConnected` states
 that reassembly state changes only while connected, on both sides.
 `MCClientConnectionBrokenEarlyFragment.cfg` is its reversed witness: it adds
-`ClientFragmentReceiveEarly`, the pre-fix acceptance in sending-connection-response
+`ClientFragmentReceiveEarly`, an acceptance in sending connection response
 (state 3), and must fail `FragmentOnlyWhenConnected`.
 
 `MCClientConnection.cfg` is the committed run: the hang check under "the first packet
@@ -262,7 +261,7 @@ replay of that lasso and on the four deterministic patterns, not on a completed 
 
 Each run names its patterns in the TSV. Across the runs TLC explored: nothing lost
 (`"none"`); the first send on each link lost (`"first"`); every other send lost
-(`"alternate"`: "the first packet dropped, the second through", forever); sends 1 and 2
+(`"alternate"`: the first packet dropped, the second through, forever); sends 1 and 2
 lost (`"burst"`); any copy dropped at any time (`"arbitrary"`); and the first packet of
 every kind lost (`KindLoss = "firstkind"`, applied before the link). In every safety run
 both links also duplicate and reorder, and in `S-firstkind`, `S-delay` and the three
@@ -272,8 +271,8 @@ in every safety run. The liveness runs use a FIFO link (the fairness section say
 ## What TLC found
 
 Every counterexample below was replayed by hand through the functions it names before
-it was written down. Three are findings in the code (reproduced as traces); the rest are model errors fixed on
-the way, or the reversed witnesses doing their job.
+it was written down. Three are the findings runs (F4, F8 and the keys observation); the rest
+are model errors fixed on the way, or the reversed witnesses doing their job.
 
 ### The hang, reproduced (reversed witnesses)
 
@@ -283,7 +282,7 @@ the way, or the reversed witnesses doing their job.
   its kind and is lost. From there the lasso is `Tick`, `ClientSend` (the stored
   response, byte-identical), `ServerRecvResponse` ("client is already connected",
   ignored). The server never sends another keep-alive; the client waits in 3 for a
-  packet nobody will send again. That is the hang the request described, and
+  packet nobody will send again. That is the hang, and
   `ServerNotStranded` fails on the same lasso: the slot is never acknowledged.
 2. **`RepeatKeepAlive = FALSE` under `"alternate"`** (`W-once-alternate`): the same
   hang, with the loss coming from the link: the keep-alive is the server's fifth send
@@ -301,33 +300,35 @@ re-sends, and the establishing keep-alive is re-sent on its own clock until the 
 acknowledges one (`rocketnet_server_protocol_write_keep_alive_if_due`,
 `sdk/rocketnet_server_protocol.cpp`).
 
-### Findings in the code (each a line in the report, none a code change here)
+### Findings runs
 
-4. **F4, the ephemeral secret survives a failed attempt** (`F4-ephemeral`,
+4. **F4, the ephemeral secret outside the handshake** (`F4-ephemeral`,
   `EphemeralErasedOutsideHandshake`, 4 states): connect, two ticks with nothing heard,
-  state -2 with `cEph = TRUE`. Replayed: `rocketnet_client_protocol_connect` draws the
-  keypair (`sdk/rocketnet_client_protocol.cpp:188`); `rocketnet_client_check_deadlines`
-  sets the state and returns (`:201-221`); nothing on that path, nor on the denied
-  path (`:612-614`), calls `sodium_memzero` on `client_ephemeral_secret_key`. The
-  zeroing happens only at the challenge (`:509`), the integrity limit (`:66`) and
-  `disconnect` (`:1336`). the standard is a MUST. The same trace reaches -7 and -1.
-5. **F8, `disconnect` rewrites a terminal state to 0** (`F8-terminal`,
-  `TerminalAbsorbing`, 5 states): -2, then `AppDisconnect`, then 0. Replayed:
-  `rocketnet_client_protocol_disconnect` (`:1332-1333`) sets `DISCONNECTED` from any
-  state but 0; the transport's state-change callback fires only across an `update`
-  (`sdk/rocketnet_client_transport.cpp:600-602`), so the change is never reported.
-  the standard says only `connect` leaves a terminal state. The inventory classes this as a
-  question; the invariant `DisconnectIsTerminal` (no way *up* from a non-positive
-  state but a connect) holds in every run, so the sideways move is the whole of it.
-6. **The session keys survive a failed or ended attempt** (`OBS-keys`,
+  state -2 with `cEph = TRUE`. The model's `Tick` sets the timed-out state and leaves the
+  ephemeral secret live, so the run fails as expected; the same trace reaches -7 and -1.
+  The code keeps the rule: `rocketnet_client_process_challenge` zeroes the ephemeral
+  secret when it commits the keys, and every terminal transition passes through
+  `rocketnet_client_set_state` (`sdk/rocketnet_client_protocol.cpp`), which calls
+  `rocketnet_client_connection_reset` to zero the keys and the ephemeral secret, as
+  [t13.4 Slot reset](../standard/TRANSPORT.md#t13.4) requires of a client reset.
+5. **F8, `disconnect` moves a terminal state to 0** (`F8-terminal`,
+  `TerminalAbsorbing`, 5 states): -2, then `AppDisconnect`, then 0.
+  `rocketnet_client_protocol_disconnect` sets disconnected from any state but 0, which
+  is the standard's client table ([t11.3 Session processing before connected](../standard/TRANSPORT.md#t11.3):
+  a disconnect in any negative state is a per-connection reset to disconnected), and
+  `rocketnet_client_transport_disconnect` reports the change to the state-change
+  callback. `TerminalAbsorbing` is therefore stricter than the standard. The invariant
+  `DisconnectIsTerminal` (no way *up* from a non-positive state but a connect) holds in
+  every run, so the sideways move to 0 is the whole of it.
+6. **The session keys after a failed or ended attempt** (`OBS-keys`,
   `KeysErasedWhenDown`, 11 states): the challenge commits the keys (state 9); two
-  ticks later the client is -4 with `cKeys` still set. Replayed: `check_deadlines`
-  (`:214-220`), `process_denied` (`:612-614`) and `process_disconnect` (`:963`) each
-  set the state and nothing else; the keys are zeroed only at the integrity limit
-  (`:65`) and in `disconnect` (`:1335`). The standard says the client "releases
-  all connection state" on a denied and on a server disconnect. Not in the inventory;
-  an observation of the same shape as F4, with less exposure (the state gate refuses
-  every session packet below 3, so the keys cannot be used, only read from memory).
+  ticks later the client is -4 with `cKeys` still set. The model's `Tick`, denied and
+  server-disconnect steps set the state and leave the keys, so the run fails as
+  expected. The standard has the client release its connection state on a denied, a
+  server disconnect and a timeout ([t11.3](../standard/TRANSPORT.md#t11.3),
+  [t13.2 Timeout](../standard/TRANSPORT.md#t13.2)); the code does so in
+  `rocketnet_client_set_state`, as for F4. The exposure is smaller than F4's in any case:
+  the state gate refuses every session packet below 3, so held keys cannot be used.
 
 ### Model errors, fixed
 
@@ -352,8 +353,8 @@ acknowledges one (`rocketnet_server_protocol_write_keep_alive_if_due`,
   head *per type*, failed the same way with a sharper lasso: the server sends the
   keep-alive behind a payload every time, the path drops it while it is second on the
   wire, and the keep-alive is never at the head, so a condition on the head has
-  nothing to force. A path that drops one packet type forever is exactly what "a
-  packet re-sent often enough eventually arrives" excludes, so `"arbitrary"` runs
+  nothing to force. A path that drops one packet type forever is exactly what Link's
+  eventual-delivery assumption excludes, so `"arbitrary"` runs
   under `SpecTyped`, whose `DeliveryFairTyped` is Link's `EventualDelivery` per type.
 10. **The payload race.** With payloads limited to one per interval and the witness
   clock `"anysend"`, the first `W-anysend` run passed: at tick granularity the payload
@@ -365,11 +366,12 @@ acknowledges one (`rocketnet_server_protocol_write_keep_alive_if_due`,
 ### Not a hang: the disconnect burst
 
 The one packet either end sends without re-sending is the disconnect: ten copies
-(`DisconnectCopies` here), then the sender's state is gone
-(`rocketnet_client_protocol_disconnect`, `sdk/rocketnet_client_protocol.cpp:1309-1336`;
-`rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp:1656-1676`).
-If every copy is lost the peer waits for its idle timeout, which the standard states as
-the design ("losing all ten costs only a peer that waits for the timeout"). In this
+(`ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS`, `ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS`;
+`DisconnectCopies` here), then the sender's state is gone
+(`rocketnet_client_protocol_disconnect`, `sdk/rocketnet_client_protocol.cpp`;
+`rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp`).
+[t13.3 Disconnect](../standard/TRANSPORT.md#t13.3) never retransmits the burst, so if
+every copy is lost the peer waits for its idle timeout. In this
 model that is `CrashedServerTimesOut` (`L-crash`): the client reaches -5. It is a
 bounded wait, not a packet nobody will send again, and it is not reported as a defect.
 
@@ -377,9 +379,8 @@ bounded wait, not a packet nobody will send again, and it is not reported as a d
 
 The original seven-column records are preserved unchanged in
 [`RUNS-HISTORY.tsv`](RUNS-HISTORY.tsv). Current measurements use the runner
-and refresh procedure in [`README.md`](README.md). Each historical row now
-has its own committed configuration; no edit to a shared file is needed.
-The table follows the original ledger order. A declared debt retains its
+and refresh procedure in [`README.md`](README.md). Each historical row
+has its own committed configuration, listed in ledger order. A declared debt retains its
 original parameters and is not a completed proof.
 
 | Historical row | Committed configuration | Declared outcome |

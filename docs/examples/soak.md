@@ -1,31 +1,46 @@
 # Soak
 
 `examples/soak.c` is the stress demo and profiling harness: up to 1000 clients
-against one server over a 1% lossy simulated link for N seconds at 60 Hz,
-checking every message's integrity and order, and measuring server tick and
-client update timings, packet/byte rates, and steady-state allocations. This is
-a demo and a profiling instrument, not a load claim.
+(default 1000) against one server over a simulated link that drops 1% of
+packets each way, for N seconds of 60 Hz steps, checking every message's
+integrity and order, and measuring server tick and client update timings,
+packet/byte rates, and steady-state allocations. This is a demo and a
+profiling instrument, not a load claim.
 
 ## What it shows
 
-1. Install a counting allocator via `rocketnet_allocator` before `rocketnet_init`
-   to verify `allocs/tick == 0` during the steady-state soak and zero leaks at teardown.
+1. Install a counting allocator via `rocketnet_allocator` before
+   `rocketnet_init`. It reports allocations per steady-state tick
+   (`allocs/tick`) and peak bytes, and the run fails if any allocation is
+   still live after teardown.
 2. Connect `--clients <n>` (1..1000, default 1000) to one server in a single
    process over `loopback` by default (1000 real UDP sockets in one process on
    one machine need OS socket-buffer care; `loopback` measures the library, not
-   the kernel). `--transport <name>` (or `ROCKETNET_SERVER_TRANSPORT`) selects
-   `portable`, `gso`, `msgx`, or `xdp` (`xdp` requires root and its own machine).
-3. Run a deterministic 60 Hz step for `--seconds <n>` (default 3 in CI; use
-   `--seconds 60` for full profiling) with fixed `--seed <n>` (default 1),
-   exchanging `ROCKETNET_UNRELIABLE_SEQUENCED` state messages and
-   `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT` event messages in both directions.
+   the kernel). `--transport <name>` sets the transport on the server and every
+   client, for example `portable`, `gso` on Linux, or `msgx` on macOS. `xdp`
+   refuses here, because the server asks for an ephemeral port.
+3. Step a simulated 60 Hz clock for `--seconds <n>` (1..120, default 3; use
+   `--seconds 60` for full profiling) with the payload `--seed <n>` (default 1),
+   exchanging 48-byte `ROCKETNET_UNRELIABLE_SEQUENCED` state messages and,
+   every sixth tick, 96-byte `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT`
+   event messages in both directions. Above 25 clients each client sends on
+   one tick in `clients / 25`, so the message rate stays near 25 clients'
+   worth while the connection count grows.
    Every message carries client id, sequence, and FNV-1a body checksum; any gap,
    backward sequence, or checksum mismatch prints `FAIL` naming client and sequence
-   (`--self-test-corrupt` flips one byte before send to prove the check bites).
+   (`--self-test-corrupt` flips one byte of the first event before send to
+   prove the check bites).
 4. Record server tick and client per-peer update latency (`p50`, `p99`, `max`
    against the 100 µs per-client budget), packet/byte rates from public counters,
    and write `--out <file>` (default `soak-results.tsv`, one TSV row per metric
    with `clients`, `seconds`, `seed`, `transport`, `build`, `metric`, `value`).
+5. Check the run: every event arrived and was acked, no corruption or order
+   gap, no lost receipt, no budget drop, no unreleased message, no API misuse,
+   every client disconnects cleanly, and nothing is left allocated. The
+   `allocs/tick` figure is reported, not checked.
+
+`--clients` outside 1..1000 or `--seconds` outside 1..120 exits 1 without
+running.
 
 ## Run it and scale sweep
 
@@ -34,7 +49,18 @@ a demo and a profiling instrument, not a load claim.
 ./bin/example_soak --clients 1000 --seconds 60 --out soak-60s.tsv
 ```
 
-10-second sweep across 1, 10, 100, and 1000 clients (`--seconds 10 --seed 1`):
+A run prints one summary line, then `PASS`:
+
+```
+soak: clients=10 seconds=10 seed=1 transport=loopback rel=2000/2000 seq=11944/12000 srv_p50=66.2us srv_p99=120.8us cli_peer_p50=5.15us cli_peer_p99=9.27us (budget 100us) allocs/tick=0.00 peak_bytes=281816858
+PASS
+```
+
+`rel` and `seq` are received over sent for events and state messages (state
+messages lost on the lossy link are not resent). Timings depend on the
+machine. A check that fails prints a `FAIL: ...` line and exits 1.
+
+One 10-second sweep across 1, 10, 100, and 1000 clients (`--seconds 10 --seed 1`):
 
 | clients | rel (rx/tx) | seq (rx/tx) | srv p50 (µs) | srv p99 (µs) | cli/peer p50 (µs) | cli/peer p99 (µs) | allocs/tick | peak_bytes |
 |--------:|------------:|------------:|-------------:|-------------:|------------------:|------------------:|------------:|-----------:|
@@ -47,7 +73,9 @@ a demo and a profiling instrument, not a load claim.
 
 Build with symbols kept (`cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo`; the
 repository's `Release` build also strips nothing by default). `--pause` prints
-`PAUSED pid=<pid>` and waits for Enter on stdin so a profiler can attach first:
+`PAUSED pid=<pid> (press Enter to start)` and waits for Enter on stdin so a
+profiler can attach first; the pid is read from `/proc`, so it prints as 0
+outside Linux:
 
 ```sh
 # Linux perf + FlameGraph

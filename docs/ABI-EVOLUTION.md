@@ -55,7 +55,7 @@ Two forms are common for this. The SDK uses the size argument.
 
 | | Size argument (chosen) | Leading size field |
 | :--- | :--- | :--- |
-| Today's layout | Unchanged: every config struct keeps its revision 1 layout | Changes: a `size` member goes first and every offset moves, an incompatible change at revision 1 |
+| The revision 1 layout | Unchanged: every config struct keeps its revision 1 layout | Changes: a `size` member goes first and every offset moves, an incompatible change at revision 1 |
 | Existing callers | Compile and run unchanged on the unsized entry points | Must be rebuilt, and must set the field |
 | Forgetting it | Not possible on a sized call: the size is a parameter | A zeroed or stale `size` reads as an unknown size, or worse, as a wrong known one |
 | C | `rocketnet_client_default_config_sized( &config, sizeof( config ) )` | `config.size = sizeof( config );` before every use |
@@ -120,12 +120,13 @@ keeps the old size and reads the old prefix. The frozen sizes per revision and o
 public header and in `rocketnet_abi_type_size`, which is the
 authority for a given build; this document does not repeat the numbers.
 
-Revision 1 is the layout without the simulator controls, kept in the known-size
-list so a caller built against it reads its prefix; it predates the release.
-Revision 2 is the v1.0.0 layout: it appends the four development link-simulator
-controls to both the client and server configs. Its `BYTES_2` formulas end at
-`simulated_duplicate_percent` and remain frozen when later revisions grow. A
-new revision is added only for a layout that a release has shipped.
+Revision 1 ends at `reliable_timeout_ms` (`ROCKETNET_CLIENT_CONFIG_BYTES_1`,
+`ROCKETNET_SERVER_CONFIG_BYTES_1`): it is the prefix the unsized entry points
+read and write. Revision 2 is the full v1.0.0 layout: it appends the four
+development link-simulator controls to both the client and server configs, and
+its `BYTES_2` formulas end at `simulated_duplicate_percent`. Both revisions ship
+in v1.0.0 and both sizes stay in the known-size lists; each formula stays frozen
+when a later revision grows the struct.
 
 The structs marked "no" have no sized entry points, so their revision 1 layout
 is frozen: a field added to one of them is an incompatible change until its
@@ -143,9 +144,9 @@ transport and message types, with offsets and
 sizes taken from the compiler. A binding compares them against its own
 declarations before its first call. They pin this rule three ways:
 
-- `static_assert`s in `sdk/rocketnet_abi.cpp` require each config's revision 1
-  size formula to equal the compiler's `sizeof`, so a formula wrong for a
-  target fails the build there.
+- `static_assert`s in `sdk/rocketnet_abi.cpp` require the newest revision's
+  size formula of each internal transport and message config to equal the
+  compiler's `sizeof`, so a formula wrong for a target fails the build there.
 - `sized_config_accepts_every_known_size` (`test_unit_sized_config.cpp`)
   requires each known-size list to be strictly growing and to end at the size
   `rocketnet_abi_type_size` reports, so a revision added without its size, or

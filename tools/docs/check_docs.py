@@ -2,8 +2,10 @@
 """Release documentation verification for RocketNet v1.0.0.
 
 Subcommands:
-  archaeology  Check every tracked .md file for STANDARD.md, rocketnet_*_send,
-               card ids, the word card, dates, and host names (prints nothing and exits 0 when clean).
+  archaeology  Check every tracked .md file for STANDARD.md, CHANNELS, rocketnet_*_send,
+               card ids, the word card, dates, host names, S:NNNN line refs, MESSAGES
+               sections above m13, short commit shas, PR and issue numbers, and
+               change narration (prints nothing and exits 0 when clean).
   links        Check that every relative link and every #anchor in every tracked .md
                file resolves at head.
   usage        Compile every ```c and ```cpp fenced block of USAGE.md against
@@ -26,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG_HEADING_RE = re.compile(
     r"^## \[[0-9]+\.[0-9]+\.[0-9]+\] - 20[0-9][0-9]-[01][0-9]-[0-3][0-9]$"
 )
-LICENSE_LINE_RE = re.compile(r"\bLICENSE\b")
+LICENSE_FILE_RE = re.compile(r"^LICENSE")
 VISUAL_STUDIO_RE = re.compile(r"\bVisual Studio\b", re.IGNORECASE)
 
 SPACE_PHRASE_PATTERNS = [
@@ -54,7 +56,11 @@ ARCHAEOLOGY_PATTERNS = [
     ("host", re.compile(r"\b(amd-[123]|hulk|hetzner[0-9]*|vision|captain|studio|space)\b", re.IGNORECASE)),
     ("CHANNELS.md", re.compile(r"\bCHANNELS\b")),
     ("S_line_ref", re.compile(r"\bS:\d+\b")),
-    ("m_section", re.compile(r"\bm(?:1[4-9]|[2-9][0-9])\b")),
+    ("m_section", re.compile(r"(?<!#)\bm(?:1[4-9]|[2-9][0-9])\b")),
+    ("short_sha", re.compile(r"`(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{7,12}`")),
+    ("PR", re.compile(r"\bPRs?\b")),
+    ("issue_ref", re.compile(r"(?<![\w/(&])#[0-9]+\b")),
+    ("change_narration", re.compile(r"\b(?:this change|the base of this change|landed|earlier code)\b", re.IGNORECASE)),
 ]
 
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -74,7 +80,7 @@ def scrub_allowlisted_line(rel_path, line):
     scrubbed = line
     if rel_path == "CHANGELOG.md" and CHANGELOG_HEADING_RE.match(line.strip()):
         scrubbed = re.sub(r"20[0-9][0-9]-[01][0-9]-[0-3][0-9]", "", scrubbed)
-    if LICENSE_LINE_RE.search(line):
+    if LICENSE_FILE_RE.match(Path(rel_path).name):
         scrubbed = re.sub(r"20[0-9][0-9]-[01][0-9]-[0-3][0-9]", "", scrubbed)
     scrubbed = VISUAL_STUDIO_RE.sub("", scrubbed)
     for pat in SPACE_PHRASE_PATTERNS:

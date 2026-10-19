@@ -33,33 +33,53 @@ From the repository root, after the normal build, in two terminals:
 ```
 
 The server listens on `127.0.0.1:40000`, receives one reliable-ordered message
-from the client, echoes it, and exits after its first client disconnects. Both
-programs finish in under ten seconds and print `PASS` as their last line.
-`tools/run_examples.py --build build` runs the pair in that order. To see the
-refusal, start a fresh server and run the client's own flag:
+from the client, echoes it, and exits after its first client disconnects. The
+client gives up after ten seconds and the server after thirty; on success each
+prints `PASS` as its last line. `tools/run_examples.py --build build` runs the
+pair in that order. To see the refusal, start a fresh server and run the
+client's own flag:
 
 ```sh
 ./bin/example_client_server_client --wrong-protocol
 ```
-The client mints the token for another protocol id, the server ignores it, and
-the client prints `expected refusal:` with the refused state and then `PASS`.
-Stop that server when the run finishes.
+
+The client mints the token for another protocol id, the server ignores it, the
+client's cookie request times out after five seconds, and the client prints
+`expected refusal:` with the refused state and then `PASS`. Stop that server
+when the run finishes.
 
 ## What the output means
 
+The server prints:
+
 ```
+server listening on 127.0.0.1:40000 with protocol id 0x636c69656e747331
+server wrote client_server.keys for the client
 server received: hello from the client
+server client disconnected (reason none)
+PASS
+```
+
+The client prints:
+
+```
+client state: requesting cookie -> sending connection request
+client state: sending connection request -> sending connection response
+client state: sending connection response -> connected
 client received: hello from the client
 client state: connected -> disconnected
 client disconnect reason: none
 PASS
 ```
+
 Each `client state:` line is a state change from the public callback. The
 server prints the message it received; the client prints the echo. The
 disconnect reason is `none` for a clean disconnect. Library log lines are
 informational and not part of the check. The key file is a local artifact and
 can be deleted after a run.
+
 ## Public calls it uses
+
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_generate_backend_keypair`, `rocketnet_generate_server_keypair`,
   `rocketnet_write_production_connect_token`

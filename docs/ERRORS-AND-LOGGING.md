@@ -28,13 +28,13 @@ point that can refuse returns a value the caller can test, logs one line at
 | `rocketnet_client_validate_config( config )` / `rocketnet_client_validate_config_sized( config, bytes )` | `0`, with an error log line naming the rule |
 | `rocketnet_client_required_memory( config )` / `rocketnet_client_required_memory_sized( config, bytes )` | `0` for a refused config or unknown size |
 | `rocketnet_client_create( context, config, memory, memory_bytes )` / `rocketnet_client_create_sized(...)` | `NULL`, with one error log line |
-| `rocketnet_client_connect( client, connect_token )` | returns `rocketnet_status_t`: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or the transport's code |
+| `rocketnet_client_connect( client, connect_token )` | returns `rocketnet_status_t`: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `INVALID_ARGUMENT` for a `NULL` argument, or the transport's code |
 | `rocketnet_server_default_config( config )` / `rocketnet_server_default_config_sized( config, bytes )` | counted no-op on `NULL` / `0` on `NULL` or unknown size |
 | `rocketnet_server_dev_config( config )` / `rocketnet_server_dev_config_sized( config, bytes )` | counted no-op on `NULL` / `0` on `NULL` or unknown size |
 | `rocketnet_server_validate_config( config )` / `rocketnet_server_validate_config_sized( config, bytes )` | `0`, with an error log line naming the rule |
 | `rocketnet_server_required_memory( config )` / `rocketnet_server_required_memory_sized( config, bytes )` | `0` for a refused config or unknown size |
 | `rocketnet_server_create( context, address, config, memory, memory_bytes )` / `rocketnet_server_create_sized(...)` | `NULL`, with one error log line |
-| `rocketnet_server_start( server )` | returns `rocketnet_status_t`: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
+| `rocketnet_server_start( server )` | returns `rocketnet_status_t`: `SERVER_NOT_STOPPED`, `INVALID_ARGUMENT` for a `NULL` server, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | `ROCKETNET_MESSAGE_OK` (`0`) or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` (`-1`) |
 
 Create validates the config, applies the environment overrides
@@ -73,7 +73,7 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,
     ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,
 
-    // caller arguments and configuration (client, server, message, connect tokens)
+    // caller arguments and configuration (client, server, message)
     ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,
     ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,
     ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,
@@ -147,7 +147,7 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback(
      `rocketnet_set_log_callback` or `rocketnet_log_function` re-entrantly.
 3. **Coexistence with `rocketnet_log_function`**:
    - `rocketnet_log_function( void (*function)( int level, const char * format, ... ) )`
-     remains available for C callers that prefer a `printf`-style signature.
+     is available for C callers that prefer a `printf`-style signature.
      The last registration across `rocketnet_set_log_callback` and
      `rocketnet_log_function` wins; passing `NULL` restores the default stdout
      sink.

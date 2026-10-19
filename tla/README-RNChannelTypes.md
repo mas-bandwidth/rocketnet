@@ -2,9 +2,14 @@
 
 `RNChannelTypes` is a standalone finite message-stream model for codes 1, 2
 and 4, with the ordered code-3 path needed to delimit sequencing epochs.
-It follows `standard/MESSAGES.md` sections 7.1–7.3 and records the relevant
-differences from RakNet's reliability layer below. It is not a composition proof
-for `RNChannel`, `RNWindow`, a scheduler or the C++ implementation.
+It follows [m6](../standard/MESSAGES.md#m6) (code 1) and [m7](../standard/MESSAGES.md#m7) (codes 2, 3 and 4) of
+`standard/MESSAGES.md` and records the relevant differences from RakNet's
+reliability layer below. The code it stands for is
+`sdk/rocketnet_channel_sequenced.cpp` (`rn_sequenced_block` and
+`rn_sequenced_reliable_hold`) with `rn_channels_dispatch_sequenced` and
+`rn_channels_drain_sequenced` in `sdk/rocketnet_channel.cpp`. It is not a
+composition proof for `RNChannel`, `RNWindow`, a scheduler or the C++
+implementation.
 
 ## Interface
 
@@ -27,10 +32,9 @@ for `RNChannel`, `RNWindow`, a scheduler or the C++ implementation.
 - `LosePacket(pid)` is a transport loss input. It does not free reliable
   resend state. Unreliable originals may be lost and never resent.
 
-The four counter names and the packet-input action names align with the
-`RNChannel` module on the staged base. No module from it is imported or
-changed: the approved standalone interface keeps this work independent.
-Channel dispatch composes the models later.
+The four counter names and the packet-input action names match the
+`RNChannel` module. No module from it is imported: the model is standalone,
+and no composition of the two is checked.
 
 ## Promotion
 
@@ -67,8 +71,8 @@ arrived code-2 messages, so it is not merely an at-most-once assertion.
 The reliable-number duplicate rule runs first, then the same sequencing rule
 as code 1. A stale or superseded code-4 message is still acknowledged by its
 transport packet, and that ACK clears its resend state even if it never reaches
-the application. This is the study's I12: acknowledged means transport arrival,
-not application delivery. No sender-side superseding removes resend state.
+the application. Acknowledged means transport arrival, not application delivery
+([m1.4](../standard/MESSAGES.md#m1.4) rule 2). No sender-side superseding removes resend state.
 
 ## Shared delivery and comparison
 
@@ -96,16 +100,16 @@ from its delivered sequenced trace; it detects stale watermark leakage.
 
 ## Deliberate differences and abstractions
 
-| Rule | Model/design choice | Study comparison |
+| Rule | Model choice | RakNet comparison |
 |---|---|---|
-| Ahead-of-epoch sequencing | Keep only newest `(o, s)` per channel | RakNet keeps all and releases in sequence order (standard/MESSAGES.md m6) |
-| Held sequenced delivery | Same `s + 1` watermark as direct delivery | Study item 18's held path uses `s`, admitting a duplicate |
-| Held ordered delivery | Reset watermark to zero on the same delivery path | Study item 19 omits reset and can wrongly discard new-epoch sequenced input |
-| Capacities | Fixed send catalogue and held descriptors; real exhaustion disconnects with `MESSAGE_MEMORY_EXHAUSTED` | The exhaustion rule supersedes earlier wording about refused sends; RakNet's holds are unbounded |
-| Packet input | Fresh packet ids; transport replay suppression is a precondition | RakNet accepts repeated datagram ids before reliability dispatch (§6.2) |
-| ACK | Only packet-id notification retires resend state | Same I8/I12 semantic meaning; no new message ACK protocol |
+| Ahead-of-epoch sequencing | Keep only newest `(o, s)` per channel | RakNet keeps all and releases in sequence order; m7.3 rule 4 keeps one |
+| Held sequenced delivery | Same `s + 1` watermark as direct delivery | Using `s` on the held path would admit a duplicate |
+| Held ordered delivery | Reset watermark to zero on the same delivery path | Omitting the reset can wrongly discard new-epoch sequenced input (m7.3 rule 7) |
+| Capacities | Fixed send catalogue and held descriptors; real exhaustion disconnects with `MESSAGE_MEMORY_EXHAUSTED` | RakNet's holds are unbounded |
+| Packet input | Fresh packet ids; transport replay suppression is a precondition | RakNet accepts repeated datagram ids before reliability dispatch |
+| ACK | Only packet-id notification retires resend state | RakNet also retires resends on datagram ACK; no message ACK protocol |
 | Ordering/sequence wrap | Small nonwrapping counters | Wire half-range/wrap arithmetic is outside this model |
-| Scheduling | First packet writes follow enqueue order; retransmits may overtake | standard/MESSAGES.md m10 requires channel FIFO; RakNet can reorder sends by priority |
+| Scheduling | First packet writes follow enqueue order; retransmits may overtake | RakNet can reorder sends by priority |
 | Payload | Opaque stable byte-record identity | Allocation, byte lengths, copy counts and view lifetime need implementation tests |
 | Channels | Two channels in the bounded driver | Runtime range checks and up-to-65536 scaling are outside this bound |
 
@@ -137,8 +141,8 @@ runtime allocation design.
 - `BrokenHeapDrainNoReset`: messages 2 (sequenced) and 3 (ordered) arrive
   ahead of ordered message 1. Arrival of message 1 drains `<<1, 2, 3>>`,
   advances the ordered cursor to 2, but leaves watermark 1 from epoch 1.
-  `EpochWatermark` requires zero in the new epoch. This models study item
-  19's excessive filtering, not a backwards or duplicate-delivery claim.
+  `EpochWatermark` requires zero in the new epoch. This models the excessive
+  filtering a missing reset causes, not a backwards or duplicate-delivery claim.
 - `BrokenReliableTwice`: original packet 1 and retry packet 2 carry the same
   code-2 identity before either ACK. Both deliver, producing `<<1, 1>>`;
   `ReliableExactlyOnce` rejects the second delivery.
@@ -158,8 +162,7 @@ All seven healthy scenarios and four reversed witnesses complete with the
 pinned runner and JAR from `README.md`, on Linux with a 110-second budget
 per shard. Positive cases use two workers; witnesses use one. They retain
 all seven programs, the same arbitrary arrival and ACK timing, original
-loss and retry behavior. The original completed scenarios retain their
-exact generated/distinct counts after the evaluation change.
+loss and retry behavior.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|
@@ -175,7 +178,5 @@ exact generated/distinct counts after the evaluation change.
 | `MCRNChannelTypesUnordered.cfg` | 253601 | 52469 | 5.385 | pass - |
 | `MCRNChannelTypesChannels.cfg` | 99178 | 20995 | 3.708 | pass - |
 
-Earlier failed measurements remain in the job evidence and historical ledger;
-they are not passing results. The reset scenario originally exhausted its
-110-second budget during recursive expression evaluation. Eager binding
-completes the same bounded scenario without restricting its action graph.
+Eager binding lets the reset scenario complete inside its 110-second budget
+without restricting its action graph.

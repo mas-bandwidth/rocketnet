@@ -1,7 +1,11 @@
 # RNSlots: connection tags and message views
 
-`RNSlots` extends the draft in `standard/MESSAGES.md` section 15.1. The object
-observes the transport's final slot owners, resets changed endpoints, and
+`RNSlots` models the connection tags of `sdk/rocketnet_slots.cpp`
+(`rn_slots_observe`, `rn_slots_admit`), which keep
+[m1.4](../standard/MESSAGES.md#m1.4) rule 5 of `standard/MESSAGES.md`: every
+acknowledgement and payload is attributed to the connection it was sent on,
+not only to its slot index. The object observes the transport's final slot
+owners, resets changed endpoints, and
 admits each payload or acknowledged packet id against its captured connection
 tag. A slot index never identifies a connection by itself.
 
@@ -11,9 +15,10 @@ A delivered message is an opaque byte view into the connection's region.
 The application explicitly releases every view before its next object update.
 Calling update while a view remains held enters
 `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED`; the implementation asserts in debug
-and returns this named error in release. Views cannot survive an update.
-This refines section 11.1's batch lifetime and supersedes the earlier open
-choice between automatic expiry and arbitrary explicit lifetime. `BeginUpdate`
+and returns this named error in release (the update's entry check in
+`sdk/rocketnet_message_server.cpp`). Views cannot survive an update. The
+application releases each view with `rocketnet_server_release_message` or
+`rocketnet_client_release_message`. `BeginUpdate`
 checks for empty held sets before running the transport; `Observe` retains
 that condition; `RejectUnreleasedUpdate` models the invalid call.
 The `updatewithheld` mutation proceeds anyway, violating
@@ -60,12 +65,11 @@ application release and `Link`. The release-paced workload prevents exhaustion.
 Fair release alone cannot ensure delivery if earlier arrivals already kick a
 connection; liveness makes that admissibility condition explicit.
 
-## Action mapping for the objects implementation
+## Action mapping to the code
 
-The endpoint and slots names below are the planned functions in
-`standard/MESSAGES.md` sections 10 and 11. The release and error-check rows name
-required object responsibilities; their final C API spelling belongs to the
-public objects and API.
+The endpoint and slots functions below are in `sdk/rocketnet_endpoint.cpp` and
+`sdk/rocketnet_slots.cpp`; the update and release rows are the server object's,
+in `sdk/rocketnet_message_server.cpp` and the public API of `sdk/rocketnet.h`.
 
 | Model action | Implementation responsibility |
 |---|---|
@@ -79,7 +83,7 @@ public objects and API.
 | `Admit` | `rn_slots_admit` at apply time, then `rn_endpoint_on_acked` or `rn_endpoint_on_payload` |
 | `Kick` | Object error handling calls `rocketnet_server_transport_disconnect_client` with the exhaustion reason |
 | `ResetFree` | Reset the disconnected endpoint's region before the slot can be reassigned |
-| `Release` | Object message-release operation returns the view's region charge |
+| `Release` | `rocketnet_server_release_message` returns the view's region charge |
 | `RejectUnreleasedUpdate` | Entry check in `rocketnet_server_update` before touching the transport or old views |
 | `EndUpdate` | Return deliveries to the application after processing the current batch |
 
@@ -91,8 +95,7 @@ two packet tickets and one in-flight copy. The exhaustion control has one
 slot, two tickets and two in-flight copies, so duplication and reordering
 are enabled and reachable. Their conjunction is not one combined proof:
 two-slot interaction with two wire copies exceeds the 110-second budget and
-remains an unexplored larger bound. The failed measurement is preserved in
-the job evidence; it is not reported as a pass.
+remains an unexplored larger bound.
 
 The five counterexamples below are replayed from the measured TLC traces.
 `BeginUpdate` precedes transport actions and `EndUpdate` returns to the
@@ -104,7 +107,7 @@ identifiers, not an ordering protocol.
   `Observe` binds the endpoint to 2. Mutated `Admit` applies the payload tagged
   1 to 2, violating `NoCrossConnectionApply` at state 10. The same invariant
   also covers the transport ack entries; the shortest recorded witness uses
-  a payload. This is the same-batch stale-entry hazard in section 10.2.
+  a payload. This is the same-batch stale-entry hazard that m1.4 rule 5 rules out.
 - **Omit reset:** deliver connection 1's record, return its view, then release
   it. Region storage is empty, but receive/dedup state still belongs to 1.
   Begin another update, disconnect 1, and observe the free slot. The mutant
@@ -132,9 +135,8 @@ identifiers, not an ordering protocol.
 
 Each reversed witness declares only its intended failing property. Positive
 controls check the full safety set; `Live` also checks
-`EveryReliableDelivered`. Current measured counts and fingerprints are in
-`RUNS.tsv`. Earlier semantic-error and timeout attempts are retained in the
-job evidence, not substituted for final completed measurements.
+`EveryReliableDelivered`. Measured counts and fingerprints are in
+`tla/RUNS.tsv`.
 
 All nine cases match their expected result with up to two workers, a 110-second
 per-case budget and the pinned runner/JAR from `README.md`. The measured
