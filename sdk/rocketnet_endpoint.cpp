@@ -61,6 +61,7 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
     endpoint->config_wait_start = -1.0;
     endpoint->config_error = ROCKETNET_MESSAGE_ERROR_NONE;
     endpoint->pending_type = -1;
+    endpoint->pending_in_place = 0;
     endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
     endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
     endpoint->packet_written = 0;
@@ -100,6 +101,12 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     endpoint->pending_type = -1;
     endpoint->pending_descriptor = RN_DESCRIPTOR_NONE;
     endpoint->pending_bytes = 0;
+    endpoint->pending_in_place = 0;
+    endpoint->pending_channel = 0;
+    endpoint->pending_header = 0;
+    endpoint->in_place_serial = 0;
+    endpoint->in_place_receipt = 0;
+    endpoint->in_place_admitted = 0;
     endpoint->unreliable_head = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_tail = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_count = 0;
@@ -252,8 +259,8 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
     // tla/RNEndpoint.tla Send, its second half (RNChannel Enqueue's): the
     // message joins its channel's queue in FIFO order and takes its receipt
     // serial (7.4: nonzero for every send). 0 leaves the start pending.
-    if ( endpoint->pending_type == -1 )
-        return 0;
+    if ( endpoint->pending_type == -1 || endpoint->pending_in_place )
+        return 0;                                               // an in-place start finishes with rn_endpoint_in_place_finish
     if ( bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes )
         return 0;
 
@@ -353,6 +360,203 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
     endpoint->pending_type = -1;
     endpoint->pending_descriptor = RN_DESCRIPTOR_NONE;
     endpoint->pending_bytes = 0;
+    endpoint->pending_in_place = 0;                             // RNOutgoingBuild Abort: the owner aborts the frame
+}
+
+// ---------------------------------------------------------------
+//                     the in-place unreliable send
+// ---------------------------------------------------------------
+
+// docs/OUTGOING-BUILD.md; tla/RNOutgoingBuild.tla StartInPlace, FinishInPlace,
+// FinishInPlaceOverBudget and Abort. The payload is the frame's: the header
+// goes in front of the bytes the game wrote and the form byte after them,
+// in place, so the message layer copies nothing into the transport.
+
+static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now );
+
+static int rn_endpoint_sequenced_header_bytes( int channel )
+{
+    return 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 );              // flags and length, sequencing, ordering, channel
+}
+
+int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, double now )
+{
+    if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
+        return RN_ENDPOINT_IN_PLACE_NO;
+    if ( reliability != ROCKETNET_UNRELIABLE && reliability != ROCKETNET_UNRELIABLE_SEQUENCED &&
+         reliability != ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
+        return RN_ENDPOINT_IN_PLACE_NO;
+    if ( ( endpoint->ordered.channels.enabled_types & ( 1u << reliability ) ) == 0 || rn_region_exhausted( endpoint->region ) )
+        return RN_ENDPOINT_IN_PLACE_NO;                         // the region path refuses and counts it
+
+    int header;
+    if ( reliability == ROCKETNET_UNRELIABLE_SEQUENCED )
+    {
+        header = rn_endpoint_sequenced_header_bytes( channel );
+        const int transport_max = transport_max_payload_bytes > 0 ? transport_max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
+        if ( bytes > endpoint->config->max_message_bytes || header + bytes + 1 > ROCKETNET_MAX_PAYLOAD_BYTES ||
+             header + bytes + 1 > transport_max )
+            return RN_ENDPOINT_IN_PLACE_NO;                     // the large single-record path
+    }
+    else
+    {
+        header = reliability == ROCKETNET_UNRELIABLE ? 0 : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+        if ( (uint32_t) bytes > endpoint->unreliable_limit )
+            return RN_ENDPOINT_IN_PLACE_NO;                     // refused, or the receipt twin's promotion
+    }
+
+    // RNOutgoingBuild StartInPlace: a message never overtakes an unreliable
+    // one queued before it (including a sequenced send promoted to the
+    // channel queue); direct and queued packets share the update cap, and
+    // while reliable work is due (the write pass's reliable phase would send
+    // a packet) one packet of it stays for that phase
+    // (RNOutgoingBuild ReliableSentWithinOneUpdate)
+    const int reserved = rn_endpoint_ordered_due( endpoint, now ) ? 1 : 0;
+    if ( endpoint->unreliable_count > 0 || endpoint->written + reserved >= endpoint->config->max_packets_per_update ||
+         ( reliability == ROCKETNET_UNRELIABLE_SEQUENCED &&
+           ( endpoint->region->channel_send[channel].queue_head != RN_DESCRIPTOR_NONE ||
+             endpoint->ordered.ack.chunk_head != RN_RESEND_NONE ) ) )
+        return RN_ENDPOINT_IN_PLACE_QUEUED;
+    return header;
+}
+
+bool rn_endpoint_in_place_affordable( struct rn_endpoint_t * endpoint, int payload_bytes, double now )
+{
+    if ( !endpoint->send_budget_enabled )
+        return true;                                            // R6: uncapped, no bucket
+    // the refill the next write pass would make at this update time, made now
+    // (a second refill at the same time adds nothing)
+    rocketnet_send_budget_refill( &endpoint->budget, now );
+    const int admitted = rocketnet_send_budget_max_wire_bytes( payload_bytes );
+    const double reserve = rn_endpoint_ordered_due( endpoint, now ) ? (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES : 0.0;
+    return admitted > 0 && !endpoint->budget.reliable_waiting && endpoint->budget.tokens >= (double) admitted + reserve;
+}
+
+void rn_endpoint_in_place_begin( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int header )
+{
+    rocketnet_assert( endpoint->pending_type == -1 );
+    endpoint->pending_type = reliability;
+    endpoint->pending_bytes = (uint32_t) bytes;
+    endpoint->pending_descriptor = RN_DESCRIPTOR_NONE;
+    endpoint->pending_in_place = 1;
+    endpoint->pending_channel = channel;
+    endpoint->pending_header = header;
+}
+
+uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t * payload, int bytes, double now, int * payload_bytes )
+{
+    *payload_bytes = 0;
+    if ( endpoint->pending_type == -1 || !endpoint->pending_in_place || !payload )
+        return 0;
+    if ( bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes )
+        return 0;
+
+    uint32_t serial = endpoint->serial + 1;
+    if ( serial == 0 )
+        serial = 1;
+
+    const int type = endpoint->pending_type;
+    const int header = endpoint->pending_header;
+    const int capacity = header + (int) endpoint->pending_bytes + 1;
+    int length = 0;
+    if ( type == ROCKETNET_UNRELIABLE )
+    {
+        // the SINGLE form: the message at the payload root, the form byte after it
+        length = rocketnet_message_single_finish( payload, capacity, bytes );
+    }
+    else
+    {
+        // one record of a RECORDS payload: its header in front of the bytes
+        rocketnet_message_record_t record;
+        memset( &record, 0, sizeof( record ) );
+        if ( type == ROCKETNET_UNRELIABLE_SEQUENCED )
+        {
+            // RNChannelTypes!Enqueue: the sequencing index is taken at finish,
+            // as on the queued path, so the sequenced drop rule is unchanged
+            uint32_t ordering = 0;
+            const uint32_t sequencing = rn_channels_send_sequenced( &endpoint->ordered.channels, (uint32_t) endpoint->pending_channel, &ordering );
+            record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
+            record.channel = (uint32_t) endpoint->pending_channel;
+            record.sequencing = sequencing & ROCKETNET_MESSAGE_U24_MASK;
+            record.ordering = ordering & ROCKETNET_MESSAGE_U24_MASK;
+        }
+        else
+            record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;   // 5 travels as code 0 (STANDARD.md _Record_)
+        record.data = payload + header;
+        record.bytes = bytes;
+        rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, payload, capacity );
+        if ( rocketnet_message_writer_add_in_place( &writer, &record ) )
+            length = rocketnet_message_writer_finish( &writer );
+    }
+    rocketnet_assert( length > 0 );
+
+    endpoint->serial = serial;
+    endpoint->pending_type = -1;
+    endpoint->pending_descriptor = RN_DESCRIPTOR_NONE;
+    endpoint->pending_bytes = 0;
+    endpoint->pending_in_place = 0;
+    endpoint->in_place_serial = serial;
+    endpoint->in_place_receipt = type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT ? 1 : 0;
+    endpoint->in_place_admitted = 0;
+    if ( length <= 0 )
+    {
+        rn_endpoint_in_place_failed( endpoint );
+        return serial;
+    }
+
+    // R6, RNSendBudget Send at the unreliable class. start took this path
+    // only when the bucket could pay the declared maximum
+    // (rn_endpoint_in_place_affordable), and the bytes written are at most
+    // that, so the admit succeeds; RNOutgoingBuild FinishInPlaceOverBudget
+    // is the drop, counted, should the bucket have moved since. The class
+    // order holds: while the reliable path has work due, an in-place packet
+    // is admitted only if one maximum packet stays in the bucket for it
+    if ( endpoint->send_budget_enabled )
+    {
+        rocketnet_send_budget_refill( &endpoint->budget, now );
+        const int admitted = rocketnet_send_budget_max_wire_bytes( length );
+        const double reserve = rn_endpoint_ordered_due( endpoint, now ) ? (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES : 0.0;
+        if ( admitted == 0 || endpoint->budget.tokens < (double) admitted + reserve ||
+             rocketnet_send_budget_admit( &endpoint->budget, ROCKETNET_SEND_CLASS_UNRELIABLE, admitted ) != ROCKETNET_SEND_BUDGET_SEND )
+        {
+            rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
+            if ( endpoint->in_place_receipt )
+                rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, serial ); // local budget drop before wire send
+            endpoint->in_place_receipt = 0;
+            return serial;
+        }
+        endpoint->in_place_admitted = admitted;
+    }
+
+    *payload_bytes = length;
+    return serial;
+}
+
+void rn_endpoint_in_place_sent( struct rn_endpoint_t * endpoint, uint64_t packet_id, int wire_bytes, double now )
+{
+    // RNOutgoingBuild TransportSend's commit: the receipt entry under the
+    // transport's packet id (RNReceipts WritePacket), the budget settled at
+    // the sealed size
+    if ( endpoint->in_place_receipt )
+        rn_window_ack_commit_receipt_packet( &endpoint->ordered.ack, packet_id, &endpoint->in_place_serial, 1, now );
+    if ( endpoint->send_budget_enabled && endpoint->in_place_admitted > 0 )
+        rocketnet_send_budget_settle( &endpoint->budget, endpoint->in_place_admitted, wire_bytes );
+    endpoint->written++;
+    endpoint->in_place_receipt = 0;
+    endpoint->in_place_admitted = 0;
+}
+
+void rn_endpoint_in_place_failed( struct rn_endpoint_t * endpoint )
+{
+    // 6.4 "Failed send": the transport refused the frame, so the message is
+    // lost, counted, and a receipt takes its LOSS
+    rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+    if ( endpoint->in_place_receipt )
+        rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, endpoint->in_place_serial );
+    endpoint->in_place_receipt = 0;
+    endpoint->in_place_admitted = 0;
+    endpoint->written++;
 }
 
 uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data, int bytes,
@@ -443,6 +647,7 @@ uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 {
     // RNChannel EndUpdate: the last update's deliveries expire and their
     // receive descriptors return to the region (RNSlots Release's charge)
+    endpoint->written = 0;
     const uint32_t delivered = endpoint->ordered.channels.deliveries;
     rn_ordered_end_update( &endpoint->ordered );
     rn_window_ack_receipt_begin_update( &endpoint->ordered.ack );
@@ -609,8 +814,8 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     // tla/RNEndpoint.tla WritePacket, the plan (9.3, RNChannel WritePacket
     // with RNSendBudget Send, Wait and Drop): ordered progress and
     // retransmits first, one packet at a time so a frame is started only for
-    // a packet that is written, then the unreliable records, under the
-    // connection's budget (R6), at most max_packets_per_update packets.
+    // a packet that is written, then unreliable records under the
+    // connection's budget (R6) and shared per-update packet allowance.
     if ( endpoint->packet_written )
         return 0;                                               // the written packet is not yet sent or failed
 
@@ -618,7 +823,6 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     {
         if ( endpoint->send_budget_enabled )
             rocketnet_send_budget_begin_update( &endpoint->budget, now );
-        endpoint->written = 0;
         // every resend waits the same delay, with no back-off (tla/RNResendTiming.tla)
         rn_window_ack_gaps_update( &endpoint->ordered.ack, now );   // the resend gap record (development builds only)
         endpoint->write_phase = RN_ENDPOINT_WRITE_RELIABLE;
