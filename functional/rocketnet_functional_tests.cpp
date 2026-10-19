@@ -118,6 +118,35 @@ static void rocketnet_test_hammer_thread( void * data )
     }
 }
 
+struct rocketnet_test_wire_hammer_args_t
+{
+    struct rocketnet_server_transport_t * server;
+    int thread_id;
+    int packets;
+    uint64_t wire_bytes_sum;
+};
+
+static void rocketnet_test_wire_hammer_thread( void * data )
+{
+    struct rocketnet_test_wire_hammer_args_t * args = (struct rocketnet_test_wire_hammer_args_t*) data;
+    uint64_t sum = 0;
+    for ( int i = 0; i < args->packets; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_transport_start_packet( args->server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        rocketnet_check( frame );
+        uint8_t * payload = frame + context.payload_index;
+        payload[0] = (uint8_t) args->thread_id;
+        payload[1] = (uint8_t) i;
+        for ( int j = 2; j < 16; j++ )
+            payload[j] = (uint8_t) ( args->thread_id * 31 + i * 7 + j );
+        const int wire_bytes = rocketnet_server_transport_finish_packet( args->server, &context, 16 );
+        rocketnet_check( wire_bytes > 0 );
+        sum += (uint64_t) wire_bytes;
+    }
+    args->wire_bytes_sum = sum;
+}
+
 void rocketnet_test_transport_disconnect_delivery()
 {
     // the disconnect burst through the TRANSPORT, not handed to the client
@@ -897,6 +926,103 @@ void rocketnet_test_transport_concurrent_fill()
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
+void rocketnet_test_transport_wire_totals_concurrent_send_exact()
+{
+    // the four-thread hammer of test_transport_concurrent_fill, then pin the
+    // whole-server and per-client sent wire totals: a lost increment from a
+    // non-atomic add fails these exact asserts even without tsan.
+
+    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
+    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_DRIVER" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_DRIVER" );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "portable" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    rocketnet_server_transport_send_packets( server );
+
+    struct rocketnet_server_transport_stats_t base_server;
+    memset( &base_server, 0, sizeof(base_server) );
+    rocketnet_server_transport_stats( server, &base_server );
+    struct rocketnet_server_transport_client_stats_t base_slot;
+    memset( &base_slot, 0, sizeof(base_slot) );
+    rocketnet_server_transport_client_stats( server, 0, &base_slot );
+
+    const int NUM_THREADS = 4;
+    const int PACKETS_PER_THREAD = 50;
+    struct rocketnet_test_wire_hammer_args_t args[NUM_THREADS];
+    rocketnet_platform_thread_t * threads[NUM_THREADS];
+    for ( int t = 0; t < NUM_THREADS; t++ )
+    {
+        args[t].server = server;
+        args[t].thread_id = t;
+        args[t].packets = PACKETS_PER_THREAD;
+        args[t].wire_bytes_sum = 0;
+        threads[t] = rocketnet_platform_thread_create( NULL, rocketnet_test_wire_hammer_thread, &args[t] );
+        rocketnet_check( threads[t] );
+    }
+
+    for ( int t = 0; t < NUM_THREADS; t++ )
+    {
+        rocketnet_platform_thread_join( threads[t] );
+        rocketnet_platform_thread_destroy( threads[t] );
+    }
+
+    uint64_t total_wire = 0;
+    for ( int t = 0; t < NUM_THREADS; t++ )
+        total_wire += args[t].wire_bytes_sum;
+
+    rocketnet_server_transport_send_packets( server );
+
+    const uint64_t expected_packets = (uint64_t) ( NUM_THREADS * PACKETS_PER_THREAD );
+    const uint64_t overhead = (uint64_t) ( ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
+    struct rocketnet_server_transport_stats_t sstats;
+    memset( &sstats, 0, sizeof(sstats) );
+    rocketnet_server_transport_stats( server, &sstats );
+    rocketnet_check( sstats.packets_sent - base_server.packets_sent == expected_packets );
+    rocketnet_check( sstats.bytes_sent - base_server.bytes_sent == total_wire + expected_packets * overhead );
+
+    struct rocketnet_server_transport_client_stats_t cstats;
+    memset( &cstats, 0, sizeof(cstats) );
+    rocketnet_server_transport_client_stats( server, 0, &cstats );
+    rocketnet_check( cstats.packets_sent - base_slot.packets_sent == expected_packets );
+    rocketnet_check( cstats.bytes_sent - base_slot.bytes_sent == total_wire + expected_packets * overhead );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+    rocketnet_test_env_restore( &process_guard );
 }
 
 void rocketnet_test_transport_start_finish_shape()
@@ -6967,6 +7093,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_ring_exhaustion", rocketnet_test_transport_ring_exhaustion },
     { "test_transport_client_concurrent_fill", rocketnet_test_transport_client_concurrent_fill },
     { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill },
+    { "test_transport_wire_totals_concurrent_send_exact", rocketnet_test_transport_wire_totals_concurrent_send_exact },
     { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape },
     { "test_transport_udp_loopback", rocketnet_test_transport_udp_loopback },
     { "cpp_transports_connect_over_loopback", rocketnet_test_cpp_transports_connect_over_loopback },
