@@ -125,6 +125,16 @@
 
 /** @brief Required connect-token buffer size in bytes. */
 #define ROCKETNET_CONNECT_TOKEN_BYTES                      768
+/** @brief Application-defined connect-token user data size in bytes. */
+#define ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES            256
+/** @brief Backend signing public key size in bytes. */
+#define ROCKETNET_BACKEND_PUBLIC_KEY_BYTES                  32
+/** @brief Backend signing secret key size in bytes. */
+#define ROCKETNET_BACKEND_SECRET_KEY_BYTES                  64
+/** @brief Server sealing public key size in bytes. */
+#define ROCKETNET_SERVER_PUBLIC_KEY_BYTES                   32
+/** @brief Server sealing secret key size in bytes. */
+#define ROCKETNET_SERVER_SECRET_KEY_BYTES                   32
 
 /** @brief Alignment in bytes that a caller memory block for a client or a server needs, and that SDK allocations return. */
 #define ROCKETNET_ALLOCATION_ALIGNMENT                     64
@@ -804,6 +814,48 @@ struct rocketnet_receipt_t
     uint32_t serial;
     uint32_t status;            // ROCKETNET_RECEIPT_ACKED or ROCKETNET_RECEIPT_LOSS
 };
+
+// -----------------------------------------
+//                      connect tokens
+// -----------------------------------------
+
+// The backend's Ed25519 signing keypair: public_key is
+// ROCKETNET_BACKEND_PUBLIC_KEY_BYTES long and secret_key is
+// ROCKETNET_BACKEND_SECRET_KEY_BYTES long. The backend keeps the secret key
+// and gives the public key to every server. Returns ROCKETNET_STATUS_OK, or
+// ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL pointer, or
+// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the crypto library refuses.
+ROCKETNET_EXPORT int rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
+
+// The server's X25519 sealing keypair: public_key and secret_key are each
+// ROCKETNET_SERVER_PUBLIC_KEY_BYTES and ROCKETNET_SERVER_SECRET_KEY_BYTES
+// long. The server keeps the secret key; the backend seals tokens to the
+// public key. Returns the same codes as the backend keypair call.
+ROCKETNET_EXPORT int rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
+
+// Mints a production connect token from the backend's secret key and the
+// server's public key. The token carries client_id, protocol_id, the server
+// addresses, create_timestamp, expire_timestamp, timeout_seconds and
+// user_data, and fresh session keys. server_address_strings holds
+// server_address_count entries (1 or 2), at most one of each family; user_data
+// is ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES long, or NULL for all zeros. The
+// output is ROCKETNET_CONNECT_TOKEN_BYTES long and connect_token_bytes is its
+// size; a short buffer is refused and nothing is written. Reads no clock.
+// Returns ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT,
+// ROCKETNET_STATUS_INVALID_PROTOCOL_ID, ROCKETNET_STATUS_INVALID_ADDRESS or
+// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. Secret keys are never logged.
+ROCKETNET_EXPORT int rocketnet_write_production_connect_token( const uint8_t * backend_secret_key,
+                                                               const uint8_t * server_public_key,
+                                                               uint64_t protocol_id,
+                                                               const char * const * server_address_strings,
+                                                               int server_address_count,
+                                                               uint64_t client_id,
+                                                               uint64_t create_timestamp,
+                                                               uint64_t expire_timestamp,
+                                                               int32_t timeout_seconds,
+                                                               const uint8_t * user_data,
+                                                               uint8_t * connect_token,
+                                                               size_t connect_token_bytes );
 
 // -----------------------------------------
 //                             client
