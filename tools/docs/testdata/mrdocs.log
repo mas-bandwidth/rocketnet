@@ -36,7 +36,7 @@ Finalizing corpus
   20 | ROCKETNET_EXPORT_FUNC bool rocketnet_platform_init();
      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-/workspace/rocketnet/sdk/rocketnet.hpp:29:18:
+/workspace/rocketnet/sdk/rocketnet.hpp:34:18:
     1) update: function is undocumented
   29 |     virtual void update( double time ) = 0;
      |                  ^~~~~~~~~~~~~~~~~~~~~~~~~~

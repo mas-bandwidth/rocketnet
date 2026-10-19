@@ -12,7 +12,7 @@
 
 #include <string.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_send_budget.h"
 

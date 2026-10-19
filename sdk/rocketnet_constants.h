@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_CONSTANTS_H
 #define ROCKETNET_CONSTANTS_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_history.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"

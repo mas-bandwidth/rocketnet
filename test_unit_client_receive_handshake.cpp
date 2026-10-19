@@ -13,7 +13,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_client_receive_handshake.h"
 
