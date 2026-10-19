@@ -35,6 +35,10 @@
 #define WINDOWS_CONNRESET_GAP_BOUND ( WINDOWS_CONNRESET_TICK + 0.050 )
 #define WINDOWS_CONNRESET_LIVE_CLIENTS 3
 #define WINDOWS_CONNRESET_PAYLOAD_BYTES 32
+// packets a server sends each client per tick in the hard-killed case: a
+// snapshot split across a few packets, so the dead client draws several ICMP
+// reports per tick, as a game server's traffic does
+#define WINDOWS_CONNRESET_SNAPSHOT_PACKETS 4
 
 static void windows_connreset_check( bool condition, const char * expression, int line )
 {
@@ -221,10 +225,10 @@ static int windows_connreset_live_slot( windows_connreset_session_t * session, i
 }
 
 // one server tick: update every client, update the server, read every
-// payload (recording each live client's receive gap), send one payload to
-// every connected client (the dead one too, until it times out), and
-// extra_dead_sends more to the dead client's slot
-static void windows_connreset_tick( windows_connreset_session_t * session, int extra_dead_sends )
+// payload (recording each live client's receive gap), send sends_per_client
+// payloads to every connected client (the dead one too, until it times out),
+// and extra_dead_sends more to the dead client's slot
+static void windows_connreset_tick( windows_connreset_session_t * session, int sends_per_client, int extra_dead_sends )
 {
     const double now = rocketnet_platform_time();
     session->sequence++;
@@ -256,10 +260,13 @@ static void windows_connreset_tick( windows_connreset_session_t * session, int e
     {
         if ( !rocketnet_server_transport_is_client_connected( session->server, client_index ) )
             continue;
-        rocketnet_server_transport_send_packet( session->server, client_index, payload, (int) sizeof( payload ) );
         const int slot = windows_connreset_live_slot( session, client_index );
-        if ( slot >= 0 )
-            session->server_sent[slot]++;
+        for ( int j = 0; j < sends_per_client; j++ )
+        {
+            rocketnet_server_transport_send_packet( session->server, client_index, payload, (int) sizeof( payload ) );
+            if ( slot >= 0 )
+                session->server_sent[slot]++;
+        }
         if ( client_index == session->child_index )
             for ( int j = 0; j < extra_dead_sends; j++ )
                 rocketnet_server_transport_send_packet( session->server, client_index, payload, (int) sizeof( payload ) );
@@ -294,7 +301,7 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
     double next = start;
     for ( ;; )
     {
-        windows_connreset_tick( session, 0 );
+        windows_connreset_tick( session, 1, 0 );
         bool connected = rocketnet_server_transport_num_connected_clients( session->server ) == WINDOWS_CONNRESET_LIVE_CLIENTS + 1;
         for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
             connected = connected && rocketnet_client_transport_state( session->live[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
@@ -315,7 +322,7 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
     const double warm = rocketnet_platform_time();
     while ( rocketnet_platform_time() - warm < 1.0 )
     {
-        windows_connreset_tick( session, 0 );
+        windows_connreset_tick( session, 1, 0 );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
@@ -349,7 +356,8 @@ static const char * windows_connreset_label( const windows_connreset_transport_t
 // keeps sending to it, so the stack answers with ICMP port unreachable. The
 // three live clients see no receive gap past one update interval plus 50 ms,
 // the dead client times out by the normal timeout and frees its slot, and a
-// fifth client then connects within its handshake time.
+// fifth client then connects within its handshake time. The server sends
+// every client a snapshot of WINDOWS_CONNRESET_SNAPSHOT_PACKETS packets a tick.
 static void windows_connreset_hard_killed_client( const windows_connreset_transport_t * transport )
 {
     const uint64_t resets_before = rocketnet_platform_receive_resets();
@@ -361,7 +369,7 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     double next = killed;
     while ( rocketnet_server_transport_is_client_connected( session.server, session.child_index ) )
     {
-        windows_connreset_tick( &session, 0 );
+        windows_connreset_tick( &session, WINDOWS_CONNRESET_SNAPSHOT_PACKETS, 0 );
         windows_connreset_require( rocketnet_platform_time() - killed < ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS + 5.0 );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
@@ -373,6 +381,9 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
         windows_connreset_require( rocketnet_server_transport_is_client_connected( session.server, session.live_index[i] ) );
     }
     windows_connreset_require( rocketnet_server_transport_num_connected_clients( session.server ) == WINDOWS_CONNRESET_LIVE_CLIENTS );
+    printf( "windows_connreset_hard_killed_client %s: dead client timed out after %.2f s, max receive gap so far %.1f ms\n",
+            windows_connreset_label( transport ), timed_out, session.max_gap * 1000.0 );
+    fflush( stdout );
 
     // the slot is free: a fifth client connects within its handshake time
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -381,7 +392,7 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     const double fifth_start = rocketnet_platform_time();
     while ( rocketnet_client_transport_state( fifth ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
-        windows_connreset_tick( &session, 0 );
+        windows_connreset_tick( &session, WINDOWS_CONNRESET_SNAPSHOT_PACKETS, 0 );
         windows_connreset_client_tick( fifth, rocketnet_platform_time(), session.sequence, true, NULL, NULL );
         windows_connreset_require( rocketnet_client_transport_state( fifth ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
         windows_connreset_require( rocketnet_platform_time() - fifth_start < 5.0 );
@@ -462,7 +473,7 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
     while ( dead_sends < 1000 )
     {
         // the per-tick send to every connected slot is one, plus nine extra
-        windows_connreset_tick( &session, 9 );
+        windows_connreset_tick( &session, 1, 9 );
         dead_sends += 10;
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
