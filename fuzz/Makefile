@@ -7,7 +7,8 @@
 # four here.
 #
 # The bpf/xdp link deps are Linux only; darwin links the same library without
-# them. The `compile` target proves the sources compile against the development
+# them and adds the CoreFoundation and SystemConfiguration frameworks the
+# platform layer's interface lookup uses, as CMakeLists.txt does. The `compile` target proves the sources compile against the development
 # headers on any host, which is where an undeclared development symbol would
 # surface.
 
@@ -18,7 +19,8 @@
 #
 # ROCKETNET_FUZZ_CXX names the compiler that links libFuzzer. Apple clang
 # ships no libFuzzer runtime, so on a Mac point it at an LLVM toolchain that
-# does: make ROCKETNET_FUZZ_CXX="$$(brew --prefix llvm)/bin/clang++".
+# does, for example the LLVM release for macOS ARM64 unpacked at ~/sdk/llvm:
+# make ROCKETNET_FUZZ_CXX="$$HOME/sdk/llvm/bin/clang++".
 CXX      := $(if $(ROCKETNET_FUZZ_CXX),$(ROCKETNET_FUZZ_CXX),clang++)
 SANITIZE ?= -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 FLAGS     = -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEVELOPMENT=1 -I../sodium -I../sdk -I../test
@@ -26,7 +28,7 @@ BUILD    ?= ../build
 LIB       = $(BUILD)/librocketnet_dev.a
 UNAME_S  := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-LINKS     = -lpthread
+LINKS     = -lpthread -framework CoreFoundation -framework SystemConfiguration
 else
 LINKS     = -lbpf -lxdp -luring -lpthread
 endif
