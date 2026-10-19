@@ -12,6 +12,15 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
+#if defined(__APPLE__) || defined(__linux__)
+int rocketnet_posix_hard_killed_child_main( const char * host, int port );
+#endif
 
 int rocketnet_functional_test_count();
 const char * rocketnet_functional_test_name( int index );
@@ -57,6 +66,22 @@ static int rocketnet_functional_worker( const char * name )
 
 int main( int argc, char ** argv )
 {
+#if defined(__APPLE__) || defined(__linux__)
+    // the hard-killed-peer case starts this same binary as its child; give it
+    // an absolute path so posix_spawn does not depend on the caller's cwd.
+    if ( argc >= 4 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
+        return rocketnet_posix_hard_killed_child_main( argv[2], atoi( argv[3] ) );
+#endif
+
+#if defined(__APPLE__)
+    {
+        char self_path[4096];
+        uint32_t self_size = (uint32_t) sizeof(self_path);
+        if ( _NSGetExecutablePath( self_path, &self_size ) == 0 )
+            setenv( "ROCKETNET_FUNCTIONAL_SELF", self_path, 1 );
+    }
+#endif
+
 #if defined(_WIN32)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },

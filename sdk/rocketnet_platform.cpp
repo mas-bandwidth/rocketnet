@@ -2225,6 +2225,37 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     }
 }
 
+// ICMP-class and buffer errnos a UDP receive reports: on a BSD stack a
+// connected socket surfaces an ICMP port-unreachable as ECONNREFUSED on the
+// next receive, and EHOSTUNREACH/ENETUNREACH (with the down and queue
+// variants) arrive the same way. They are weather about one destination,
+// never a failure of the socket: a receive skips them and keeps reading.
+// Shared by the portable recvmsg arm and the batch recvmsg_x arm.
+static bool rocketnet_receive_weather( int error )
+{
+    return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS;
+}
+
+#if ROCKETNET_DEVELOPMENT
+// the injected-errno seam (tests only): a nonzero value is consumed by the
+// next receive syscall on this path, so a test can prove the drain's handling
+// of an errno the host will not produce on demand. never compiled into a
+// release library.
+static int rocketnet_platform_recvmsg_error_for_testing = 0;
+static int rocketnet_platform_recvmsg_x_error_for_testing = 0;
+
+void rocketnet_platform_set_recvmsg_error_for_testing( int error )
+{
+    rocketnet_platform_recvmsg_error_for_testing = error;
+}
+
+void rocketnet_platform_set_recvmsg_x_error_for_testing( int error )
+{
+    rocketnet_platform_recvmsg_x_error_for_testing = error;
+}
+#endif // #if ROCKETNET_DEVELOPMENT
+
 int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
 {
     rocketnet_assert( socket );
@@ -2253,14 +2284,40 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
         msg.msg_iov = iov;
         msg.msg_iovlen = 2;
 
-        result = int( recvmsg( socket->handle, &msg, 0 ) );
+#if ROCKETNET_DEVELOPMENT
+        if ( rocketnet_platform_recvmsg_error_for_testing != 0 )
+        {
+            errno = rocketnet_platform_recvmsg_error_for_testing;
+            rocketnet_platform_recvmsg_error_for_testing = 0;
+            result = -1;
+        }
+        else
+#endif // #if ROCKETNET_DEVELOPMENT
+        {
+            result = int( recvmsg( socket->handle, &msg, 0 ) );
+        }
 
         if ( result < 0 )
         {
-            if ( errno != EAGAIN && errno != EINTR )
+            const int error = errno;
+
+            if ( error == EINTR )
+                continue;
+
+            if ( error == EAGAIN || error == EWOULDBLOCK )
+                return 0;
+
+            if ( rocketnet_receive_weather( error ) )
             {
-                rocketnet_debug( "recvfrom failed with error %d", errno );
+                // an ICMP-class or buffer error is about the destination,
+                // not the socket: skip it and keep the drain alive. before
+                // this branch it returned 0, which reads as "drained" and
+                // let one queued ICMP error hide every datagram behind it.
+                rocketnet_debug( "recvmsg error (%s). skipped", strerror( error ) );
+                continue;
             }
+
+            rocketnet_debug( "recvfrom failed with error %d", error );
             return 0;
         }
 
@@ -2618,19 +2675,43 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         }
 
         errno = 0;
-        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+        ssize_t result;
+#if ROCKETNET_DEVELOPMENT
+        if ( rocketnet_platform_recvmsg_x_error_for_testing != 0 )
+        {
+            errno = rocketnet_platform_recvmsg_x_error_for_testing;
+            rocketnet_platform_recvmsg_x_error_for_testing = 0;
+            result = -1;
+        }
+        else
+#endif // #if ROCKETNET_DEVELOPMENT
+        {
+            result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+        }
         if ( result < 0 )
         {
-            if ( errno == EINTR )
+            const int error = errno;
+
+            if ( error == EINTR )
                 continue;
-            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+            if ( error == EAGAIN || error == EWOULDBLOCK )
                 return total;
+
+            // an ICMP-class or buffer error is weather about a destination,
+            // not a refusal of the batch pump: skip it and keep draining.
+            // pausing here demoted the whole socket to the per-packet pump
+            // for ROCKETNET_MSGX_RETRY_SECONDS on a single killed peer.
+            if ( rocketnet_receive_weather( error ) )
+            {
+                rocketnet_debug( "recvmsg_x error (%s). skipped", strerror( error ) );
+                continue;
+            }
 
             // outside ordinary weather: pause the pump and finish this
             // call per-packet -- what earlier chunks drained is already
             // delivered, nothing about this call's contract changes.
 
-            rocketnet_msgx_pause( socket, "recvmsg_x", errno );
+            rocketnet_msgx_pause( socket, "recvmsg_x", error );
             goto per_packet;
         }
 
