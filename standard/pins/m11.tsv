@@ -7,8 +7,5 @@ kind	ROCKETNET_MESSAGE_CONTROL_CONFIG	1
 version	ROCKETNET_MESSAGE_CONFIG_VERSION	1
 enabled default	( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & 0xFFu )	0xFF
 num channels default	rn_pin_message_default_num_channels	32
-CONFIG window messages default	rn_pin_message_default_window_messages	1024
-CONFIG receive ring bytes default	rn_pin_message_default_receive_ring_bytes	262144
 max message bytes default	rn_pin_message_default_max_message_bytes	262144
-CONFIG fragment bytes	ROCKETNET_MESSAGE_FRAGMENT_BYTES	1152
 form	ROCKETNET_MESSAGE_FORM_RECORDS	1

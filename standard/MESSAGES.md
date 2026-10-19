@@ -2265,30 +2265,32 @@ configuration: build-specific maximum at least 301; num_channels 301
 <a id="m11"></a>
 ## m11. CONFIG control record
 
-Each endpoint MUST send exactly one CONFIG record for each connection and MUST
-NOT send another. It MUST send the CONFIG record before any other reliable
-record of that connection, and it resends the CONFIG record until the
-connection layer acknowledges it ([m7 Delivery: reliable codes 2, 3 and 4](#m7)).
-An endpoint MUST start its CONFIG wait at the first update at which its
-connection layer reports the connection established.
-
-An endpoint MUST end the connection with `RELIABLE_TIMEOUT` when an update is
-at or after the start of the CONFIG wait plus the reliable timeout
-([m9 Acknowledgement mapping, resend and send budget](#m9)) and it has not
-accepted the peer's CONFIG.
-
-An endpoint MUST accept a CONFIG record only when its body is 28 bytes, its
-kind is 1, and, when its version is 1, both reserved fields are zero. An
-endpoint MUST refuse every other CONFIG record as `MESSAGE_BAD_CONTROL`. An
-endpoint MUST read a body whose version it does not know and MUST compare it;
-such a body is a CONFIG mismatch and never `MESSAGE_BAD_CONTROL`.
-
-An endpoint MUST compare the `version`, `enabled`, `num_channels`,
-`window_messages`, `receive_ring_bytes`, `max_message_bytes` and
-`fragment_bytes` fields of the body with its own values. An endpoint MUST end
-the connection with `CONFIG_MISMATCH` when any compared field differs. An
-endpoint MAY receive message records before the peer's CONFIG and MUST
-process them against its own configuration.
+1. Each endpoint MUST send exactly one CONFIG record for each connection and
+   MUST NOT send another.
+2. An endpoint MUST send the CONFIG record before any other reliable record of
+   that connection, and MUST resend it until the connection layer acknowledges
+   it ([m7 Delivery: reliable codes 2, 3 and 4](#m7)).
+3. An endpoint MUST start its CONFIG wait at the first update at which its
+   connection layer reports the connection established.
+4. An endpoint MUST end the connection with `RELIABLE_TIMEOUT` when an update
+   is at or after the start of the CONFIG wait plus the reliable timeout
+   ([m9 Acknowledgement mapping, resend and send budget](#m9)) and it has not
+   accepted the peer's CONFIG.
+5. An endpoint MUST accept a CONFIG record only when its body length is the
+   body size row of [m11.2 Constants and defaults](#m11.2), its kind is its kind row, and, when its
+   version is its version row, both reserved fields are zero.
+6. An endpoint MUST refuse every other CONFIG record as `MESSAGE_BAD_CONTROL`,
+   and MUST end the connection with `PROTOCOL_VIOLATION` when it does.
+7. An endpoint MUST read a body whose version it does not know and MUST
+   compare it; such a body is a CONFIG mismatch and never
+   `MESSAGE_BAD_CONTROL`.
+8. An endpoint MUST compare the `version`, `enabled`, `num_channels`,
+   `window_messages`, `receive_ring_bytes`, `max_message_bytes` and
+   `fragment_bytes` fields of the body with its own values.
+9. An endpoint MUST end the connection with `CONFIG_MISMATCH` when any
+   compared field differs.
+10. An endpoint MAY receive message records before the peer's CONFIG, and
+    when it does it MUST process them against its own configuration.
 
 ### m11.1. Wire layout
 
@@ -2333,15 +2335,17 @@ reliable number. The payload is 35 bytes:
 | window_messages | 14 | 4 | u32 | the reliable window W | the sender's configured window |
 | receive_ring_bytes | 18 | 4 | u32 | the receive ring B | the sender's configured ring size |
 | max_message_bytes | 22 | 4 | u32 | the largest message | the sender's configured maximum |
-| fragment_bytes | 26 | 4 | u32 | the block stride F | `1152` |
+| fragment_bytes | 26 | 4 | u32 | the block stride F | the fragment bytes row of [m5.4 Constants and configuration](#m5.4) |
 | reserved tail | 30 | 4 | zero[4] | reserved | `0` |
 | form | 34 | 1 | u8 | the payload form | `1` |
 
 ### m11.2. Constants and defaults
 
-The library's default configuration is the one below. Every field of the body
-except the reserved fields is compared, so an implementation MUST use the
-same defaults or the two ends end the connection with `CONFIG_MISMATCH`.
+The library's default configuration is the one below, with the window and
+ring defaults and the fragment stride in the [m5.4 Constants and configuration](#m5.4) rows window
+messages default, receive ring bytes default and fragment bytes. Every field of the
+body except the reserved fields is compared, so two ends whose configurations
+differ in any compared field end the connection with `CONFIG_MISMATCH`.
 
 | Name | Value | Unit |
 |---|---|---|
@@ -2351,10 +2355,7 @@ same defaults or the two ends end the connection with `CONFIG_MISMATCH`.
 | version | `1` | none |
 | enabled default | `0xFF` | mask |
 | num channels default | `32` | channels |
-| CONFIG window messages default | `1024` | messages |
-| CONFIG receive ring bytes default | `262144` | bytes |
 | max message bytes default | `262144` | bytes |
-| CONFIG fragment bytes | `1152` | bytes |
 | form | `1` | none |
 
 `enabled` with bit r set permits the application to send reliability r; the
@@ -2369,11 +2370,11 @@ An endpoint has one CONFIG state per connection.
 |---|---|---|---|---|
 | Waiting | CONFIG body accepted | every compared field is equal | the CONFIG wait ends | Verified |
 | Waiting | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
-| Waiting | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL`; the violation ends the connection | none |
+| Waiting | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |
 | Waiting | update | at or after the start of the CONFIG wait plus the reliable timeout | end the connection with `RELIABLE_TIMEOUT` | none |
 | Verified | CONFIG body accepted | every compared field is equal | no change | Verified |
 | Verified | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
-| Verified | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL`; the violation ends the connection | none |
+| Verified | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |
 
 An event that a state does not list is ignored in that state.
 
