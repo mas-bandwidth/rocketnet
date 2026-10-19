@@ -376,6 +376,20 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         return (uint64_t) _InterlockedExchangeAdd64( (volatile long long *) value, (long long) add );
     }
 
+    inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
+    {
+    #if defined(_M_IX86)
+        // 32-bit x86 has no single-instruction 64-bit load; CAS with the
+        // observed value (a self-write) retries until it reads consistent.
+        long long observed = *(volatile long long *) value;
+        while ( _InterlockedCompareExchange64( (volatile long long *) value, observed, observed ) != observed )
+            observed = *(volatile long long *) value;
+        return (uint64_t) observed;
+    #else
+        return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, 0, 0 );
+    #endif
+    }
+
     inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
     {
     #if defined(_M_IX86)
@@ -415,6 +429,11 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
     {
         return __atomic_fetch_add( value, add, __ATOMIC_RELAXED );
+    }
+
+    inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
+    {
+        return __atomic_load_n( value, __ATOMIC_RELAXED );
     }
 
     inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )

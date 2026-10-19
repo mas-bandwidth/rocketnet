@@ -302,6 +302,28 @@ static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_trans
     }
 }
 
+// The staged producers (any game thread) fold the whole-server sent counters
+// and the per-client sent totals with relaxed atomics, as the fill-phase
+// atomics in rocketnet_platform.h do for stats_pending_packets_sent and
+// stats_pending_bytes_sent: each counter is meaningful alone and nothing is
+// ordered behind it. The pending-by-address table is main-thread only, so a
+// producer whose client_index is out of range drops the count rather than
+// touch it.
+
+static void rocketnet_server_wire_totals_add_sent_atomic( struct rocketnet_server_transport_t * server_transport,
+                                                          int client_index, int packet_bytes )
+{
+    const uint64_t wire_bytes = (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &server_transport->server_stats.packets_sent, 1 );
+    rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &server_transport->server_stats.bytes_sent, wire_bytes );
+    if ( client_index >= 0 && client_index < server_transport->client_wire_totals_capacity )
+    {
+        struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &totals->packets_sent, 1 );
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &totals->bytes_sent, wire_bytes );
+    }
+}
+
 static void rocketnet_server_wire_totals_add_received( struct rocketnet_server_transport_t * server_transport,
                                                        int client_index, const rocketnet_address_t * address,
                                                        int packet_bytes )
@@ -2054,7 +2076,7 @@ static void rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
         rocketnet_server_driver_finish_packet( server_transport, frame->socket_packet_id, frame->data, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
-        rocketnet_server_wire_totals_add_sent( server_transport, frame->client_index, NULL, wire_bytes );
+        rocketnet_server_wire_totals_add_sent_atomic( server_transport, frame->client_index, wire_bytes );
         return;
     }
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
@@ -2228,7 +2250,7 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         rocketnet_server_driver_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
-        rocketnet_server_wire_totals_add_sent( server_transport, context->client_index, NULL, wire_bytes );
+        rocketnet_server_wire_totals_add_sent_atomic( server_transport, context->client_index, wire_bytes );
     }
     else
     {
@@ -2461,9 +2483,9 @@ void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * ser
     stats->packets_received_per_second = server_transport->server_stats.packets_received_per_second;
     stats->bandwidth_sent_kbps = server_transport->server_stats.bandwidth_sent_kbps;
     stats->bandwidth_received_kbps = server_transport->server_stats.bandwidth_received_kbps;
-    stats->packets_sent = server_transport->server_stats.packets_sent;
+    stats->packets_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &server_transport->server_stats.packets_sent );
     stats->packets_received = server_transport->server_stats.packets_received;
-    stats->bytes_sent = server_transport->server_stats.bytes_sent;
+    stats->bytes_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &server_transport->server_stats.bytes_sent );
     stats->bytes_received = server_transport->server_stats.bytes_received;
 }
 
@@ -2547,9 +2569,9 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     if ( client_index < server_transport->client_wire_totals_capacity )
     {
         const struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
-        stats->packets_sent = totals->packets_sent;
+        stats->packets_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &totals->packets_sent );
         stats->packets_received = totals->packets_received;
-        stats->bytes_sent = totals->bytes_sent;
+        stats->bytes_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &totals->bytes_sent );
         stats->bytes_received = totals->bytes_received;
     }
 }
