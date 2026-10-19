@@ -111,6 +111,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew: control with one liveness and one action property, and two invariant witnesses |
 | `rnlivefleetrun` | 3 | Live fleet run lifecycle (the live XDP runner): control with one liveness property and two invariant witnesses |
 | `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew (the deterministic simulation design section 7): control with one liveness and one action property, and two invariant witnesses |
+| `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew (docs/DST.md section 7): control with one liveness and one action property, and two invariant witnesses |
+| `rnclientreceivequit` | 5 | The client receive thread's quit-and-wake handshake with destroy: controls for linux, macOS and Windows (two invariants, one action property, one liveness property) and two witnesses: the wake sent before quit (`WokenSeesQuit`) and a wait with no timeout and no wake (`DestroyCompletes`) |
 
 The 47-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh
