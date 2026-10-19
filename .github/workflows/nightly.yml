@@ -57,10 +57,10 @@ jobs:
   # and msgx rung tests windows does not build.
 
   build-and-test-windows-debug:
-    name: windows-2025 / Debug
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
-    runs-on: windows-2025
+    name: windows / Debug
+    # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
+    # build-and-test-windows runs on, never a hosted image
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
@@ -74,7 +74,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check committed XDP fallback source on Windows
-        # Uses Python and CMake preinstalled on the windows-2025 runner.
+        # Uses the Python and CMake on the fleet Windows runner's job PATH.
         run: python tools/check_xdp_archive.py --committed-only
 
       - name: Configure
@@ -93,11 +93,21 @@ jobs:
         timeout-minutes: 5
         run: ./bin/Debug/test_iocp.exe
 
-      - name: Full transport suite with IOCP selected
-        timeout-minutes: 10
+      - name: Run functional suite
+        timeout-minutes: 60
+        shell: bash
+        run: ./bin/Debug/functional.exe
+
+      - name: Functional suite with IOCP selected
+        timeout-minutes: 60
+        shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: iocp
-        run: ./bin/Debug/test.exe
+        run: |
+          set -o pipefail
+          ./bin/Debug/functional.exe | tr -d '\r' | tee functional-iocp.log
+          grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
+          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
       - name: Run serialization surface (portable)
         shell: bash
