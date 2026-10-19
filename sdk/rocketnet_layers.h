@@ -63,17 +63,9 @@ extern "C" {
 /** @brief Maximum number of explanatory exclusions in a host-memory estimate. */
 #define ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS                            8
 
-/** @brief Let this queued message take the earliest scheduler turn.
- * Priority affects scheduling, not delivery or wire format.
- */
 #define ROCKETNET_PRIORITY_IMMEDIATE                                    0
-/** @brief Give this queued message more scheduler turns than MEDIUM or LOW. */
 #define ROCKETNET_PRIORITY_HIGH                                         1
-/** @brief Give this queued message more scheduler turns than LOW. */
 #define ROCKETNET_PRIORITY_MEDIUM                                       2
-/** @brief Give this queued message the fewest scheduler turns.
- * The scheduler still services every priority over time.
- */
 #define ROCKETNET_PRIORITY_LOW                                          3
 
 // the block stride, a wire constant
@@ -1153,16 +1145,11 @@ void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, str
 // config, the sizing of one connection's region, callable before any
 // connect, and the client and server message objects.
 
-/** @brief One send outcome reported by a message-layer receipts call.
- * The nonzero serial identifies the send. The caller owns the output array;
- * the connection owns the list that is copied after update. A full receipt
- * ring drops its oldest entry.
- */
+// One outcome for a send's nonzero serial. The list returned after an update
+// is valid until the next update; a full receipt ring drops its oldest entry.
 struct rocketnet_message_receipt_t
 {
-    /** @brief Identify the send whose outcome is reported. */
     uint32_t serial;
-    /** @brief ROCKETNET_RECEIPT_ACKED or ROCKETNET_RECEIPT_LOSS. */
     uint32_t status;            // ROCKETNET_RECEIPT_ACKED or ROCKETNET_RECEIPT_LOSS
 };
 
@@ -1182,10 +1169,7 @@ struct rocketnet_message_config_t
     int max_packets_per_update;         // 1 .. 256; default 4
     int unreliable_deliveries;          // per connection per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                // 0 .. 4096; default 16
-    /** @brief Maximum pending send receipts, 16 through 65536 (default 256).
-     * A full ring drops its oldest receipt.
-     */
-    int receipt_ring;
+    int receipt_ring;                   // 16 .. 1 << 16; default 256
     int rto_initial_ms;                 // 10 .. 60000; default 100
     int rto_min_ms;                     // 1 .. 60000; default 10
     int rto_max_ms;                     // 10 .. 60000; default 250
@@ -1330,16 +1314,8 @@ uint32_t rocketnet_message_client_send( struct rocketnet_message_client_t * clie
 // 1 with the next message on channel, 0 when there is none. a NULL client, data or bytes is a counted no-op that returns 0.
 int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
 
-/** @brief Copy this update's client receipt outcomes into caller storage.
- * Call after update and before the next update, without a concurrent update.
- * Repeated calls copy the same visible entries; the client owns the internal
- * list, and the caller owns the output array.
- * @param client Client object; NULL returns 0.
- * @param out Writable array with room for capacity entries; NULL returns 0.
- * @param capacity Array length in entries; values below 1 return 0.
- * @return Entries copied, from 0 through capacity. Zero means none are visible
- * or an input is invalid; it is not an error status.
- */
+// Copies this update's receipt list into out, up to capacity entries; returns
+// the copied count. Repeated calls see the same list until the next update.
 int rocketnet_message_client_receipts( struct rocketnet_message_client_t * client, struct rocketnet_message_receipt_t * out, int capacity );
 
 // a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
@@ -1414,18 +1390,7 @@ int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * serv
 // a NULL server, data or bytes is a counted no-op that returns 0.
 int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
 
-/** @brief Copy one connected server client's receipt outcomes.
- * Call after update and before the next update, without a concurrent update.
- * Repeated calls copy the same visible entries; the server connection owns
- * the internal list, and the caller owns the output array.
- * @param server Server object; NULL returns 0.
- * @param client_index Slot index in [0, configured max_clients); an invalid or
- * disconnected slot returns 0.
- * @param out Writable array with room for capacity entries; NULL returns 0.
- * @param capacity Array length in entries; values below 1 return 0.
- * @return Entries copied, from 0 through capacity. Zero means none are visible
- * or an input is invalid; it is not an error status.
- */
+// As rocketnet_message_client_receipts for one connected client slot. Invalid inputs return zero.
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity );
 
 // a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.

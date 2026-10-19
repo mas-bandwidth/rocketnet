@@ -755,7 +755,7 @@ struct rocketnet_client_config_t
     /** @brief Maximum queued client send receipts, 16 through 65536 (default 256).
      * A full ring drops its oldest receipt; ROCKETNET_CLIENT_RECEIPT_RING can override it.
      */
-    int receipt_ring;
+    int receipt_ring;                               // ROCKETNET_CLIENT_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
     int rto_initial_ms;                             // ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
     int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
@@ -805,7 +805,7 @@ struct rocketnet_server_config_t
     /** @brief Maximum queued receipts per server client, 16 through 65536 (default 256).
      * A full ring drops its oldest receipt; ROCKETNET_SERVER_RECEIPT_RING can override it.
      */
-    int receipt_ring;
+    int receipt_ring;                               // ROCKETNET_SERVER_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
     int rto_initial_ms;                             // ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
     int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
