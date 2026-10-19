@@ -2,35 +2,46 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Datagram weather at the platform socket, on every pump a POSIX host
-    offers: oversize, runt, random-garbage and zero-length datagrams from a
-    raw sender, the prefilter counters they move, and the test-only send
-    seam that reports ENOBUFS and EAGAIN without reaching the kernel. A
-    real burst then prices the send path under load: sent equals received
-    plus the platform's counted drops.
+    Socket weather on every POSIX transport cell. A raw sender on loopback
+    drives the receive error arms of a live server or client transport with
+    an oversize datagram, runts, a seeded storm of random garbage and
+    zero-length datagrams interleaved with valid traffic; each cell proves the
+    valid traffic arrives exactly, each prefilter counter moves by the exact
+    count, the pump the socket chose is the pump it keeps, and the connection
+    lives. The test-only send seam then makes a socket's sends report ENOBUFS
+    and EAGAIN, and a real loopback burst at the smallest send buffer that
+    carries a datagram prices the send path: sent equals received plus the
+    drops the senders counted.
 */
 
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
-#include "rocketnet_server_protocol.h"
+#include "rocketnet_counters.h"
+#include "rocketnet_protocol.h"
 #include "rocketnet_wire.h"
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <sys/select.h>
 #include <unistd.h>
 
-#if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-static void rocketnet_posix_check_impl( bool condition, const char * text, const char * file, int line )
+// darwin declares IPV6_DONTFRAG only under __APPLE_USE_RFC_3542, which the
+// platform layer defines for itself; the option number is the RFC 3542 one
+#if defined(__APPLE__) && !defined(IPV6_DONTFRAG)
+#define IPV6_DONTFRAG 62
+#endif
+
+static void posix_check_impl( bool condition, const char * text, const char * file, int line )
 {
     if ( condition )
         return;
@@ -39,116 +50,39 @@ static void rocketnet_posix_check_impl( bool condition, const char * text, const
     exit( 1 );
 }
 
-#define rocketnet_posix_check( condition ) rocketnet_posix_check_impl( (condition), #condition, __FILE__, __LINE__ )
-
-static bool rocketnet_posix_receive_one( rocketnet_platform_socket_t * socket, uint8_t * data, int capacity, int * bytes )
-{
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( rocketnet_platform_time() < deadline )
-    {
-        rocketnet_address_t from;
-        int count = rocketnet_platform_socket_receive_packets( socket, &from, data, capacity, bytes, 1 );
-        if ( count > 0 )
-            return true;
-        rocketnet_platform_sleep( 0.001 );
-    }
-    return false;
-}
-
-static void rocketnet_posix_send_seam_family( const char * bind_string, const char * local_string )
-{
-    rocketnet_address_t bind_address;
-    rocketnet_address_t local_address;
-    rocketnet_address_parse( &bind_address, bind_string );
-    rocketnet_address_parse( &local_address, local_string );
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
-    if ( socket == NULL )
-        return;
-    local_address.port = bind_address.port;
-    local_address.type = bind_address.type;
-
-    const char * pump_before = rocketnet_platform_socket_pump( socket );
-
-    (void) rocketnet_platform_take_send_failures();
-
-    uint8_t packet[64];
-    for ( int i = 0; i < (int) sizeof(packet); i++ )
-        packet[i] = (uint8_t) ( 0xa0 + i );
-
-    uint8_t receive_data[ROCKETNET_RECEIVE_CEILING];
-    int packet_bytes = 0;
-
-    // ENOBUFS: the next three sends are dropped, not paused.
-
-    rocketnet_platform_socket_fail_next_sends( 3, ENOBUFS );
-    for ( int i = 0; i < 3; i++ )
-        rocketnet_platform_socket_send_packet( socket, &local_address, packet, (int) sizeof(packet) );
-    rocketnet_posix_check( rocketnet_platform_socket_send_failures() == 3 );
-    rocketnet_posix_check( rocketnet_platform_take_send_failures() == 3 );
-    rocketnet_posix_check( rocketnet_platform_socket_receive_packets( socket, &local_address, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes, 1 ) == 0 );
-    rocketnet_posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump_before ) == 0 );
-
-    // EAGAIN: the next two sends are dropped, not paused.
-
-    rocketnet_platform_socket_fail_next_sends( 2, EAGAIN );
-    for ( int i = 0; i < 2; i++ )
-        rocketnet_platform_socket_send_packet( socket, &local_address, packet, (int) sizeof(packet) );
-    rocketnet_posix_check( rocketnet_platform_socket_send_failures() == 2 );
-    rocketnet_posix_check( rocketnet_platform_take_send_failures() == 2 );
-    rocketnet_posix_check( rocketnet_platform_socket_receive_packets( socket, &local_address, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes, 1 ) == 0 );
-    rocketnet_posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump_before ) == 0 );
-
-    // traffic resumes on the next send, on the same pump.
-
-    rocketnet_platform_socket_send_packet( socket, &local_address, packet, (int) sizeof(packet) );
-    rocketnet_posix_check( rocketnet_posix_receive_one( socket, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes ) );
-    rocketnet_posix_check( packet_bytes == (int) sizeof(packet) );
-    for ( int i = 0; i < packet_bytes; i++ )
-        rocketnet_posix_check( receive_data[i] == packet[i] );
-    rocketnet_posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump_before ) == 0 );
-
-    rocketnet_platform_socket_destroy( socket );
-}
-
-void rocketnet_test_posix_platform_send_seam()
-{
-    // the seam is a platform seam: this is its contract, before any
-    // transport-level case drives a server or client with it.
-
-    rocketnet_posix_send_seam_family( "0.0.0.0", "127.0.0.1" );
-    rocketnet_posix_send_seam_family( "::", "::1" );
-}
+#define posix_check( condition ) posix_check_impl( (condition), #condition, __FILE__, __LINE__ )
 
 // ---------------------------------------------------
-// receive weather: oversize, runts, garbage and zero-length chaff
+// the socket a create made: the registry diff across the call
 
-#define ROCKETNET_POSIX_WEATHER_MAX_DATAGRAMS   1300
-#define ROCKETNET_POSIX_WEATHER_GARBAGE         1000
-#define ROCKETNET_POSIX_WEATHER_VALID           20
-#define ROCKETNET_POSIX_WEATHER_VALID_BYTES     64
+#define POSIX_MAX_SOCKETS 256
 
-static int      weather_size[ROCKETNET_POSIX_WEATHER_MAX_DATAGRAMS];
-static uint64_t weather_hash[ROCKETNET_POSIX_WEATHER_MAX_DATAGRAMS];
-static bool     weather_valid[ROCKETNET_POSIX_WEATHER_MAX_DATAGRAMS];
-static uint8_t  weather_valid_data[ROCKETNET_POSIX_WEATHER_VALID][ROCKETNET_POSIX_WEATHER_VALID_BYTES];
-
-static uint64_t rocketnet_posix_hash( const uint8_t * data, int bytes )
+static int posix_snapshot( rocketnet_platform_socket_t ** sockets )
 {
-    uint64_t hash = 1469598103934665603ULL;
-    for ( int i = 0; i < bytes; i++ )
+    return rocketnet_platform_sockets_for_testing( sockets, POSIX_MAX_SOCKETS );
+}
+
+static rocketnet_platform_socket_t * posix_new_socket( rocketnet_platform_socket_t ** before, int num_before )
+{
+    rocketnet_platform_socket_t * after[POSIX_MAX_SOCKETS];
+    const int num_after = posix_snapshot( after );
+    rocketnet_platform_socket_t * found = NULL;
+    for ( int i = 0; i < num_after; i++ )
     {
-        hash ^= data[i];
-        hash *= 1099511628211ULL;
+        bool old = false;
+        for ( int j = 0; j < num_before; j++ )
+            old = old || before[j] == after[i];
+        if ( !old )
+        {
+            posix_check( found == NULL );
+            found = after[i];
+        }
     }
-    return hash;
+    posix_check( found != NULL );
+    return found;
 }
 
-static int rocketnet_posix_prefix_bytes( int bytes )
-{
-    return bytes < ROCKETNET_RECEIVE_CEILING ? bytes : ROCKETNET_RECEIVE_CEILING;
-}
-
-static uint64_t rocketnet_posix_next_random( uint64_t * state )
+static uint64_t posix_next_random( uint64_t * state )
 {
     uint64_t x = *state;
     x ^= x << 13;
@@ -158,307 +92,746 @@ static uint64_t rocketnet_posix_next_random( uint64_t * state )
     return x;
 }
 
-static int rocketnet_posix_open_injector( const char * local_string, uint16_t port, struct sockaddr_storage * storage, socklen_t * storage_bytes )
+static socklen_t posix_sockaddr( int ipv6, uint16_t port, struct sockaddr_storage * storage )
 {
     memset( storage, 0, sizeof(*storage) );
-    if ( local_string[0] == ':' )
+    if ( ipv6 )
     {
         struct sockaddr_in6 * address = (struct sockaddr_in6*) storage;
         address->sin6_family = AF_INET6;
         address->sin6_port = htons( port );
-        rocketnet_posix_check( inet_pton( AF_INET6, local_string, &address->sin6_addr ) == 1 );
-        *storage_bytes = sizeof(struct sockaddr_in6);
-        return socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+        address->sin6_addr = in6addr_loopback;
+        return sizeof(struct sockaddr_in6);
     }
     struct sockaddr_in * address = (struct sockaddr_in*) storage;
     address->sin_family = AF_INET;
     address->sin_port = htons( port );
     address->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
-    *storage_bytes = sizeof(struct sockaddr_in);
-    return socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    return sizeof(struct sockaddr_in);
 }
 
-static void rocketnet_posix_weather_wait( rocketnet_platform_socket_t * socket )
+static int posix_open_raw_sender( int ipv6 )
+{
+    int s = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( s >= 0 );
+    // an oversize datagram needs a send buffer above it (the darwin default
+    // is net.inet.udp.maxdgram, 9216 bytes)
+    int bytes = 256 * 1024;
+    posix_check( setsockopt( s, SOL_SOCKET, SO_SNDBUF, &bytes, sizeof(bytes) ) == 0 );
+    return s;
+}
+
+static void posix_set_dont_fragment( int s, int ipv6, int value )
+{
+    if ( ipv6 )
+    {
+#if defined(IPV6_DONTFRAG)
+        setsockopt( s, IPPROTO_IPV6, IPV6_DONTFRAG, &value, sizeof(value) );
+#endif
+    }
+    else
+    {
+#if defined(IP_DONTFRAG)
+        setsockopt( s, IPPROTO_IP, IP_DONTFRAG, &value, sizeof(value) );
+#endif
+    }
+#if defined(__linux__)
+    int mode = value ? IP_PMTUDISC_DO : IP_PMTUDISC_DONT;
+    setsockopt( s, ipv6 ? IPPROTO_IPV6 : IPPROTO_IP, ipv6 ? IPV6_MTU_DISCOVER : IP_MTU_DISCOVER, &mode, sizeof(mode) );
+#endif
+}
+
+static uint16_t posix_local_port( rocketnet_platform_socket_t * socket )
+{
+    struct sockaddr_storage storage;
+    socklen_t bytes = sizeof(storage);
+    posix_check( getsockname( socket->handle, (struct sockaddr*) &storage, &bytes ) == 0 );
+    if ( storage.ss_family == AF_INET6 )
+        return ntohs( ( (struct sockaddr_in6*) &storage )->sin6_port );
+    return ntohs( ( (struct sockaddr_in*) &storage )->sin_port );
+}
+
+// datagrams queued on a socket and not yet read. darwin counts them
+// (SO_NUMRCVPKT, zero-length ones included); elsewhere the count is unknown
+// and the caller's bounded update loop is the only wait.
+
+static int posix_queued_datagrams( rocketnet_platform_socket_t * socket )
+{
+#if defined(SO_NUMRCVPKT)
+    int count = 0;
+    socklen_t bytes = sizeof(count);
+    posix_check( getsockopt( socket->handle, SOL_SOCKET, SO_NUMRCVPKT, &count, &bytes ) == 0 );
+    return count;
+#else
+    (void) socket;
+    return -1;
+#endif
+}
+
+static void posix_wait_queued( rocketnet_platform_socket_t * socket, int expected )
 {
     const double deadline = rocketnet_platform_time() + 5.0;
     for ( ;; )
     {
-        fd_set readable;
-        FD_ZERO( &readable );
-        FD_SET( socket->handle, &readable );
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000;
-        if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
-            break;
-        rocketnet_posix_check( rocketnet_platform_time() < deadline );
+        const int queued = posix_queued_datagrams( socket );
+        if ( queued < 0 )
+        {
+            rocketnet_platform_sleep( 0.005 );
+            return;
+        }
+        if ( queued >= expected )
+            return;
+        posix_check( rocketnet_platform_time() < deadline );
+        rocketnet_platform_sleep( 0.0002 );
     }
-    usleep( 200000 );
 }
 
-static void rocketnet_posix_weather_cell( const char * bind_string, const char * local_string, const char * pump_override )
+// ---------------------------------------------------
+// a connected pair on one cell
+
+struct posix_pair_t
 {
+    struct rocketnet_server_transport_t * server;
+    struct rocketnet_client_transport_t * client;
+    rocketnet_platform_socket_t * server_socket;
+    rocketnet_platform_socket_t * client_socket;
+    const char * server_pump;
+    const char * client_pump;
+    int ipv6;
+    int client_index;
+};
+
+static void posix_pair_update( struct posix_pair_t * pair )
+{
+    rocketnet_client_transport_send_packets( pair->client );
+    rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+    rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+    rocketnet_server_transport_send_packets( pair->server );
+}
+
+static void posix_pair_check_connected( struct posix_pair_t * pair )
+{
+    posix_check( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    posix_check( rocketnet_server_transport_num_connected_clients( pair->server ) == 1 );
+    posix_check( strcmp( rocketnet_platform_socket_pump( pair->server_socket ), pair->server_pump ) == 0 );
+    posix_check( strcmp( rocketnet_platform_socket_pump( pair->client_socket ), pair->client_pump ) == 0 );
+}
+
+static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char * server_driver, const char * client_driver,
+                               const char * pump_override, const char * server_pump, const char * client_pump )
+{
+    memset( pair, 0, sizeof(*pair) );
+    pair->ipv6 = ipv6;
+    pair->server_pump = server_pump;
+    pair->client_pump = client_pump;
+
     if ( pump_override )
         setenv( "ROCKETNET_PUMP", pump_override, 1 );
     else
         unsetenv( "ROCKETNET_PUMP" );
 
-    rocketnet_address_t bind_address;
-    rocketnet_address_t local_address;
-    rocketnet_address_parse( &bind_address, bind_string );
-    rocketnet_address_parse( &local_address, local_string );
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
-    rocketnet_posix_check( socket != NULL );
-    local_address.port = bind_address.port;
-    local_address.type = bind_address.type;
+    rocketnet_platform_socket_t * before[POSIX_MAX_SOCKETS];
 
-    const char * pump_at_create = rocketnet_platform_socket_pump( socket );
-    if ( pump_override )
-        rocketnet_posix_check( strcmp( pump_at_create, pump_override ) == 0 );
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 1;
+    snprintf( server_config.driver, sizeof(server_config.driver), "%s", server_driver );
 
-    struct sockaddr_storage to;
-    socklen_t to_bytes = 0;
-    int injector = rocketnet_posix_open_injector( local_string, local_address.port, &to, &to_bytes );
-    rocketnet_posix_check( injector >= 0 );
+    int num_before = posix_snapshot( before );
+    pair->server = rocketnet_server_transport_create( NULL, ipv6 ? "[::1]" : "127.0.0.1", &server_config );
+    posix_check( pair->server != NULL );
+    pair->server_socket = posix_new_socket( before, num_before );
 
-    int records = 0;
-    int valid_count = 0;
-    uint64_t too_short = 0;
-    uint64_t too_large = 0;
-    uint64_t wrong_epoch = 0;
-    uint64_t wrong_value = 0;
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), ipv6 ? "[::1]:%d" : "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
 
-    uint8_t * buffer = (uint8_t*) malloc( 65535 );
-    rocketnet_posix_check( buffer != NULL );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token ) );
 
-    const uint8_t expected_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    snprintf( client_config.driver, sizeof(client_config.driver), "%s", client_driver );
 
-    // one zero-length datagram first: legal UDP carrying nothing the
-    // protocol admits, and never a drain terminator
+    num_before = posix_snapshot( before );
+    pair->client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
+    posix_check( pair->client != NULL );
+    pair->client_socket = posix_new_socket( before, num_before );
 
-    rocketnet_posix_check( sendto( injector, buffer, 0, 0, (struct sockaddr*) &to, to_bytes ) == 0 );
-
-    // an oversize datagram: its true length reaches the transport, which
-    // refuses it as too large before reading the truncated payload
-
+    const double deadline = rocketnet_platform_time() + 10.0;
+    while ( rocketnet_platform_time() < deadline )
     {
-        const int bytes = 65507;
-        for ( int i = 0; i < bytes; i++ )
-            buffer[i] = (uint8_t) ( 0x11 + i );
-        rocketnet_posix_check( sendto( injector, buffer, (size_t) bytes, 0, (struct sockaddr*) &to, to_bytes ) == bytes );
-        weather_size[records] = bytes;
-        weather_hash[records] = rocketnet_posix_hash( buffer, rocketnet_posix_prefix_bytes( bytes ) );
-        weather_valid[records] = false;
-        records++;
-        too_large++;
+        posix_pair_update( pair );
+        if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
     }
+    pair->client_index = rocketnet_client_transport_client_index( pair->client );
+    posix_check( pair->client_index >= 0 );
+    posix_pair_check_connected( pair );
+}
 
-    // one zero-length datagram between the weather classes
-
-    rocketnet_posix_check( sendto( injector, buffer, 0, 0, (struct sockaddr*) &to, to_bytes ) == 0 );
-
-    // two runts: one byte, and one byte below the prefilter header
-
-    {
-        const int runts[2] = { 1, ROCKETNET_PREFILTER_BYTES - 1 };
-        for ( int r = 0; r < 2; r++ )
-        {
-            const int bytes = runts[r];
-            for ( int i = 0; i < bytes; i++ )
-                buffer[i] = (uint8_t) ( 0x40 + 7 * r + i );
-            rocketnet_posix_check( sendto( injector, buffer, (size_t) bytes, 0, (struct sockaddr*) &to, to_bytes ) == bytes );
-            weather_size[records] = bytes;
-            weather_hash[records] = rocketnet_posix_hash( buffer, bytes );
-            weather_valid[records] = false;
-            records++;
-            too_short++;
-        }
-    }
-
-    // a seeded storm: 1000 random datagrams of random sizes. the expected
-    // prefilter outcome is computed from each one as it is built.
-
-    uint64_t random_state = 0x9e3779b97f4a7c15ULL;
-    for ( int g = 0; g < ROCKETNET_POSIX_WEATHER_GARBAGE; g++ )
-    {
-        int bytes = (int) ( rocketnet_posix_next_random( &random_state ) % 1500 ) + 1;
-        for ( int i = 0; i < bytes; i++ )
-            buffer[i] = (uint8_t) rocketnet_posix_next_random( &random_state );
-
-        if ( bytes < ROCKETNET_PREFILTER_BYTES )
-            too_short++;
-        else if ( bytes > ROCKETNET_RECEIVE_CEILING )
-            too_large++;
-        else if ( buffer[1] != ROCKETNET_FILTER_EPOCH_UNKEYED )
-            wrong_epoch++;
-        else if ( memcmp( buffer + 2, expected_filter, ROCKETNET_FILTER_VALUE_BYTES ) != 0 )
-            wrong_value++;
-
-        rocketnet_posix_check( sendto( injector, buffer, (size_t) bytes, 0, (struct sockaddr*) &to, to_bytes ) == bytes );
-        weather_size[records] = bytes;
-        weather_hash[records] = rocketnet_posix_hash( buffer, rocketnet_posix_prefix_bytes( bytes ) );
-        weather_valid[records] = false;
-        records++;
-
-        // valid traffic interleaved with the storm, a zero-length datagram
-        // in front of each one
-
-        if ( ( g % ( ROCKETNET_POSIX_WEATHER_GARBAGE / ROCKETNET_POSIX_WEATHER_VALID ) ) == 0 &&
-             valid_count < ROCKETNET_POSIX_WEATHER_VALID )
-        {
-            rocketnet_posix_check( sendto( injector, buffer, 0, 0, (struct sockaddr*) &to, to_bytes ) == 0 );
-
-            const int valid_bytes = ROCKETNET_POSIX_WEATHER_VALID_BYTES;
-            uint8_t * valid = weather_valid_data[valid_count];
-            memset( valid, 0, (size_t) valid_bytes );
-            valid[0] = 10;  // a reserved type: the prefilter admits it, the transport ignores it
-            valid[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
-            memcpy( valid + 2, expected_filter, ROCKETNET_FILTER_VALUE_BYTES );
-            valid[6] = (uint8_t) valid_count;
-            valid[7] = (uint8_t) ~valid_count;
-            for ( int i = 8; i < valid_bytes; i++ )
-                valid[i] = (uint8_t) ( valid_count * 31 + i );
-
-            rocketnet_posix_check( sendto( injector, valid, (size_t) valid_bytes, 0, (struct sockaddr*) &to, to_bytes ) == valid_bytes );
-            weather_size[records] = valid_bytes;
-            weather_hash[records] = rocketnet_posix_hash( valid, valid_bytes );
-            weather_valid[records] = true;
-            records++;
-            valid_count++;
-        }
-    }
-
-    // and one zero-length datagram last: the drain still has to reach every
-    // valid packet behind it
-
-    rocketnet_posix_check( sendto( injector, buffer, 0, 0, (struct sockaddr*) &to, to_bytes ) == 0 );
-
-    rocketnet_posix_weather_wait( socket );
-
-    static uint8_t receive_data[ROCKETNET_POSIX_WEATHER_MAX_DATAGRAMS * ROCKETNET_RECEIVE_CEILING];
-    static rocketnet_address_t received_from[ROCKETNET_POSIX_WEATHER_MAX_DATAGRAMS];
-    static int received_bytes[ROCKETNET_POSIX_WEATHER_MAX_DATAGRAMS];
-
-    const int received = rocketnet_platform_socket_receive_packets( socket, received_from, receive_data,
-                                                                    ROCKETNET_RECEIVE_CEILING, received_bytes,
-                                                                    ROCKETNET_POSIX_WEATHER_MAX_DATAGRAMS );
-    rocketnet_posix_check( received == records );
-
-    struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
-
-    struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
-    server.counters = &counters;
-    memcpy( server.filter_value, expected_filter, ROCKETNET_FILTER_VALUE_BYTES );
-
-    int valid_seen = 0;
-    for ( int i = 0; i < received; i++ )
-    {
-        const int bytes = received_bytes[i];
-        rocketnet_posix_check( bytes == weather_size[i] );
-        const uint8_t * packet = receive_data + (size_t) i * ROCKETNET_RECEIVE_CEILING;
-        rocketnet_posix_check( rocketnet_posix_hash( packet, rocketnet_posix_prefix_bytes( bytes ) ) == weather_hash[i] );
-
-        if ( weather_valid[i] )
-        {
-            rocketnet_posix_check( bytes == ROCKETNET_POSIX_WEATHER_VALID_BYTES );
-            rocketnet_posix_check( memcmp( packet, weather_valid_data[valid_seen], (size_t) bytes ) == 0 );
-            valid_seen++;
-        }
-
-        uint8_t response[ROCKETNET_RECEIVE_CEILING];
-        int response_bytes = 0;
-        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
-        int payload_bytes = 0;
-        int payload_client_index = -1;
-        (void) rocketnet_server_protocol_process_packet( &server, &received_from[i], packet, bytes,
-                                                         0, 0.0, response, &response_bytes,
-                                                         payload, &payload_bytes, &payload_client_index );
-    }
-
-    rocketnet_posix_check( valid_seen == ROCKETNET_POSIX_WEATHER_VALID );
-    rocketnet_posix_check( counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == (uint64_t) received );
-    rocketnet_posix_check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] == too_short );
-    rocketnet_posix_check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large );
-    rocketnet_posix_check( counters.values[ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH] == wrong_epoch );
-    rocketnet_posix_check( counters.values[ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE] == wrong_value );
-
-    // the pump that carried the weather is still the pump the socket chose
-
-    rocketnet_posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump_at_create ) == 0 );
-
-    close( injector );
-    free( buffer );
-    rocketnet_platform_socket_destroy( socket );
-
+static void posix_pair_destroy( struct posix_pair_t * pair )
+{
+    rocketnet_client_transport_destroy( pair->client );
+    rocketnet_server_transport_destroy( pair->server );
     unsetenv( "ROCKETNET_PUMP" );
 }
 
-void rocketnet_test_posix_receive_weather()
+// ---------------------------------------------------
+// receive weather
+
+#define POSIX_WEATHER_GARBAGE       1000
+#define POSIX_WEATHER_ROUNDS        20
+#define POSIX_WEATHER_ZEROS         8       // zero-length datagrams per round, interleaved
+#define POSIX_WEATHER_VALID_BYTES   100
+#define POSIX_WEATHER_MAX_UPDATES   3       // updates a queued round may take to drain
+
+struct posix_expect_t
 {
-    // both address families, both pumps a POSIX host offers: the platform's
-    // default and the portable pump forced by environment
+    uint64_t too_short;
+    uint64_t too_large;
+    uint64_t wrong_epoch;
+    uint64_t wrong_value;
+};
 
-    for ( int family = 0; family < 2; family++ )
+static void posix_classify( const uint8_t * data, int bytes, struct posix_expect_t * expect )
+{
+    if ( bytes < ROCKETNET_PREFILTER_BYTES )
+        expect->too_short++;
+    else if ( bytes > ROCKETNET_RECEIVE_CEILING )
+        expect->too_large++;
+    else if ( data[1] != ROCKETNET_FILTER_EPOCH_UNKEYED )
+        expect->wrong_epoch++;
+    else
+        expect->wrong_value++;
+}
+
+static void posix_send_datagram( int sender, const struct sockaddr_storage * to, socklen_t to_bytes, const uint8_t * data, int bytes,
+                                 struct posix_expect_t * expect )
+{
+    const ssize_t sent = sendto( sender, data, (size_t) bytes, 0, (const struct sockaddr*) to, to_bytes );
+    if ( sent != bytes )
+        printf( "raw send of %d bytes answered %d (%s)\n", bytes, (int) sent, strerror( errno ) );
+    posix_check( sent == bytes );
+    if ( expect && bytes > 0 )
+        posix_classify( data, bytes, expect );
+}
+
+static void posix_counters_read( const struct rocketnet_counters_t * counters, struct posix_expect_t * out )
+{
+    out->too_short = counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT];
+    out->too_large = counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+    out->wrong_epoch = counters->values[ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH];
+    out->wrong_value = counters->values[ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE];
+}
+
+static bool posix_expect_equal( const struct posix_expect_t * a, const struct posix_expect_t * b )
+{
+    return a->too_short == b->too_short && a->too_large == b->too_large && a->wrong_epoch == b->wrong_epoch && a->wrong_value == b->wrong_value;
+}
+
+static void posix_valid_payload( int index, uint8_t * payload )
+{
+    payload[0] = (uint8_t) index;
+    payload[1] = (uint8_t) ~index;
+    for ( int i = 2; i < POSIX_WEATHER_VALID_BYTES; i++ )
+        payload[i] = (uint8_t) ( index * 37 + i );
+}
+
+static bool posix_valid_matches( int index, const uint8_t * payload, int bytes )
+{
+    uint8_t expected[POSIX_WEATHER_VALID_BYTES];
+    posix_valid_payload( index, expected );
+    return bytes == POSIX_WEATHER_VALID_BYTES && memcmp( payload, expected, POSIX_WEATHER_VALID_BYTES ) == 0;
+}
+
+// at_server: the raw sender is an outside socket aimed at the server
+// transport, and the client sends the valid traffic. otherwise the weather
+// comes from the server's own socket (the one address the client listens to)
+// and the server sends the valid traffic.
+
+static void posix_weather_cell( int ipv6, int at_server, const char * server_driver, const char * client_driver,
+                                const char * pump_override, const char * server_pump, const char * client_pump )
+{
+    struct posix_pair_t pair;
+    posix_pair_create( &pair, ipv6, server_driver, client_driver, pump_override, server_pump, client_pump );
+
+    int sender;
+    bool own_sender = false;
+    struct sockaddr_storage to;
+    socklen_t to_bytes;
+    rocketnet_platform_socket_t * receiver;
+    if ( at_server )
     {
-        const char * bind_string = family == 0 ? "0.0.0.0" : "::";
-        const char * local_string = family == 0 ? "127.0.0.1" : "::1";
+        sender = posix_open_raw_sender( ipv6 );
+        own_sender = true;
+        to_bytes = posix_sockaddr( ipv6, (uint16_t) rocketnet_server_transport_port( pair.server ), &to );
+        receiver = pair.server_socket;
+    }
+    else
+    {
+        sender = pair.server_socket->handle;
+        to_bytes = posix_sockaddr( ipv6, posix_local_port( pair.client_socket ), &to );
+        receiver = pair.client_socket;
+    }
 
-        rocketnet_posix_weather_cell( bind_string, local_string, NULL );
-        rocketnet_posix_weather_cell( bind_string, local_string, "portable" );
+    const struct rocketnet_counters_t * counters = at_server ? rocketnet_server_transport_counters( pair.server )
+                                                             : rocketnet_client_transport_counters( pair.client );
+
+    struct posix_expect_t expect;
+    posix_counters_read( counters, &expect );
+
+    static uint8_t buffer[65507];
+    uint64_t random_state = 0x9e3779b97f4a7c15ULL ^ (uint64_t) ( ipv6 * 2 + at_server );
+    int garbage_sent = 0;
+    int valid_sent = 0;
+    int valid_seen = 0;
+
+    for ( int round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
+    {
+        int datagrams = 0;
+
+        // the valid traffic for this round leaves first, through the
+        // transport, so its datagram is in flight while the weather lands
+
+        {
+            struct rocketnet_packet_context_t context;
+            uint8_t * frame = at_server ? rocketnet_client_transport_start_packet( pair.client, POSIX_WEATHER_VALID_BYTES, &context )
+                                        : rocketnet_server_transport_start_packet( pair.server, pair.client_index, POSIX_WEATHER_VALID_BYTES, &context );
+            posix_check( frame != NULL );
+            posix_valid_payload( valid_sent, frame + context.payload_index );
+            if ( at_server )
+            {
+                posix_check( rocketnet_client_transport_finish_packet( pair.client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
+                rocketnet_client_transport_send_packets( pair.client );
+            }
+            else
+            {
+                posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
+                rocketnet_server_transport_send_packets( pair.server );
+            }
+            valid_sent++;
+            datagrams++;
+        }
+
+        // the first round carries the oversize datagram and the two runts
+
+        if ( round == 0 )
+        {
+            for ( int i = 0; i < 65507; i++ )
+                buffer[i] = (uint8_t) ( 0x11 + i );
+            // the transports socket sets dont-fragment, which refuses a
+            // datagram above the loopback MTU; lifted for this one send
+            posix_set_dont_fragment( sender, ipv6, 0 );
+            posix_send_datagram( sender, &to, to_bytes, buffer, 65507, &expect );
+            posix_set_dont_fragment( sender, ipv6, 1 );
+            buffer[0] = 0x40;
+            posix_send_datagram( sender, &to, to_bytes, buffer, 1, &expect );
+            posix_send_datagram( sender, &to, to_bytes, buffer, ROCKETNET_PREFILTER_BYTES - 1, &expect );
+            datagrams += 3;
+        }
+
+        // the seeded storm, a zero-length datagram between every few
+
+        const int garbage_this_round = POSIX_WEATHER_GARBAGE / POSIX_WEATHER_ROUNDS;
+        for ( int g = 0; g < garbage_this_round; g++ )
+        {
+            if ( g % ( garbage_this_round / POSIX_WEATHER_ZEROS ) == 0 )
+            {
+                posix_send_datagram( sender, &to, to_bytes, buffer, 0, NULL );
+                datagrams++;
+            }
+            const int bytes = (int) ( posix_next_random( &random_state ) % 1500 ) + 1;
+            for ( int i = 0; i < bytes; i++ )
+                buffer[i] = (uint8_t) posix_next_random( &random_state );
+            posix_send_datagram( sender, &to, to_bytes, buffer, bytes, &expect );
+            garbage_sent++;
+            datagrams++;
+        }
+
+        // a server receiver: the round is queued whole before the first
+        // update, and every datagram behind every zero-length one must be
+        // read within a few updates (a drain that stopped at a zero-length
+        // datagram would need one update per zero). a client receiver
+        // drains on its own I/O thread, so its bound is a deadline.
+
+        if ( at_server )
+            posix_wait_queued( receiver, datagrams );
+
+        const double deadline = rocketnet_platform_time() + 5.0;
+        int updates = 0;
+        for ( ;; )
+        {
+            posix_pair_update( &pair );
+            updates++;
+
+            if ( at_server )
+            {
+                const int num_payloads = rocketnet_server_transport_num_payloads( pair.server );
+                for ( int i = 0; i < num_payloads; i++ )
+                {
+                    int client_index = -1;
+                    int payload_bytes = 0;
+                    uint8_t * payload = rocketnet_server_transport_payload( pair.server, i, &client_index, &payload_bytes );
+                    posix_check( client_index == pair.client_index );
+                    posix_check( valid_seen < valid_sent );
+                    posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
+                    valid_seen++;
+                }
+            }
+            else
+            {
+                const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
+                for ( int i = 0; i < num_payloads; i++ )
+                {
+                    int payload_bytes = 0;
+                    uint8_t * payload = rocketnet_client_transport_payload( pair.client, i, &payload_bytes );
+                    posix_check( valid_seen < valid_sent );
+                    posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
+                    valid_seen++;
+                }
+            }
+
+            struct posix_expect_t now;
+            posix_counters_read( counters, &now );
+            if ( posix_expect_equal( &now, &expect ) && valid_seen == valid_sent )
+                break;
+
+            const bool short_now = at_server ? updates >= POSIX_WEATHER_MAX_UPDATES : rocketnet_platform_time() >= deadline;
+            if ( short_now )
+            {
+                {
+                    printf( "round %d still short after %d updates: too_short %llu/%llu too_large %llu/%llu wrong_epoch %llu/%llu wrong_value %llu/%llu valid %d/%d\n",
+                            round, updates,
+                            (unsigned long long) now.too_short, (unsigned long long) expect.too_short,
+                            (unsigned long long) now.too_large, (unsigned long long) expect.too_large,
+                            (unsigned long long) now.wrong_epoch, (unsigned long long) expect.wrong_epoch,
+                            (unsigned long long) now.wrong_value, (unsigned long long) expect.wrong_value,
+                            valid_seen, valid_sent );
+                    posix_check( !short_now );
+                }
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+
+        posix_pair_check_connected( &pair );
+    }
+
+    // a few quiet updates: nothing more moves, nothing more arrives
+
+    for ( int i = 0; i < 10; i++ )
+    {
+        posix_pair_update( &pair );
+        posix_check( rocketnet_server_transport_num_payloads( pair.server ) == 0 );
+        posix_check( rocketnet_client_transport_num_payloads( pair.client ) == 0 );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    struct posix_expect_t final_counts;
+    posix_counters_read( counters, &final_counts );
+    posix_check( posix_expect_equal( &final_counts, &expect ) );
+    posix_check( garbage_sent == POSIX_WEATHER_GARBAGE );
+    posix_check( valid_seen == POSIX_WEATHER_ROUNDS );
+    posix_pair_check_connected( &pair );
+
+    printf( "  %s %s server=%s client=%s%s: pump %s/%s too_short %llu too_large %llu wrong_epoch %llu wrong_value %llu valid %d\n",
+            at_server ? "server-cell" : "client-cell", ipv6 ? "ipv6" : "ipv4", server_driver, client_driver,
+            pump_override ? " ROCKETNET_PUMP=portable" : "", pair.server_pump, pair.client_pump,
+            (unsigned long long) expect.too_short, (unsigned long long) expect.too_large,
+            (unsigned long long) expect.wrong_epoch, (unsigned long long) expect.wrong_value, valid_seen );
+    fflush( stdout );
+
+    if ( own_sender )
+        close( sender );
+    posix_pair_destroy( &pair );
+}
+
+static const char * posix_msgx_pump()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    return "msgx";
+#else
+    return "portable";
+#endif
+}
+
+void rocketnet_test_posix_server_receive_weather()
+{
+    // the server cells: portable, msgx, and msgx forced portable
+
+    for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
+    {
+        posix_weather_cell( ipv6, 1, "portable", "portable", NULL, "portable", "portable" );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        posix_weather_cell( ipv6, 1, "msgx", "portable", NULL, posix_msgx_pump(), "portable" );
+        posix_weather_cell( ipv6, 1, "auto", "portable", "portable", "portable", "portable" );
+#endif
+    }
+}
+
+void rocketnet_test_posix_client_receive_weather()
+{
+    // the client cells: portable and msgx
+
+    for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
+    {
+        posix_weather_cell( ipv6, 0, "portable", "portable", NULL, "portable", "portable" );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        posix_weather_cell( ipv6, 0, "portable", "msgx", NULL, "portable", posix_msgx_pump() );
+#endif
     }
 }
 
 // ---------------------------------------------------
-// a real burst: 64 clients, 512 packets of 1200 bytes in one update each,
-// sender buffers at the kernel minimum
+// the send seam at the platform: exact counts on each pump
 
-#define ROCKETNET_POSIX_BURST_CLIENTS   64
-#define ROCKETNET_POSIX_BURST_PACKETS   512
-#define ROCKETNET_POSIX_BURST_BYTES     1200
-#define ROCKETNET_POSIX_BURST_STRIDE    ROCKETNET_POSIX_BURST_BYTES
+static void posix_send_seam_socket( int ipv6, const char * pump )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, ipv6 ? "::" : "0.0.0.0" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                                      ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, pump );
+    posix_check( socket != NULL );
+    posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
 
-struct rocketnet_posix_burst_drain_t
+    rocketnet_address_t to;
+    rocketnet_address_parse( &to, ipv6 ? "::1" : "127.0.0.1" );
+    to.port = bind_address.port;
+
+    uint8_t packets[8][64];
+    struct rocketnet_platform_send_t sends[8];
+    for ( int i = 0; i < 8; i++ )
+    {
+        for ( int j = 0; j < 64; j++ )
+            packets[i][j] = (uint8_t) ( i * 7 + j );
+        sends[i].to = &to;
+        sends[i].packet_data = packets[i];
+        sends[i].packet_bytes = 64;
+    }
+
+    static uint8_t data[8 * ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t from[8];
+    int bytes[8];
+
+    const int errors[2] = { ENOBUFS, EAGAIN };
+    for ( int e = 0; e < 2; e++ )
+    {
+        // a batch whose every send call fails: all eight are dropped and
+        // counted, the pump stays as it was, nothing arrives
+
+        const uint64_t before = rocketnet_platform_socket_send_failures( socket );
+        rocketnet_platform_socket_fail_next_sends( socket, 64, errors[e] );
+        rocketnet_platform_socket_send_packets( socket, sends, 8 );
+        rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
+        posix_check( rocketnet_platform_socket_send_failures( socket ) - before == 8 );
+        posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+        rocketnet_platform_sleep( 0.01 );
+        posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 ) == 0 );
+
+        // the next batch goes: all eight arrive, nothing more is counted
+
+        rocketnet_platform_socket_send_packets( socket, sends, 8 );
+        posix_check( rocketnet_platform_socket_send_failures( socket ) - before == 8 );
+        int received = 0;
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while ( received < 8 && rocketnet_platform_time() < deadline )
+        {
+            const int got = rocketnet_platform_socket_receive_packets( socket, from + received, data + (size_t) received * ROCKETNET_RECEIVE_CEILING,
+                                                                       ROCKETNET_RECEIVE_CEILING, bytes + received, 8 - received );
+            received += got;
+            if ( got == 0 )
+                rocketnet_platform_sleep( 0.0005 );
+        }
+        posix_check( received == 8 );
+        for ( int i = 0; i < 8; i++ )
+        {
+            posix_check( bytes[i] == 64 );
+            posix_check( memcmp( data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packets[i], 64 ) == 0 );
+        }
+        posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+    }
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
+void rocketnet_test_posix_platform_send_seam()
+{
+    for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
+    {
+        posix_send_seam_socket( ipv6, "portable" );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        posix_send_seam_socket( ipv6, "msgx" );
+#endif
+    }
+}
+
+// ---------------------------------------------------
+// the send seam under a live transport: a server whose sends fail with
+// ENOBUFS, then EAGAIN, keeps its pump and its connection, counts what it
+// dropped, and its traffic resumes on the next update
+
+static void posix_transport_send_seam_cell( int ipv6, const char * server_driver, const char * server_pump )
+{
+    struct posix_pair_t pair;
+    posix_pair_create( &pair, ipv6, server_driver, "portable", NULL, server_pump, "portable" );
+
+    const int errors[2] = { ENOBUFS, EAGAIN };
+    int tag = 0;
+    for ( int e = 0; e < 2; e++ )
+    {
+        const uint64_t failures_before = rocketnet_platform_socket_send_failures( pair.server_socket );
+        const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
+
+        // every send call of this update fails: eight payloads and anything
+        // else the update sends are dropped, each one counted
+
+        for ( int i = 0; i < 8; i++ )
+        {
+            struct rocketnet_packet_context_t context;
+            uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
+            posix_check( frame != NULL );
+            memset( frame + context.payload_index, 0xdd, 16 );
+            posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
+        }
+        rocketnet_platform_socket_fail_next_sends( pair.server_socket, 1000, errors[e] );
+        rocketnet_server_transport_send_packets( pair.server );
+        rocketnet_platform_socket_fail_next_sends( pair.server_socket, 0, 0 );
+
+        const uint64_t dropped = rocketnet_platform_socket_send_failures( pair.server_socket ) - failures_before;
+        posix_check( dropped >= 8 );
+        const uint64_t transport_failed = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
+        posix_check( transport_failed - transport_failed_before == dropped );
+        posix_check( strcmp( rocketnet_platform_socket_pump( pair.server_socket ), server_pump ) == 0 );
+
+        // none of the dropped payloads arrives
+
+        for ( int i = 0; i < 20; i++ )
+        {
+            rocketnet_client_transport_update( pair.client, rocketnet_platform_time() );
+            const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
+            for ( int k = 0; k < num_payloads; k++ )
+            {
+                int payload_bytes = 0;
+                uint8_t * payload = rocketnet_client_transport_payload( pair.client, k, &payload_bytes );
+                posix_check( !( payload_bytes == 16 && payload[0] == 0xdd ) );
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+
+        // the next update's traffic goes: eight tagged payloads arrive whole
+
+        for ( int i = 0; i < 8; i++ )
+        {
+            struct rocketnet_packet_context_t context;
+            uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
+            posix_check( frame != NULL );
+            memset( frame + context.payload_index, 0x5a, 16 );
+            frame[context.payload_index] = (uint8_t) ( tag + i );
+            posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
+        }
+        rocketnet_server_transport_send_packets( pair.server );
+        posix_check( rocketnet_platform_socket_send_failures( pair.server_socket ) - failures_before == dropped );
+
+        int arrived = 0;
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while ( arrived < 8 && rocketnet_platform_time() < deadline )
+        {
+            posix_pair_update( &pair );
+            const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
+            for ( int k = 0; k < num_payloads; k++ )
+            {
+                int payload_bytes = 0;
+                uint8_t * payload = rocketnet_client_transport_payload( pair.client, k, &payload_bytes );
+                posix_check( payload_bytes == 16 );
+                posix_check( payload[0] == (uint8_t) ( tag + arrived ) );
+                posix_check( payload[1] == 0x5a );
+                arrived++;
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+        posix_check( arrived == 8 );
+        tag += 8;
+        posix_pair_check_connected( &pair );
+
+        printf( "  seam %s %s server=%s: dropped and counted %llu, transport SEND_FAILED +%llu, pump %s, resumed 8/8\n",
+                errors[e] == ENOBUFS ? "ENOBUFS" : "EAGAIN", ipv6 ? "ipv6" : "ipv4", server_driver,
+                (unsigned long long) dropped, (unsigned long long) ( transport_failed - transport_failed_before ),
+                rocketnet_platform_socket_pump( pair.server_socket ) );
+        fflush( stdout );
+    }
+
+    posix_pair_destroy( &pair );
+}
+
+void rocketnet_test_posix_transport_send_seam()
+{
+    for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
+    {
+        posix_transport_send_seam_cell( ipv6, "portable", "portable" );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        posix_transport_send_seam_cell( ipv6, "msgx", "msgx" );
+#endif
+    }
+}
+
+// ---------------------------------------------------
+// a real burst: 64 senders, 512 packets of 1200 bytes each in one batch
+// call, each sender at the smallest send buffer that carries one datagram
+
+#define POSIX_BURST_SENDERS     64
+#define POSIX_BURST_PACKETS     512
+#define POSIX_BURST_BYTES       1200
+
+struct posix_burst_drain_t
 {
     rocketnet_platform_socket_t * socket;
     volatile bool stop;
     volatile bool running;
     volatile uint64_t received;
-    bool seen[ROCKETNET_POSIX_BURST_CLIENTS][ROCKETNET_POSIX_BURST_PACKETS];
+    volatile uint64_t duplicates;
+    bool seen[POSIX_BURST_SENDERS][POSIX_BURST_PACKETS];
 };
 
-static void rocketnet_posix_burst_drain_thread( void * context )
+static void posix_burst_take( struct posix_burst_drain_t * drain, const uint8_t * data, const int * bytes, int count )
 {
-    struct rocketnet_posix_burst_drain_t * drain = (struct rocketnet_posix_burst_drain_t*) context;
-    static uint8_t receive_data[64 * ROCKETNET_POSIX_BURST_STRIDE];
+    for ( int i = 0; i < count; i++ )
+    {
+        const uint8_t * packet = data + (size_t) i * POSIX_BURST_BYTES;
+        posix_check( bytes[i] == POSIX_BURST_BYTES );
+        uint32_t sender = 0;
+        uint32_t sequence = 0;
+        memcpy( &sender, packet, sizeof(sender) );
+        memcpy( &sequence, packet + sizeof(sender), sizeof(sequence) );
+        if ( sender == 0xffffffffu )
+            continue;   // a send-buffer probe
+        posix_check( sender < POSIX_BURST_SENDERS );
+        posix_check( sequence < POSIX_BURST_PACKETS );
+        if ( drain->seen[sender][sequence] )
+        {
+            drain->duplicates++;
+            continue;
+        }
+        drain->seen[sender][sequence] = true;
+        drain->received++;
+    }
+}
+
+static void posix_burst_drain_thread( void * context )
+{
+    struct posix_burst_drain_t * drain = (struct posix_burst_drain_t*) context;
+    static uint8_t data[64 * POSIX_BURST_BYTES];
     static rocketnet_address_t from[64];
-    static int packet_bytes[64];
-
+    static int bytes[64];
     drain->running = true;
-
     while ( !drain->stop )
     {
-        const int received = rocketnet_platform_socket_receive_packets( drain->socket, from, receive_data,
-                                                                        ROCKETNET_POSIX_BURST_STRIDE, packet_bytes, 64 );
-        if ( received == 0 )
+        const int count = rocketnet_platform_socket_receive_packets( drain->socket, from, data, POSIX_BURST_BYTES, bytes, 64 );
+        if ( count == 0 )
         {
             rocketnet_platform_sleep( 0.0002 );
             continue;
         }
-        for ( int i = 0; i < received; i++ )
-        {
-            const uint8_t * packet = receive_data + (size_t) i * ROCKETNET_POSIX_BURST_STRIDE;
-            rocketnet_posix_check( packet_bytes[i] == ROCKETNET_POSIX_BURST_BYTES );
-            uint32_t client = 0;
-            uint32_t sequence = 0;
-            memcpy( &client, packet, sizeof(client) );
-            memcpy( &sequence, packet + sizeof(client), sizeof(sequence) );
-            rocketnet_posix_check( client < ROCKETNET_POSIX_BURST_CLIENTS );
-            rocketnet_posix_check( sequence < ROCKETNET_POSIX_BURST_PACKETS );
-            drain->seen[client][sequence] = true;
-            drain->received++;
-        }
+        posix_burst_take( drain, data, bytes, count );
     }
 }
 
@@ -467,206 +840,119 @@ void rocketnet_test_posix_send_burst()
     rocketnet_address_t server_bind;
     rocketnet_address_parse( &server_bind, "0.0.0.0" );
     rocketnet_platform_socket_t * server = rocketnet_platform_socket_create( NULL, &server_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
-                                                                             1024*1024, 1024*1024 );
-    rocketnet_posix_check( server != NULL );
+                                                                             ROCKETNET_SOCKET_SEND_BUFFER_SIZE, 8 * 1024 * 1024 );
+    posix_check( server != NULL );
 
     rocketnet_address_t destination;
     rocketnet_address_parse( &destination, "127.0.0.1" );
     destination.port = server_bind.port;
 
-    struct rocketnet_posix_burst_drain_t drain;
-    memset( &drain, 0, sizeof(drain) );
+    static uint8_t packet[POSIX_BURST_PACKETS][POSIX_BURST_BYTES];
+
+    // the smallest send buffer that carries one datagram: a smaller one
+    // refuses every send outright (EMSGSIZE), which prices nothing
+
+    int send_buffer = 0;
+    for ( int candidate = POSIX_BURST_BYTES; candidate <= 64 * 1024 && send_buffer == 0; candidate += 64 )
+    {
+        rocketnet_address_t probe_bind;
+        rocketnet_address_parse( &probe_bind, "0.0.0.0" );
+        rocketnet_platform_socket_t * probe = rocketnet_platform_socket_create( NULL, &probe_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, candidate, 4096 );
+        posix_check( probe != NULL );
+        memset( packet[0], 0xff, POSIX_BURST_BYTES );
+        const uint64_t before = rocketnet_platform_socket_send_failures( probe );
+        rocketnet_platform_socket_send_packet( probe, &destination, packet[0], POSIX_BURST_BYTES );
+        if ( rocketnet_platform_socket_send_failures( probe ) == before )
+            send_buffer = candidate;
+        rocketnet_platform_socket_destroy( probe );
+    }
+    posix_check( send_buffer > 0 );
+
+    // drain the probes before the burst starts
+
+    {
+        static uint8_t data[64 * POSIX_BURST_BYTES];
+        rocketnet_address_t from[64];
+        int bytes[64];
+        rocketnet_platform_sleep( 0.01 );
+        while ( rocketnet_platform_socket_receive_packets( server, from, data, POSIX_BURST_BYTES, bytes, 64 ) > 0 ) {}
+    }
+
+    static struct posix_burst_drain_t drain;
+    memset( (void*) &drain, 0, sizeof(drain) );
     drain.socket = server;
 
-    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, rocketnet_posix_burst_drain_thread, &drain );
-    rocketnet_posix_check( thread != NULL );
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, posix_burst_drain_thread, &drain );
+    posix_check( thread != NULL );
     while ( !drain.running )
         rocketnet_platform_sleep( 0.0005 );
-    rocketnet_platform_sleep( 0.05 );
 
-    (void) rocketnet_platform_take_send_failures();
+    static struct rocketnet_platform_send_t sends[POSIX_BURST_PACKETS];
+    uint64_t drops = 0;
+    const char * pump = NULL;
 
-    static uint8_t packet[ROCKETNET_POSIX_BURST_PACKETS][ROCKETNET_POSIX_BURST_BYTES];
-    static struct rocketnet_platform_send_t sends[ROCKETNET_POSIX_BURST_PACKETS];
-
-    for ( uint32_t client = 0; client < ROCKETNET_POSIX_BURST_CLIENTS; client++ )
+    for ( uint32_t sender_index = 0; sender_index < POSIX_BURST_SENDERS; sender_index++ )
     {
-        rocketnet_address_t client_bind;
-        rocketnet_address_parse( &client_bind, "0.0.0.0" );
-        // the kernel minimum for SO_SNDBUF; the kernel doubles it
-        rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &client_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1, 1024*1024 );
-        rocketnet_posix_check( sender != NULL );
+        rocketnet_address_t sender_bind;
+        rocketnet_address_parse( &sender_bind, "0.0.0.0" );
+        rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, send_buffer, 4096 );
+        posix_check( sender != NULL );
+        pump = rocketnet_platform_socket_pump( sender );
 
-        for ( uint32_t sequence = 0; sequence < ROCKETNET_POSIX_BURST_PACKETS; sequence++ )
+        for ( uint32_t sequence = 0; sequence < POSIX_BURST_PACKETS; sequence++ )
         {
             uint8_t * bytes = packet[sequence];
-            memcpy( bytes, &client, sizeof(client) );
-            memcpy( bytes + sizeof(client), &sequence, sizeof(sequence) );
-            for ( int i = (int) ( sizeof(client) + sizeof(sequence) ); i < ROCKETNET_POSIX_BURST_BYTES; i++ )
-                bytes[i] = (uint8_t) ( client + sequence + i );
+            memcpy( bytes, &sender_index, sizeof(sender_index) );
+            memcpy( bytes + sizeof(sender_index), &sequence, sizeof(sequence) );
+            for ( int i = (int) ( sizeof(sender_index) + sizeof(sequence) ); i < POSIX_BURST_BYTES; i++ )
+                bytes[i] = (uint8_t) ( sender_index + sequence + i );
             sends[sequence].to = &destination;
             sends[sequence].packet_data = bytes;
-            sends[sequence].packet_bytes = ROCKETNET_POSIX_BURST_BYTES;
+            sends[sequence].packet_bytes = POSIX_BURST_BYTES;
         }
 
-        rocketnet_platform_socket_send_packets( sender, sends, ROCKETNET_POSIX_BURST_PACKETS );
+        rocketnet_platform_socket_send_packets( sender, sends, POSIX_BURST_PACKETS );
+        drops += rocketnet_platform_socket_send_failures( sender );
+        posix_check( strcmp( rocketnet_platform_socket_pump( sender ), pump ) == 0 );
         rocketnet_platform_socket_destroy( sender );
 
-        // let the drain catch up between clients: a burst that fills the
-        // receive queue past the kernel's ceiling would price receiver loss
-        // the send path cannot see, and this case is about the send path
+        // the receiver catches up between senders: receive-queue overflow is
+        // loss the send path cannot see, and this case prices the send path
 
-        const uint64_t expected = (uint64_t) ( client + 1 ) * ROCKETNET_POSIX_BURST_PACKETS;
-        const double catch_up = rocketnet_platform_time() + 0.2;
+        const uint64_t expected = (uint64_t) ( sender_index + 1 ) * POSIX_BURST_PACKETS - drops;
+        const double catch_up = rocketnet_platform_time() + 2.0;
         while ( drain.received < expected && rocketnet_platform_time() < catch_up )
             rocketnet_platform_sleep( 0.0005 );
     }
 
-    // let the drain finish what is in flight, then take the final accounting
-
-    rocketnet_platform_sleep( 0.2 );
+    rocketnet_platform_sleep( 0.05 );
     drain.stop = true;
     rocketnet_platform_thread_join( thread );
     rocketnet_platform_thread_destroy( thread );
 
-    // Drain anything the thread left after its stop check, counting it.
-
-    static uint8_t tail_data[64 * ROCKETNET_POSIX_BURST_STRIDE];
-    static rocketnet_address_t tail_from[64];
-    static int tail_bytes[64];
-    for ( ;; )
     {
-        const int received = rocketnet_platform_socket_receive_packets( server, tail_from, tail_data,
-                                                                        ROCKETNET_POSIX_BURST_STRIDE, tail_bytes, 64 );
-        if ( received == 0 )
-            break;
-        for ( int i = 0; i < received; i++ )
+        static uint8_t data[64 * POSIX_BURST_BYTES];
+        rocketnet_address_t from[64];
+        int bytes[64];
+        for ( ;; )
         {
-            const uint8_t * bytes = tail_data + (size_t) i * ROCKETNET_POSIX_BURST_STRIDE;
-            uint32_t client = 0;
-            uint32_t sequence = 0;
-            memcpy( &client, bytes, sizeof(client) );
-            memcpy( &sequence, bytes + sizeof(client), sizeof(sequence) );
-            rocketnet_posix_check( client < ROCKETNET_POSIX_BURST_CLIENTS );
-            rocketnet_posix_check( sequence < ROCKETNET_POSIX_BURST_PACKETS );
-            if ( !drain.seen[client][sequence] )
-            {
-                drain.seen[client][sequence] = true;
-                drain.received++;
-            }
+            const int count = rocketnet_platform_socket_receive_packets( server, from, data, POSIX_BURST_BYTES, bytes, 64 );
+            if ( count == 0 )
+                break;
+            posix_burst_take( &drain, data, bytes, count );
         }
     }
 
-    const uint64_t drops = rocketnet_platform_take_send_failures();
-    const uint64_t sent = (uint64_t) ROCKETNET_POSIX_BURST_CLIENTS * ROCKETNET_POSIX_BURST_PACKETS;
-
-    printf( "posix burst: sent=%llu received=%llu platform_send_drops=%llu (%s)\n",
-            (unsigned long long) sent, (unsigned long long) drain.received,
-            (unsigned long long) drops, drops > 0 ? "ENOBUFS-style drops observed" : "no send drop observed" );
+    const uint64_t sent = (uint64_t) POSIX_BURST_SENDERS * POSIX_BURST_PACKETS;
+    printf( "  burst: pump %s send_buffer %d sent %llu received %llu counted_drops %llu duplicates %llu: %s\n",
+            pump, send_buffer, (unsigned long long) sent, (unsigned long long) drain.received,
+            (unsigned long long) drops, (unsigned long long) drain.duplicates,
+            drops > 0 ? "the kernel refused sends (ENOBUFS or EAGAIN)" : "no send was refused at this load" );
     fflush( stdout );
 
-    rocketnet_posix_check( drain.received + drops == sent );
+    posix_check( drain.received + drops == sent );
 
     rocketnet_platform_socket_destroy( server );
 }
 
-
-// ---------------------------------------------------
-// a transport reads the platform's dropped-send count into its counters
-
-void rocketnet_test_posix_transport_send_seam()
-{
-    struct rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config( &server_config );
-    server_config.max_clients = 1;
-    snprintf( server_config.driver, sizeof(server_config.driver), "portable" );
-
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
-    rocketnet_posix_check( server != NULL );
-
-    char server_address[64];
-    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
-
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_posix_check( rocketnet_write_dev_connect_token( server_address, 0xf00dULL, (uint64_t) time( NULL ), token ) );
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
-    rocketnet_posix_check( client != NULL );
-
-    double start = rocketnet_platform_time();
-    bool connected = false;
-    while ( rocketnet_platform_time() - start < 10.0 && !connected )
-    {
-        rocketnet_client_transport_update( client, rocketnet_platform_time() );
-        rocketnet_client_transport_send_packets( client );
-        rocketnet_server_transport_update( server, rocketnet_platform_time() );
-        rocketnet_server_transport_send_packets( server );
-        connected = rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
-        rocketnet_platform_sleep( 0.001 );
-    }
-    rocketnet_posix_check( connected );
-
-    (void) rocketnet_platform_take_send_failures();
-
-    // ENOBUFS: the next send the server makes is dropped and counted, and
-    // the transport is not paused or disconnected by it
-
-    const int client_index = rocketnet_client_transport_client_index( client );
-    rocketnet_posix_check( client_index >= 0 );
-
-    struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
-    rocketnet_posix_check( frame != NULL );
-    memcpy( frame + context.payload_index, "drop", 4 );
-    rocketnet_posix_check( rocketnet_server_transport_finish_packet( server, &context, 4 ) > 0 );
-
-    rocketnet_platform_socket_fail_next_sends( 1, ENOBUFS );
-    rocketnet_server_transport_send_packets( server );
-
-    rocketnet_posix_check( rocketnet_platform_take_send_failures() == 1 );
-    rocketnet_posix_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
-
-    // EAGAIN next: the same accounting, and the connection still lives
-
-    frame = rocketnet_server_transport_start_packet( server, client_index, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
-    rocketnet_posix_check( frame != NULL );
-    memcpy( frame + context.payload_index, "drop", 4 );
-    rocketnet_posix_check( rocketnet_server_transport_finish_packet( server, &context, 4 ) > 0 );
-
-    rocketnet_platform_socket_fail_next_sends( 1, EAGAIN );
-    rocketnet_server_transport_send_packets( server );
-
-    rocketnet_posix_check( rocketnet_platform_take_send_failures() == 1 );
-    rocketnet_posix_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
-    rocketnet_posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-
-    // traffic resumes: the next payload arrives whole and the connection
-    // stays connected
-
-    frame = rocketnet_server_transport_start_packet( server, client_index, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
-    rocketnet_posix_check( frame != NULL );
-    memcpy( frame + context.payload_index, "live", 4 );
-    rocketnet_posix_check( rocketnet_server_transport_finish_packet( server, &context, 4 ) > 0 );
-    rocketnet_server_transport_send_packets( server );
-
-    bool delivered = false;
-    start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 10.0 && !delivered )
-    {
-        rocketnet_client_transport_update( client, rocketnet_platform_time() );
-        for ( int i = 0; i < rocketnet_client_transport_num_payloads( client ); i++ )
-        {
-            int payload_bytes = 0;
-            uint8_t * payload = rocketnet_client_transport_payload( client, i, &payload_bytes );
-            if ( payload && payload_bytes == 4 && memcmp( payload, "live", 4 ) == 0 )
-                delivered = true;
-        }
-        rocketnet_platform_sleep( 0.001 );
-    }
-    rocketnet_posix_check( delivered );
-    rocketnet_posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-
-    rocketnet_client_transport_destroy( client );
-    rocketnet_server_transport_destroy( server );
-}
-
-#endif // #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

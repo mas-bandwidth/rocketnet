@@ -215,9 +215,10 @@ static void client_io_receive_time_from_callback()
 }
 REGISTER_UNIT_TEST( client_io_receive_time_from_callback );
 
-// Two datagrams, one under the size prefilter: the expose delivers one packet;
-// after its return a later datagram reaches the next expose. RNClientIo
-// IoReceive, IoPublish, Expose, Return.
+// Two datagrams, one under the size prefilter: both reach the expose, because
+// the main thread's prefilter counts the runt rather than the I/O thread
+// dropping it; after the return a later datagram reaches the next expose.
+// RNClientIo IoReceive, IoPublish, Expose, Return.
 static void client_io_step_publishes_received()
 {
     rocketnet_fake_client_driver_t fake = {};
@@ -265,9 +266,11 @@ static void client_io_step_publishes_received()
 
     rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( received != NULL );
-    rocketnet_unit_check( received->num_packets == 1 );
-    rocketnet_unit_check( received->packet_bytes[0] == 16 );
-    rocketnet_unit_check( memcmp( received->packet_data[0], datagram, 16 ) == 0 );
+    rocketnet_unit_check( received->num_packets == 2 );
+    rocketnet_unit_check( received->packet_bytes[0] == 4 );
+    rocketnet_unit_check( memcmp( received->packet_data[0], short_datagram, 4 ) == 0 );
+    rocketnet_unit_check( received->packet_bytes[1] == 16 );
+    rocketnet_unit_check( memcmp( received->packet_data[1], datagram, 16 ) == 0 );
     rocketnet_client_io_return( &io );
 
     rocketnet_fake_client_push( &fake, &from, datagram, 8 );
