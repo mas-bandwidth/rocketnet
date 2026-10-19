@@ -55,7 +55,7 @@ proofs-client_packets:
 	    refuted=$$(grep -c ": FAILURE$$" "$$output"); \
 	    own_passed=$$(grep "^\[$$harness\." "$$output" | grep -c ": SUCCESS$$"); \
 	    own_total=$$(grep "^\[$$harness\." "$$output" | grep -c -E ": (SUCCESS|FAILURE)$$"); \
-	    counts="properties $$passed of $$(( passed + refuted )) passed, harness's own $$own_passed of $$own_total; unwind $(CLIENT_PACKETS_UNWIND)"; \
+	    counts="properties $$passed of $$(( passed + refuted )) passed, harness function $$own_passed of $$own_total; unwind $(CLIENT_PACKETS_UNWIND)"; \
 	    rm -f "$$output"; \
 	    if [ $$status -ne 0 ]; then \
 	        failed=1; \

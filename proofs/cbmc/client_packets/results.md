@@ -65,15 +65,18 @@ proved, both passes, in 317 s for the whole target. Each time in the table
 covers both of that harness's passes.
 
 The translation unit holds 4891 instrumented properties. Under each
-harness's line the gate prints its counts: properties passed out of the
-total, then the harness's own assertions passed out of its total. The total
-includes code the harness never reaches. Refuted: 0 and timed out: 0 for
-every harness. The counts come from a run on 2026-10-19 merged with base
-1581cc4 (1025 s for the whole target, both passes, on a loaded bench). Each row below lists the harness's own assertions on
+harness's line the gate prints the counts from its proving pass (not the
+witness pass): properties passed out of the total, then the properties in
+the harness function itself (its assertions and the automatic checks on
+its own code) passed out of their total. The total
+includes code the harness never reaches. Refuted: 0 for every harness, and
+none timed out. The counts come from a run on 2026-10-19 merged with base
+1581cc4 (1025 s for the whole target, both passes, on a loaded bench); the
+times in the table are from the 317 s run above. Each row below lists the harness's own assertions on
 top of the shared bounds, pointer, overflow, division-by-zero, unwinding and
 `rocketnet_assert` checks.
 
-| harness | result | properties passed | own assertions passed | time | harness assertions |
+| harness | result | properties passed | harness-function properties passed | time | harness assertions |
 |---|---|---|---|---|---|
 | harness_process_cookie | proved | 4891 of 4891 | 29 of 29 | 5 s | returns 0/1; the wrong size (not 38) is refused; the wrong state is refused with the state unchanged; a salt mismatch is refused; an accepted cookie is stored and the client moves to sending connection request |
 | harness_process_challenge | proved | 4891 of 4891 | 30 of 30 | 5 s | returns 0/1; the wrong size (not 66) is refused; any state but sending connection request is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted challenge moves the client to sending connection response |
