@@ -146,9 +146,8 @@ jobs:
           - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","fleet"]' }
-          # macos apple silicon
-          - { os: macos-15,     build_type: Debug,   leg: ab }   # hosted stopgap; mini-m5 once registered
-          - { os: macos-15,     build_type: Release, leg: ab }   # hosted stopgap; mini-m5 once registered
+          # macos apple silicon DISABLED: no darwin runner registered for this repository; owed: a darwin runner registered for this repository
+          #   (rows: { os: macos-15, build_type: Debug, leg: ab }, { os: macos-15, build_type: Release, leg: ab })
     steps:
 
       - uses: actions/checkout@v4
@@ -158,10 +157,6 @@ jobs:
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
       # System sodium is installed only as an independent parity reference;
       # the production targets compile the committed, namespaced vendor.
@@ -441,6 +436,8 @@ jobs:
 
   build-and-test-windows:
     name: windows-2025 / Release (${{ matrix.leg }})
+    # DISABLED: no Windows runner is registered for this repository; owed: the Windows fleet machine
+    if: false
     runs-on: windows-2025
     strategy:
       fail-fast: false
@@ -545,29 +542,39 @@ jobs:
 
   happy-path:
     name: happy path / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    # macOS and Windows rows are DISABLED: no darwin runner registered for
+    # this repository (owed: a darwin runner), and no Windows fleet machine.
+    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        include:
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
     steps:
 
       - uses: actions/checkout@v4
 
       - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
 
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
+      - name: Check the fleet's Go is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go 1.23 (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          got="$(go version)"
+          echo "$got"
+          case "$got" in
+            *go1.23*)
+              ;;
+            *) echo "TOOL-MISSING go 1.23 $got on $RUNNER_NAME"; exit 1 ;;
+          esac
 
       - name: Build (Linux and macOS, through the Makefile)
         if: runner.os != 'Windows'
@@ -923,7 +930,7 @@ jobs:
 
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
       fail-fast: false
       matrix:
@@ -933,6 +940,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Add the s390x architecture and the ports archive
+        if: runner.environment == 'github-hosted'
         run: |
           set -euo pipefail
           sudo dpkg --add-architecture s390x
@@ -1310,10 +1318,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # the Linux platform selftest stays on the hosted image: it is the bench-host capability check
-          # (bench/selftest.sh), and hulk fails its UDP_SEGMENT legs with EIO on loopback (measured 2026-09-21)
-          - { os: ubuntu-24.04 }
-          - { os: macos-15 }   # hosted stopgap; mini-m5 once registered
+          # the Linux platform selftest runs on the fleet bench; a host that
+          # cannot build a harness reports it as SKIPPED and fails a built one
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
+          # macos DISABLED: no darwin runner registered for this repository; owed: a darwin runner
     steps:
 
       - uses: actions/checkout@v4
@@ -1323,10 +1331,6 @@ jobs:
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
       # only soak_sim, not the whole tree: build-and-test already compiles
       # everything on both these OSes in both configurations, so a second full

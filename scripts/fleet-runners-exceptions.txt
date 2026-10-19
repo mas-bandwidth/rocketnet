@@ -1,0 +1,20 @@
+# fleet-runner lint exceptions. Format: <workflow> <job> <TYPE> <reason>
+#   TEMPORARY  a nightly-only workflow, removed by rocketnet-nightly-on-fleet
+#   DISABLED   the job/rows carry `if: false` + a `# DISABLED:` comment
+#   GUEST      an install inside a VM the job boots
+# `<job> *` covers every job in the workflow.
+
+fuzz-nightly.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+nightly.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+nightly-frame-budget.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+nightly-examples.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+nightly-soak.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+nightly-leaks.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+nightly-bigendian-system.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+nightly-channel-seeds.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+nightly-proofs.yml * TEMPORARY removed by rocketnet-nightly-on-fleet
+
+ci.yml build-and-test DISABLED darwin runner not registered for this repository; owed: a darwin runner registered for this repository
+ci.yml happy-path DISABLED darwin runner not registered for this repository; owed: a darwin runner registered for this repository
+ci.yml platform-selftests DISABLED darwin runner not registered for this repository; owed: a darwin runner registered for this repository
+ci.yml build-and-test-windows DISABLED owed: the Windows fleet machine
