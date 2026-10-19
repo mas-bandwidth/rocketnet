@@ -20,6 +20,27 @@ option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETN
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_IO_URING "Build the io_uring server driver against liburing when it is found (Linux)" ON)
+# One switch selects the sanitizer for every target, Apple clang and Linux
+# alike. address is ASan with UBSan and a hard stop on the first report;
+# thread is TSan. Empty keeps the compiler's default and the existing jobs
+# that pass their flags through CMAKE_C_FLAGS/CMAKE_CXX_FLAGS.
+set(ROCKETNET_SANITIZE "" CACHE STRING "Build every target with a sanitizer: address (ASan+UBSan) or thread (TSan)")
+set_property(CACHE ROCKETNET_SANITIZE PROPERTY STRINGS "" address thread)
+if(ROCKETNET_SANITIZE)
+    if(NOT ROCKETNET_SANITIZE STREQUAL "address" AND NOT ROCKETNET_SANITIZE STREQUAL "thread")
+        message(FATAL_ERROR "ROCKETNET_SANITIZE must be empty, address or thread")
+    endif()
+    if(MSVC)
+        message(FATAL_ERROR "ROCKETNET_SANITIZE is for Apple clang and GCC/Clang, not MSVC")
+    endif()
+    if(ROCKETNET_SANITIZE STREQUAL "address")
+        set(ROCKETNET_SANITIZER_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    else()
+        set(ROCKETNET_SANITIZER_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
+    endif()
+    add_compile_options(${ROCKETNET_SANITIZER_FLAGS})
+    add_link_options(${ROCKETNET_SANITIZER_FLAGS})
+endif()
 set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
 set(ROCKETNET_DRIVER_SOURCES "" CACHE STRING "Additional native driver source files")
 if(ROCKETNET_DRIVER_REGISTRY_HEADER)

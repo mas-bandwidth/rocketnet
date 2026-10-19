@@ -108,6 +108,35 @@ compiles later on the target kernel, which needs BTF; it is not compiled by `mak
 The generated header lives in each build tree, so concurrent configurations do
 not rewrite the checkout. Windows copies the committed header into its build tree.
 
+## Sanitizers and leaks
+
+`ROCKETNET_SANITIZE` builds every target with a sanitizer on Linux and macOS.
+It is empty by default, so the Makefile and the existing jobs are unchanged.
+`address` adds `-fsanitize=address,undefined -fno-sanitize-recover=all
+-fno-omit-frame-pointer`; `thread` adds `-fsanitize=thread
+-fno-omit-frame-pointer`:
+
+    cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_SANITIZE=address
+    cmake --build build-asan --parallel 4
+    ./bin/test
+
+    cmake -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_SANITIZE=thread
+    cmake --build build-tsan --parallel 4
+    ./bin/functional
+
+LeakSanitizer has no Apple runtime, so on macOS leaks are checked with the
+system `leaks` tool on a Release build without sanitizers. The script sets
+`MallocStackLogging=1` and runs each binary through
+`/usr/bin/leaks --atExit --`, failing on any leak with its stack. It runs the
+lifecycle and functional suites and a 100000 iteration soak under every
+transport pin, and `--self-test` proves that a scratch binary leaking one
+allocation turns the check red:
+
+    cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-release --parallel 4
+    python3 tools/macos/leaks_run.py --self-test
+    python3 tools/macos/leaks_run.py --matrix
+
 ## Pinned sodium
 
 The default build uses the committed `sodium/sodium.c` and `sodium/sodium.h`
