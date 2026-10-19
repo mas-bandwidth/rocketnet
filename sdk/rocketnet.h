@@ -10,12 +10,13 @@
 //
 // The API's shape: every call that can fail returns enum rocketnet_status_t;
 // a pure question returns bool; every set of values is a typed enum named
-// ROCKETNET_<SET>_<VALUE>, and each lookup that names a value ends in _name
-// and returns "unknown" for a value outside its enum, never NULL.
+// ROCKETNET_<SET>_<VALUE>, and each lookup that names an enum value ends in
+// _name and returns "unknown" for a value outside its enum, never NULL.
 //
-// Sizes: memory and buffer sizes are size_t (memory_bytes, the
-// required_memory results, config_bytes, connect_token_bytes); message bytes
-// and counts are int; client indexes and destination ids are uint64_t.
+// Sizes: a caller memory block or buffer handed to a call is sized in size_t
+// (memory_bytes, the required_memory results, config_bytes,
+// connect_token_bytes); config fields, message bytes and counts are int;
+// client indexes and destination ids are uint64_t.
 
 #ifndef ROCKETNET_H
 #define ROCKETNET_H
@@ -66,8 +67,9 @@
 /**
  * @brief Identifies the public C struct and calling-convention revision.
  *
- * This revision is independent of the wire protocol version. Existing public
- * layouts remain unchanged. Increment it for an incompatible public layout or
+ * This revision is independent of the wire protocol version. Revision 1 is
+ * the layout and calling contract of the first published API, this header.
+ * From here on, increment it for an incompatible public layout or
  * calling-contract change; append-only additions that preserve old layouts
  * keep the revision unchanged.
  */
