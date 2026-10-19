@@ -3217,6 +3217,12 @@ void rocketnet_test_transport_ipv6_loopback()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
+// the transport-level dual-stack case: the server listens on the ipv6
+// wildcard [::] and an ipv4 client connects to 127.0.0.1 on the granted
+// port, with payloads both ways. like the ipv6 loopback above it has no
+// driver ifdefs: it runs on whichever transport the suite or the env pin
+// selects, so the CI transport matrix runs it per transport.
+
 void rocketnet_test_transport_dual_stack_ipv4_client()
 {
     // a server bound to the IPv6 wildcard is dual-stack: it serves IPv4 as
@@ -3251,6 +3257,57 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    int server_received = 0;
+    int client_received = 0;
+    int sent_to_server = 0;
+    int sent_to_client = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        if ( sent_to_server < 10 )
+        {
+            rocketnet_client_transport_send_packet( client, (const uint8_t*) "hello4", 6 );
+            sent_to_server++;
+        }
+        if ( sent_to_client < 10 )
+        {
+            rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "world4", 6 );
+            sent_to_client++;
+        }
+
+        rocketnet_server_transport_send_packets( server );
+
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 );
+            rocketnet_check( payload_bytes == 6 );
+            rocketnet_check( memcmp( payload, "hello4", 6 ) == 0 );
+            server_received++;
+        }
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == 6 );
+            rocketnet_check( memcmp( packet, "world4", 6 ) == 0 );
+            client_received++;
+        }
+
+        if ( server_received >= 10 && client_received >= 10 )
+            break;
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( server_received >= 10 );
+    rocketnet_check( client_received >= 10 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
