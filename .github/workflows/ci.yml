@@ -274,6 +274,10 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
 
+      - name: Test the MSan gate's verdicts
+        if: runner.os == 'Linux'
+        run: python3 tools/test_run_msan.py
+
       # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
       # extern "C" block, and a C and a C++ client and server built from only
       # the header and the prebuilt static library (seconds)
