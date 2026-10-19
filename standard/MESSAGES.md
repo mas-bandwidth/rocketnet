@@ -2203,10 +2203,64 @@ unreliable item dropped.
 <a id="m10"></a>
 ## m10. Channels and priorities
 
-Status: pending
+Channels are per-connection streams. Their scheduling does not affect the
+wire representation.
 
-Scope: per-channel state, the four priority levels, round robin across
-channels, FIFO within a channel, and the packet writer's order.
+1. An implementation MUST set its build-specific maximum channel count to a
+   value from 1 through 65,536, inclusive. The default build-specific maximum
+   MUST be 32. A connection MUST set num_channels from 1 through its
+   implementation build-specific maximum. For every message send, a sender
+   MUST select a channel from zero through one less than that connection's
+   num_channels, and a message endpoint MUST refuse a send with a channel
+   outside that range.
+2. A record with code 1, 3 or 4 MUST carry the channel field in
+   [m3 Record format](#m3). Receipt types use their base codes from
+   [m1.3 Reliability types](#m1.3): type 7 uses code 3 and carries a channel;
+   types 5 and 6 use codes 0 and 2 and carry none. A promoted type-5 send uses
+   code 2 and carries no channel.
+3. A sender MUST encode a channel that fits in u8 as one byte. A sender MUST
+   encode a larger channel as a little-endian u16 and MUST set WIDE if and only
+   if it uses that u16 encoding. A receiver MUST reject WIDE when the channel
+   fits in u8.
+
+The diagrams show the channel field alone. Its position in a record is the
+position defined by its code in [m3 Record format](#m3).
+
+```
+Offset 0
+        0 1 2 3 4 5 6 7
+       +-+-+-+-+-+-+-+-+
+NARROW |    channel    |
+       +-+-+-+-+-+-+-+-+
+
+Offset 0               1
+        0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+WIDE   |      channel, little-endian   |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---:|---:|---|---|---|
+| channel, narrow | 0 | 1 | u8 | channel number | any u8 channel number |
+| channel, wide | 0 | 2 | u16 | channel number | any u16 channel number |
+
+| Name | Value | Units | Meaning |
+|---|---:|---|---|
+| channel wide boundary | `256` | channels | first channel encoded as WIDE |
+| default maximum channel count | `32` | channels | SDK default for the build-specific maximum |
+| maximum allowed build-specific channel count | `65536` | channels | largest build-specific maximum permitted |
+
+```vector m10.narrow-channel
+record: RELIABLE_ORDERED, channel 3, number 5, ring 0, ordering 0, data "hi"
+03 02 00 05 00 00 00 00 00 00 00 03 68 69 01
+```
+
+```vector m10.wide-channel
+record: RELIABLE_ORDERED, channel 300 (WIDE), number 5, ring 0, ordering 0, data "hi"
+configuration: build-specific maximum at least 301; num_channels 301
+13 02 00 05 00 00 00 00 00 00 00 2c 01 68 69 01
+```
 
 <a id="m11"></a>
 ## m11. CONFIG control record
@@ -2219,18 +2273,74 @@ fields compared, mismatch handling; the defaults of the wire fields; vectors.
 <a id="m12"></a>
 ## m12. Receipts
 
-Status: pending
+Types 5, 6 and 7 request an outcome for a send. The type is an API value; the
+wire carries its base code, except that a large type-5 send uses the reliable
+promotion defined here and in [m2 Payload forms and sender size rules](#m2).
 
-Scope: the receipt outcomes, when each is reported, and the receipt of a
-promoted message.
+1. A sender MUST NOT put receipt types 5, 6 or 7 on the wire. Types 5, 6 and 7
+   use codes 0, 2 and 3, respectively, as [m1.3 Reliability types](#m1.3)
+   defines.
+2. After applying limits in [m2 Payload forms and sender size rules](#m2),
+   a sender MUST use the reliable code-2 path for a permitted
+   type-5 send whose data exceeds the row `UNRELIABLE record limit` of
+   [m2.2 Constants](#m2.2). The sender MUST preserve the type-5 receipt for
+   that send. The receiver sees code 2; the sender reports ACKED only after
+   every block fragment is acknowledged.
+3. A type-6 or type-7 receipt reports ACKED when all reliable numbers for its
+   send are acknowledged. A type-5 send that remains unreliable reports ACKED
+   when its carrying packet is acknowledged and LOSS when it is lost, refused
+   by the send budget, or expires without an acknowledgement. These outcomes
+   are API semantics and are not carried on the wire.
+
+```vector m12.promotion
+public type: 5 (unreliable with ack receipt)
+data length: one byte above the UNRELIABLE record limit
+data: 0x41 in every byte
+packet: second payload of the promoted code-2 block
+0a 04 01 01 00 00 48 00 01 00 01 00 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41
+01
+```
 
 <a id="m13"></a>
 ## m13. Security considerations
 
-Status: pending
+The transport seals every payload; this section bounds what a peer can do
+within the message layer of a sealed connection.
 
-Scope: violations end the connection; memory bounds from configuration; what
-a hostile peer can and cannot make a receiver hold.
+1. **Violations end the connection.** A payload that breaks a rule of RN-2 is
+   a violation. A receiver MUST refuse the whole payload, MUST NOT hand up any
+   record of it, and MUST end the connection. A correct sender never sends a
+   violation, so one is evidence of a faulty or hostile peer. Each violation has
+   its own counter.
+2. **No live growth.** Every table a peer can influence is fixed at connection
+   creation from configuration. A receiver MUST NOT allocate memory after
+   connection creation, so a peer MUST NOT be able to make a receiver hold more
+   than the configured region. The checks of [m4 Receiver checks](#m4) run
+   before a record is held or delivered.
+3. **Bounds.** A record whose channel, number, span or size falls outside the
+   configured values, the window or the ring is refused by
+   [m4 Receiver checks](#m4), [m5 Message numbering and the reliable window](#m5)
+   and [m8 Blocks](#m8), never stored. A receiver MUST NOT read outside the byte
+   range the transport delivers.
+4. **Amplification.** The checks run over a payload once. A receiver MUST
+   complete them in time bounded by the payload's own length, with no
+   allocation, so a peer MUST NOT be able to grow a receiver's work or memory.
 
 <a id="ma"></a>
 ## ma. Appendix A: test vectors
@@ -2275,4 +2385,7 @@ It is generated; the bytes are in the sections.
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-sequenced-hold-drain` |
 | [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.budget-trace` |
 | [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.resend-trace` |
+| [m10 Channels and priorities](#m10) | `m10.narrow-channel` |
+| [m10 Channels and priorities](#m10) | `m10.wide-channel` |
+| [m12 Receipts](#m12) | `m12.promotion` |
 <!-- vector-index:end -->
