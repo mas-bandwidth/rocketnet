@@ -116,14 +116,14 @@ int main( int argc, char ** argv )
         CHECK( run_show_default_and_struct() == 0 );
 
 #if defined( _WIN32 )
-        snprintf( command, sizeof( command ), "set ROCKETNET_SERVER_MAX_CLIENTS=5&& %s", argv[0] );
+        snprintf( command, sizeof( command ), "set ROCKETNET_SERVER_MAX_CLIENTS=5&& \"%s\"", argv[0] );
 #else
         snprintf( command, sizeof( command ), "ROCKETNET_SERVER_MAX_CLIENTS=5 %s", argv[0] );
 #endif
         CHECK( system( command ) == 0 );
 
 #if defined( _WIN32 )
-        snprintf( command, sizeof( command ), "set ROCKETNET_SERVER_MAX_CLIENTS=99999&& %s", argv[0] );
+        snprintf( command, sizeof( command ), "set ROCKETNET_SERVER_MAX_CLIENTS=99999&& \"%s\"", argv[0] );
 #else
         snprintf( command, sizeof( command ), "ROCKETNET_SERVER_MAX_CLIENTS=99999 %s", argv[0] );
 #endif
