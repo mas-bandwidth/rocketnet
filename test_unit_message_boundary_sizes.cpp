@@ -251,3 +251,19 @@ static void message_boundary_sizes_every_mode_every_channel() {
     }
 }
 REGISTER_UNIT_TEST(message_boundary_sizes_every_mode_every_channel);
+
+static void message_boundary_oversize_unreliable_counts_failed_not_refused() {
+    boundary_pair_t pair; boundary_setup(&pair);
+    std::vector<boundary_received_t> got; boundary_step(&pair,&got);
+    const rocketnet_counters_t * cc=rocketnet_message_client_counters(pair.client);
+    const uint64_t failed_before=rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED);
+    const uint64_t refused_before=rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED);
+    const int oversize=16384+1;
+    const uint32_t serial=rocketnet_message_client_send(pair.client,0,ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED,
+        boundary_data(1,oversize).data(), oversize);
+    check(serial==0);
+    check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==failed_before+1);
+    check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==refused_before);
+    boundary_teardown(&pair);
+}
+REGISTER_UNIT_TEST(message_boundary_oversize_unreliable_counts_failed_not_refused);
