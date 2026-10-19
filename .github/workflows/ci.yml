@@ -1456,3 +1456,40 @@ jobs:
 
       - name: Benchmark campaign result gate
         run: python3 bench/test_campaign.py
+
+  instruction-gate:
+    name: instruction count gate
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config valgrind python3; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Test the instruction-count checker
+        run: python3 tools/test_check_instructions.py
+
+      - name: Build instruction_count (Release)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target instruction_count --parallel
+
+      - name: Run the cachegrind instruction gate
+        run: python3 tools/check_instructions.py --bin ./build/instruction_count
