@@ -1180,7 +1180,7 @@ The type data of a keep-alive is:
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---|---|---|---|---|
 | client index | 0 | 4 | u32 | the slot the server assigned this connection | 0 to one less than the client slot count |
-| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 or more |
+| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 to the `maximum client slot count` row of [t3 Constants and registries](#t3) |
 
 A keep-alive's type data is eight bytes and follows the ack block
 ([t15 Acknowledgement](#t15)). A keep-alive carries no application bytes.
