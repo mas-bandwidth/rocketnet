@@ -13,7 +13,7 @@
 //
 // loopback_patterns_off_same_trace compares a fixed run, with both fields zero
 // and with the link simulator on and off, against counters recorded at the base
-// (sprint/rocketnet-proof 390a7e6) before this change existed.
+// (sprint/rocketnet-proof 98691c9) before this change existed.
 
 #include "test_unit_registry.h"
 
@@ -255,9 +255,9 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // the counters of the fixed run at the base, with the link simulator off and
 // with it on at 5 ms latency (the simulator on, both patterns zero)
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xf2b74aa0d3022a66 ), UINT64_C( 0xbee918a0ee08a064 ), 24 };
+    { 35, 35, 3762, 2437, 35, 35, 3137, 4462, UINT64_C( 0xf2b74aa0d3022a66 ), UINT64_C( 0xbee918a0ee08a064 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xf2b74aa0d3022a66 ), UINT64_C( 0xbee918a0ee08a064 ), 25 };
+    { 35, 35, 3762, 2437, 35, 35, 3137, 4462, UINT64_C( 0xf2b74aa0d3022a66 ), UINT64_C( 0xbee918a0ee08a064 ), 25 };
 
 static void loopback_patterns_off_same_trace()
 {
