@@ -21,8 +21,8 @@ the same phases, with the clients as the environment this time. Both are checked
 instances of the shared lossy link `tla/Link.tla`: `C2S` carries every client's packets to
 the server, `S2C` the server's packets to every address. `tla/MCServerConnection.tla` and
 `tla/MCServerConnection.cfg` are the small instance; every TLC run is a row in
-`tla/RUNS.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M2 and M3
-(with M4's keep-alive pacing and M6's admission checks where they decide a slot). Line
+`tla/RUNS.tsv`. It covers the server's connection states and slots, with the keep-alive
+pacing and the admission checks where they decide a slot. Line
 numbers below are at `3ad4179` (origin/main at the time of writing).
 
 ## What the model covers
@@ -191,7 +191,7 @@ below changed; the TSV has one row per run.
 | `S-alternate` | C2SPattern "alternate", S2CPattern "alternate" | Spec | the same | 4644754 | pass |
 | `S-burst` | C2SPattern "burst", S2CPattern "burst" | Spec | the same | 2774632 | pass |
 | `S-firstkind` | KindLoss "firstkind" | Spec | the same | 6790752 | pass |
-| `S-arbitrary` | C2SPattern "arbitrary", S2CPattern "arbitrary" | Spec | the same | 12837009 | not finished (stopped at the card's time bound, 24 minutes): no violation in the states explored |
+| `S-arbitrary` | C2SPattern "arbitrary", S2CPattern "arbitrary" | Spec | the same | 12837009 | not finished (stopped at the run's time bound, 24 minutes): no violation in the states explored |
 | `S-move-env` | as S-move, Duplication TRUE, Reordering TRUE | Spec | the same | 15380262 | TLC owed: stopped at the bench bound after 12 minutes with 4.4 M states on the queue, no violation |
 | `S-reuse-dup` | Duplication TRUE | Spec | the same | not run | TLC owed: queued behind S-move-env; narrowed from duplication and reordering to duplication alone because the two-client instance with both on passed 31 M distinct states unfinished, and duplication alone is what the replayed packet needs |
 
@@ -260,7 +260,7 @@ every run, because the client in state 3 re-sends it on its timer.
 Every counterexample below was replayed by hand through the functions it names before it was
 written down. One finding in the code came out of this model (item 8, F9 of the inventory
 made concrete: a shared token admits a second connection once the used-token history has
-been flushed); every other invariant the card named holds on the code's behaviour under
+been flushed); every other invariant the model names holds on the code's behaviour under
 every pattern run, and every reversed witness fails as it must. One model error was found
 and fixed on the way.
 
@@ -361,8 +361,8 @@ and fixed on the way.
    **The fix, model-checked.** `RefuseAdmittedAtResponse = TRUE` adds the missing rung to
    the response ladder: a response whose token the admitted set already holds is refused
    (ignored, as the request-time rung at `:516` ignores). `S-share-fix` is `S-share-none`
-   with the knob on: 8,160,820 states, 1,637,413 distinct, depth 43, 151 s, pass. The code's behaviour (`FALSE`) stays the red case. For
-   the fix card, and not for this PR: an explicit
+   with the knob on: 8,160,820 states, 1,637,413 distinct, depth 43, 151 s, pass. The code's behaviour (`FALSE`) stays the red case. The fix
+   is an explicit
    `rocketnet_admitted_token_set_contains` check at the response, before the slot check at
    `:678`, with its own counter (not a change to `add()`: `sdk/rocketnet_tests.cpp:2007-2008`
    asserts that `add` is idempotent, and a refusal from `add` would be counted under
@@ -376,8 +376,8 @@ and fixed on the way.
    owner's ruling. This module still models the set; the code now matches
    `AdmittedHeld = FALSE` with the set never full, under which `OneConnectionPerToken`
    (a lifetime count) is no longer the code's rule. `tla/RNSecurityTables.tla` carries
-   the rule as `OneTokenOneLiveConnection` and `ChurnNeverDenied`; re-stating this
-   module's invariant to match is owed to a later card.
+   the rule as `OneTokenOneLiveConnection` and `ChurnNeverDenied`; this module's
+   invariant is not yet re-stated to match.
 
 ### Model errors, fixed
 
@@ -399,8 +399,7 @@ and fixed on the way.
 
 ## The RUNS.tsv rows
 
-Six models land in parallel, so this card does not edit `tla/RUNS.tsv`; the rows it would add
-are these (module, config, states, distinct, result, bench, date):
+The model's measured rows are these (module, config, states, distinct, result, bench, date):
 
 ```
 MCServerConnection	MCServerConnection.cfg; checks PacketsReachOwnSlotOnly, SessionNeverAnswered	14097280	2779489	pass
@@ -412,7 +411,7 @@ MCServerConnection	MCServerConnection.cfg with C2SPattern "first", S2CPattern "f
 MCServerConnection	MCServerConnection.cfg with C2SPattern "alternate", S2CPattern "alternate"	24564007	4644754	pass
 MCServerConnection	MCServerConnection.cfg with C2SPattern "burst", S2CPattern "burst"	14076977	2774632	pass
 MCServerConnection	MCServerConnection.cfg with KindLoss "firstkind"	32588361	6790752	pass
-MCServerConnection	MCServerConnection.cfg with C2SPattern "arbitrary", S2CPattern "arbitrary"	86207063	12837009	not finished (stopped at the card's time bound): no violation in the states explored
+MCServerConnection	MCServerConnection.cfg with C2SPattern "arbitrary", S2CPattern "arbitrary"	86207063	12837009	not finished (stopped at the run's time bound): no violation in the states explored
 MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, Duplication TRUE, Reordering TRUE	63888899	15380262	not finished (stopped at the bench bound, TLC owed): no violation in the states explored
 MCServerConnection	MCServerConnection.cfg with SweepRemovesMapping FALSE; checks SlotMappingBijection (reversed witness)	16948	5861	fail as expected: Invariant SlotMappingBijection is violated, 14-state trace
 MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none", RefuseAdmittedAtResponse TRUE (the fix)	8160820	1637413	pass

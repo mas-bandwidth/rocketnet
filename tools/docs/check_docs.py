@@ -3,7 +3,7 @@
 
 Subcommands:
   archaeology  Check every tracked .md file for STANDARD.md, rocketnet_*_send,
-               card ids, dates, and host names (prints nothing and exits 0 when clean).
+               card ids, the word card, dates, and host names (prints nothing and exits 0 when clean).
   links        Check that every relative link and every #anchor in every tracked .md
                file resolves at head.
   usage        Compile every ```c and ```cpp fenced block of USAGE.md against
@@ -49,6 +49,7 @@ ARCHAEOLOGY_PATTERNS = [
     ("STANDARD.md", re.compile(r"STANDARD\.md", re.IGNORECASE)),
     ("removed_send", re.compile(r"rocketnet_(client|server)_send\b", re.IGNORECASE)),
     ("worker_card", re.compile(r"rocketnet-[a-z-]+\.w[0-9]", re.IGNORECASE)),
+    ("card", re.compile(r"\bcards?\b", re.IGNORECASE)),
     ("date", re.compile(r"20[0-9][0-9]-[01][0-9]-[0-3][0-9]", re.IGNORECASE)),
     ("host", re.compile(r"\b(amd-[123]|hulk|hetzner[0-9]*|vision|captain|studio|space)\b", re.IGNORECASE)),
 ]

@@ -24,8 +24,9 @@ needs.
    `rocketnet_server_receipts`, print one summary line per mode, and check each
    mode's delivery, ordering, and receipt promise.
 
-Each frame runs in standard order: `update`, `receive` and `release` (plus
-`receipts`), simulation, `start` and `finish`, and `send_packets` last so
+Each frame runs in standard order: `update`, receive message and release
+message (plus `receipts`), simulation, start message and finish message, and
+`send_packets` last so
 queued messages leave in the same frame.
 
 ## Run it
@@ -60,13 +61,13 @@ in exact sequence.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config_sized`, `rocketnet_server_create_sized`,
+- `rocketnet_server_dev_config_sized`, `rocketnet_server_create_sized`, `rocketnet_server_start`,
   `rocketnet_server_port`, `rocketnet_server_update`,
   `rocketnet_server_client_connected`, `rocketnet_server_start_message`,
   `rocketnet_server_finish_message`, `rocketnet_server_receive_message`,
   `rocketnet_server_release_message`, `rocketnet_server_receipts`,
   `rocketnet_server_send_packets`, `rocketnet_server_destroy`
-- `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`,
+- `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`, `rocketnet_client_connect`,
   `rocketnet_client_state`, `rocketnet_client_index`,
   `rocketnet_client_update`, `rocketnet_client_start_message`,
   `rocketnet_client_finish_message`, `rocketnet_client_receive_message`,

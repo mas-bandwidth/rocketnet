@@ -22,12 +22,12 @@ numbers below are at `14993f6` (the base of this change).
 | `kept` | the lifetime counters and the config | kept across connections; fresh only at create |
 | `link` | the path from the server | the session tags of server packets in flight (lossy: `Lose`) |
 
-The connect-without-token API (`create`, then `connect(token)`, `disconnect`, connect again)
-does not exist at `14993f6`: today the token is passed to `rocketnet_client_transport_create`
-(`sdk/rocketnet_client_transport.cpp:293`) and `rocketnet_client_transport_disconnect`
-(`:1618`) ends the object's only connection. The card the implementation
-writes that API and its single reset function; the card the implementation
-writes the reset inventory each field below stands for and cites this model.
+The public client is this session object: `rocketnet_client_create` makes it
+DISCONNECTED, `rocketnet_client_connect` starts a connection with a token, and
+`rocketnet_client_disconnect` ends it, so the client can connect again. The code cites this
+model where the client is defined and where End then Reset runs
+(`sdk/rocketnet_api.cpp`), and the reset inventory each field below stands for is in
+`sdk/rocketnet_connection_reset.h`.
 
 **The per-connection record** (`Fields`), grouped by the step that writes it:
 

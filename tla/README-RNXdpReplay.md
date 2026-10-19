@@ -9,8 +9,8 @@ server update from the session replay windows (`sdk/rocketnet_replay.h`,
 kernel's coarse filter in front of it.
 
 The model is written before the code. `server_xdp/server_xdp.c` holds no
-replay map yet; the code card the implementation implements
-it, names its steps after the actions below and cites this module. Until then
+replay map yet; the implementation
+names its steps after the actions below and cites this module. Until then
 the `xdp-replay-high-water` row of `tla/COVERAGE.tsv` is `owed`.
 
 `tla/MCRNXdpReplay.tla` and `tla/MCRNXdpReplay.cfg` are the small instance.

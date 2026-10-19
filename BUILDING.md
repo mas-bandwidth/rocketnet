@@ -323,7 +323,7 @@ platform has — on Linux `xdp` (AF_XDP, privileged), `gso` (`SO_REUSEPORT` +
 batched send), and `portable`; on macOS `msgx` (Darwin batch pump) and
 `portable`; on Windows `iocp` (overlapped UDP with USO/URO), `rio` (Registered
 I/O), and `portable`; plus the in-memory `loopback` transport (pin-only) on
-every platform — and the endpoint walks an ordered candidate list at create. The list rides the config's transport field or the
+every platform — and the endpoint walks an ordered candidate list at client connect and server start. The list rides the config's transport field or the
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env). With no list,
 each endpoint walks its platform's `auto` order: a Linux server tries `xdp`,
@@ -342,8 +342,8 @@ Names known but absent on a platform — or not applicable to an endpoint, like
 `gso` for a client — are skipped with a log line, so one fleet-wide value deploys
 everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
-Unknown names refuse loudly at create. The granted transport is reported by
-the transport name query on each client and server, and the create log line. Queue-count bounds are per transport, refused loudly and never
+Unknown names refuse loudly at client connect and server start. The granted transport is reported by
+the transport name query on each client and server, and the start log line. Queue-count bounds are per transport, refused loudly and never
 clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport refuses
 past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —

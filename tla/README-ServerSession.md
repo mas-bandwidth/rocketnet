@@ -27,12 +27,13 @@ change).
 
 `stop` exists (`rocketnet_server_transport_stop`, `sdk/rocketnet_server_transport.cpp:1306`, sets
 STOPPING), as do create (`:696`), destroy (`:1269`) and `disconnect_client` (`:2362`, over
-`rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp:1920`). A
-server created STOPPED with no transport bound, `start`, start again after stop, and
-`disconnect_all_clients` do not exist at `14993f6`; the card
-the implementation writes them, and the card
-the implementation writes the one per-slot reset function and the
-inventory each field below stands for, citing this model.
+`rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp:1920`). The
+public server is this lifecycle object: `rocketnet_server_create` makes it stopped with no
+transport bound, `rocketnet_server_start` and `rocketnet_server_stop` run it, it can start
+again after a stop, and `rocketnet_server_disconnect_all_clients` drains every slot. The
+code cites this model where the server is defined (`sdk/rocketnet_api.cpp`), and the one
+per-slot reset function and the inventory each field below stands for are in
+`sdk/rocketnet_connection_reset.h`.
 
 **The per-slot record** (`Fields`), grouped by the step that writes it:
 
@@ -54,8 +55,8 @@ re-presentation from that same address is not modelled here. The
 restart sentences under _Keys_ and _Per-connection keys_ (`standard/TRANSPORT.md:189`, `:1058`) make key
 freshness independent of the history: the session nonce is chosen when the mapping is created,
 so a restart can never recreate a key. standard/TRANSPORT.md:189 has the server generate its cookie key "at start"; the
-model keeps the keys as one value fresh at create and unchanged by stop and start, as the card
-lists them kept. A cookie key regenerated at each start instead would invalidate only
+model keeps the keys as one value fresh at create and unchanged by stop and start, as the reset
+inventory keeps them. A cookie key regenerated at each start instead would invalidate only
 outstanding cookies, which no slot record holds, so no property here depends on the choice.
 
 **Actions.**

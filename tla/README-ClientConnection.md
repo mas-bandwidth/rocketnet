@@ -6,7 +6,7 @@ the shared lossy link `tla/Link.tla`: `C2S` carries what the client sends, `S2C`
 the server sends. The server is modelled as the environment the client talks to, only
 as far as it drives the client. `tla/MCClientConnection.tla` and
 `tla/MCClientConnection.cfg` are the small instance; current measured cases are in
-`tla/RUNS.tsv`, with earlier records retained in `tla/RUNS-HISTORY.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M1.
+`tla/RUNS.tsv`, with earlier records retained in `tla/RUNS-HISTORY.tsv`.
 
 ## What the model covers
 
@@ -126,7 +126,7 @@ The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`
   replay and no older copy with that id can exist; a copy whose id is in `cSeen` is the
   replay `rocketnet_replay_already_received` refuses. The window's 4096-sequence width
   is above any instance here. Client session packets carry no id: the server's replay
-  window is the server card's business. The inventory's `SequenceMonotone` is therefore
+  window belongs to the server's models. The inventory's `SequenceMonotone` is therefore
   not checked here; `RNReplayWindow` owns sequences.
 - **The cookie** is a flag echoing the attempt. The cookie gate (MAC, lifetime, key
   rotation) is the security module's. A cookie never expires here.
@@ -140,7 +140,7 @@ The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`
   protocol alone gets there.
 - **The server** holds one mapping for this address and one slot for this client. Other
   clients are a count. Token tables, cookie keys, the client-id check and the confirmed
-  flag are the server and security cards'.
+  flag belong to the server and security models.
 - **Payload rate.** The server application sends at most one payload per send interval
   (a model-size bound; the code places no rate on payloads). The keep-alive suppression witness still
   shows the suppression, because one payload per interval is enough to restamp the
@@ -222,17 +222,17 @@ below changed; the TSV has one row per run.
 | `L-first` | KindLoss "none", C2SPattern "first", S2CPattern "first" | Spec | Connects, ServerNotStranded | 4057 | pass |
 | `L-alternate` | KindLoss "none", C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects, ServerNotStranded | 11237 | pass |
 | `L-burst` | KindLoss "none", C2SPattern "burst", S2CPattern "burst" | Spec | Connects, ServerNotStranded | 4055 | pass |
-| `L-arbitrary` | KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary" | SpecTyped | Connects, ServerNotStranded | 23032 | not finished (stopped at the card's deadline) |
+| `L-arbitrary` | KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary" | SpecTyped | Connects, ServerNotStranded | 23032 | not finished (stopped at the run's time bound) |
 | `W-once-firstkind` | RepeatKeepAlive FALSE | Spec | Connects | 1312 | fail as expected |
 | `W-once-alternate` | KindLoss "none", RepeatKeepAlive FALSE, C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects | 7413 | fail as expected |
 | `W-anysend` | KeepAliveClock "anysend" | Spec | Connects | 9748 | fail as expected |
 | `L-silent` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | SilentServerTimesOut, AttemptResolves | 20 | pass |
 | `L-crash` | Timeout 3, Deadline 6, ServerDeadline 4, MaxNonces 2, Disconnects TRUE, KindLoss "none" | Spec | CrashedServerTimesOut, AttemptResolves | 772894 | pass |
-| `S-none` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 28369060 | not finished (stopped at the card's deadline) |
+| `S-none` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 28369060 | not finished (stopped at the run's time bound) |
 | `S-first` | Timeout 2, Deadline 5, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "first", S2CPattern "first", Duplication TRUE, Reordering TRUE | Spec | safety only | 74297106 | pass |
 | `S-alternate` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "alternate", S2CPattern "alternate", Duplication TRUE, Reordering TRUE | Spec | safety only | 18268052 | pass |
 | `S-burst` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "burst", S2CPattern "burst", Duplication TRUE, Reordering TRUE | Spec | safety only | 24756464 | pass |
-| `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | 75959281 | not finished (stopped at the card's deadline) |
+| `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | 75959281 | not finished (stopped at the run's time bound) |
 | `S-firstkind` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 7054770 | pass |
 | `S-delay` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 5051198 | pass |
 | `F4-ephemeral` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | EphemeralErasedOutsideHandshake | 124 | fail as expected (F4) |
@@ -247,7 +247,7 @@ and the server may disconnect, other clients may take the slot, deadlines on whe
 pattern lets the handshake finish inside them and off where it does not
 (`"alternate"`, `"burst"`, `"firstkind"`); `S-firstkind` and `S-delay` add a tick of
 latency; `S-arbitrary` adds a second attempt (a reconnect, so a late packet of an old
-attempt meets a new one) and did not finish inside the card's deadline: 74.6 million
+attempt meets a new one) and did not finish inside the run's time bound: 74.6 million
 distinct states with no violation when it was stopped, and TLC reports a violation the
 moment it finds one. `S-none` with latency and the full environment was stopped at 28
 million states for the same reason; `S-firstkind` (7 million, complete) is the
@@ -272,8 +272,7 @@ in every safety run. The liveness runs use a FIFO link (the fairness section say
 ## What TLC found
 
 Every counterexample below was replayed by hand through the functions it names before
-it was written down. Three are findings in the code (all three already in
-`docs/TLA-INVENTORY.md`, now reproduced as traces); the rest are model errors fixed on
+it was written down. Three are findings in the code (reproduced as traces); the rest are model errors fixed on
 the way, or the reversed witnesses doing their job.
 
 ### The hang, reproduced (reversed witnesses)

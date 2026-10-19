@@ -63,12 +63,12 @@ can be deleted after a run.
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_generate_backend_keypair`, `rocketnet_generate_server_keypair`,
   `rocketnet_write_production_connect_token`
-- `rocketnet_server_default_config`, `rocketnet_server_create`, `rocketnet_server_update`,
+- `rocketnet_server_default_config`, `rocketnet_server_create`, `rocketnet_server_start`, `rocketnet_server_update`,
   `rocketnet_server_port`, `rocketnet_server_max_clients`, `rocketnet_server_num_connected_clients`,
   `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_start_message`,
   `rocketnet_server_finish_message`, `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
   `rocketnet_server_destroy`
-- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_state`,
+- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_connect`, `rocketnet_client_state`,
   `rocketnet_client_state_name`, `rocketnet_client_update`, `rocketnet_client_receive_message`,
   `rocketnet_client_release_message`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_disconnect_reason`,

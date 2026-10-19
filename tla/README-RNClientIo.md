@@ -168,7 +168,7 @@ depth 10 (3,697 states generated, 1,388 distinct).
   game thread writes A while the I/O thread reads it. In the code at the
   base this cannot happen yet, because the main thread sends the ring itself
   and resets it after the walk (line 1017); the hazard is the design's, and
-  the rule is what the transport card must keep.
+  the rule is what the transport must keep.
 
 ### `MCRNClientIoBrokenSwapWhileReading.cfg`
 

@@ -36,7 +36,7 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in `bin\
 - [standard/RATIONALE.md](standard/RATIONALE.md) — RN-R, the non-normative rationale for the transport and message standards.
 - [docs/PLATFORMS.md](docs/PLATFORMS.md) — supported operating systems, architectures, compilers, and transports for v1.0.0.
 - [docs/ABI-EVOLUTION.md](docs/ABI-EVOLUTION.md) — shared-library ABI stability and sized configuration evolution.
-- [docs/ERRORS-AND-LOGGING.md](docs/ERRORS-AND-LOGGING.md) — status codes, `_ex` entry points, and FFI-safe logging callbacks.
+- [docs/ERRORS-AND-LOGGING.md](docs/ERRORS-AND-LOGGING.md) — status codes, refusal results, and FFI-safe logging callbacks.
 - [docs/RELEASING.md](docs/RELEASING.md) — release checklist, versioning, and packaging verification.
 - [SECURITY.md](SECURITY.md) — supported versions and vulnerability reporting policy.
 - [CHANGELOG.md](CHANGELOG.md) — release history for v1.0.0.

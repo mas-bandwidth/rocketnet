@@ -76,8 +76,8 @@ module; no safety property depends on it):
 - **Acks are abstracted, and `U'` is assumed to move only past released
   records.** 6.3 step 2 argues from P2, P6 and the scheduler's first-write order
   that when the ack that moves `U'` past `n` was built, `n` had been released.
-  That argument is `RNWindow`'s to check (the sibling card
-  `rnwindow-model-checks-every-reliable-number-delivered-once`). Here it is a
+  That argument is `RNWindow`'s to check (the sibling model, which checks
+  that every reliable number is delivered once). Here it is a
   precondition of `Ack(n)`: `n` must be opened (P2: acked means opened), and the
   ack that completes a block, or acks a single record, needs the record released.
   A fragment of an incomplete block may be acked while it is still held; that is

@@ -6,7 +6,7 @@ tagged with the connection id of their slot, a send that queues one copy to
 each subscriber slot's endpoint the way `rocketnet_message_server_broadcast`
 does, and the transport's slot churn between object updates. No code
 implements it yet; `tla/COVERAGE.tsv` holds the `rn-flows` row as owed to
-the first implementation card, the implementation.
+the first implementation.
 
 ## Abstraction
 
@@ -105,12 +105,12 @@ flow 1, which queues a copy to slot 1 with nobody entitled; begin an update
 and `Deliver` it to connection 1. `DeliveredOnlyToSubscribers` fails at
 state 10. Checked by hand against the flows design: the design's unsubscribe
 unlinks the node from the flow's list in the same call that frees it from
-the slot's row (sections 2 and 3), which is the step the mutant skips; card
-1's test `flows_unsubscribe_stops_later_sends` replays this trace.
+the slot's row (sections 2 and 3), which is the step the mutant skips; the test
+`flows_unsubscribe_stops_later_sends` replays this trace.
 
 ## Uncommitted checks of the reuse rule
 
-`NoSubscriptionSurvivesReuse` has no committed reversed witness (the card
+`NoSubscriptionSurvivesReuse` has no committed reversed witness (the design
 names one). In a scratch copy, `Broken = {"keepatreuse"}` (Observe skips the
 drop) with one slot, two connections, one flow, one id and one send was run
 twice with TLC and the pinned JAR:

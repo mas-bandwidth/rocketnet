@@ -34,4 +34,4 @@ sha256 checksums (verify with `sha256sum -c SHA256SUMS`):
     58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd  LICENSE
 
 These files are never edited; a pin move re-fetches them and rewrites
-SHA256SUMS. The sibling test cards read them through test/wycheproof.h.
+SHA256SUMS. The tests read them through test/wycheproof.h.

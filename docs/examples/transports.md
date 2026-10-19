@@ -5,12 +5,12 @@ selection, a pin, and a candidate list. Each server that starts is proved with
 a client exchange over the loopback interface, `127.0.0.1`.
 ## What it shows
 
-Three kinds of `transport` setting, each created in turn on a server:
+Three kinds of `transport` setting, each tried in turn on a server:
 - **auto** (`NULL`): the platform's recommended ladder. A Linux server tries
   `xdp`, then `gso`, then `portable`; macOS tries `msgx`, then `portable`;
   Windows uses its own order. The first transport that starts wins.
-- **a pin**: one name. The server gets exactly that transport or create fails
-  loudly; there is no fallback.
+- **a pin**: one name. The server gets exactly that transport or
+  `rocketnet_server_start` fails loudly; there is no fallback.
 - **a list**: comma-separated names tried left to right. The first one granted
   wins, and the library logs each refusal, so `xdp,gso,portable` lands on the
   best transport this machine and this user can actually have.
@@ -49,12 +49,13 @@ PASS
 The `info:` and `error:` lines before each `chose` line are the library's own
 log lines: they say which candidate was granted and why the others were
 skipped or refused. The `chose` line is the public query
-(`rocketnet_server_transport_name`). `PASS` means all three creates behaved as
+(`rocketnet_server_transport_name`). `PASS` means all three starts behaved as
 their kind promises and every started server completed the exchange.
 
 ## Selecting a transport in a deployment
 
-The environment overrides the config struct at create, with precedence
+The environment overrides the config struct when the transport starts, with
+precedence
 default < struct < environment:
 
 ```sh
@@ -63,13 +64,13 @@ ROCKETNET_CLIENT_TRANSPORT=portable ./my_client
 ```
 
 The value is the same candidate list, so a deployment can pin one transport or
-keep the automatic ladder without rebuilding. The create log line names the
+keep the automatic ladder without rebuilding. The start log line names the
 variable and the value it displaced.
 
 ## Public calls it uses
 
 - Lifecycle: `rocketnet_init`, `rocketnet_term`, `rocketnet_log_level`
-- Server: `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_port`, `rocketnet_server_transport_name`, `rocketnet_server_update`, `rocketnet_server_max_clients`, `rocketnet_server_client_connected`, `rocketnet_server_receive`, `rocketnet_server_release`, `rocketnet_server_send_packets`, `rocketnet_server_destroy`
-- Client: `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_update`, `rocketnet_client_state`, `rocketnet_client_start`, `rocketnet_client_finish`, `rocketnet_client_receive`, `rocketnet_client_release`, `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
+- Server: `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_start`, `rocketnet_server_port`, `rocketnet_server_transport_name`, `rocketnet_server_update`, `rocketnet_server_max_clients`, `rocketnet_server_client_connected`, `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_send_packets`, `rocketnet_server_destroy`
+- Client: `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_connect`, `rocketnet_client_update`, `rocketnet_client_state`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`, `rocketnet_client_receive_message`, `rocketnet_client_release_message`, `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
 - Development token: `rocketnet_write_dev_connect_token`
 - Time: `rocketnet_time`, `rocketnet_sleep`

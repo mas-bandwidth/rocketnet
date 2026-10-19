@@ -7,7 +7,7 @@ and its key generation, and the per-update verify budget, as
 `sdk/rocketnet_server_protocol.cpp` drives them and standard/TRANSPORT.md
 specifies them. This module lands the held draft of `tla/Security.tla`
 (commit `2f8de9d`) at the
-grain of inventory modules 5 and 6 in `docs/TLA-INVENTORY.md`: the full
+grain of the token and cookie tables: the full
 handshake, the lossy link and the replay window stay in that draft;
 here a request past the cookie gate, a response that opens under its
 mapping, another client taking a slot, a disconnect and a tick are the

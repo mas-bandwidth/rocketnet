@@ -99,7 +99,7 @@ while fragment 1 is not" is violated (out-of-order arrival is reached).
 
 `PlaceByIndex = FALSE` copies a fragment to `base + have·F`, the next free place
 in arrival order, which is RakNet's concatenation of the split list in list order
-(docs/RAKNET-RELIABILITY.md 8.2: `InsertIntoSplitPacketList` appends,
+(RakNet's `InsertIntoSplitPacketList` appends,
 `BuildPacketFromSplitPacketList` concatenates, `SortSplitPacketList` is declared
 and never defined). TLC's trace, 13 states:
 

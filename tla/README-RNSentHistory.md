@@ -1,6 +1,6 @@
 # RNSentHistory: the sent history under loss, reordering and ack delay
 
-`RNSentHistory.tla` is the sent-record slice of `docs/TLA-INVENTORY.md` M8: a
+`RNSentHistory.tla` is the sent-record slice of the fragments and acks model: a
 ring of `N` records, each holding the newest sent session sequence congruent to
 its index mod `N`, and what a write does to the record it replaces.
 

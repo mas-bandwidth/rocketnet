@@ -23,7 +23,7 @@ Three orders nest, outermost first.
 2. **RakNet's four priorities inside a class.** Each level has a clock. The
    level with the smallest clock goes next and its clock advances by its
    stride: 1, 5, 14 and 35 for IMMEDIATE, HIGH, MEDIUM and LOW
-   (`(1 << p) * (p + 1) + p`, docs/RAKNET-RELIABILITY.md 5.3). A clock behind
+   (`(1 << p) * (p + 1) + p`, as RakNet's scheduler does). A clock behind
    the last level taken counts as that level's clock (RakNet's pull-forward).
    A tie goes to the more urgent level. When nothing is queued the clocks
    reset to RakNet's seeds 0, 3, 10 and 27. Under a backlog adjacent levels

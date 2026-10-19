@@ -2,8 +2,8 @@
 
 `RNUringDriver.tla` models the io_uring server driver
 (`sdk/rocketnet_server_uring_linux.cpp`) **before the code exists**. It
-follows THE DESIGN of card the implementation. Once that card
-lands, the driver cites this module, and the `io-uring-driver` row in
+follows the driver's design. Once the driver
+lands, it cites this module, and the `io-uring-driver` row in
 `COVERAGE.tsv` moves from `owed` to `current`.
 
 ## The abstraction

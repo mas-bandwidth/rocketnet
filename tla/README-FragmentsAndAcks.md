@@ -16,8 +16,7 @@ line citations below are re-checked against the code it lands on (`617d498`).
 `tla/MCFragmentsAndAcks.tla` and `tla/MCFragmentsAndAcks.cfg` are the small instance
 (safety); `tla/MCFragmentsAndAcksLive.cfg` is the liveness run on the same instance. Every
 other run is its own root cfg, named once in `tla/CASES.tsv` (group `fragmentsandacks`),
-and its measured record is in `tla/RUNS.tsv`, written by `tlacheck` (`tla/README.md`). The
-inventory rows are `docs/TLA-INVENTORY.md`, M8 and M9.
+and its measured record is in `tla/RUNS.tsv`, written by `tlacheck` (`tla/README.md`).
 
 ## What the model covers
 
@@ -111,7 +110,7 @@ window refuses.
 ## What the model abstracts away
 
 - **The replay window's representation.** `opened` is a set; the 64-word bitmap and
-  its large-skip clear (F1, `docs/TLA-INVENTORY.md`) belong to the ReplayWindow
+  its large-skip clear (F1, `tla/README-ReplayWindow.md`) belong to the ReplayWindow
   module. Every block here is truthful by construction, so `SurfacedOnlyIfOpened` says
   what the ack layer does with truthful blocks. F1 broke it from below; the code now
   clears the whole window on a large skip (`rocketnet_replay_advance`,
@@ -336,8 +335,7 @@ rule at `MaxSeq = 6` with jitter (106 million).
 
 ## The sent-ring bitmaps
 
-The design the pro card the implementation implements in
-`sdk/rocketnet_ack.cpp` (owed: the fields `sent_held`, `sent_unacked` and
+The design for `sdk/rocketnet_ack.cpp` (owed: the fields `sent_held`, `sent_unacked` and
 `sent_bits_checked` are not in the code yet). Beside the sent ring the endpoint keeps two
 bitmaps, one bit per slot: held (the slot holds a written record) and unacked (written and
 not yet acknowledged), and the highest sequence whose slot has been reconciled.
@@ -368,7 +366,7 @@ window only when slot `s % SentRing` has its unacked bit set and holds s.
 | Property | The rule |
 |---|---|
 | `BitsCoverRing` | always: every slot whose record is in the window, written and not acknowledged is in `unacked`, and `unacked` is inside `held`; the walk never misses a record |
-| `BitsMatchRing` | when `bitsChecked = highestSent`: `held` is exactly the slots whose record is written and at or above `WindowLow`, `unacked` exactly those of them not acknowledged; the check the pro card's `ack_block_walk_bits_match_ring` test runs |
+| `BitsMatchRing` | when `bitsChecked = highestSent`: `held` is exactly the slots whose record is written and at or above `WindowLow`, `unacked` exactly those of them not acknowledged; the check the `ack_block_walk_bits_match_ring` test runs |
 | `WalkVisitsUnacked` | `lastVisited = lastExpect`: the bitmap walk visits exactly the sequences the ring says it should |
 
 **Abstracted.** The bits are sets of slot indexes, not words; the walk's word scan (find the
@@ -497,7 +495,7 @@ the same 32.
 abandoned long ago lands in a slot that a completion has just emptied, re-occupies it
 with its old id, and from then on every live id is more than 256 ahead of the occupant:
 from id X+264 on, every payload in that slot is refused, with no loss burst at all. The
-reader's harness (to become the fix card's test) drove this: 644 of 736 payloads delivered, 92 `FRAGMENT_STALE`, exactly one slot
+reader's harness drove this: 644 of 736 payloads delivered, 92 `FRAGMENT_STALE`, exactly one slot
 in eight, no other loss. It holds for payloads of up to about 15 fragments (past that the
 delayed fragment is outside the 4,096-sequence replay window and refused there). The
 model's window (`Window = SentRing = MaxSeq = 4`) is too small to tell "late but inside
@@ -515,8 +513,8 @@ it on the instance where the code's rule fails (`find-stale-small`), and the res
 in the table. The code's comment chose the bounded difference against a hostile id
 "just under 2^31 ahead", which only the connection's own sealed sender can produce.
 `find-stale-plain` (`StaleRule = "plain"`, `FirstId = 6` so the id counter wraps during
-the run) fails as the standard says a plain comparison must. The fix is a code card, not
-this one: the serial comparison the standard names.
+the run) fails as the standard says a plain comparison must. The fix is in the code, not
+the model: the serial comparison the standard names.
 
 ### D2. `BATCH_FULL` fires under legitimate load (design claim contradicted; MEDIUM on the server, LOW on the client)
 
@@ -555,7 +553,7 @@ payloads at all: 64 clients each completing 9 two-fragment payloads in one updat
 `sdk/rocketnet_server_transport.cpp:842-849` makes the same false claim as
 `fragment.h` ("completions cap at eight per client at the defaults"). `drain / 2 + num_slots` would not fix the server; the pool has to follow the drain (16,000 / 2) or
 the drain the pool. A model of one connection cannot see this: the overflow is across
-connections, in a pool the model's receiver does not share. The fix is a code card.
+connections, in a pool the model's receiver does not share. The fix is in the code.
 
 ### Model errors found and fixed on the way
 

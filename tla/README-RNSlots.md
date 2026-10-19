@@ -65,7 +65,7 @@ connection; liveness makes that admissibility condition explicit.
 The endpoint and slots names below are the planned functions in
 `standard/MESSAGES.md` sections 10 and 11. The release and error-check rows name
 required object responsibilities; their final C API spelling belongs to the
-objects/API cards.
+public objects and API.
 
 | Model action | Implementation responsibility |
 |---|---|

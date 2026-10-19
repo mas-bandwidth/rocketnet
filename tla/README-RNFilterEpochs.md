@@ -10,7 +10,7 @@ worked example of a rotating-key machine; this module is the filter's own.
 Rocketnet 1.0 is unkeyed: `rocketnet_prefilter_check`
 (`sdk/rocketnet_protocol.cpp`) refuses every epoch but 0 on a comparison.
 The model is written before the code that implements the keyed form; the
-code card the implementation names its functions after the
+implementation names its functions after the
 actions (Install, Retire, Check) and cites this module. Until then the
 `rn-filter-epochs` row of `tla/COVERAGE.tsv` is `owed`.
 
@@ -116,4 +116,4 @@ states (19,907 generated, depth 18) and every invariant holds.
 Both traces were checked by hand against `standard/TRANSPORT.md`. Neither has code to
 replay against yet: `rocketnet_prefilter_check` holds no generation table
 and refuses every nonzero epoch, so the keyed rule and its unit test
-replaying these witnesses are the code card's.
+replaying these witnesses come with the keyed implementation.

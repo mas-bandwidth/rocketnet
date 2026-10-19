@@ -123,9 +123,9 @@ int main( void )
             {
                 promotion_before = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED );
                 printf( "promotion counter before: %llu\n", (unsigned long long) promotion_before );
-                // 4096 bytes is above one packet's record limit. A start that
-                // returns a buffer here is the promotion: an oversize
-                // unreliable send without a receipt is refused instead.
+                // 4096 bytes is above one packet's record limit, so the start
+                // message promotes the send to its reliable twin, which keeps
+                // the receipt; every unreliable type promotes the same way.
                 uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, OVERSIZE_BYTES );
                 CHECK( out != NULL );
                 memset( out, 0x5a, OVERSIZE_BYTES );

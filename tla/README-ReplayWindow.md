@@ -10,12 +10,11 @@ link under it: the window never sends, and what reaches it is a sequence that op
 `tla/MCReplayWindow.tla` and `tla/MCReplayWindow.cfg` are the small instance. Every
 TLC run is a row in `tla/RUNS.tsv`.
 
-The model exists for two fix cards, `rnfix-replay-long-skip-clears-window-r2` (F1,
-rocketnet#189, High) and `rnfix-replay-advanced-after-connect-check-r2` (OV-34, Low).
-Each card's rule is an invariant, and each has a reversed witness: the committed
-instance set to what the code does today, which TLC rejects with a trace that replays
-against the code by hand. Both are recorded under "What TLC found". This PR changes
-no C++.
+The model checks two rules: a long skip clears the whole window (F1, High), and the
+window advances only after the connect check (OV-34, Low). Each rule is an invariant,
+and each has a reversed witness: the instance set to the unfixed behaviour,
+which TLC rejects with a trace that replays against the code by hand. Both are recorded
+under "What TLC found".
 
 ## What the model covers
 
@@ -79,7 +78,7 @@ is no liveness property here; the connection models above it carry those.
 |---|---|---|
 | `TypeOK` | | the obvious types |
 | `WindowIsTruth` | the window's one job; behind F1 | inside the retained range a bit is set exactly for the sequences that opened |
-| `GenuineIsAccepted` | F1 as the card states it | a genuine sequence inside the range that has not opened is never refused as already received |
+| `GenuineIsAccepted` | F1 as stated above | a genuine sequence inside the range that has not opened is never refused as already received |
 | `AckReportsOnlyReceived` | F1's second half (`sdk/rocketnet_ack.cpp` builds the block from the same window) | the ack block names only sequences that opened |
 | `ReceivedIsRefused` | standard/TRANSPORT.md _Replay Protection_: "within the window accept a sequence only once" | everything that opened is refused thereafter |
 | `BelowFloorIsRefused` | standard/TRANSPORT.md _Replay window sizing_: "an undersized window discards old legitimate packets; it never accepts a replay" | below the floor everything is refused |
@@ -89,7 +88,7 @@ is no liveness property here; the connection models above it carry those.
 | `Monotone` (action property) | | the mark never goes backwards; a slot is never given up |
 
 `GenuineIsAccepted` and `AckReportsOnlyReceived` follow from `WindowIsTruth`; they are
-stated separately because they are the sentences the F1 card uses, and each gets its
+stated separately because they are the sentences of the F1 rule, and each gets its
 own witness run.
 
 ## What the model abstracts away
@@ -149,7 +148,7 @@ the one invariant.)
 
 Both counterexamples were replayed by hand through `sdk/rocketnet_replay.cpp` and
 `sdk/rocketnet_server_protocol.cpp` at main `3ad4179`. Both are real: the code does what
-the trace says. The F1 fix clears the whole ring; OV-34 belongs to its separate fix card.
+the trace says. The F1 fix clears the whole ring; OV-34 has its own fix.
 
 ### 1. F1: a long skip leaves stale bits that read as received (real, `sdk/rocketnet_replay.cpp:54-60`)
 
@@ -188,12 +187,12 @@ Against the code, at the default `W = 4096` (64 words), from a zeroed struct:
    first-run loop at `:87-93` reads bit 301 (set) then bit 300 (set) then bit 299
    (clear), so `first_range_length = 2`: the peer is told 4396 and 4397 arrived.
 
-The card's own test (fill `1..W`, advance to `3W`) is the same shape at full width:
+The F1 test (fill `1..W`, advance to `3W`) is the same shape at full width:
 after the jump every bit `256..4095` is stale, so every sequence `2W + 257 .. 3W - 1`
 reads as received and the block reports a run of 3840 packets of which one arrived. The
 existing `rocketnet_test_replay_protection` (`sdk/rocketnet_tests.cpp:3503-3511`) says
 "a far-ahead advance clears the whole window" but probes only sequences 1, 2 and
-`W + 1`, all in word 0, so it passes today; that is why the fix card asks for a test
+`W + 1`, all in word 0, so it passes either way; that is why F1 needs a test
 written in terms of `ROCKETNET_REPLAY_WINDOW_BITS` that reaches past word 3.
 
 The code now clears the whole ring in `sdk/rocketnet_replay.cpp`'s
@@ -211,7 +210,7 @@ with `client_index == -1` passes the already-received check at `:901` (the windo
 empty), opens at `:914` (it carries the session keys), reaches
 `rocketnet_replay_advance( replay, sequence )` at `:962`, which sets bit 1 and moves
 `highest_opened` to 1, and only then hits `if ( mapping->client_index == -1 )` at `:967`
-and is ignored. The window moved before connect, exactly as the card says.
+and is ignored. The window moved before connect, exactly as OV-34 says.
 
 Why the order matters, in this model's terms: a sequence marked on a pending mapping is
 reported by this end's next ack block as received although the packet was never

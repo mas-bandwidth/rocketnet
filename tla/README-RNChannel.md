@@ -19,7 +19,7 @@ serialization, byte order, allocator layout, or zero-copy proof here.
 `SendCapacity` bounds outstanding message records; `W` bounds unacked reliable
 units and live receiver ring slots. The example has K=2 and C=2. Full-buffer
 send attempts have an explicit `RefuseSend` transition, which does not advance
-the accepted input. An environment retry can later succeed. This is the card's
+the accepted input. An environment retry can later succeed. This is the model's
 capacity abstraction; allocator exhaustion/disconnection (R5) belongs to the
 memory model and implementation.
 
@@ -119,8 +119,7 @@ abstracts eventual reliable send-budget availability. Reliable messages are
 never discarded for budget, and code-0 budget drop is explicit and counted.
 No rate, latency, bandwidth-priority, zero-copy, or concrete memory-allocation
 claim follows from this model. Those implementation obligations remain in the
-design and their assigned cards. Neither `standard/MESSAGES.md` nor
-`docs/TLA-INVENTORY.md` is changed here.
+design and the code.
 
 ## Reversed witnesses and measurements
 
@@ -206,14 +205,12 @@ final eight measured rows above count as acceptance evidence.
 
 `tlacheck merge --keep tla/RUNS.tsv` adds the eight new measured rows. Every
 pre-existing row and `RUNS-HISTORY.tsv` remains byte-for-byte unchanged, and
-`tlacheck groups --root . --stale` returns `[]`. Existing unrelated bench
-debt remains recorded; this card does not turn those historical timeouts into
-passes.
+`tlacheck groups --root . --stale` returns `[]`. Rows for unrelated runs that
+stopped at a time bound stay recorded as such.
 
 To reproduce, build the runner at the pin in [README.md](README.md), then run
 one bounded shard at a time with `--group rnchannel --shards 8 --shard N`
 for N=0 through 7, `--workers 2 --timeout 110s`, the pinned JAR, and a private
 output directory per shard. Merge the eight `RUNS.tsv` files with `--keep`,
-and check `groups --stale`. No C++ changes, Go/C++ tests, sequenced wire types,
-allocator proof, rate scheduler proof, or full-width wrap proof are part of
-this card.
+and check `groups --stale`. Sequenced wire types, an allocator proof, a rate scheduler proof and a
+full-width wrap proof are outside this model.

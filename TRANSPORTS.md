@@ -22,7 +22,7 @@ one pin-only row. It is in-process, carries datagrams through memory with no
 socket and no system network call, and serves tests and examples; it is never
 chosen by auto. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
-allocates its queue at create, `ROCKETNET_LOOPBACK_QUEUE_PACKETS` x
+allocates its queue when it starts, `ROCKETNET_LOOPBACK_QUEUE_PACKETS` x
 `sizeof(rocketnet_loopback_packet_t)` = 1,531,904 bytes, so a full table of
 live endpoints is about 1,533,435,904 bytes. The cost is paid only by a process
 that instantiates the loopback transport, which is tests and examples, never a
@@ -77,8 +77,8 @@ that reports it.
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
 at the stride the kernel reports, and a send run of same-destination frames of
 one size with at most one shorter tail. Each coalescing driver probes its
-offloads at create on the bound socket; a refusal is a tier, not an error, and
-the create log line names each feature as yes or no.
+offloads when it starts on the bound socket; a refusal is a tier, not an error,
+and the start log line names each feature as yes or no.
 
 - **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive.
 - **IOCP (Windows 11, Server 2022 or later):** USO on send through the
@@ -174,7 +174,7 @@ has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
 batched `SENDMSG` per staged slot, in chunks no larger than the free submission
 queue space, and returns once every send has completed. A queue count past
-`ROCKETNET_URING_MAX_QUEUES` refuses the create; zero selects
+`ROCKETNET_URING_MAX_QUEUES` refuses the server start; zero selects
 `ROCKETNET_URING_DEFAULT_QUEUES`.
 
 The driver needs liburing at build time (`ROCKETNET_IO_URING`, on by default

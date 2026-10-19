@@ -24,11 +24,10 @@ STANDARD step in _Processing Connection Requests_:
 | slots | cheap | rocketnet_client_slots_num_free in sdk/rocketnet_server_protocol.cpp | no client slots available |
 | keypair | crypto | crypto_box_keypair in sdk/rocketnet_server_protocol.cpp | obtain the server ephemeral keypair |
 
-The code holds the slots and keypair rungs once this card lands: the slot
+The code holds the slots and keypair rungs in this order: the slot
 check seals the denial under the handshake keys, which need no ephemeral
-pair, so it stands ahead of the keypair. The remaining rungs reach the model
-order as the token-order cards land; until then the table states the target
-order the model checks.
+pair, so it stands ahead of the keypair. Where a remaining rung of the code
+differs, the table states the target order the model checks.
 
 ## Witnesses
 

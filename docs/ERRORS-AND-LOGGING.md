@@ -21,40 +21,31 @@ point that can refuse returns a value the caller can test, logs one line at
 | `rocketnet_init( context )` | `false` |
 | `rocketnet_term( void )` | refuses in place |
 | `rocketnet_allocator( malloc_fn, free_fn )` | `false` |
-| `rocketnet_client_default_config( config )` | a NULL config is a counted no-op |
-| `rocketnet_client_validate_config( config )` | `0`, with a log line naming the rule |
-| `rocketnet_client_create( context, config, memory, memory_bytes )` | `NULL`, with one error line |
-| `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
-| `rocketnet_client_create_sized(...)` | `NULL` for an unknown config size |
-| `rocketnet_server_default_config( config )` / `rocketnet_server_dev_config( config )` | a NULL config is a counted no-op |
-| `rocketnet_server_validate_config( config )` | `0`, with a log line naming the rule |
-| `rocketnet_server_create( context, address, config, memory, memory_bytes )` | `NULL`, with one error line |
-| `rocketnet_server_create_sized(...)` | `NULL` for an unknown config size |
-| `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
-| `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | `ROCKETNET_MESSAGE_OK` or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` |
+| `rocketnet_generate_backend_keypair( pub, sec )` / `rocketnet_generate_backend_keypair_from_seed( seed, pub, sec )` | returns `rocketnet_status_t` |
+| `rocketnet_generate_server_keypair( pub, sec )` | returns `rocketnet_status_t` |
+| `rocketnet_write_production_connect_token(...)` | returns `rocketnet_status_t` |
+| `rocketnet_client_default_config( config )` / `rocketnet_client_default_config_sized( config, bytes )` | counted no-op on `NULL` / `0` on `NULL` or unknown size |
+| `rocketnet_client_validate_config( config )` / `rocketnet_client_validate_config_sized( config, bytes )` | `0`, with an error log line naming the rule |
+| `rocketnet_client_required_memory( config )` / `rocketnet_client_required_memory_sized( config, bytes )` | `0` for a refused config or unknown size |
+| `rocketnet_client_create( context, config, memory, memory_bytes )` / `rocketnet_client_create_sized(...)` | `NULL`, with one error log line |
+| `rocketnet_client_connect( client, connect_token )` | returns `rocketnet_status_t`: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or the transport's code |
+| `rocketnet_server_default_config( config )` / `rocketnet_server_default_config_sized( config, bytes )` | counted no-op on `NULL` / `0` on `NULL` or unknown size |
+| `rocketnet_server_dev_config( config )` / `rocketnet_server_dev_config_sized( config, bytes )` | counted no-op on `NULL` / `0` on `NULL` or unknown size |
+| `rocketnet_server_validate_config( config )` / `rocketnet_server_validate_config_sized( config, bytes )` | `0`, with an error log line naming the rule |
+| `rocketnet_server_required_memory( config )` / `rocketnet_server_required_memory_sized( config, bytes )` | `0` for a refused config or unknown size |
+| `rocketnet_server_create( context, address, config, memory, memory_bytes )` / `rocketnet_server_create_sized(...)` | `NULL`, with one error log line |
+| `rocketnet_server_start( server )` | returns `rocketnet_status_t`: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
+| `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | `ROCKETNET_MESSAGE_OK` (`0`) or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` (`-1`) |
 
-The client and server create paths validate the config, apply the environment
-overrides (`ROCKETNET_CLIENT_*`, `ROCKETNET_SERVER_*`, with precedence
-DEFAULT < CONFIG STRUCT < ENVIRONMENT), reserve the caller memory block or make
-the one allocation, and start the selected transport. The detailed transport
-create failure branches belong to the internal transport layer
-(`sdk/rocketnet_layers.h`); a game sees only the public create result, the log
-line and the misuse count.
+Create validates the config, applies the environment overrides
+(`ROCKETNET_CLIENT_*`, `ROCKETNET_SERVER_*`, with precedence
+DEFAULT < CONFIG STRUCT < ENVIRONMENT), and reserves the caller memory block or
+makes the one allocation; it opens no socket. `rocketnet_client_connect` and
+`rocketnet_server_start` start the selected transport and return the status
+code of the first failure. A game sees the public result, the log line and the
+misuse count.
 
-The helper names used later in this document (`rocketnet_error`,
-`rocketnet_assert`, `rocketnet_log_v`, `rocketnet_config_apply_env`,
-`rocketnet_config_validate`, `rocketnet_driver_ladder_parse`,
-`rocketnet_reassembly_memory_allowed`, `rocketnet_address_parse`,
-`rocketnet_server_config_has_keys`, `rocketnet_client_protocol_connect`,
-`rocketnet_platform_socket_create`, `rocketnet_platform_socket_create_with_pump`,
-`rocketnet_platform_thread_create`, `rocketnet_platform_mutex_create`,
-`rocketnet_free`, `rocketnet_frame_sync_create`, `rocketnet_frame_sync_create_ex`,
-`rocketnet_num_counters`, `rocketnet_counter_name`, `rocketnet_counter_value`
-and `rocketnet_last_error`) are internal to the SDK
-(`sdk/rocketnet_layers.h`, `sdk/rocketnet_internal.h`); a game does not call
-them.
-
-## 2. STATUS CODES
+## 2. Status Codes
 
 ### 2.1 Stable Status Code Enum (`rocketnet_status_t`)
 
@@ -75,7 +66,7 @@ enum rocketnet_status_t
 {
     ROCKETNET_STATUS_OK                                 = 0,
 
-    // lifecycle and allocator state (rocketnet_init_ex, rocketnet_term_ex, rocketnet_allocator_ex)
+    // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_allocator)
     ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,
     ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,
     ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,
@@ -105,7 +96,12 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
     ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,
 
-    ROCKETNET_NUM_STATUS_CODES                          = 23
+    // object lifecycle (rocketnet_client_connect, rocketnet_server_start) and destinations
+    ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = 23,
+    ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = 24,
+    ROCKETNET_STATUS_FLOW_ID_RESERVED                   = 25,
+
+    ROCKETNET_NUM_STATUS_CODES                          = 26
 };
 ```
 

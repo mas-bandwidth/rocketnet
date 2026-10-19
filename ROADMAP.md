@@ -85,7 +85,7 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 
 | feature | done |
 |---|:---:|
-| Zero-copy send: start, write in place, finish or abort | ✅ |
+| Zero-copy send: start message, write in place, finish message or abort message | ✅ |
 | Receive and release messages as views | ✅ |
 | N channels with per-record dispatch | ✅ |
 | Large reliable messages split into blocks and delivered whole | ✅ |
@@ -101,7 +101,7 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 | Endpoint and slots as pure machines (standard/MESSAGES.md) | ✅ |
 | CONFIG announcement: both ends prove the same configuration | ✅ |
 | Message layer soaked at full configured load | ❌ |
-| Broadcast send | ✅ |
+| Send one message to every connected client, a start message and finish message per slot | ✅ |
 | Flows: server-side subscription groups (later) | ❌ |
 | complete | 88% |
 

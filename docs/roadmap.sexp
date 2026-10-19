@@ -76,7 +76,7 @@
    :text "The message layer of standard/MESSAGES.md: channels, priorities, budgets and one fixed region per connection."
    :columns ("done")
    :rows
-   ((:feature "Zero-copy send: start, write in place, finish or abort" :cells (y) :evidence "2c1aa7b; reliable_sequenced_c_api_start_finish")
+   ((:feature "Zero-copy send: start message, write in place, finish message or abort message" :cells (y) :evidence "2c1aa7b; reliable_sequenced_c_api_start_finish")
     (:feature "Receive and release messages as views" :cells (y) :evidence "2c1aa7b; unreliable_delivered_as_a_view; tla/RNSlots.tla")
     (:feature "N channels with per-record dispatch" :cells (y) :evidence "c79da45 rocketnet-channel-dispatch-and-packet-builder")
     (:feature "Large reliable messages split into blocks and delivered whole" :cells (y) :evidence "16531dd; reliable_sequenced_block_delivers_whole, ordered_receipt_after_all_chunks")
@@ -92,7 +92,7 @@
     (:feature "Endpoint and slots as pure machines (standard/MESSAGES.md)" :cells (y) :evidence "bbb62e8 endpoint_back_to_back_over_lossy_array, endpoint_never_allocates_or_reads_a_clock; 9bca948 slots_observe_and_admit; tla/RNEndpoint.tla 3c3c048")
     (:feature "CONFIG announcement: both ends prove the same configuration" :cells (y) :evidence "1026843 message_config_equal_connects_and_verifies, message_config_mismatch_ends_both_connections; functional 4906e5d")
     (:feature "Message layer soaked at full configured load" :cells (n) :note "bounded exhaustion soak c335529; the many-client load harness bin/load (docs/LOAD.md, f49cc28) is built, a recorded full-load run is owed")
-    (:feature "Broadcast send" :cells (y) :evidence "7e2106e; message_server_broadcast_reaches_every_connected, message_server_broadcast_skips_free_and_exhausted")
+    (:feature "Send one message to every connected client, a start message and finish message per slot" :cells (y) :evidence "7e2106e; message_server_broadcast_reaches_every_connected, message_server_broadcast_skips_free_and_exhausted")
     (:feature "Flows: server-side subscription groups (later)" :cells (n) :note "REQUIREMENTS.md step 3; designed and modelled, not built: docs/FLOWS.md, tla/RNFlows.tla (2c7236b)")))
 
   (:id "transports" :title "Transports"
