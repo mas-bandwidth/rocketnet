@@ -136,3 +136,112 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+  # macOS Apple silicon on the fleet's darwin member, the same runner label
+  # ci.yml's macOS rows use. Apple clang carries no libFuzzer runtime, so this
+  # leg names a Homebrew LLVM clang through ROCKETNET_FUZZ_CC/CXX: the same
+  # flags and the same darwin link set as fuzz/Makefile.
+  fuzz-macos:
+    name: nightly fuzz macOS (${{ fromJSON(matrix.leg).target }})
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        leg:
+          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured"}'
+          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message"}'
+    concurrency:
+      group: fuzz-nightly-macos-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Find the LLVM clang that carries libFuzzer
+        shell: bash
+        run: |
+          set -euo pipefail
+          LLVM_PREFIX="$(brew --prefix llvm 2>/dev/null || true)"
+          if [ -z "$LLVM_PREFIX" ] || [ ! -x "$LLVM_PREFIX/bin/clang++" ]; then
+            echo "TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a (any) (brew --prefix llvm failed) on $RUNNER_NAME"
+            exit 1
+          fi
+          "$LLVM_PREFIX/bin/clang++" --version
+          echo "ROCKETNET_FUZZ_CC=$LLVM_PREFIX/bin/clang" >> "$GITHUB_ENV"
+          echo "ROCKETNET_FUZZ_CXX=$LLVM_PREFIX/bin/clang++" >> "$GITHUB_ENV"
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake xxd python3; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/${{ fromJSON(matrix.leg).target }}
+          key: fuzz-corpus-macos-${{ fromJSON(matrix.leg).target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-macos-${{ fromJSON(matrix.leg).target }}-
+
+      - name: Configure the instrumented library
+        run: >
+          cmake -B build-fuzz
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER="$ROCKETNET_FUZZ_CC"
+          -DCMAKE_CXX_COMPILER="$ROCKETNET_FUZZ_CXX"
+          -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+
+      - name: Build the instrumented library
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+
+      - name: Build ${{ fromJSON(matrix.leg).target }}
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          "$ROCKETNET_FUZZ_CXX" -g -O1 -std=c++17 \
+            -ffp-contract=off \
+            -DROCKETNET_DEVELOPMENT=1 \
+            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+            -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
+            -lpthread \
+            -o "bin/${{ fromJSON(matrix.leg).target }}"
+
+      - name: Fuzz ${{ fromJSON(matrix.leg).target }}
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          set -euo pipefail
+          mkdir -p "corpus/${{ fromJSON(matrix.leg).target }}"
+          T="${{ github.event.inputs.max_total_time || '900' }}"
+          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with the wire dictionary"
+          ./"bin/${{ fromJSON(matrix.leg).target }}" \
+            "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
+            -dict=fuzz/rocketnet.dict \
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-macos-${{ fromJSON(matrix.leg).target }}-${{ replace(matrix.ref, '/', '-') }}
+          path: |
+            crash-*
+            oom-*
+            timeout-*
+            leak-*
+          if-no-files-found: ignore
