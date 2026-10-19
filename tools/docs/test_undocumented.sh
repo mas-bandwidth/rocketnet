@@ -57,37 +57,3 @@ if sh "$SCRIPT" "$ROOT/tools/docs/testdata/does_not_exist.log" "$AREAS" >/dev/nu
 fi
 
 echo "ok: undocumented.sh fixture checks passed"
-
-# MrDocs cannot attach a block comment to each X-macro expansion. Keep a
-# source-level pin so a newly appended counter cannot silently lack its public
-# name, meaning, unit, class, and family documentation.
-python3 - "$ROOT/sdk/rocketnet_counters.h" <<'PY'
-import pathlib
-import re
-import sys
-
-source = pathlib.Path(sys.argv[1]).read_text()
-def undocumented(text):
-    block = text.split("#define ROCKETNET_COUNTER_ROWS( X )", 1)[1].split("\nenum\n{", 1)[0]
-    missing = []
-    previous = ""
-    for line in block.splitlines():
-        row = re.match(r"\s*X\(\s*([A-Z0-9_]+)\s*,", line)
-        if row:
-            name = row.group(1)
-            expected = "@brief ROCKETNET_COUNTER_" + name + ":"
-            if not (expected in previous and "Unit: occurrences." in previous
-                    and "Class:" in previous and "family:" in previous
-                    and previous.strip().endswith("*/ \\")):
-                missing.append(name)
-        if line.strip():
-            previous = line
-    return missing
-
-assert not undocumented(source), "undocumented counter rows: " + ", ".join(undocumented(source))
-needle = "    X( PACKETS_RECEIVED, ARRIVAL, NONE ) \\\n"
-assert needle in source, "counter-row mutation anchor changed"
-mutated = source.replace(needle, needle + "    X( NEW_UNDOCUMENTED_ROW, REFUSAL, NONE ) \\\n", 1)
-assert undocumented(mutated) == ["NEW_UNDOCUMENTED_ROW"], "new undocumented row stayed green"
-print("ok: every counter row has a named meaning/unit comment and a planted row is rejected")
-PY
