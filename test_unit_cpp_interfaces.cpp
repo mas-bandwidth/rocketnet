@@ -4,7 +4,7 @@
 */
 
 // test_unit_cpp_interfaces.cpp -- the ABI layout queries of sdk/rocketnet.h,
-// called from C++ through the header's own extern "C" block.
+// called from C++, checked against the compiled transport types.
 //
 //   * abi_queries_match_the_compiled_layout: every answer equals sizeof and
 //     offsetof of the compiled types.
@@ -15,7 +15,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <stddef.h>
 #include <stdint.h>
