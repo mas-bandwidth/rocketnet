@@ -1288,7 +1288,20 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
     const uint64_t received_before = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 );
     rocketnet_server_gso_test_fail_receives( (struct rocketnet_server_gso_t*) pair.driver, 64, EIO );
     posix_linux_client_traffic_resumes( &pair, 0 );
-    const uint64_t syscalls = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - syscalls_before;
+
+    // a worker folds its counts into the driver only when the main thread
+    // flips its buffer, so the failed calls show within a few updates
+
+    uint64_t syscalls = 0;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_platform_time() < deadline )
+    {
+        syscalls = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - syscalls_before;
+        if ( syscalls >= 64 )
+            break;
+        posix_pair_update( &pair );
+        rocketnet_platform_sleep( 0.001 );
+    }
     const uint64_t received = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 ) - received_before;
     posix_check( syscalls >= 64 );
     posix_check( received >= 8 );
