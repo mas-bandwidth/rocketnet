@@ -20,7 +20,8 @@
   symbolic in 0..1472, over an object of exactly that size.
 - Unwind 64 is enough. Every unwinding assertion passes. The longest loop on
   these paths is the 32-byte key write in the associated-data writer.
-- Why `--arrays-uf-always`: without it, the payload harness used up the
+- Why `--arrays-uf-always` (measured on the first run, 2026-10-18; that
+  run's logs are not kept with this file): without it, the payload harness used up the
   bench's 30 GB of memory in about 3 minutes and was killed. The cause is
   the symbolic-length copies out of the 1472-byte opened buffer.
 - Why `--slice-formula`: with `--arrays-uf-always` alone, the dispatcher
@@ -31,54 +32,57 @@
 - Reversed witnesses: `proof.mk` runs every harness a second time with
   `-DPROOF_WITNESS`. In that build, each harness asserts that its accepting
   path never runs. The run must fail exactly those `witness:` assertions and
-  nothing else. All eleven do, so no harness passes vacuously. Extra
-  witnesses cover the cookie leaving requesting cookie and the keep-alive
-  that connects the client. The payload
-  witness reaches a delivered payload of 1439 bytes
+  nothing else, and none of its own witnesses may hold. All eleven pass
+  this check, so no harness passes vacuously. An unreachable witness turns
+  the line red: a planted witness for a 37-byte cookie, which the reader
+  refuses, printed `harness_process_cookie VERIFICATION FAILED (a witness
+  was not reached)`. Extra witnesses cover the cookie leaving requesting
+  cookie and the keep-alive that connects the client. The payload witness
+  reaches a delivered payload of 1439 bytes
   (`ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES`), which means the full packet size
   is actually reached.
 
 ## Solver
 
 CBMC's built-in SAT back end is faster here than CaDiCaL as an external
-solver. Both runs proved all eleven harnesses, on the same bench, at the
-same head, on 2026-10-19:
+solver. Both runs proved all eleven harnesses on the same bench on
+2026-10-19. Both ran the same harness, at the commit before the witness
+check counted unreached witnesses:
 
-| solver | whole target, both passes, all eleven harnesses | harness_process_record |
-|---|---|---|
-| built-in (default) | 438 s | 279 s |
-| `--external-sat-solver cadical` (CaDiCaL 2.1.3) | 2027 s | about 1040 s |
+| solver | whole target, both passes, all eleven harnesses |
+|---|---|
+| built-in (default) | 438 s |
+| `--external-sat-solver cadical` (CaDiCaL 2.1.3) | 2027 s |
 
 So `proof.mk` keeps the default.
 
-## Results (2026-10-18; re-run 2026-10-19)
+## Results (2026-10-19)
 
-The times below are from the first run, on 2026-10-18. On 2026-10-19 the
-target ran again on the current base, which reorders the challenge and
+The run below is on the current base. That base reorders the challenge and
 denied readers: the size check now runs before the state check, and a
 wrong-size packet no longer counts as an integrity failure. Every harness
-proved again, both passes, in 438 s for the whole target (the cumulative
-times are below the table).
+proved, both passes, in 317 s for the whole target. Each time in the table
+covers both of that harness's passes.
 
-CBMC reports "0 of 4891 failed" for each harness. 4891 is every property
-instrumented in the translation unit, and that total includes code the
-harness never reaches. Each row below lists the harness's own assertions on
+The translation unit holds 4891 instrumented properties. The planted-bug
+run prints that total; the gate prints only one line per harness. The total
+includes code the harness never reaches. Each row below lists the harness's own assertions on
 top of the shared bounds, pointer, overflow, division-by-zero, unwinding and
 `rocketnet_assert` checks.
 
 | harness | result | time | harness assertions |
 |---|---|---|---|
-| harness_process_cookie | proved | 6 s | returns 0/1; the wrong size (not 38) is refused; the wrong state is refused with the state unchanged; a salt mismatch is refused; an accepted cookie is stored and the client moves to sending connection request |
-| harness_process_challenge | proved | 6 s | returns 0/1; the wrong size (not 66) is refused; any state but sending connection request is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted challenge moves the client to sending connection response |
-| harness_process_denied | proved | 8 s | returns 0/1; the wrong size (not 34) is refused; any state but sending connection request or response is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted denied ends the attempt as denied |
-| harness_open_session_packet | proved | 17 s | covers every session type's floor and size rule (keep-alive with its validator, disconnect, ack, fragment, payload): a packet below the floor is refused; outside sending connection response and connected the packet is refused; a zero sequence, a replayed sequence (read from the window before the call), a packet that does not open, and a packet whose ack block the read refuses are all refused; a keep-alive with an invalid index or slot count is refused; an opened packet's block plus type data fill exactly packet_bytes - 26; a fixed-size type opens only at its size, a ranged type only above its floor |
-| harness_process_keep_alive | proved | 21 s | the session reader asserts below; the first keep-alive connects with 0 <= index < max_clients <= 1000 |
-| harness_process_payload | proved | 21 s | the session reader asserts below; a refused payload delivers 0 bytes; a delivered payload is 1..packet_bytes - 33 bytes and at most 1439 |
-| harness_process_ack | proved | 8 s | the session reader asserts below |
-| harness_process_fragment | proved | 4 s | the session reader asserts below; outside connected a fragment is refused |
-| harness_process_disconnect | proved | 5 s | the session reader asserts below; an accepted disconnect disconnects |
-| harness_process_packet | proved | 13 s | the dispatcher asserts below |
-| harness_process_record | proved | 160 s | the dispatcher asserts below, over every I/O verdict; the record is left raw afterwards |
+| harness_process_cookie | proved | 5 s | returns 0/1; the wrong size (not 38) is refused; the wrong state is refused with the state unchanged; a salt mismatch is refused; an accepted cookie is stored and the client moves to sending connection request |
+| harness_process_challenge | proved | 5 s | returns 0/1; the wrong size (not 66) is refused; any state but sending connection request is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted challenge moves the client to sending connection response |
+| harness_process_denied | proved | 5 s | returns 0/1; the wrong size (not 34) is refused; any state but sending connection request or response is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted denied ends the attempt as denied |
+| harness_open_session_packet | proved | 14 s | covers every session type's floor and size rule (keep-alive with its validator, disconnect, ack, fragment, payload): a packet below the floor is refused; outside sending connection response and connected the packet is refused; a zero sequence, a replayed sequence (read from the window before the call), a packet that does not open, and a packet whose ack block the read refuses are all refused; a keep-alive with an invalid index or slot count is refused; an opened packet's block plus type data fill exactly packet_bytes - 26; a fixed-size type opens only at its size, a ranged type only above its floor |
+| harness_process_keep_alive | proved | 11 s | the session reader asserts below; the first keep-alive connects with 0 <= index < max_clients <= 1000 |
+| harness_process_payload | proved | 8 s | the session reader asserts below; a refused payload delivers 0 bytes; a delivered payload is 1..packet_bytes - 33 bytes and at most 1439 |
+| harness_process_ack | proved | 14 s | the session reader asserts below |
+| harness_process_fragment | proved | 9 s | the session reader asserts below; outside connected a fragment is refused |
+| harness_process_disconnect | proved | 7 s | the session reader asserts below; an accepted disconnect disconnects |
+| harness_process_packet | proved | 28 s | the dispatcher asserts below |
+| harness_process_record | proved | 211 s | the dispatcher asserts below, over every I/O verdict; the record is left raw afterwards |
 
 The session reader asserts: returns 0/1; a packet below the type's wire
 floor is refused; outside sending connection response and connected the
@@ -95,11 +99,6 @@ packet_bytes - 33.
 
 No property failed and none timed out. Every harness proved at the full
 bound, so no smaller bound is recorded.
-
-Cumulative time at which each harness's line was printed in the
-2026-10-19 run (proof and witness pass): cookie 6 s, challenge 14 s, denied
-21 s, open_session_packet 36 s, keep_alive 57 s, payload 76 s, ack 91 s,
-fragment 103 s, disconnect 116 s, packet 159 s, record 438 s.
 
 ## Planted-bug check
 
@@ -206,7 +205,11 @@ model passed.
 ## ESBMC
 
 ESBMC 8.5.0 was also tried, through a C++17 copy of the harness. It
-proves none of these harnesses.
+proves none of these harnesses. The Z3 and flattener results below come
+from an earlier attempt at this card (branch
+sprint/rocketnet-cbmc-client-packet-readers.w4.g1.e21, head 849bca2). The
+Bitwuzla, Boolector and Yices results were run on 2026-10-19 with that
+attempt's ESBMC target.
 
 - The client struct is about 307,000 bytes, because it holds one ack
   record per history packet (4096). With `--z3`, ESBMC encodes the struct
