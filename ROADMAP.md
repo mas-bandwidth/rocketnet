@@ -277,3 +277,113 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | complete | 77% |
 
 [Source data](docs/roadmap.sexp)
+
+## Landed in the sprint since the 2026-10-18 roadmap record
+
+Cards landed on sprint/rocketnet-proof after the 2026-10-18 roadmap record (782b0ba), one row per card, its id the card id, with the landing merge commit as evidence. They reach main when v1.0.0 promotes the sprint branch.
+
+| feature | done |
+|---|:---:|
+| T1: a request with another salt resends the stored challenge | ✅ |
+| Print the standard's vector index on demand instead of committing it | ✅ |
+| hello: the least rocketnet program that works, and the home of the example series | ✅ |
+| big_messages: a 200 KB reliable message, and an oversize unreliable send promoted | ✅ |
+| T2: split the merged TOKEN_EXPIRED refusals | ✅ |
+| The rocketnet standard, section t13: Session: keep-alive, timeout, disconnect, slot reset | ✅ |
+| client + server: two programs over real UDP, with keys, a matchmaker stub and connect tokens | ✅ |
+| stats: state and counters through the public queries | ✅ |
+| budgets: send budgets and over-budget behaviour | ✅ |
+| config_env: default, struct, environment, and a refused bad value | ✅ |
+| transports: auto, a pin, and a list, chosen and said out loud | ✅ |
+| Every size, every type, every channel, both directions, every message verified: the loopback matrix | ✅ |
+| The live stress runner, piece 1: the client stress mode and the merge | ✅ |
+| The library is callable from a DLL on macOS | ✅ |
+| Deterministic simulation testing for rocketnet: the design | ✅ |
+| The library is callable from a DLL on Windows | ✅ |
+| XDP replies go to the peer's own MAC address on link, to the gateway otherwise | ✅ |
+| The DST's fault injector, as a TLA+ model first | ✅ |
+| The rocketnet standard, section m11: CONFIG control record | ✅ |
+| The MSan gate fails on crashed tests | ✅ |
+| rocketnet CI: the fleet-runner lint, and the per-push workflows on the fleet | ✅ |
+| game_loop: a 60 Hz server and N clients, against the 100 microsecond client budget | ✅ |
+| The sprint base green again: the staged-finish wire totals case and the MemorySanitizer check fixed | ✅ |
+| A backend keypair can be derived from a seed through rocketnet.h | ✅ |
+| The loopback transport holds max clients plus the server | ✅ |
+| rocketnet CI: the nightly workflows on the fleet | ✅ |
+| DST layer 1: the seeded core, N clients and a server, one seed, exact replay | ✅ |
+| The unreleased-message refusal is a public counter on client and server | ✅ |
+| The live stress runner, piece 2: the server stress mode | ✅ |
+| Connect-token create and expire checks can read the game clock | ✅ |
+| A public client can run with no I/O thread, stepped by the game's update | ✅ |
+| DST layer 3: the TLA+ properties as runtime checks | ✅ |
+| API reference comments: platform | ✅ |
+| The server drains its receive queue up to a per-update budget | ✅ |
+| API reference comments: reliability | ✅ |
+| The development library can simulate a bad link, through config alone | ✅ |
+| Oversize unreliable sends are promoted to their reliable twin, as RakNet does, and said so | ✅ |
+| The rocketnet standard, section t7: Key schedule | ✅ |
+| The rocketnet standard, section t11: Handshake: client | ✅ |
+| The rocketnet standard, section t8: Packet formats | ✅ |
+| The rocketnet standard, section t9: Packet protection | ✅ |
+| The rocketnet standard, section t6: Connect token | ✅ |
+| The rocketnet standard, section t14: Replay protection | ✅ |
+| rocketnet: CHANNELS.md names the counter an unreliable oversize send moves | ✅ |
+| The rocketnet standard, section m8: Blocks | ✅ |
+| The rocketnet standard, section t12: Handshake: server | ✅ |
+| The rocketnet standard, section m4: Receiver checks | ✅ |
+| channels: a stalled chat channel does not block positions | ✅ |
+| ack receipts: did my unreliable update arrive? | ✅ |
+| Retire the old STANDARD.md | ✅ |
+| An instruction-count gate for the client frame and the server tick, on every push | ✅ |
+| A clang-format configuration derived from the owner's netcode style, with a format check | ✅ |
+| Every piece of per-connection state is reset when a connection ends, in one function per side | ✅ |
+| complete | 100% |
+
+[Source data](docs/roadmap.sexp)
+
+## Sprint work moved to the roadmap (later)
+
+Cards moved out of the sprint on 2026-10-19, when Glenn moved everything not for the rocketnet v1.0.0 release to the roadmap. One row per card, its id the card id; each keeps the card's whole brief under :brief in the data, and a carried branch and head where an attempt had pushed one.
+
+| feature | done |
+|---|:---:|
+| The docs job fails on any undocumented public symbol | ❌ |
+| Profile pass 1, measurement: run soak across the matrix and commit the raw numbers | ❌ |
+| Profile pass 1, report: where rocketnet's time goes, and what to cut first | ❌ |
+| DST layer 4: per-push shards, the nightly campaign, and the planted-bug proof | ❌ |
+| Sentinel: the proofs and Frama-Clang prerequisites are in place before the Frama-Clang trial | ❌ |
+| Frama-Clang trial: can WP prove rocketnet_ack_block_read from the C++ source? | ❌ |
+| ESBMC proofs: every sdk rocketnet_assert on the proved paths is a checked property | ❌ |
+| The simulator and reset tests catch the bugs they exist to catch | ❌ |
+| LAN 1000 clients: the Linux gso server | ❌ |
+| LAN 1000 clients: the Linux io_uring server | ❌ |
+| LAN 1000 clients: the Linux portable server | ❌ |
+| LAN 1000 clients: the Linux xdp server | ❌ |
+| LAN 1000 clients: the macOS msgx server | ❌ |
+| LAN 1000 clients: the macOS portable server | ❌ |
+| LAN 1000 clients: the Windows iocp server | ❌ |
+| LAN 1000 clients: the Windows portable server | ❌ |
+| LAN 1000 clients: the Windows rio server | ❌ |
+| LAN transport throughput and 1000 clients, one server per transport | ❌ |
+| LAN bench runner, piece 1: the client load modes and the merge | ❌ |
+| LAN bench runner, piece 2: the server pinned-transport mode | ❌ |
+| LAN bench runner, piece 3: the orchestration (twin) | ❌ |
+| LAN throughput: the Linux gso server | ❌ |
+| LAN throughput: the Linux io_uring server | ❌ |
+| LAN throughput: the Linux portable server | ❌ |
+| LAN throughput: the Linux xdp server | ❌ |
+| LAN throughput: the macOS msgx server | ❌ |
+| LAN throughput: the macOS portable server | ❌ |
+| LAN throughput: the Windows iocp server | ❌ |
+| LAN throughput: the Windows portable server | ❌ |
+| LAN throughput: the Windows rio server | ❌ |
+| The live stress run: the XDP server on the test server, one client from every fleet bench | ❌ |
+| The load harness runs nightly on Linux, macOS and Windows | ❌ |
+| CBMC proves the ack-block reader free of out-of-bounds access up to the full packet size | ❌ |
+| CBMC proves the server packet readers free of out-of-bounds access up to the full packet size | ❌ |
+| CBMC proves the sequence buffers and replay window free of out-of-bounds access | ❌ |
+| CBMC proves the client packet readers free of out-of-bounds access up to the full packet size | ❌ |
+| The MSan known-findings list matches every fleet toolchain | ❌ |
+| complete | 0% |
+
+[Source data](docs/roadmap.sexp)
