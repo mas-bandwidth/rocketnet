@@ -62,7 +62,12 @@ int main( int argc, char ** argv )
     rocketnet_client_default_config( &config );
     config.transport = "portable";
 
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, &config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     if ( !client )
     {
         printf( "error: failed to create client\n" );
@@ -103,8 +108,8 @@ int main( int argc, char ** argv )
         // (2) receive and process every received message for this update
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
 
         const int state = rocketnet_client_state( client );
         if ( state < 0 )
@@ -129,7 +134,7 @@ int main( int argc, char ** argv )
             {
                 if ( next_mode != skip_mode )
                 {
-                    uint8_t * payload = rocketnet_client_start( client, 0, next_mode, payload_bytes );
+                    uint8_t * payload = rocketnet_client_start_message( client, 0, next_mode, payload_bytes );
                     if ( !payload )
                     {
                         printf( "error: client could not start mode %d\n", next_mode );
@@ -138,7 +143,7 @@ int main( int argc, char ** argv )
                     }
                     payload[0] = (uint8_t) next_mode;
                     memcpy( payload + 1, happy_pattern, pattern_bytes );
-                    serials[next_mode] = rocketnet_client_finish( client, payload_bytes );
+                    serials[next_mode] = rocketnet_client_finish_message( client, payload_bytes );
                     if ( serials[next_mode] == 0 )
                     {
                         printf( "error: client could not finish mode %d\n", next_mode );
@@ -183,7 +188,7 @@ int main( int argc, char ** argv )
                 done = 1;
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
         rocketnet_client_send_packets( client );

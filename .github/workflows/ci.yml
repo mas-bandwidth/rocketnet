@@ -281,14 +281,18 @@ jobs:
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
       # driver_env_pin_is_honoured runs under the same pin and proves the
-      # pinned transport is the one granted. A cell line is server transport,
-      # client transport, then case=card for each case expected to fail until
-      # that card lands. The dual-stack case passed rocketnet-dual-stack-
-      # advertises-ipv4 on every socket transport; the in-memory loopback
-      # driver is not a socket transport and still holds its expected-fail
-      # mark. An expected-fail mark left after a pass fails the step; any
-      # other skip fails. xdp has no cell: it needs root and a VM guest, and
-      # its IPv6 cell belongs to rocketnet-xdp-serves-ipv6.
+      # pinned transport is the one granted. tools/check_transport_matrix.py
+      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # OS it builds for. A cell line is: server transport, client
+      # transport, then case=card for each case expected to fail until that
+      # card lands: the case fails, or prints a skip naming that card. An
+      # expected failure that passes fails the step, so the mark is removed
+      # as the card lands; any other skip fails. The in-memory loopback
+      # driver is not a socket transport and holds the one mark. The xdp
+      # cell needs root, a namespace and a veth pair, so it runs
+      # xdp_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
+      # client) as root inside a virtme-ng guest on the runner's own kernel,
+      # never on the host; a runner with no VM tier fails the cell.
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
         if: contains(matrix.leg, 'b')
         timeout-minutes: 3
@@ -299,16 +303,12 @@ jobs:
             gso portable
             io_uring portable
             loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
+            xdp portable
           TRANSPORT_MATRIX_MACOS: |
             portable portable
             portable msgx
             msgx portable
             msgx msgx
-            loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
-          TRANSPORT_MATRIX_WINDOWS: |
-            portable portable
-            iocp portable
-            rio portable
             loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
         run: |
           set +e -uo pipefail
@@ -318,7 +318,9 @@ jobs:
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
-          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          socket_cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          xdp_cases="xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6"
+          cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
           mkdir -p build
@@ -330,8 +332,29 @@ jobs:
               echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
               continue
             fi
+            if [ "$server" = xdp ]; then
+              (
+                # root, a namespace and a veth pair inside a guest of the
+                # runner's own kernel; the host is never touched
+                vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+                if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+                  for case in $xdp_cases; do
+                    echo "no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm" > "$logs/$server.$client.$case.log"
+                    echo 1 > "$logs/$server.$client.$case.rc"
+                  done
+                  exit 0
+                fi
+                timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                  sh -c 'for case in '"$xdp_cases"'; do sudo '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                  > "$logs/$server.$client.vm.log" 2>&1
+                for case in $xdp_cases; do
+                  [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs/$server.$client.vm.log" > "$logs/$server.$client.$case.log"; }
+                done
+              ) &
+              continue
+            fi
             (
-              for case in $cases; do
+              for case in $socket_cases; do
                 ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
                 echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
               done
@@ -341,7 +364,8 @@ jobs:
           failed=0
           while read -r server client expected; do
             [ -n "$server" ] && [ -d "$logs" ] || continue
-            [ -f "$logs/$server.$client.driver_env_pin_is_honoured.rc" ] || continue
+            cases=$(cell_cases "$server")
+            [ -f "$logs/$server.$client.${cases##* }.rc" ] || continue
             for case in $cases; do
               log="$logs/$server.$client.$case.log"
               rc=$(cat "$logs/$server.$client.$case.rc")
@@ -381,6 +405,10 @@ jobs:
           else
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
+
+      - name: Check every driver row has transport matrix cells
+        if: runner.os == 'Linux'
+        run: python3 tools/check_transport_matrix.py
 
       - name: Check export source gate
         if: runner.os == 'Linux'
@@ -652,6 +680,84 @@ jobs:
         run: |
           ./bin/Release/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
+      # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
+      # server, so a family regression on any one transport fails here.
+      # driver_env_pin_is_honoured runs under the same pin and proves the
+      # pinned transport is the one granted. tools/check_transport_matrix.py
+      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # OS it builds for. A cell line is: server transport, client
+      # transport, then case=card for each case expected to fail until that
+      # card lands: the case fails, or prints a skip naming that card. An
+      # expected failure that passes fails the step, so the mark is removed
+      # as the card lands; any other skip fails. xdp is Linux only; its cell
+      # is in the Linux matrix.
+      - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
+        if: matrix.leg == 'b'
+        timeout-minutes: 3
+        shell: bash
+        env:
+          TRANSPORT_MATRIX_WINDOWS: |
+            portable portable
+            iocp portable
+            rio portable
+            loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
+        run: |
+          set +e -uo pipefail
+          case "$RUNNER_OS" in
+            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
+            macOS)   matrix=$TRANSPORT_MATRIX_MACOS;   functional=./bin/functional ;;
+            Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
+            *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
+          esac
+          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          uring_offered=0
+          if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+          mkdir -p build
+          logs=$(mktemp -d "$PWD/build/transport-matrix.XXXXXX")
+          # each cell runs its cases in series; the cells run in parallel
+          while read -r server client expected; do
+            [ -n "$server" ] || continue
+            if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
+              echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              continue
+            fi
+            (
+              for case in $cases; do
+                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
+                echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
+              done
+            ) &
+          done <<< "$matrix"
+          wait
+          failed=0
+          while read -r server client expected; do
+            [ -n "$server" ] && [ -d "$logs" ] || continue
+            [ -f "$logs/$server.$client.driver_env_pin_is_honoured.rc" ] || continue
+            for case in $cases; do
+              log="$logs/$server.$client.$case.log"
+              rc=$(cat "$logs/$server.$client.$case.rc")
+              card=""
+              for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
+              ok=1
+              [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
+              if [ -n "$card" ] && { [ "$ok" = 1 ] || grep -q 'remove the marker' "$log"; }; then
+                echo "XPASS server=$server client=$client $case: $card has landed; remove its expected-fail mark"
+                failed=1
+              elif [ -n "$card" ]; then
+                echo "XFAIL server=$server client=$client $case (expected until $card lands)"
+              elif [ "$ok" = 1 ]; then
+                echo "PASS server=$server client=$client $case"
+              else
+                echo "FAIL server=$server client=$client $case (exit $rc)"
+                tail -n 5 "$log" | sed 's/^/    /'
+                failed=1
+              fi
+            done
+          done <<< "$matrix"
+          rm -rf "$logs"
+          exit "$failed"
 
   # THE HAPPY PATH: the real server and client binaries as separate processes
   # over loopback, watched stage by stage. It is deliberately small -- connect,

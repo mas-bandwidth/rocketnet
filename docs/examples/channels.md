@@ -51,13 +51,13 @@ conditions held.
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_server_dev_config_sized`, `rocketnet_server_create_sized`,
   `rocketnet_server_port`, `rocketnet_server_update`,
-  `rocketnet_server_client_connected`, `rocketnet_server_receive`,
-  `rocketnet_server_release`, `rocketnet_server_send_packets`,
+  `rocketnet_server_client_connected`, `rocketnet_server_receive_message`,
+  `rocketnet_server_release_message`, `rocketnet_server_send_packets`,
   `rocketnet_server_destroy`
 - `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`,
   `rocketnet_client_state`, `rocketnet_client_update`,
-  `rocketnet_client_start`, `rocketnet_client_finish`,
-  `rocketnet_client_receive`, `rocketnet_client_release`,
+  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
+  `rocketnet_client_receive_message`, `rocketnet_client_release_message`,
   `rocketnet_client_send_packets`, `rocketnet_client_destroy`
 - `rocketnet_write_dev_connect_token`
 - `rocketnet_time`, `rocketnet_sleep`

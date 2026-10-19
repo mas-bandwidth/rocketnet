@@ -103,6 +103,11 @@ int main( int argc, char ** argv )
     server_config.max_clients = num_clients;
     server_config.transport = "loopback";
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     if ( !server ) { printf( "FAIL: server create\n" ); goto cleanup; }
     printf( "%d clients, server transport %s\n", num_clients, rocketnet_server_transport_name( server ) );
 
@@ -115,7 +120,8 @@ int main( int argc, char ** argv )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];       // a development token stamped far ahead, as in hello
         if ( !rocketnet_write_dev_connect_token( server_address, (uint64_t) i, 4102444800ull, token ) ||
-             !( clients[i] = rocketnet_client_create( NULL, token, &client_config, NULL, 0 ) ) )
+             !( clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 ) ) ||
+             rocketnet_client_connect( clients[i], token ) != ROCKETNET_STATUS_OK )
             { printf( "FAIL: client %d create\n", i ); goto cleanup; }
     }
 
@@ -148,15 +154,15 @@ int main( int argc, char ** argv )
             const double start = rocketnet_time();
             rocketnet_client_update( client, time );                                    // (1) update
             if ( wrong_order ) rocketnet_client_send_packets( client );                 // the mistake: sends last frame's queue
-            while ( rocketnet_client_receive( client, 0, &data, &bytes ) )              // (2) receive the snapshot
-                { read_message( &to_client, frame, data, bytes ); rocketnet_client_release( client, data ); }
+            while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )              // (2) receive the snapshot
+                { read_message( &to_client, frame, data, bytes ); rocketnet_client_release_message( client, data ); }
             // (3) simulate: nothing moves in this example
-            if ( measuring && ( buffer = rocketnet_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
-                { write_message( buffer, frame ); rocketnet_client_finish( client, sizeof( message_t ) ); }      // (4) queue
+            if ( measuring && ( buffer = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
+                { write_message( buffer, frame ); rocketnet_client_finish_message( client, sizeof( message_t ) ); }      // (4) queue
             if ( measuring && ( frame + i ) % 30 == 0 && frame + 60 < measure_from + frames )
             {
-                if ( ( buffer = rocketnet_client_start( client, 1, ROCKETNET_RELIABLE_ORDERED, sizeof( message_t ) ) ) ) write_message( buffer, frame );
-                if ( !buffer || !rocketnet_client_finish( client, sizeof( message_t ) ) ) { printf( "FAIL: client %d event refused\n", i ); goto cleanup; }
+                if ( ( buffer = rocketnet_client_start_message( client, 1, ROCKETNET_RELIABLE_ORDERED, sizeof( message_t ) ) ) ) write_message( buffer, frame );
+                if ( !buffer || !rocketnet_client_finish_message( client, sizeof( message_t ) ) ) { printf( "FAIL: client %d event refused\n", i ); goto cleanup; }
                 events_sent++;
             }
             if ( !wrong_order ) rocketnet_client_send_packets( client );                // (5) last, so this frame's messages leave this frame
@@ -171,15 +177,15 @@ int main( int argc, char ** argv )
         for ( int i = 0; i < num_clients; i++ )                                         // (2) receive positions and events
         {
             if ( !rocketnet_server_client_connected( server, i ) ) continue;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
-                { read_message( &to_server, frame, data, bytes ); rocketnet_server_release( server, i, data ); }
-            while ( rocketnet_server_receive( server, i, 1, &data, &bytes ) )
-                { read_message( &to_server, frame, data, bytes ); rocketnet_server_release( server, i, data ); events_received++; }
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+                { read_message( &to_server, frame, data, bytes ); rocketnet_server_release_message( server, i, data ); }
+            while ( rocketnet_server_receive_message( server, i, 1, &data, &bytes ) )
+                { read_message( &to_server, frame, data, bytes ); rocketnet_server_release_message( server, i, data ); events_received++; }
         }
         // (3) simulate: nothing moves in this example
         for ( int i = 0; measuring && i < num_clients; i++ )                            // (4) queue each client's snapshot
-            if ( ( buffer = rocketnet_server_start( server, i, 0, ROCKETNET_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
-                { write_message( buffer, frame ); rocketnet_server_finish( server, i, sizeof( message_t ) ); }
+            if ( ( buffer = rocketnet_server_start_message( server, i, 0, ROCKETNET_UNRELIABLE_SEQUENCED, sizeof( message_t ) ) ) )
+                { write_message( buffer, frame ); rocketnet_server_finish_message( server, i, sizeof( message_t ) ); }
         if ( !wrong_order ) rocketnet_server_send_packets( server );                    // (5) last, so this frame's messages leave this frame
 
         if ( measuring && connected != num_clients ) { printf( "FAIL: a client disconnected\n" ); goto cleanup; }
@@ -203,12 +209,16 @@ int main( int argc, char ** argv )
 
     if ( events_received != events_sent ) printf( "FAIL: %llu of %llu events arrived\n", (unsigned long long) events_received, (unsigned long long) events_sent );
     else if ( wrong_order ? extra < 1 : extra != 0 ) printf( "FAIL: %d extra frame(s) in the %s order\n", extra, wrong_order ? "wrong" : "correct" );
-    else { printf( "PASS\n" ); result = 0; }
+    else result = 0;
 
 cleanup:
     for ( int i = 0; i < num_clients; i++ ) rocketnet_client_destroy( clients[i] );
     rocketnet_server_destroy( server );
     rocketnet_term();
     free( clients );
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

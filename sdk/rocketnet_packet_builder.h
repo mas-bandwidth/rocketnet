@@ -34,7 +34,7 @@
 // reliable record must outlive the frame for resends and the transport encrypts
 // the frame in place.
 
-#define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets one builder call tracks, config max_packets_per_update at most this
+#define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets ONE builder call tracks; the endpoint asks for one packet per call and counts the update's packets against the config's max_packets_per_update (1 .. 1024), so this is not the per-update limit
 #define ROCKETNET_PACKET_BUILDER_MAX_NUMBERS            16      // the reliable numbers one packet carries (layer 3's reference ring takes 16 per packet)
 #define ROCKETNET_PACKET_BUILDER_MAX_RECORDS            16      // the records one packet carries: a packet's records are tracked to commit or to give back
 

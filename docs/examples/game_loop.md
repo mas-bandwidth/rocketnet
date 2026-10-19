@@ -23,7 +23,7 @@ holds `ROCKETNET_LOOPBACK_MAX_ENDPOINTS` endpoints, one server and up to
 all are connected. The header at this base still names the message calls
 start, finish, receive, release and send_packets; the lifecycle rename makes
 them `*_start_message`, `*_finish_message`, `*_receive_message`,
-`*_release_message` and `*_send_messages`.
+`*_release_message` and `*_send_packets`.
 
 ## Run it
 

@@ -878,6 +878,12 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current(
     return rocketnet_server_transport_create_internal( context, address, config, 0.0, NULL );
 }
 
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address,
+                                                                                     const struct rocketnet_server_transport_config_t * config, int * status )
+{
+    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status );
+}
+
 static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
                                                                            const char * public_address_string,
                                                                            const struct rocketnet_server_transport_config_t * config,
