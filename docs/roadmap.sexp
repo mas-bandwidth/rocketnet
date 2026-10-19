@@ -2712,4 +2712,69 @@ No dependency the card does not name: no package-manager fetch, no network insta
 No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
 Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
 \"Not done\" is a welcome report; a green claim you did not run is not.
-ROUTE NOTE (coordinator, 2026-10-19; why attempt 5 held). The source work is done on the carried head 60a84d7b5b66 (it contains a3d4dabfdedc and a clean merge of the base): the route-table reply buffer is zeroed before each receive with the comment saying why, and tools/msan_known.txt carries the classified frames with no SDK finding listed. Attempt 5 ran no gate because it had no Linux job. What is left is measurement, and it is this card's DONE-WHEN unchanged: on a Linux bench with clang 18 and libstdc++ 13 (hetzner2 and hulk reproduce the SDK frame; a clang 21 bench does not), run STEP 1's gate at BASE and STEP 4's gate at the head, then the bounded build and ./bin/test, and report the lines. Change no file unless a gate shows a finding the head does not yet classify. A load-guard deferral is waited out inside the deadline (the gate is one process), not a HOLD; finishing without a gate run is not-done, and a bench whose toolchain is not clang 18 finishes STEP 2's HOLD at once, naming its versions.")))))
+ROUTE NOTE (coordinator, 2026-10-19; why attempt 5 held). The source work is done on the carried head 60a84d7b5b66 (it contains a3d4dabfdedc and a clean merge of the base): the route-table reply buffer is zeroed before each receive with the comment saying why, and tools/msan_known.txt carries the classified frames with no SDK finding listed. Attempt 5 ran no gate because it had no Linux job. What is left is measurement, and it is this card's DONE-WHEN unchanged: on a Linux bench with clang 18 and libstdc++ 13 (hetzner2 and hulk reproduce the SDK frame; a clang 21 bench does not), run STEP 1's gate at BASE and STEP 4's gate at the head, then the bounded build and ./bin/test, and report the lines. Change no file unless a gate shows a finding the head does not yet classify. A load-guard deferral is waited out inside the deadline (the gate is one process), not a HOLD; finishing without a gate run is not-done, and a bench whose toolchain is not clang 18 finishes STEP 2's HOLD at once, naming its versions.")
+    (:id "rocketnet-dst-fault-injectors" :feature "DST layer 2: the fault injectors (reorder, delay, clock skew, crash and restart), built from their model" :cells (n) :note "moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release); was ready in stream rocketnet-tests. Carried: branch sprint/rocketnet-dst-fault-injectors.w5.g1.e21 head 61e887ab8b9eb1ca5343bb271ceac59211233efc (attempt 5, ready); a read found that head BROKEN: dst_harness.h deletes the landed rocketnet-dst-invariant-checks wiring (the dst_checks.h include and its calls), so rebase onto the base tip and keep that wiring"
+     :brief "RESULT: rocketnet-dst-fault-injectors sha=000000000000 tier: pro
+CARRY: rocketnet-dst-fault-injectors attempt 5 head=61e887ab8b9eb1ca5343bb271ceac59211233efc
+REPO: mas-bandwidth/rocketnet
+BASE: sprint/rocketnet-proof
+KIND: test
+PRIORITY: high
+STREAM: rocketnet-tests
+DEPENDS-ON: rocketnet-dst-harness-core,rocketnet-dst-fault-model
+SOURCE: docs/DST.md (read) section 3: reorder, delay, clock skew, and crash and restart of a client and of the server, each drawn from the fault substream of the one seed, each with its bounds; built from tla/RNSimFaults.tla (rocketnet-dst-fault-model), cited from the code.
+PATHS: soak_sim.cpp,CMakeLists.txt,sdk/rocketnet_network_simulator.h,sdk/rocketnet_network_simulator.cpp,tla/COVERAGE.tsv,sdk/rocketnet_ack.cpp
+NEW: dst.cpp,dst_harness.h,dst_faults.h,test_unit_dst_faults.cpp,docs/DST.md
+SHARED: CMakeLists.txt
+START: dst_harness.h (read), tla/RNSimFaults.tla (read), sdk/rocketnet_network_simulator.h (read)
+TEST: none because the cases are C++ checks registered with REGISTER_UNIT_TEST in test_unit_dst_faults.cpp; DONE-WHEN names the command that runs them
+DONE-WHEN: (1) red at BASE: `./bin/test dst_fault_crash_restart_client` prints `unknown unit test dst_fault_crash_restart_client`, exit 2; (2) the injectors as docs/DST.md section 3 states: reorder and delay (simulator), clock skew (a per-peer offset and rate applied to the time each peer's update is passed), client crash and restart, server crash and restart, every draw from the fault substream, every rate and bound from the design; each injector's code cites the tla/RNSimFaults.tla action or invariant it implements, and the tla/COVERAGE.tsv row for RNSimFaults moves from owed to covered naming the code; (3) ./bin/test cases, time as an argument starting at 1000.0, no socket: dst_fault_crash_restart_client (the restarted client reconnects on a fresh session within the design's bound), dst_fault_server_restart (every client sees the restart and reconnects), dst_fault_skew_bounded (no peer's time leaves its bound or runs backwards), dst_fault_reorder_delivers (reordered packets all arrive), dst_fault_off_same_trace (all new faults at rate zero leave the core's trace hash unchanged for a fixed seed); (4) every existing simulator user is unchanged with the new knobs off: soak_sim's summary at ROCKETNET_SOAK_SIM_SEED=1 equal at BASE and head, `bash scripts/soak-sim-selftest` green, `./bin/functional` green; (5) the DST over the design's per-push seed range PASS at head; `make && ./bin/test` green
+TOOLCHAIN: cmake, gcc or clang on the Linux member JOB.md names
+GATE-NEEDS: linux
+STOP: when DONE-WHEN holds and the commit is on your branch, or the deadline is reached; then report, with not-done named
+DEADLINE: finish within 180 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 180 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: none new; the tree's network simulator and the standard library.
+
+# DST layer 2: the fault injectors, built from their model
+
+THE TASK. Add the faults docs/DST.md (read) section 3 names to the DST core, drawn from the seed's fault substream, implementing tla/RNSimFaults.tla (read) action by action. The simulator header grows only what reorder and delay need, in its existing style, deterministic from its seed; every existing user of the simulator (soak_sim, the channel harness, the scripted schedules) stays bit-identical when the new knobs are off. A crash destroys the peer's protocol and message objects without a disconnect; a restart creates them again as section 3 says. Skew is applied to the time each peer is passed; no peer reads a clock. No invariant checks beyond the core's (rocketnet-dst-invariant-checks owns them); a fault that makes the core's pattern check fail on a healthy build is a finding for the report, never a check to loosen. Where the model and the code disagree, the model is right or the report says why. Where docs/DST.md names other files, list them as PATHS-PROPOSED.
+
+STEP 1. Confirm `uname -s` is Linux; cd into the staged checkout JOB.md names; git log --oneline -1; build (the bounded make) and record DONE-WHEN (1).
+STEP 2. Read the model and docs/DST.md section 3; write the red cases.
+STEP 3. Build the injectors, citing the model from each.
+STEP 4. Run the gate: every DONE-WHEN command. Read the last lines.
+STEP 5. Commit on your own branch as `rocketnet-dst-fault-injectors: <what>` with the trailer; end as JOB.md says.
+THIS REPOSITORY. mas-bandwidth/rocketnet: a C++ UDP transport library with a message layer above it. `make` builds into bin/; `./bin/test` is the unit suite (no sockets, no real time; `./bin/test <name>` runs one test and prints `unknown unit test <name>` with exit 2 for a name it does not hold), `./bin/functional` the loopback tier. Root test_unit_<topic>.cpp files register with REGISTER_UNIT_TEST (test_unit_registry.h (read)) and build with no CMakeLists.txt edit (CMakeLists.txt globs test_unit_*.cpp). sdk/rocketnet.h (read) is the public C surface; every new export also goes in tools/exports.txt, which tools/check_exports.py (read) compares on every platform. docs/CHANNELS.md (read) is the message-layer design; STANDARD.md (read) the wire and connect standard; docs/TLA-INVENTORY.md (read) the state-machine inventory. tla/ holds the models (an MC wrapper, a cfg per case, a README per module with its reversed witnesses); tla/CASES.tsv (read) names each case once, tla/RUNS.tsv (read) holds the measured records written by `tlacheck run` and joined by `tlacheck merge --keep tla/RUNS.tsv`, never edited by hand (tla/README.md (read), \"Refreshing records after a model edit\"), and the lander refuses a change whose cases have no current record. tla/COVERAGE.tsv (read) records which code each model covers. CMakeLists.txt keeps -ffp-contract=off on every target.
+
+
+STANDING RULES (owner, binding on every card).
+- Unit tests use no real time, no sockets, no network and no outside services. Time is an argument, and a test clock starts at 1000.0. Anything that needs a real socket, a kernel program or the wall clock is a functional test, never ./bin/test.
+- Make the smallest change, with no refactor.
+- Never touch the space game's baseline or delta code.
+- Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+- Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+- The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+- Never read outside the job's working directory.
+
+BUILD BOUND (the bench sandbox caps a job at 256 processes and 8 GiB, and the Makefile's build target runs an unbounded make -j). Wherever this card says `make` for the build, run instead `(mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && nice make -j4 --no-print-directory)`, the same build bounded to four jobs. Run builds and suites one at a time, never in the background. A test red at head is rerun at the unchanged BASE only for that one test. Commit the work before any CI-equivalent gate that reads git status.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Work only in the staged checkout JOB.md names; do not clone a second copy. Commit on its own branch; touch no other branch. No gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Build and test only on the member JOB.md names, never the coordinator's machine. Never search /, ~ or /Volumes; stay inside the checkout and the job directory.
+No key, and nothing derived from a key, in any log line, test output, comment or report.
+No dependency the card does not name: no package-manager fetch, no network install.
+No names of people, machines or customers in code, comments or docs; docs and comments in the present tense.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.")))))

@@ -384,6 +384,7 @@ Cards moved out of the sprint on 2026-10-19, when Glenn moved everything not for
 | CBMC proves the sequence buffers and replay window free of out-of-bounds access | ❌ |
 | CBMC proves the client packet readers free of out-of-bounds access up to the full packet size | ❌ |
 | The MSan known-findings list matches every fleet toolchain | ❌ |
+| DST layer 2: the fault injectors (reorder, delay, clock skew, crash and restart), built from their model | ❌ |
 | complete | 0% |
 
 [Source data](docs/roadmap.sexp)
