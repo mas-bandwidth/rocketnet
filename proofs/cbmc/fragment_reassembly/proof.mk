@@ -18,7 +18,7 @@ NIGHTLY += proofs-fragment_reassembly
 ESBMC ?= esbmc
 
 FRAG_REASSEMBLY_SOURCE = $(CURDIR)/fragment_reassembly/proof_fragment_reassembly.c
-FRAG_REASSEMBLY_SHIM = $(CURDIR)/fragment_reassembly/esbmc_cprover.h
+FRAG_REASSEMBLY_SHIM = $(CURDIR)/esbmc_shim.h
 FRAG_REASSEMBLY_FLAGS = --std c++17 --overflow-check --ub-shift-check \
                         -I$(SDK) --include-file $(FRAG_REASSEMBLY_SHIM)
 FRAG_REASSEMBLY_TIMEOUT = 1800
