@@ -1868,6 +1868,8 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_DROPPED_REPLAYED` | `refusal` | `none` |
 | `CLIENT_CHALLENGE_WRONG_SIZE` | `refusal` | `CLIENT_CHALLENGE_RECEIVED` |
 | `CLIENT_DENIED_WRONG_SIZE` | `refusal` | `CLIENT_DENIED_RECEIVED` |
+| `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
+| `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -1981,7 +1983,7 @@ f7 fa 01 00 00 75 4f 7d 3a 00 00 00 b1 eb 07 8c
 00 34 b4 85 d8 00 00 00 b0 cb 42 af 01 00 00 00
 d9 df bc 00 21 00 bd b0 38 5c 01 00 00 9f 8d 1d
 fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
-54 00
+54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00 08 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
