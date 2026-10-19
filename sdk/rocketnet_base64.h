@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_BASE64_H
 #define ROCKETNET_BASE64_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, char * output, size_t output_size );
 

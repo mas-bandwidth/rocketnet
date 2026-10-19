@@ -4,27 +4,61 @@
 #include <stdint.h>
 #include <string.h>
 
-// IPv4 values use octet significance, independent of host memory order.
+/**
+ * @brief Stores one IPv4 forwarding route.
+ *
+ * IPv4 addresses use octet significance, independent of host byte order.
+ * `forward_dest` and `forward_mask` use that same numeric representation;
+ * `forward_metric` is the route priority, where a smaller value wins among
+ * equally specific matching routes. `if_index` is the outgoing interface
+ * index. The fields are plain values owned by the caller.
+ */
 struct rocketnet_ifforward4_t
 {
+    /** @brief Outgoing interface index. */
     uint32_t if_index;
+    /** @brief Destination address in IPv4 octet significance. */
     uint32_t forward_dest;
+    /** @brief Destination mask in IPv4 octet significance. */
     uint32_t forward_mask;
+    /** @brief Route priority; smaller values win ties. */
     uint32_t forward_metric;
 };
 
+/**
+ * @brief Converts four IPv4 octets to a host-order numeric address.
+ *
+ * The returned value is `(ip[0] << 24) | (ip[1] << 16) | (ip[2] << 8) | ip[3]`,
+ * independent of host byte order. The caller supplies a non-NULL pointer to
+ * at least four readable bytes; the function does not validate or retain it.
+ * @param ip Input IPv4 address octets.
+ * @return The address in IPv4 octet significance.
+ */
 static inline uint32_t rocketnet_route_ip( const uint8_t * ip )
 {
     return (uint32_t(ip[0]) << 24) | (uint32_t(ip[1]) << 16) | (uint32_t(ip[2]) << 8) | uint32_t(ip[3]);
 }
 
+/**
+ * @brief Reports whether route `a` is preferable to route `b` for an IPv4 address.
+ *
+ * A route matches when its destination masked by `forward_mask` equals `ip`
+ * masked by the same value. A matching route beats a missing or nonmatching
+ * route; when both match, the numerically larger mask wins, then the smaller
+ * metric. This function does not check that masks are contiguous. It reads
+ * the route values only for the call and does not modify them.
+ * @param a Candidate route; NULL or a nonmatching route loses.
+ * @param b Current best route; NULL or a nonmatching route loses to a matching `a`.
+ * @param ip IPv4 address in octet significance.
+ * @return True when `a` is preferred, otherwise false.
+ */
 static inline bool better_match( const rocketnet_ifforward4_t * a, const rocketnet_ifforward4_t * b, uint32_t ip )
 {
     if ( !a || (ip & a->forward_mask) != (a->forward_dest & a->forward_mask) )
         return false;
     if ( !b || (ip & b->forward_mask) != (b->forward_dest & b->forward_mask) )
         return true;
-    // A longer contiguous most-significant-bit mask has a greater value.
+    // The implementation compares masks numerically; contiguous prefixes sort by length.
     if ( a->forward_mask != b->forward_mask )
         return a->forward_mask > b->forward_mask;
     return a->forward_metric < b->forward_metric;
@@ -34,6 +68,20 @@ static inline bool better_match( const rocketnet_ifforward4_t * a, const rocketn
 #include <sys/socket.h>
 #include <linux/rtnetlink.h>
 
+/**
+ * @brief Parses one supported main-table IPv4 unicast route message.
+ *
+ * Accepts an RTM_NEWROUTE message for AF_INET with a prefix length at most
+ * 32, a nonzero output interface, a destination attribute when the prefix is
+ * nonzero, and RT_TABLE_MAIN. A default route has an implicit zero destination.
+ * Unknown attributes are ignored. Attribute lengths and message bounds are
+ * checked; repeated recognized attributes use the last value. `out` is written
+ * only on success. The input message and output object are borrowed for this
+ * call, and both pointers must be non-NULL and valid.
+ * @param msg_ptr Netlink route message to inspect.
+ * @param out Receives the parsed route on success; unchanged on refusal.
+ * @return True for a supported route, false for an unsupported or malformed message.
+ */
 static inline bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketnet_ifforward4_t * out )
 {
     if ( msg_ptr->nlmsg_len < NLMSG_LENGTH(sizeof(rtmsg)) || msg_ptr->nlmsg_type != RTM_NEWROUTE )

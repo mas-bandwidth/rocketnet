@@ -17,7 +17,7 @@
 
 #include "rocketnet_keys.h"
 #include "rocketnet_crypto_tally.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <sodium.h>
 #include <string.h>

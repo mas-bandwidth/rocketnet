@@ -1,7 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #pragma once
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include <atomic>
 
 // Process-wide, non-repeating packet tickets. Zero means exhausted.

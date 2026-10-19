@@ -9,14 +9,14 @@
 #define ROCKETNET_CONNECT_TOKEN_H
 
 #include <stdint.h>
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 // The connect token, per STANDARD.md. All layouts are packed little-endian at
 // the exact offsets the standard states; the byte sizes here are the wire
 // format and never change independently of it.
 
-/** @brief Connect-token format version written into signed data. */
-#define ROCKETNET_VERSION                       0x4E7C1A93
+/** @brief Connect-token wire-format version stored in signed data. */
+#define ROCKETNET_WIRE_VERSION                       0x4E7C1A93
 
 /** @brief Byte size of the sealed private data block. */
 #define ROCKETNET_PRIVATE_BLOCK_BYTES           384
@@ -62,14 +62,16 @@
 /** @brief Byte offset of the sealed private block in signed data. */
 #define ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK    89
 
+// The private connect token data: what the backend seals to the server.
+
 /** Data sealed to the server inside a connect token. Keys and user data are sensitive. */
 struct rocketnet_connect_token_private_t
 {
     uint64_t client_id; ///< Application-assigned client identifier.
-    uint64_t protocol_id; ///< Protocol identifier, equal to the signed protocol_id.
-    uint64_t expire_timestamp; ///< Unix expiry time, equal to the signed expire_timestamp.
-    uint8_t client_to_server_key[ROCKETNET_KEY_BYTES]; ///< Key for client-to-server traffic.
-    uint8_t server_to_client_key[ROCKETNET_KEY_BYTES]; ///< Key for server-to-client traffic.
+    uint64_t protocol_id; ///< Protocol identifier shared by client and server.
+    uint64_t expire_timestamp; ///< Unix expiry time in seconds.
+    uint8_t client_to_server_key[ROCKETNET_KEY_BYTES]; ///< Private client-to-server session key.
+    uint8_t server_to_client_key[ROCKETNET_KEY_BYTES]; ///< Private server-to-client session key.
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES]; ///< Opaque bytes owned by the application; this API does not interpret them.
 };
 
@@ -87,6 +89,9 @@ void rocketnet_write_connect_token_private( const struct rocketnet_connect_token
  */
 void rocketnet_read_connect_token_private( struct rocketnet_connect_token_private_t * output, const uint8_t * buffer );
 
+// The signed connect data: what the backend signs, carried verbatim in the
+// token and in every connection request.
+
 /** Data the backend signs and the client carries verbatim in each connect request. */
 struct rocketnet_signed_connect_data_t
 {
@@ -96,8 +101,8 @@ struct rocketnet_signed_connect_data_t
     uint64_t expire_timestamp; ///< Unix expiry time in seconds.
     int32_t timeout_seconds; ///< Connection timeout in seconds.
     uint8_t address_flags; ///< Bitmask of ROCKETNET_ADDRESS_FLAG_IPV4 and ROCKETNET_ADDRESS_FLAG_IPV6.
-    uint8_t ipv4_address[6]; ///< Four IPv4 octets followed by a little-endian port.
-    uint8_t ipv6_address[18]; ///< Eight little-endian 16-bit groups followed by a little-endian port.
+    uint8_t ipv4_address[6];                        ///< Four IPv4 octets and a little-endian port.
+    uint8_t ipv6_address[18];                       ///< Eight little-endian IPv6 groups and a little-endian port.
     uint8_t server_public_key[ROCKETNET_KEY_BYTES]; ///< Public key to which the private block is sealed.
     uint8_t sealed_private_block[ROCKETNET_SEALED_BLOCK_BYTES]; ///< Sealed private block for this server.
 };
@@ -116,6 +121,11 @@ void rocketnet_write_signed_connect_data( const struct rocketnet_signed_connect_
  */
 void rocketnet_read_signed_connect_data( struct rocketnet_signed_connect_data_t * output, const uint8_t * buffer );
 
+// Minting, the backend's job. Seals the private block to the server public
+// key, fills and signs the signed connect data, appends the clear token keys,
+// and pads to the fixed token size. The private fields' protocol id and
+// expire are taken from the signed fields, as the standard requires them
+// equal. Returns 1 on success, 0 on a crypto failure.
 
 /** @brief Mint a complete token with fresh ephemeral sealing randomness.
  * @param signed_fields [in] Non-NULL signed data; protocol_id and expire_timestamp also set the private block values.
@@ -129,6 +139,19 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
                                    const uint8_t * backend_secret_key,
                                    uint8_t * token );
 
+// TEST-ONLY. Exists for the known-answer vectors in
+// test/connect_token_vectors.json, which another implementation of the
+// backend's minting is checked against byte for byte; nothing ships calling
+// it. The same token as rocketnet_write_connect_token, except the private
+// block is sealed with the caller's 32-byte ephemeral X25519 secret instead
+// of a freshly drawn one -- exactly crypto_box_seal's construction:
+// epk = crypto_scalarmult_base(esk), nonce = crypto_generichash(24 bytes,
+// epk || server_pk), output epk || crypto_box_easy(block, nonce, server_pk,
+// esk). The token keys come from private_fields, as in the production writer.
+// A reused ephemeral secret ties tokens together, so it is never exported
+// (kept out of tools/exports.txt) and never used to mint a real token.
+// Returns 1 on success, 0 on a crypto failure.
+
 /** @brief Mint a deterministic token for known-answer tests only.
  * @param signed_fields [in] Non-NULL signed fields.
  * @param private_fields [in] Non-NULL private fields and session keys.
@@ -137,12 +160,13 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
  * @param token [out] Non-NULL output buffer of at least ROCKETNET_CONNECT_TOKEN_BYTES.
  * @return 1 on success; 0 on a crypto failure or when ephemeral_secret_key is NULL. Do not use this test-only routine to mint production tokens.
  */
-
 int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_connect_data_t * signed_fields,
                                                  const struct rocketnet_connect_token_private_t * private_fields,
                                                  const uint8_t * backend_secret_key,
                                                  const uint8_t * ephemeral_secret_key,
                                                  uint8_t * token );
+
+// Client-side split of a 768-byte token into its parts. Pure layout.
 
 /** The regions of a complete connect token, split without validation. */
 struct rocketnet_connect_token_t
@@ -160,12 +184,16 @@ struct rocketnet_connect_token_t
  */
 void rocketnet_read_connect_token( struct rocketnet_connect_token_t * output, const uint8_t * token );
 
-/** Verify, open, and compare tokens as separate server-side steps. Authenticity comes from the detached signature check. */
-/** @brief Verify the signature over the complete signed-data region.
- * @param signed_connect_data [in] Non-NULL ROCKETNET_SIGNED_CONNECT_DATA_BYTES bytes.
- * @param signature [in] Non-NULL ROCKETNET_SIGNATURE_BYTES detached signature.
- * @param backend_public_key [in] Non-NULL 32-byte public signing key.
- * @return 1 when the signature verifies; 0 otherwise.
+// Server-side processing, in the standard's order: verify the signature over
+// the signed connect data against the backend public key -- authenticity is
+// this and only this -- then open the sealed block, then check the inner
+// fields agree with the signed ones. Each returns 1 on success, 0 on refusal.
+
+/** @brief Verify the detached signature over signed connect data.
+ * @param signed_connect_data [in] Non-NULL signed region of ROCKETNET_SIGNED_CONNECT_DATA_BYTES.
+ * @param signature [in] Non-NULL ROCKETNET_SIGNATURE_BYTES-byte detached signature.
+ * @param backend_public_key [in] Non-NULL 32-byte backend signing public key.
+ * @return 1 if the signature verifies; 0 otherwise. Verify before opening the sealed block.
  */
 int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
                                           const uint8_t * signature,
@@ -191,6 +219,9 @@ int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private
 int rocketnet_connect_token_private_consistent( const struct rocketnet_connect_token_private_t * private_fields,
                                                 const uint8_t * signed_connect_data );
 
+// The token identifier: the 16-byte unkeyed generichash of the signed connect
+// data. Content-determined, never the signature bytes.
+
 /** @brief Hash signed connect data into its 16-byte content identifier.
  * @param identifier [out] Non-NULL buffer with room for ROCKETNET_TOKEN_IDENTIFIER_BYTES.
  * @param signed_connect_data [in] Non-NULL ROCKETNET_SIGNED_CONNECT_DATA_BYTES region.
@@ -198,6 +229,15 @@ int rocketnet_connect_token_private_consistent( const struct rocketnet_connect_t
  */
 void rocketnet_connect_token_identifier( uint8_t * identifier, const uint8_t * signed_connect_data );
 
+
+// The published development keys, embedded and used by default so
+// development works out of the box: run the server, point a client at its
+// address, connected -- no backend, no configuration, no copying keys
+// between machines. THE SECURITY OF A DEPLOYMENT THAT SHIPS WITH THESE IS
+// ZERO: both secret halves are printed in the standard, so anyone can mint
+// tokens your server accepts and open every session. The keys being public
+// is the loud failure; nothing else is relaxed -- the development path runs
+// the same handshake, sealing and replay protection that ships.
 
 /** @brief Public signing key used by the development-token path.
  * @details Development keys are public test credentials; deployments using them have no token authenticity or session confidentiality.
@@ -229,18 +269,7 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 /** @brief Connection timeout in seconds carried by a development token. */
 #define ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS 10
 
-#if ROCKETNET_DEVELOPMENT
-/** @brief Mint a local development token for a numeric server address.
- * @param server_address_string [in] Non-NULL numeric IPv4 or IPv6 address accepted by the address parser.
- * @param client_id [in] Application client identifier.
- * @param current_timestamp [in] Current Unix timestamp in seconds.
- * @param connect_token [out] Non-NULL buffer of at least ROCKETNET_CONNECT_TOKEN_BYTES.
- * @return 1 on success; 0 for a NULL required pointer, invalid address, or cryptographic failure. Uses public development credentials and is unsuitable for production.
- */
-ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string,
-                                                             uint64_t client_id,
-                                                             uint64_t current_timestamp,
-                                                             uint8_t * connect_token );
-#endif // #if ROCKETNET_DEVELOPMENT
+// rocketnet_write_dev_connect_token, the development token minting, is
+// declared once, in the public rocketnet.h.
 
 #endif // #ifndef ROCKETNET_CONNECT_TOKEN_H
