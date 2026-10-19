@@ -603,10 +603,15 @@
     /* A fitting unreliable message (docs/OUTGOING-BUILD.md) that was not */ \
     /* written in place in a packet buffer and took the queued path, with */ \
     /* its one copy into the frame at send_packets: the transport gave no */ \
-    /* frame (a client not yet connected, a full send ring), or unreliable */ \
-    /* messages already waited in the connection's queue. EXPECTED: a */ \
-    /* client's sends before CONNECTED take it. Counted on the owner's */ \
-    /* counters, once per message. appended: indices are the contract. */ \
+    /* frame (a client not yet connected, a full send ring), unreliable */ \
+    /* messages already waited in the connection's queue, the send budget */ \
+    /* could not pay it at start, or the update's max_packets_per_update */ \
+    /* was spent (in-place and queued packets count against it together), */ \
+    /* one packet of it being kept for the write pass while reliable work */ \
+    /* is due. The queued path then sends it, or drops it over budget and */ \
+    /* counts MESSAGE_UNRELIABLE_OVER_BUDGET. EXPECTED: a client's sends */ \
+    /* before CONNECTED take it. Counted on the owner's counters, once per */ \
+    /* message. appended: indices are the contract. */ \
     X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE )
 
 enum

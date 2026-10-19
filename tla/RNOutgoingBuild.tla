@@ -25,6 +25,15 @@
 (* build before this change, in which a fitting unreliable message is      *)
 (* written into its region record and copied into the frame at             *)
 (* send_packets.                                                           *)
+(*                                                                         *)
+(* One update is: BeginUpdate (the packet allowance resets), the game's    *)
+(* starts and finishes, and one or more send_packets flushes (BeginFlush,  *)
+(* the write pass's packets, EndFlush).  The write pass sends reliable     *)
+(* work first (its reliable phase) and unreliable records after.           *)
+(* SharedQuota FALSE gives in-place packets an allowance of their own      *)
+(* (PacketQuota fails); Reserve FALSE lets an in-place packet take the     *)
+(* last of the allowance while reliable work is due                        *)
+(* (ReliableSentWithinOneUpdate fails).                                    *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -36,7 +45,9 @@ CONSTANTS
     MaxPackets,     \* the queued and in-place packet allowance in one update
     MaxAcks,        \* the acks the peer makes due in a run
     MaxFaults,      \* the faults in a run: a frame refused at start, an abort, an over-budget drop
-    CopyStep        \* TRUE: the copy step of the build before this change
+    CopyStep,       \* TRUE: the copy step of the build before this change
+    SharedQuota,    \* TRUE: in-place packets draw on the write pass's allowance (FALSE: their own)
+    Reserve         \* TRUE: one packet of the allowance stays for due reliable work
 
 Msgs == 1..N
 Frames == 1..NumFrames
@@ -63,10 +74,13 @@ VARIABLES
     finished,       \* messages finished (not aborted), in finish order
     faults,         \* the faults so far
     outcome,
-    packetsThisUpdate \* queued and in-place packet attempts since BeginUpdate
+    packetsThisUpdate, \* queued and in-place packet attempts since BeginUpdate
+    flushing,       \* a send_packets flush is running
+    promised        \* the oldest reliable message due while the allowance had room, or None
 
 vars == << next, pending, handed, fellback, frameRecs, regionData, frameFree, queue,
-           staged, wire, acksDue, acksMade, finished, faults, outcome, packetsThisUpdate >>
+           staged, wire, acksDue, acksMade, finished, faults, outcome, packetsThisUpdate,
+           flushing, promised >>
 
 Rec == [msg : Msgs, data : 0..N]
 Packet == [buf : Frames, recs : Seq(Rec), acks : 0..MaxAcks]
@@ -88,6 +102,8 @@ TypeOK ==
     /\ faults \in 0..MaxFaults
     /\ outcome \in [Msgs -> Outcomes]
     /\ packetsThisUpdate \in Nat
+    /\ flushing \in BOOLEAN
+    /\ promised \in Msgs \cup {None}
 
 Init ==
     /\ next = 1
@@ -106,16 +122,29 @@ Init ==
     /\ faults = 0
     /\ outcome = [m \in Msgs |-> "none"]
     /\ packetsThisUpdate = 0
+    /\ flushing = FALSE
+    /\ promised = None
 
 UnreliableQueued == \E i \in 1..Len(queue) : Kind[queue[i]] \in Unreliable
+ReliableQueued == \E i \in 1..Len(queue) : Kind[queue[i]] = "R"
+FirstReliable == IF ReliableQueued
+                 THEN queue[CHOOSE i \in 1..Len(queue) : Kind[queue[i]] = "R" /\ \A j \in 1..(i - 1) : Kind[queue[j]] # "R"]
+                 ELSE None
+
+\* the allowance an in-place packet may take (rn_endpoint_in_place_header):
+\* the shared one, less one packet while reliable work is due
+InPlaceRoom ==
+    IF ~SharedQuota THEN TRUE
+    ELSE packetsThisUpdate + (IF Reserve /\ ReliableQueued THEN 1 ELSE 0) < MaxPackets
 
 \* start: a fitting unreliable message takes a frame when the transport has
 \* one and no unreliable message waits ahead of it in the queue.
 StartInPlace ==
     /\ next <= N /\ pending = None
     /\ ~CopyStep
+    /\ ~flushing
     /\ FitUnr(next)
-    /\ packetsThisUpdate < MaxPackets
+    /\ InPlaceRoom
     /\ ~UnreliableQueued
     /\ \E f \in frameFree :
         /\ frameFree' = frameFree \ {f}
@@ -124,15 +153,16 @@ StartInPlace ==
     /\ pending' = next
     /\ next' = next + 1
     /\ outcome' = [outcome EXCEPT ![next] = "started"]
-    /\ UNCHANGED << fellback, regionData, queue, staged, wire, acksDue, acksMade, finished, faults, packetsThisUpdate >>
+    /\ UNCHANGED << fellback, regionData, queue, staged, wire, acksDue, acksMade, finished, faults, packetsThisUpdate, flushing, promised >>
 
 \* start on the queued path: a reliable or oversize message always; a fitting
 \* unreliable one when the transport gave no frame (it may refuse at any
 \* time: a full ring, a client not yet connected), when unreliable messages
-\* wait ahead of it, or, under CopyStep, always.
+\* wait ahead of it, when the allowance has no room for it (InPlaceRoom),
+\* or, under CopyStep, always.
 StartQueued ==
-    /\ next <= N /\ pending = None
-    /\ LET refused == FitUnr(next) /\ ~CopyStep /\ frameFree # {} /\ ~UnreliableQueued IN
+    /\ next <= N /\ pending = None /\ ~flushing
+    /\ LET refused == FitUnr(next) /\ ~CopyStep /\ frameFree # {} /\ ~UnreliableQueued /\ InPlaceRoom IN
        /\ refused => faults < MaxFaults
        /\ faults' = IF refused THEN faults + 1 ELSE faults
     /\ handed' = [handed EXCEPT ![next] = Region(next)]
@@ -140,11 +170,11 @@ StartQueued ==
     /\ pending' = next
     /\ next' = next + 1
     /\ outcome' = [outcome EXCEPT ![next] = "started"]
-    /\ UNCHANGED << frameRecs, regionData, frameFree, queue, staged, wire, acksDue, acksMade, finished, packetsThisUpdate >>
+    /\ UNCHANGED << frameRecs, regionData, frameFree, queue, staged, wire, acksDue, acksMade, finished, packetsThisUpdate, flushing, promised >>
 
 \* the game writes its bytes at the pointer start returned, once
 Write ==
-    /\ pending # None
+    /\ pending # None /\ ~flushing
     /\ LET m == pending IN
        IF handed[m] \in Frames
        THEN /\ frameRecs[handed[m]][1].data = 0
@@ -153,7 +183,7 @@ Write ==
        ELSE /\ regionData[m] = 0
             /\ regionData' = [regionData EXCEPT ![m] = Data(m)]
             /\ UNCHANGED frameRecs
-    /\ UNCHANGED << next, pending, handed, fellback, frameFree, queue, staged, wire, acksDue, acksMade, finished, faults, outcome, packetsThisUpdate >>
+    /\ UNCHANGED << next, pending, handed, fellback, frameFree, queue, staged, wire, acksDue, acksMade, finished, faults, outcome, packetsThisUpdate, flushing, promised >>
 
 Written(m) == IF handed[m] \in Frames THEN frameRecs[handed[m]][1].data # 0 ELSE regionData[m] # 0
 
@@ -161,7 +191,7 @@ Written(m) == IF handed[m] \in Frames THEN frameRecs[handed[m]][1].data # 0 ELSE
 \* around the bytes and the same frame is sealed and staged; the acks due
 \* ride in it (finish_packet writes the ack block)
 FinishInPlace ==
-    /\ pending # None /\ handed[pending] \in Frames /\ Written(pending)
+    /\ pending # None /\ ~flushing /\ handed[pending] \in Frames /\ Written(pending)
     /\ LET m == pending
            f == handed[m] IN
        /\ staged' = Append(staged, [buf |-> f, recs |-> frameRecs[f], acks |-> acksDue])
@@ -170,12 +200,12 @@ FinishInPlace ==
        /\ outcome' = [outcome EXCEPT ![m] = "staged"]
     /\ packetsThisUpdate' = packetsThisUpdate + 1
     /\ pending' = None
-    /\ UNCHANGED << next, handed, fellback, frameRecs, regionData, frameFree, queue, wire, acksMade, faults >>
+    /\ UNCHANGED << next, handed, fellback, frameRecs, regionData, frameFree, queue, wire, acksMade, faults, flushing, promised >>
 
 \* finish of an in-place message the send budget cannot pay: dropped and
 \* counted (MESSAGE_UNRELIABLE_OVER_BUDGET), the frame given back
 FinishInPlaceOverBudget ==
-    /\ pending # None /\ handed[pending] \in Frames /\ Written(pending)
+    /\ pending # None /\ ~flushing /\ handed[pending] \in Frames /\ Written(pending)
     /\ faults < MaxFaults
     /\ faults' = faults + 1
     /\ LET m == pending IN
@@ -184,20 +214,24 @@ FinishInPlaceOverBudget ==
        /\ finished' = Append(finished, m)
        /\ outcome' = [outcome EXCEPT ![m] = "dropped"]
     /\ pending' = None
-    /\ UNCHANGED << next, handed, fellback, regionData, queue, staged, wire, acksDue, acksMade, packetsThisUpdate >>
+    /\ UNCHANGED << next, handed, fellback, regionData, queue, staged, wire, acksDue, acksMade, packetsThisUpdate, flushing, promised >>
 
+\* a reliable message queued while the allowance has room is due work the
+\* update owes a packet: it is promised
 FinishQueued ==
-    /\ pending # None /\ handed[pending] \notin Frames /\ Written(pending)
+    /\ pending # None /\ ~flushing /\ handed[pending] \notin Frames /\ Written(pending)
     /\ queue' = Append(queue, pending)
     /\ finished' = Append(finished, pending)
     /\ outcome' = [outcome EXCEPT ![pending] = "queued"]
+    /\ promised' = IF promised = None /\ Kind[pending] = "R" /\ packetsThisUpdate < MaxPackets
+                   THEN pending ELSE promised
     /\ pending' = None
-    /\ UNCHANGED << next, handed, fellback, frameRecs, regionData, frameFree, staged, wire, acksDue, acksMade, faults, packetsThisUpdate >>
+    /\ UNCHANGED << next, handed, fellback, frameRecs, regionData, frameFree, staged, wire, acksDue, acksMade, faults, packetsThisUpdate, flushing >>
 
 \* abort: an in-place frame goes back to the transport (abort_packet); a
 \* region record's room goes back to the region
 Abort ==
-    /\ pending # None
+    /\ pending # None /\ ~flushing
     /\ faults < MaxFaults
     /\ faults' = faults + 1
     /\ IF handed[pending] \in Frames
@@ -208,56 +242,99 @@ Abort ==
             /\ UNCHANGED << frameFree, frameRecs >>
     /\ outcome' = [outcome EXCEPT ![pending] = "aborted"]
     /\ pending' = None
-    /\ UNCHANGED << next, handed, fellback, queue, staged, wire, acksDue, acksMade, finished, packetsThisUpdate >>
+    /\ UNCHANGED << next, handed, fellback, queue, staged, wire, acksDue, acksMade, finished, packetsThisUpdate, flushing, promised >>
 
-\* the write pass, one packet: the first k queued records copied from their
-\* region records into a frame, sealed and staged with the acks due.  A k
-\* below the queue's length is the packet full: the rest wait for the next
-\* packet (one record, or the whole queue, in this model).  No in-place start is pending here: the transport forbids a
-\* flush with a fill open, so the object aborts it first (Abort).
-SendPackets ==
-    /\ queue # << >>
-    /\ packetsThisUpdate < MaxPackets
+\* send_packets begins: the write pass.  No in-place start is pending here:
+\* the transport forbids a flush with a fill open, so the object aborts it
+\* first (Abort).
+BeginFlush ==
+    /\ ~flushing
+    /\ queue # << >> \/ staged # << >>                \* an empty flush changes nothing
     /\ IF pending = None THEN TRUE ELSE handed[pending] \notin Frames
-    /\ \E f \in frameFree, k \in {1, Len(queue)} :
-        LET recs == [i \in 1..k |-> [msg |-> queue[i], data |-> regionData[queue[i]]]] IN
+    /\ flushing' = TRUE
+    /\ UNCHANGED << next, pending, handed, fellback, frameRecs, regionData, frameFree, queue,
+                    staged, wire, acksDue, acksMade, finished, faults, outcome, packetsThisUpdate, promised >>
+
+\* one packet of the write pass, from the queued records at positions idx
+\* (in queue order), copied from their region records into a frame, sealed
+\* and staged with the acks due
+WritePacket(idx) ==
+    \E f \in frameFree :
+        LET recs == [i \in 1..Len(idx) |-> [msg |-> queue[idx[i]], data |-> regionData[queue[idx[i]]]]]
+            taken == {queue[idx[i]] : i \in 1..Len(idx)} IN
         /\ frameFree' = frameFree \ {f}
         /\ frameRecs' = [frameRecs EXCEPT ![f] = recs]
         /\ staged' = Append(staged, [buf |-> f, recs |-> recs, acks |-> acksDue])
-        /\ queue' = SubSeq(queue, k + 1, Len(queue))
-        /\ regionData' = [m \in Msgs |-> IF \E i \in 1..k : queue[i] = m THEN 0 ELSE regionData[m]]
-        /\ outcome' = [m \in Msgs |-> IF \E i \in 1..k : queue[i] = m THEN "staged" ELSE outcome[m]]
-    /\ acksDue' = 0
-    /\ packetsThisUpdate' = packetsThisUpdate + 1
-    /\ UNCHANGED << next, pending, handed, fellback, wire, acksMade, finished, faults >>
+        /\ queue' = SelectSeq(queue, LAMBDA m : m \notin taken)
+        /\ regionData' = [m \in Msgs |-> IF m \in taken THEN 0 ELSE regionData[m]]
+        /\ outcome' = [m \in Msgs |-> IF m \in taken THEN "staged" ELSE outcome[m]]
+        /\ acksDue' = 0
+        /\ packetsThisUpdate' = packetsThisUpdate + 1
+        /\ UNCHANGED << next, pending, handed, fellback, wire, acksMade, finished, faults, flushing, promised >>
 
-\* the transport sends the oldest staged packet and its frame is free again
+RIndexes == SelectSeq([i \in 1..Len(queue) |-> i], LAMBDA i : Kind[queue[i]] = "R")
+
+\* the reliable phase: due reliable work first, the oldest reliable record
+\* alone, or every queued reliable record (a shorter packet is the packet full)
+SendReliable ==
+    /\ flushing
+    /\ packetsThisUpdate < MaxPackets
+    /\ ReliableQueued
+    /\ \E k \in {1, Len(RIndexes)} : WritePacket(SubSeq(RIndexes, 1, k))
+
+\* the unreliable phase, once no reliable work is due: the first queued
+\* record alone, or the whole queue
+SendUnreliable ==
+    /\ flushing
+    /\ packetsThisUpdate < MaxPackets
+    /\ queue # << >> /\ ~ReliableQueued
+    /\ \E k \in {1, Len(queue)} : WritePacket([i \in 1..k |-> i])
+
+\* send_packets returns once the transport has every packet and the write
+\* pass has nothing more it may send this update
+EndFlush ==
+    /\ flushing
+    /\ staged = << >>
+    /\ queue = << >> \/ packetsThisUpdate >= MaxPackets
+    /\ flushing' = FALSE
+    /\ promised' = IF promised # None /\ outcome[promised] = "queued" THEN promised ELSE None
+    /\ UNCHANGED << next, pending, handed, fellback, frameRecs, regionData, frameFree, queue,
+                    staged, wire, acksDue, acksMade, finished, faults, outcome, packetsThisUpdate >>
+
+\* the transport sends every staged packet, in staging order, and their
+\* frames are free again; staged packets go out at the flush (send_packets)
 TransportSend ==
+    /\ flushing
     /\ staged # << >>
-    /\ wire' = Append(wire, Head(staged))
-    /\ staged' = Tail(staged)
-    /\ frameFree' = frameFree \cup {Head(staged).buf}
-    /\ frameRecs' = [frameRecs EXCEPT ![Head(staged).buf] = << >>]
-    /\ outcome' = [m \in Msgs |-> IF \E i \in 1..Len(Head(staged).recs) : Head(staged).recs[i].msg = m THEN "sent" ELSE outcome[m]]
-    /\ UNCHANGED << next, pending, handed, fellback, regionData, queue, acksDue, acksMade, finished, faults, packetsThisUpdate >>
+    /\ LET bufs == {staged[i].buf : i \in 1..Len(staged)}
+           msgs == UNION {{staged[i].recs[j].msg : j \in 1..Len(staged[i].recs)} : i \in 1..Len(staged)} IN
+       /\ wire' = wire \o staged
+       /\ staged' = << >>
+       /\ frameFree' = frameFree \cup bufs
+       /\ frameRecs' = [f \in Frames |-> IF f \in bufs THEN << >> ELSE frameRecs[f]]
+       /\ outcome' = [m \in Msgs |-> IF m \in msgs THEN "sent" ELSE outcome[m]]
+    /\ UNCHANGED << next, pending, handed, fellback, regionData, queue, acksDue, acksMade, finished, faults, packetsThisUpdate, flushing, promised >>
 
-\* the peer's packets make acks due
+\* the next update (rn_endpoint_begin_update): the allowance resets, and a
+\* reliable message still queued is due work this update owes a packet.
+\* The transport's update reads the peer's packets, so this is where acks
+\* become due (at most MaxAcks in a run), never inside a start or a flush.
 BeginUpdate ==
-    /\ pending = None
+    /\ pending = None /\ ~flushing
     /\ packetsThisUpdate > 0
     /\ packetsThisUpdate' = 0
-    /\ UNCHANGED << next, pending, handed, fellback, frameRecs, regionData, frameFree, queue, staged, wire, acksDue, acksMade, finished, faults, outcome >>
-
-AckDue ==
-    /\ acksMade < MaxAcks
-    /\ acksDue' = acksDue + 1
-    /\ acksMade' = acksMade + 1
-    /\ UNCHANGED << next, pending, handed, fellback, frameRecs, regionData, frameFree, queue, staged, wire, finished, faults, outcome, packetsThisUpdate >>
+    /\ promised' = IF promised = None THEN FirstReliable ELSE promised
+    /\ \/ UNCHANGED << acksDue, acksMade >>
+       \/ /\ acksMade < MaxAcks
+          /\ acksDue' = acksDue + 1
+          /\ acksMade' = acksMade + 1
+    /\ UNCHANGED << next, pending, handed, fellback, frameRecs, regionData, frameFree, queue, staged, wire, finished, faults, outcome, flushing >>
 
 Next ==
     \/ StartInPlace \/ StartQueued \/ Write
     \/ FinishInPlace \/ FinishInPlaceOverBudget \/ FinishQueued \/ Abort
-    \/ SendPackets \/ TransportSend \/ AckDue \/ BeginUpdate
+    \/ BeginFlush \/ SendReliable \/ SendUnreliable \/ EndFlush
+    \/ TransportSend \/ BeginUpdate
 
 Spec == Init /\ [][Next]_vars
 
@@ -279,19 +356,32 @@ Delivered(s) == SelectSeq(s, LAMBDA m : outcome[m] # "dropped")
 
 IsPrefix(a, b) == Len(a) <= Len(b) /\ a = SubSeq(b, 1, Len(a))
 
-\* every byte the game wrote reaches the transport unchanged
+\* in-place and queued packets together stay within the allowance
 PacketQuota == packetsThisUpdate <= MaxPackets
 
+\* due reliable work is sent within one update: a reliable message queued
+\* while the update's allowance had room, or still queued when the next
+\* update began, is with the transport when send_packets returns.  A
+\* bounded response ("within one update"), so TLC checks it as an action
+\* property; an unbounded ~> would hold in a finite run even without the
+\* reservation, because the game's in-place sends run out.
+ReliableSentWithinOneUpdate ==
+    [][flushing /\ ~flushing' => (promised = None \/ outcome[promised] # "queued")]_vars
+
+\* every byte the game wrote reaches the transport unchanged
+
 BytesUnchangedInPlace ==
-    \A i \in 1..Len(Out) : \A j \in 1..Len(Out[i].recs) :
-        Out[i].recs[j].data = Data(Out[i].recs[j].msg)
+    LET out == Out IN
+    \A i \in 1..Len(out) : \A j \in 1..Len(out[i].recs) :
+        out[i].recs[j].data = Data(out[i].recs[j].msg)
 
 \* a fitting unreliable message that did not fall back is in the very
 \* buffer start handed out: buffer identity, not equal contents
 NoCopy ==
-    \A i \in 1..Len(Out) : \A j \in 1..Len(Out[i].recs) :
-        LET m == Out[i].recs[j].msg IN
-        FitUnr(m) /\ ~fellback[m] => Out[i].buf = handed[m]
+    LET out == Out IN
+    \A i \in 1..Len(out) : \A j \in 1..Len(out[i].recs) :
+        LET m == out[i].recs[j].msg IN
+        FitUnr(m) /\ ~fellback[m] => out[i].buf = handed[m]
 
 \* every ack made due is still due or rides a staged or sent packet
 AcksNeverLost == acksMade = acksDue + SumAcks(wire) + SumAcks(staged)
@@ -302,9 +392,13 @@ AcksNeverLost == acksMade = acksDue + SumAcks(wire) + SumAcks(staged)
 \* the receiver's and starts from this order); every finished, undropped
 \* message is queued or with the transport
 ModeOrder ==
-    /\ \A k \in {"U", "S", "R"} : IsPrefix(OfKind(OutMsgs, k), OfKind(Delivered(finished), k))
+    LET out == OutMsgs
+        outSet == {out[b] : b \in 1..Len(out)}
+        queued == {queue[a] : a \in 1..Len(queue)}
+        delivered == Delivered(finished) IN
+    /\ \A k \in {"U", "S", "R"} : IsPrefix(OfKind(out, k), OfKind(delivered, k))
     /\ \A i \in 1..Len(finished) :
         LET m == finished[i] IN
-        outcome[m] # "dropped" => (\E a \in 1..Len(queue) : queue[a] = m) \/ (\E b \in 1..Len(OutMsgs) : OutMsgs[b] = m)
-    /\ \A a, b \in 1..Len(OutMsgs) : a # b => OutMsgs[a] # OutMsgs[b]
+        outcome[m] # "dropped" => m \in queued \/ m \in outSet
+    /\ Cardinality(outSet) = Len(out)
 =============================================================================

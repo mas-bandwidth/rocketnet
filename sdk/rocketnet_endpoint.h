@@ -91,7 +91,7 @@ struct rn_endpoint_config_t
     /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */                                                                        \
     /* writes it, packet_sent or packet_failed ends it */                                                                                             \
     X( write_phase, int write_phase ) /* RN_ENDPOINT_WRITE_* */                                                                                       \
-    X( written, int written ) /* packets this pass, against max_packets_per_update */                                                                 \
+    X( written, int written ) /* packets this update, in place and queued, against max_packets_per_update */                                          \
     X( packet_kind, int packet_kind ) /* RN_ENDPOINT_PACKET_* of the planned packet */                                                                \
     X( packet_written, int packet_written ) /* 1 between write_packet and packet_sent or packet_failed */                                             \
     X( large_bytes, int large_bytes ) /* SEQUENCED_LARGE: the payload bytes */                                                                        \
@@ -155,14 +155,18 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 // twin's code-0 record; 10 or 11 for a code-1 record) when the message takes
 // this path, RN_ENDPOINT_IN_PLACE_QUEUED when it fits but unreliable messages
 // wait in the queue ahead of it (it queues behind them, so no mode is
-// reordered), and RN_ENDPOINT_IN_PLACE_NO otherwise (the region path decides
-// and refuses). It changes nothing and counts nothing. The frame the owner
-// asks for holds header + bytes + 1 payload bytes (the declared maximum, the
-// header and the form byte).
+// reordered) or the update's packet allowance is spent, and
+// RN_ENDPOINT_IN_PLACE_NO otherwise (the region path decides and refuses).
+// In-place packets and the write pass's packets share max_packets_per_update;
+// while reliable work is due at now, an in-place packet never takes the last
+// of it, so the write pass sends that work in the same update
+// (RNOutgoingBuild ReliableSentWithinOneUpdate). It changes nothing and counts
+// nothing. The frame the owner asks for holds header + bytes + 1 payload bytes
+// (the declared maximum, the header and the form byte).
 #define RN_ENDPOINT_IN_PLACE_NO             -1
 #define RN_ENDPOINT_IN_PLACE_QUEUED         -2
 
-int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
+int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, double now );
 
 // Whether the send budget can pay an in-place packet of payload_bytes now
 // (R6, RNSendBudget Fits at the unreliable class): the bucket refilled to now,

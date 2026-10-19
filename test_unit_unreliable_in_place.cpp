@@ -644,6 +644,67 @@ static void repeated_fill_flush_respects_packet_cap()
     ip_pair_teardown( &pair );
 }
 
+// whether the bytes of needle appear anywhere in a packet's payload
+static bool ip_carries( const ip_packet_t & packet, const uint8_t * needle, int bytes )
+{
+    if ( (int) packet.data.size() < bytes )
+        return false;
+    for ( size_t i = 0; i + (size_t) bytes <= packet.data.size(); i++ )
+        if ( memcmp( packet.data.data() + i, needle, (size_t) bytes ) == 0 )
+            return true;
+    return false;
+}
+
+static void reliable_not_starved_by_in_place()
+{
+    // RNOutgoingBuild ReliableSentWithinOneUpdate: with reliable work due, an
+    // in-place packet never takes the last of max_packets_per_update, so the
+    // write pass sends that work in the same update
+    const int cap = 2;
+    ip_pair_t pair;
+    ip_pair_setup( &pair, cap );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                         // settle the initial CONFIG exchange
+
+    ip_end_t * client = &pair.net->client;
+    const size_t sent_before = client->sent.size();
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.client );
+    const uint64_t fallback_before = ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+
+    uint8_t reliable[200];
+    ip_fill( reliable, 120, (int) sizeof( reliable ) );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, reliable, (int) sizeof( reliable ) ) != 0 );
+
+    for ( int i = 0; i < cap; i++ )
+    {
+        uint8_t * p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_UNRELIABLE, 64 );
+        check( p != NULL );
+        ip_fill( p, 121 + (uint32_t) i, 64 );
+        check( rocketnet_message_client_finish( pair.client, 64 ) != 0 );
+    }
+    rocketnet_message_client_send_packets( pair.client );
+
+    check( client->sent.size() - sent_before <= (size_t) cap );
+    bool reliable_out = false;
+    for ( size_t i = sent_before; i < client->sent.size(); i++ )
+        if ( ip_carries( client->sent[i], reliable, (int) sizeof( reliable ) ) )
+            reliable_out = true;
+    check( reliable_out );
+    // the first went in place; the second would have taken the last packet,
+    // so it fell back to the queue
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before + 1 );
+
+    // nothing is lost: the queued unreliable goes in the next update (an
+    // UNRELIABLE message is delivered on channel 0)
+    std::vector<ip_received_t> server_got;
+    ip_step( &pair, &server_got, NULL );
+    ip_step( &pair, &server_got, NULL );
+    check( ip_got( server_got, 1, 120, (int) sizeof( reliable ) ) );
+    check( ip_got( server_got, 0, 121, 64 ) );
+    check( ip_got( server_got, 0, 122, 64 ) );
+    ip_pair_teardown( &pair );
+}
+
 static void in_place_unreliable_keeps_acks_and_order()
 {
     ip_pair_t pair;
@@ -857,3 +918,4 @@ REGISTER_UNIT_TEST( unreliable_over_fit_takes_the_message_buffer );
 REGISTER_UNIT_TEST( in_place_unreliable_keeps_acks_and_order );
 REGISTER_UNIT_TEST( mixed_in_place_and_queued_respect_packet_cap );
 REGISTER_UNIT_TEST( repeated_fill_flush_respects_packet_cap );
+REGISTER_UNIT_TEST( reliable_not_starved_by_in_place );

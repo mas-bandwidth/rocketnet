@@ -2,9 +2,13 @@
 (***************************************************************************)
 (* The small instance of RNOutgoingBuild: six messages, two of each kind  *)
 (* (unreliable, sequenced, reliable), interleaved in send order, two       *)
-(* transport frames, two acks made due and a one-packet update allowance. *)
-(* The shared packet quota resets only at BeginUpdate.                    *)
-(* MCRNOutgoingBuildReversed.cfg restores the pre-change copy step.        *)
+(* transport frames, one ack made due and a one-packet update allowance.  *)
+(* The shared packet quota resets only at BeginUpdate.  The reversed      *)
+(* witnesses beside MCRNOutgoingBuild.cfg: MCRNOutgoingBuildReversed.cfg  *)
+(* (the pre-change copy step, NoCopy), MCRNOutgoingBuildOwnQuota.cfg      *)
+(* (in-place packets on an allowance of their own, PacketQuota) and       *)
+(* MCRNOutgoingBuildNoReserve.cfg (no packet kept for due reliable work,  *)
+(* ReliableSentWithinOneUpdate).                                          *)
 (***************************************************************************)
 EXTENDS RNOutgoingBuild
 

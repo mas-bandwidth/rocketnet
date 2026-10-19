@@ -5,7 +5,8 @@ This note decides how `rocketnet_message_client_start` and
 packet buffer for a fitting unreliable message, so that no copy happens
 between the message layer and the transport. The model is
 `tla/RNOutgoingBuild.tla` (README: `tla/README-RNOutgoingBuild.md`); the
-normative sentence is in STANDARD.md, _Messages_, _Payload forms_.
+normative sentence is in standard/MESSAGES.md (RN-2), m2 _Payload forms and
+sender size rules_.
 
 ## The requirement
 
@@ -42,7 +43,7 @@ and stages the packet; `send_packets` flushes it with everything else.
 
 - **Acks and other messages riding along.** Acks are the transport's: every
   sealed session packet opens with the ack block, written at the seal
-  (STANDARD.md _Acks_). An in-place packet carries the acks due at its seal,
+  (standard/TRANSPORT.md, t15 _Acknowledgement_). An in-place packet carries the acks due at its seal,
   as every packet does; nothing in the message layer has to put them there.
   Reliable records, other unreliable messages and the CONFIG record do not
   ride in it; they go in the packets of the write pass in send_packets, as
@@ -108,6 +109,19 @@ and stages the packet; `send_packets` flushes it with everything else.
   fallback), and queued packets wait for the next update. Failed transport
   attempts consume a slot, matching the queued write path. An uncapped
   connection is still bounded.
+- **Reliable work is never starved of the cap.** While reliable work is due
+  at start (a reliable record waits for its first send, or a resend or block
+  chunk is past its delay: the condition the write pass's reliable phase
+  sends on), an in-place packet never takes the last slot of the allowance:
+  start takes the in-place path only when `written + 1 < max_packets_per_update`.
+  The write pass runs its reliable phase first, so that reserved slot sends
+  the due work in the same update. Without the reservation, `cap` in-place
+  sends after a reliable send spend the allowance and the reliable record
+  waits a whole update (the model's `ReliableSentWithinOneUpdate`, which its
+  reversed witness without the reservation violates; the unit case
+  `reliable_not_starved_by_in_place`). A reliable message sent after the
+  in-place packets that spent the allowance waits for the next update, the
+  same as one sent after a full write pass.
 
 ## Option (b): written into the connection's current outgoing packet
 
@@ -175,6 +189,7 @@ several threads.
   same update (above, ordering against reliable messages).
 - A message that does not take the in-place path, because the transport
   gave no frame (a client not yet connected, a full send ring), because
-  unreliable messages already wait in the queue, or because the budget
-  cannot pay it now, takes the queued path as today and is counted
+  unreliable messages already wait in the queue, because the update's packet
+  allowance is spent (one slot kept while reliable work is due), or because
+  the budget cannot pay it now, takes the queued path as today and is counted
   `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`.

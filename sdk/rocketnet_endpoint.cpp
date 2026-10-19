@@ -379,7 +379,7 @@ static int rn_endpoint_sequenced_header_bytes( int channel )
     return 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 );              // flags and length, sequencing, ordering, channel
 }
 
-int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes )
+int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, double now )
 {
     if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
         return RN_ENDPOINT_IN_PLACE_NO;
@@ -407,8 +407,12 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
 
     // RNOutgoingBuild StartInPlace: a message never overtakes an unreliable
     // one queued before it (including a sequenced send promoted to the
-    // channel queue); direct and queued packets share the update cap.
-    if ( endpoint->unreliable_count > 0 || endpoint->written >= endpoint->config->max_packets_per_update ||
+    // channel queue); direct and queued packets share the update cap, and
+    // while reliable work is due (the write pass's reliable phase would send
+    // a packet) one packet of it stays for that phase
+    // (RNOutgoingBuild ReliableSentWithinOneUpdate)
+    const int reserved = rn_endpoint_ordered_due( endpoint, now ) ? 1 : 0;
+    if ( endpoint->unreliable_count > 0 || endpoint->written + reserved >= endpoint->config->max_packets_per_update ||
          ( reliability == ROCKETNET_UNRELIABLE_SEQUENCED &&
            ( endpoint->region->channel_send[channel].queue_head != RN_DESCRIPTOR_NONE ||
              endpoint->ordered.ack.chunk_head != RN_RESEND_NONE ) ) )
