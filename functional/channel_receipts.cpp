@@ -34,7 +34,7 @@ void unreliable_receipts_over_lossy_link()
     rocketnet_channel_harness_set_link( &h, 0.02, 0.05, 12.0f, 5.0f );
     receipt_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
     rocketnet_channel_harness_read_counters( &h );
-    const uint64_t resends_at_connect = h.resends;                                 // the connection's reliable CONFIG may be resent while connecting (CHANNELS.md 10.3)
+    const uint64_t resends_at_connect = h.resends;                                 // the connection's reliable CONFIG may be resent while connecting (standard/MESSAGES.md 10.3)
 
     uint32_t client_serial[messages] = {}, server_serial[messages] = {};
     uint8_t client_outcome[messages] = {}, server_outcome[messages] = {};

@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-// Public-API per-frame main-thread cost microbenchmark. See client_main_thread_cost.md.
+// Public-API per-frame main-thread cost microbenchmark.
 #include "rocketnet_internal.h"
 #include <algorithm>
 #include <chrono>

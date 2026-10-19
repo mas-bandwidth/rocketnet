@@ -7,10 +7,10 @@ bytes are never compared; only the decisions are.
 
 The gate exists because the one defect a cross-cutting assurance gate must
 catch is the **expiry-admits** class: a case where netcode refuses and
-rocketnet admits. `REQUIREMENTS.md` states "no security property weaker than
+rocketnet admits. The requirements state "no security property weaker than
 netcode 1.02", so every such case is a finding. The reverse — rocketnet
 refuses where netcode admits — is listed with its reason and judged against
-`REQUIREMENTS.md` (stricter is permitted).
+the requirements (stricter is permitted).
 
 ## What is compared
 
@@ -29,7 +29,7 @@ Measured against tag v1.2.1, the first release whose version info is
 `NETCODE 1.02`. That server keeps a connect-token MAC history, so a second
 presentation from another address is `refuse:replay` on both sides (`agree`).
 A timeout of zero is admitted by netcode 1.02 and refused by rocketnet
-(`rocketnet-stricter`). Stricter is permitted under `REQUIREMENTS.md`. Weaker
+(`rocketnet-stricter`). Stricter is permitted under the requirements. Weaker
 (netcode refuses, rocketnet admits) is a finding. The live run is the table
 in the report; the reference column matches that run.
 
@@ -108,7 +108,7 @@ valid_signature	accept	accept	agree
 * `agree` — both libraries reach the same decision.
 * `rocketnet-weaker` — netcode refuses, rocketnet admits. A finding.
 * `rocketnet-stricter` — rocketnet refuses, netcode admits. Listed with the
-  reason and judged against `REQUIREMENTS.md`.
+  reason and judged against the requirements.
 
 ## The netcode side, live
 

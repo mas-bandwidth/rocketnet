@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The endpoint as a pure machine (docs/CHANNELS.md 10.1, tla/RNEndpoint.tla):
+// The endpoint as a pure machine (standard/MESSAGES.md 10.1, tla/RNEndpoint.tla):
 // two endpoints back to back through a lossy, duplicating, reordering array
 // that stands in for the transport, with time a loop variable from 1000.0.
 // No socket, no clock, no transport.
@@ -12,7 +12,7 @@
 // copy arrives after its own delay, so packets overtake each other. A transport
 // refusal is a packet written and never sent (rn_endpoint_packet_failed). The
 // stand-in transport under each endpoint keeps the transport's two promises the
-// endpoint relies on (CHANNELS.md 2): a packet id opens once (the replay
+// endpoint relies on (standard/MESSAGES.md 2): a packet id opens once (the replay
 // window drops the duplicate copy), and an opened packet's id is acked back
 // to its sender, over the same kind of lossy path (P2; a lost ack is silence,
 // P5).
@@ -570,7 +570,7 @@ static void endpoint_never_allocates_or_reads_a_clock()
     check( rocketnet_init( NULL ) );
 }
 
-// R6 (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
+// R6 (standard/MESSAGES.md 11.5; tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
 // an uncapped endpoint's large sequenced state, larger than one packet, is
 // written whole and never touches the bucket: no charge, no settle, no
 // refusal, no drop. Simulated time from 1000.0; no transport but this loop.

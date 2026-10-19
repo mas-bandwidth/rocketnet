@@ -15,8 +15,7 @@
 # another address; the request ladder refuses it (TOKEN_ALREADY_USED).
 # timeout_out_of_range: netcode 1.02 admits a timeout of zero (accept).
 # rocketnet refuses it (refuse:timeout). That is the rocketnet-stricter
-# line, and it is within REQUIREMENTS.md. A rocketnet-weaker line is a
-# finding.
+# line. A rocketnet-weaker line is a finding.
 valid_signature	connect token with a valid signature	accept
 expired_token	expire timestamp in the past	refuse:expired
 bad_signature	one signature byte flipped	refuse:signature

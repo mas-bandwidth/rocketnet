@@ -582,7 +582,7 @@ static void TestDisconnectAbsorbsTerminalState()
 // check at the response alone refuses the second admission while the first
 // connection lives. once it closes, the second may connect: a slot is freed
 // when its connection closes, and the accepted residual risk is reuse inside
-// the short expiry (docs/SESSION.md 1.6).
+// the short expiry.
 // ---------------------------------------------------------------------------
 
 static void TestOneConnectionPerTokenAfterHistoryFlush()

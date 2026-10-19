@@ -2,14 +2,14 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The message layer's unit tests (docs/CHANNELS.md), one layer at a time.
-    Layer 2, message records: the known-answer vectors of STANDARD.md
+    The message layer's unit tests (standard/MESSAGES.md), one layer at a time.
+    Layer 2, message records: the known-answer vectors of standard/MESSAGES.md
     _Messages_ both ways, one input per violation hitting exactly that
     violation, the zero-copy SINGLE form in place at a 16-aligned payload
     root, and the property test over pack and parse.
     Layer 1, the region: layout, validation, the send store, the descriptor
     pool, the arena, the sizing print, and ChannelsAllocatorNoLiveAllocation
-    (docs/CHANNELS.md 4). That case arms the allocation trap for a soak of
+    (standard/MESSAGES.md 4). That case arms the allocation trap for a soak of
     send and receive at full configured load. rocketnet_channels_prepare
     installs the hooks before init; the trap is quiet until a case arms it.
 
@@ -1634,7 +1634,7 @@ static void test_channels_allocator_trap_witness()
 
 // Layers 2 to 8 do not exist yet; this stands in for them by driving every
 // carve-out of layer 1 to its configured capacity, the way they will
-// (docs/CHANNELS.md 4, 6.1, 7.1, 9.1). Per tick, per connection, each way:
+    // (standard/MESSAGES.md 4, 6.1, 7.1, 9.1). Per tick, per connection, each way:
 // sends until the descriptor pool or the store refuses, a write of every
 // fragment from its store chunk into a frame with its number and sent-map
 // entry, the receive side's descriptor, bitset, ring copy, held index,
@@ -2045,7 +2045,7 @@ static void test_channels_allocator_no_live_allocation()
     // region each, as 16 client objects have. The clients share the server's
     // wire fields but run a short send queue, so between the two ends both
     // refusals are reached: at the defaults the store's 451 chunks run out
-    // before the 1024 descriptors can (docs/CHANNELS.md 14), so the server
+    // before the 1024 descriptors can (standard/MESSAGES.md 14), so the server
     // end is store-bound and the client end is queue-bound.
 
     const int num_slots = 16;
@@ -2219,7 +2219,7 @@ static void test_channels_allocator_no_live_allocation()
 }
 
 // ----------------------------------------------------------------
-//     the SINGLE form (docs/CHANNELS.md 11.2): the codec reads a payload
+//     the SINGLE form (standard/MESSAGES.md 11.2): the codec reads a payload
 //     that is one message with the form byte last as one code-0 record.
 //     The send, receive-budget and drop behaviour of the unreliable path
 //     is tested on the shipped path (test_unit_message_objects.cpp,
@@ -2266,7 +2266,7 @@ static void test_channels_single_form_parses_as_one_code0_record()
 
 // Layer 3 sender: small region fixtures exercise the real per-number table
 // without an arena allocation. The red-first assertions stay as the rules'
-// regression witnesses (CHANNELS 6.2, RNRing PlaceSingle/PlaceBlock/Ack,
+// regression witnesses (standard/MESSAGES.md 6.2, RNRing PlaceSingle/PlaceBlock/Ack,
 // RNWindow NumberRecord/ReceiveAck).
 
 struct channels_window_send_rig_t
@@ -2392,7 +2392,7 @@ static void test_channels_window_send_any_message_fits_when_nothing_is_outstandi
 }
 
 // -----------------------------------------
-// CHANNELS 6.5 and RNWindow Accept: each case uses the region's W=64 bitset
+// standard/MESSAGES.md 6.5 and RNWindow Accept: each case uses the region's W=64 bitset
 // and descriptor table. These checks were added before the receive module.
 struct channels_window_receive_rig_t
 {
@@ -2541,7 +2541,7 @@ static void test_channels_window_receive_advance_clears_only_what_it_passes()
     channels_window_receive_teardown( &rig );
 }
 
-// CHANNELS R1/R8, 6.5 and RNWindow OpenPacket/Accept: a scripted sender
+// standard/MESSAGES.md R1/R8, 6.5 and RNWindow OpenPacket/Accept: a scripted sender
 // resends only unaccepted numbers inside R+W. The simulator duplicates and
 // reorders RECORDS payloads; the layer-2 reader feeds each parsed record to
 // the window. Accepted records are consumed and released immediately.
@@ -2664,7 +2664,7 @@ static void test_channels_window_receive_over_the_lossy_simulator()
     test_channels_window_receive_over_the_lossy_simulator_leg( 50.0f );
 }
 
-// CHANNELS 6.2/6.3, RNRing LiveSpansDisjoint and RNWindow NumberRecord/Accept:
+// standard/MESSAGES.md 6.2/6.3, RNRing LiveSpansDisjoint and RNWindow NumberRecord/Accept:
 // a small layer-6 stand-in first-writes records through the real send module,
 // retransmits them over the simulator, and gives an ACK one update after the
 // receiver accepted and released each number (P2/P6). A shadow byte map checks
@@ -2793,7 +2793,7 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
                         item->data[j] = (uint8_t) ( ( first + i ) * 31 + j );
                 }
                 // Numbering and the first packet write are one operation in
-                // this stand-in for layer 6 (CHANNELS 6.2, I3).
+                // this stand-in for layer 6 (standard/MESSAGES.md 6.2, I3).
                 newly_numbered = first;
                 channels_window_exchange_write( wire, &address, &records[first], first,
                                                 packet, sizeof(packet), now );
@@ -3583,7 +3583,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
         // 2. Resend due numbers from the resend FIFO, one packet per tick: the
         //    per-update packet limit the writers keep (max_packets_per_update),
         //    so the packets written in one RTT stay under P and acks land on
-        //    live sent-map entries (docs/CHANNELS.md 14, "Sizing P"). With no
+        //    live sent-map entries (standard/MESSAGES.md 14, "Sizing P"). With no
         //    back-off an unbounded resend walk at P = 16 evicts every entry
         //    before its ack returns, and the soak ends in RELIABLE_TIMEOUT.
         uint64_t resent_numbers[32];
@@ -3928,7 +3928,7 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
 
         // 3. the product's write: its resend FIFO walk and its new numbers, one
         //    packet per tick, so the packets written in one RTT stay under P and
-        //    acks land on live sent-map entries (docs/CHANNELS.md 14, "Sizing
+        //    acks land on live sent-map entries (standard/MESSAGES.md 14, "Sizing
         //    P"). With no back-off (6.4, RNResendTiming) a write of every due
         //    number at P = 16 evicts each entry before its ack returns, and the
         //    soak ends in RELIABLE_TIMEOUT. Every 23rd packet is a failed send
@@ -4022,7 +4022,7 @@ static void test_channels_window_lossy_soak()
 }
 
 // -----------------------------------------
-// Reversed-witness replays (CHANNELS 15, tla/README-RNWindow.md, tla/README-RNRing.md).
+// Reversed-witness replays (standard/MESSAGES.md 15, tla/README-RNWindow.md, tla/README-RNRing.md).
 // Each test drives the concrete Layer 3 modules through the exact TLC witness
 // trace with the guarding rule in place, and fails on the named invariant
 // when that one-line rule is removed on the bench.
@@ -4163,7 +4163,7 @@ static void test_channels_window_witness_reply_opens_next_update()
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     channels_window_witness_rig_t rig;
     channels_window_witness_setup( &rig, 2, 4 * F );
-    const int keep_p6 = 1; // P6 (CHANNELS 2, RNWindow RequireFixBatch): reply opens in update j+1 after EndUpdate
+    const int keep_p6 = 1; // P6 (standard/MESSAGES.md 2, RNWindow RequireFixBatch): reply opens in update j+1 after EndUpdate
 
     // Sender numbers single 0 and sends it in packet 1.
     uint64_t n0 = UINT64_MAX, p0 = UINT64_MAX;

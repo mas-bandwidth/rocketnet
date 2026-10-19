@@ -7,7 +7,7 @@
     client at it, connected. Echoes every payload back to its sender. Pass
     the public address clients dial: ./bin/server 192.0.2.10:40000
 
-    The live XDP fleet run (docs/LIVE-XDP.md): `--matrix` runs the message
+    The live XDP fleet run: `--matrix` runs the message
     matrix instead of the payload echo. The server sends its own
     sequence-derived stream to each client and verifies what it receives,
     using test/live_verify.h (sections 3 to 5). It runs at the max_clients
@@ -95,7 +95,7 @@ static void set_status( const char * path, const char * line )
     }
 }
 
-// the result lines (docs/LIVE-XDP.md section 7): tab-separated lines of the
+// the result lines: tab-separated lines of the
 // six kinds cell, bench, counters, rss, event and fail, appended to --results.
 static FILE * g_results = NULL;
 
@@ -237,7 +237,7 @@ static int in_tree_driver( const char * nic )
 #endif
 }
 
-// ---- the matrix server (docs/LIVE-XDP.md sections 3 to 7) ----
+// ---- the matrix server ----
 
 struct server_stream_t
 {
@@ -315,7 +315,7 @@ static void matrix_fail( struct server_client_t * c, int mode, int channel, int6
     c->failures++;
 }
 
-// the pacing ledger (docs/LIVE-XDP.md section 6): outstanding bytes, messages
+// the pacing ledger: outstanding bytes, messages
 // and reliable numbers, admitted only while each stays under its half margin.
 // Outstanding is sent minus what the peer's progress reports have confirmed
 // (section 5: the peer reports, per stream, the highest contiguous sequence
@@ -358,7 +358,7 @@ static void ledger_progress( struct server_client_t * c, int mode, int channel, 
     s->confirmed = new_confirm;
 }
 
-// a progress report (docs/LIVE-XDP.md section 5): tag nibble 0xC on channel
+// a progress report: tag nibble 0xC on channel
 // 31, followed by 10-byte stream records of mode (u8), channel (u8), the
 // highest contiguous sequence (u32 little endian) and the bytes received (u32
 // little endian). Each record releases that stream's confirmed sends from the

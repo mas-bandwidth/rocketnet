@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// CONFIG, the one announcement (docs/CHANNELS.md 10.3 and 13.4;
+// CONFIG, the one announcement (standard/MESSAGES.md 10.3 and 13.4;
 // tla/RNEndpoint.tla Reset, WriteOk, OnPayload with ConfigCompare, Tick):
 // each end queues one CONFIG control record at connection reset, at the head
 // of IMMEDIATE, taking the connection's first reliable number; the receiver
@@ -831,8 +831,8 @@ static void message_config_never_received_is_reliable_timeout()
     mc_pair_teardown( &pair );
 }
 
-// STANDARD.md labels the CONFIG defaults vector; this case regenerates it
-// from the library's own defaults (CHANNELS.md 13.4) and pins it byte for
+// standard/MESSAGES.md labels the CONFIG defaults vector; this case regenerates it
+// from the library's own defaults (standard/MESSAGES.md 13.4) and pins it byte for
 // byte: enabled 0xFF, all eight types of the first version's mask (7.5).
 // Red if the default mask or the default config drifts from the standard.
 static void config_vector_is_library_default()

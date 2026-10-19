@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Mas Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The DST invariant checks' unit cases (docs/DST.md section 4): each case
+    The DST invariant checks' unit cases: each case
     feeds a check a hand-built delivery sequence and asserts the check fires
     or passes. Time is an argument starting at 1000.0; the checks never read
     the wall clock.

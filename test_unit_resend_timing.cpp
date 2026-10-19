@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The resend delay of a reliable record (docs/CHANNELS.md 6.4 "RTO" and
+// The resend delay of a reliable record (standard/MESSAGES.md 6.4 "RTO" and
 // "Resend"; tla/RNResendTiming.tla): every resend waits
 // min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no back-off, and
 // rto = clamp( srtt x ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100 + 2 rttvar,
@@ -294,7 +294,7 @@ static void message_config_abi_size_is_unchanged()
 REGISTER_UNIT_TEST( message_config_abi_size_is_unchanged );
 
 // ---------------------------------------------------------------------------
-// The chunks of a block wait the RTO alone (docs/CHANNELS.md 6.4 "Resend";
+// The chunks of a block wait the RTO alone (standard/MESSAGES.md 6.4 "Resend";
 // tla/RNResendTiming.tla Delay("c"), SmallNeverHeldByChunk and the reversed
 // witness MCRNResendTimingBrokenOneFifo.cfg). These cases read only what
 // every version of layer 3 has (the walk's output and resend_count), so they

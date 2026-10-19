@@ -17,7 +17,7 @@
 // (bytes, receive queue, wanted verdict, wanted counter), so the kernel tier
 // can replay the same rows and any disagreement names a shim defect or a
 // kernel difference. Each row asserts its verdict, that its counter moved
-// by exactly one, and that every other counter stayed at zero (STANDARD.md,
+// by exactly one, and that every other counter stayed at zero (standard/TRANSPORT.md,
 // Demonstrating conformance: a must-fire with a must-not-fire).
 
 #include <ctype.h>
@@ -870,7 +870,7 @@ static void xdp_host_invalid_type_drops()
 // ---------------------------------------------------------------------------
 // the exhaustive sweep: every type byte at every UDP payload size from 0 to
 // one past the receive ceiling, both families, against the size table of
-// STANDARD.md (Packet sizes; Reading packets: the server ignores denied,
+// standard/TRANSPORT.md (Packet sizes; Reading packets: the server ignores denied,
 // challenge and cookie, and types 10 to 255 are reserved). The table is
 // written here, never taken from ROCKETNET_WIRE_SERVER_PACKET_VALID.
 

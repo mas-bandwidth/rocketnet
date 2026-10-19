@@ -343,7 +343,7 @@ static void test_staged_lease_table_full()
 
 static void test_entries_carry_connection_id(bool staged)
 {
-    // docs/CHANNELS.md P9a, P9b: the transport's own batches carry each
+    // standard/MESSAGES.md P9a, P9b: the transport's own batches carry each
     // entry's connection id beside its client index. Two slots hold
     // connection ids 1 and 2; the server sends each client three packets
     // through the public send path, then each client's sealed payload,
@@ -484,7 +484,7 @@ static void test_entries_carry_connection_id(bool staged)
 
 static void test_staged_link_address_hooks()
 {
-    // DRIVERS.md, xdp (the reply-MAC rule), from the transport's side. Fed
+    // TRANSPORTS.md, xdp (the reply-MAC rule), from the transport's side. Fed
     // one update holding a packet from an unknown address (dropped) and a
     // payload that opens under client 0's keys (view index 1), the transport
     // tells the driver about the accepted packet only. Then the driver

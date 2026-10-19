@@ -7,7 +7,7 @@
 // freed when its connection closes, and a fresh token at a server with a
 // free slot always connects, however many players have come and gone
 // before it (tla/RNSecurityTables.tla, OneTokenOneLiveConnection and
-// ChurnNeverDenied; docs/SESSION.md, Token reuse).
+// ChurnNeverDenied; Token reuse).
 //
 // Every case runs client and server protocols in memory on mocked time that
 // starts at 1000.0: no sockets, no real time.
@@ -363,7 +363,7 @@ static void server_rejects_an_expired_token_before_any_crypto()
 REGISTER_UNIT_TEST( server_rejects_an_expired_token_before_any_crypto );
 
 // A token whose connection has closed may connect again inside its short
-// expiry: the residual risk accepted by the design (docs/SESSION.md, Token
+// expiry: the residual risk accepted by the design (Token
 // reuse). This pins it, so a change to the rule is a change to this test.
 
 static void server_admits_a_token_again_after_its_connection_closes()

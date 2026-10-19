@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Mas Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The DST invariant checks of docs/DST.md section 4: each check mirrors an
+    The DST invariant checks: each check mirrors an
     invariant or property a TLA+ model in tla/ already states, named below by
     module and invariant. The checks observe deliveries, receipts, link acks,
     transport states and counters; none changes SDK behaviour. Time is an

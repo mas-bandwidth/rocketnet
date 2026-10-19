@@ -156,7 +156,7 @@ static void client_io_step_uses_send_batch_when_set()
 REGISTER_UNIT_TEST( client_io_step_uses_send_batch_when_set );
 
 // The clock callback stamps receive_time: one datagram read with now = 1000.25
-// is exposed with receive_time 1000.25. docs/CLIENT-IO.md _The clock_.
+// is exposed with receive_time 1000.25.
 static void client_io_receive_time_from_callback()
 {
     rocketnet_fake_client_driver_t fake = {};

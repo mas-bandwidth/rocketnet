@@ -210,7 +210,7 @@ void rocketnet_test_transport_reconnect_churn()
     // each connect with a fresh token and leave cleanly. every one connects;
     // a closed connection frees its slot at once, and nothing about the
     // tokens that came before denies the next one (tla/RNSecurityTables.tla,
-    // ChurnNeverDenied; docs/SESSION.md, Token reuse). before the fix the
+    // ChurnNeverDenied). before the fix the
     // third was denied with the slot free.
 
     struct rocketnet_server_transport_config_t server_config;
@@ -354,7 +354,7 @@ void rocketnet_test_client_disconnect_reports_state_change()
 // its report line
 static void rocketnet_test_client_io_handoff_round_trip( const char * driver, const char * name )
 {
-    // docs/CLIENT-IO.md Per-platform cards: a client driver on a platform
+    // Per-platform cards: a client driver on a platform
     // with the wake runs the I/O thread, so the main thread never walks the
     // send ring. A deferred hand-off loses
     // nothing: the committed slots stay in the Filling ring and leave with the
@@ -486,7 +486,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
     }
 
     // the last ring leaves while the transports keep updating; a deferred
-    // hand-off is retried every update (docs/CLIENT-IO.md Reuse only after sent)
+    // hand-off is retried every update
     start = rocketnet_platform_time();
     while ( received < TOTAL && rocketnet_platform_time() - start < 5.0 )
     {
@@ -530,8 +530,8 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
 
     // disconnect, then destroy while a ring is handed off: the disconnect
     // burst is committed to the Filling ring and handed off (or handed off by
-    // destroy), and destroy runs Stop, Join, close, free (docs/CLIENT-IO.md
-    // Stop and destroy order). The server must still read the disconnect.
+    // destroy), and destroy runs Stop, Join, close, free.
+    // The server must still read the disconnect.
     rocketnet_client_transport_disconnect( client );
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
 
@@ -556,7 +556,7 @@ void rocketnet_test_client_io_linux_handoff_round_trip()
 
 void rocketnet_test_client_io_apple_handoff_round_trip()
 {
-    // docs/CLIENT-IO.md Per-platform cards, rocketnet-client-io-apple: on
+    // Per-platform cards, rocketnet-client-io-apple: on
     // macOS and iOS the msgx client has the kqueue wake, so it runs the I/O
     // thread (RNClientIo HandOff, Defer, IoSend, IoReceive, IoWait) with its
     // batches through the sendmsg_x/recvmsg_x pump; the same round trip as
@@ -566,7 +566,7 @@ void rocketnet_test_client_io_apple_handoff_round_trip()
 
 void rocketnet_test_client_io_windows_handoff_round_trip()
 {
-    // docs/CLIENT-IO.md Per-platform cards, rocketnet-client-io-windows: on
+    // Per-platform cards, rocketnet-client-io-windows: on
     // Windows the portable client has the event wake (WSAEventSelect FD_READ
     // and a manual-reset event), so it runs the I/O thread (RNClientIo
     // HandOff, Defer, IoSend, IoReceive, IoWait); the same round trip as the
@@ -1213,7 +1213,7 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
     // The server sends two payloads; the client queues them without any call to
     // receive_packet, so the cursor has not been touched. The batch is valid
     // until the next update, and with the client I/O thread the two datagrams
-    // can be published in two batches (docs/CLIENT-IO.md "The receive path:
+    // can be published in two batches ("The receive path:
     // the handoff", RNClientIo IoPublish), so the pair is sent again until
     // one batch holds exactly this round's two, in order (read by index, so
     // the cursor stays untouched and a late payload of an earlier round is
@@ -6092,7 +6092,7 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
 
 void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 {
-    // P2 (docs/CHANNELS.md section 2) over real loopback: for an
+    // P2 (standard/MESSAGES.md section 2) over real loopback: for an
     // unfragmented payload (type 5), an acked packet id means the payload
     // was in exactly one delivered batch at the peer. Both directions, ten
     // thousand payloads each way. The payload body carries its sender
@@ -6282,7 +6282,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
 void rocketnet_test_transport_reply_opens_a_later_update()
 {
-    // P6 (docs/CHANNELS.md section 2) over real loopback: a reply to a packet
+    // P6 (standard/MESSAGES.md section 2) over real loopback: a reply to a packet
     // this end opened in update j is first opened by this end in update j+1
     // or later. Each pass is one update and mirrors the transport's phase
     // order: the client's update swaps receive buffers and takes the batch
@@ -6616,7 +6616,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
 // The level-triggered wake beside a real socket on Linux: the eventfd is set
 // and consumed, a socket's readiness is seen only when readable is true, and
 // with readable false a full receive buffer waits on the wake alone
-// (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's IoWait and IoWake). A
+    // (tla/RNClientIo.tla's IoWait and IoWake). A
 // real socket and a real eventfd, so this case lives in the functional tier.
 
 void rocketnet_test_platform_wake_linux_wakes_and_reads()
@@ -6788,8 +6788,8 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 // trigger is set and consumed, the socket's EVFILT_READ is seen only when
 // readable is true (the filter is disabled and enabled in the wait's own
 // kevent call), and with readable false an unread datagram waits on the
-// trigger alone (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's IoWait and
-// IoWake). A real socket and a real kqueue, so this case lives in the
+    // trigger alone (tla/RNClientIo.tla's IoWait and
+    // IoWake). A real socket and a real kqueue, so this case lives in the
 // functional tier.
 
 void rocketnet_test_platform_wake_apple_wakes_and_reads()
@@ -6867,8 +6867,8 @@ void rocketnet_test_platform_wake_apple_wakes_and_reads()
 // The level-triggered wake beside a real socket on Windows: the manual-reset
 // wake event is set and consumed, the socket's FD_READ event is seen only when
 // readable is true, and with readable false an unread datagram waits on the
-// wake alone (docs/CLIENT-IO.md "The wake" and rocketnet-client-io-windows;
-// tla/RNClientIo.tla's IoWait and IoWake). A real socket and real events, so
+    // wake alone (rocketnet-client-io-windows;
+    // tla/RNClientIo.tla's IoWait and IoWake). A real socket and real events, so
 // this case lives in the functional tier.
 
 void rocketnet_test_platform_wake_windows_wakes_and_reads()
@@ -7165,7 +7165,7 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 // checksum correct on every server datagram.
 //
 // The case attaches an XDP program and makes namespaces and a veth pair, so it
-// runs only as root inside a virtme-ng guest (DRIVERS.md has the vng line),
+// runs only as root inside a virtme-ng guest (TRANSPORTS.md has the vng line),
 // or as root on a machine whose operator opts in with
 // ROCKETNET_TEST_XDP_VETH=1; anywhere else it is a named skip. Everything it
 // creates is removed on every exit path, a failed check included.

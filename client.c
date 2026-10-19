@@ -7,7 +7,7 @@
     exchanges payloads. Run ./bin/server, then ./bin/client. Pass an
     address to connect elsewhere: ./bin/client 192.0.2.10:40000
 
-    --matrix runs the live-stress message matrix (docs/LIVE-XDP.md):
+    --matrix runs the live-stress message matrix:
     every mode, every channel at once, the size schedule, both directions,
     a cycle of reconnects alternating clean disconnect and silent drop, and
     result lines of section 7 written to --results. --self-test-result
@@ -62,7 +62,7 @@ static void usage( const char * prog )
 {
     printf( "usage: %s [address] [flags]\n", prog );
     printf( "flags:\n" );
-    printf( "  --matrix                 run the message matrix stress mode (docs/LIVE-XDP.md)\n" );
+    printf( "  --matrix                 run the message matrix stress mode\n" );
     printf( "  --address A:P            the server address to mint tokens for\n" );
     printf( "  --label L                bench label written on every result line\n" );
     printf( "  --duration S             stress window length in seconds (default 35)\n" );
@@ -933,7 +933,7 @@ static void run_matrix( opts_t * o )
         else
         {
             /* silent drop: destroy without a disconnect call; the server's
-               timeout path frees the slot (docs/LIVE-XDP.md section 6) */
+               timeout path frees the slot */
             r_cycle( res, o->label, window, "silent" );
             st.silent_count++;
         }
