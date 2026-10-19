@@ -573,7 +573,7 @@ typedef void (*rocketnet_assert_callback_t)( const char * condition, const char 
  * default; set it that way before concurrent SDK calls, since direct writes
  * are not synchronized.
  */
-extern ROCKETNET_EXPORT rocketnet_assert_callback_t rocketnet_assert_function_pointer;
+extern ROCKETNET_EXPORT void (*rocketnet_assert_function_pointer)( const char * condition, const char * function, const char * file, int line );
 
 /**
  * @brief Installs the process-wide callback for enabled assertion failures.
