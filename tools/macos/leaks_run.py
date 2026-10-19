@@ -95,10 +95,16 @@ def matrix():
 def self_test():
     source = (
         "#include <stdlib.h>\n"
-        "int main(void) {\n"
-        "    volatile char *p = (volatile char *)malloc(32);\n"
-        "    if (!p) return 1;\n"
+        "static void *volatile held;\n"
+        "__attribute__((noinline)) static void lose(void) {\n"
+        "    char *p = (char *)malloc(32);\n"
+        "    if (!p) return;\n"
         "    p[0] = 1;\n"
+        "    held = p;\n"
+        "}\n"
+        "int main(void) {\n"
+        "    lose();\n"
+        "    held = 0;\n"
         "    return 0;\n"
         "}\n"
     )
