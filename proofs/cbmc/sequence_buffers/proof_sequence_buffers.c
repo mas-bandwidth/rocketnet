@@ -79,7 +79,7 @@ void harness_replay_already_received( void )
 #define SEQUENCE_BUFFERS_NEAR_SKIP 256
 #endif
 
-enum { REPLAY_ANY_SKIP, REPLAY_NEAR_BOUNDED, REPLAY_FAR_ONLY };
+enum { REPLAY_ANY_SKIP, REPLAY_NEAR_BOUNDED, REPLAY_FAR_ONLY, REPLAY_STEP };
 
 static void replay_advance_claim( int shape )
 {
@@ -97,6 +97,8 @@ static void replay_advance_claim( int shape )
                         skipped >= ROCKETNET_REPLAY_WINDOW_BITS );
     if ( shape == REPLAY_FAR_ONLY )
         __ESBMC_assume( ahead && skipped >= ROCKETNET_REPLAY_WINDOW_BITS );
+    if ( shape == REPLAY_STEP )
+        __ESBMC_assume( !ahead || skipped <= 2 || skipped >= ROCKETNET_REPLAY_WINDOW_BITS );
 
     rocketnet_replay_advance( &replay, sequence );
     __ESBMC_assert( replay.highest_opened >= sequence,
@@ -115,6 +117,16 @@ void harness_replay_advance_near_bounded( void ) { replay_advance_claim( REPLAY_
 // Every far skip (at least the window width): the whole-window clear.
 void harness_replay_advance_far( void ) { replay_advance_claim( REPLAY_FAR_ONLY ); }
 
+// The step lemma for the near clear loop (sdk/rocketnet_replay.cpp:66-67):
+// every sequence at or behind the high-water mark, every far skip, and every
+// near skip of at most 2, so the loop body runs at most once and the call is
+// proved whole with unwinding assertions on. Its one loop iteration clears
+// s = highest_opened + 1 for an arbitrary highest_opened, so it covers the
+// body for every s; iteration i of a longer skip is that same body at
+// s = highest_opened + i, which is the first iteration of the state with
+// highest_opened' = highest_opened + i - 1. results.md gives the argument.
+void harness_replay_advance_step( void ) { replay_advance_claim( REPLAY_STEP ); }
+
 void harness_ack_record_received( void )
 {
     rocketnet_ack_endpoint_t endpoint;
@@ -124,42 +136,59 @@ void harness_ack_record_received( void )
     assume_endpoint_preconditions( &endpoint, sequence );
 
     rocketnet_ack_endpoint_record_received( &endpoint, sequence, wire_bytes, time );
+    // The record the sdk selects is a function of the sequence alone
+    // (sdk/rocketnet_ack.cpp:363), so pinning the written record to
+    // received[sequence % SIZE] pins the access inside the received ring.
     const uint64_t slot = sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
-    __ESBMC_assert( slot < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE,
-                    "received sequence indexes inside the received ring" );
     __ESBMC_assert( endpoint.received[slot].sequence == sequence,
                     "received sequence is recorded in its selected slot" );
 }
 
-void harness_ack_record_sent_classified( void )
+static void sent_classified_claim( rocketnet_ack_endpoint_t * endpoint )
 {
-    rocketnet_ack_endpoint_t endpoint;
     uint64_t sequence = nondet_uint64();
     int wire_bytes = nondet_int();
     uint64_t packet_id = nondet_uint64();
     int has_packet_id = nondet_int();
     uint64_t aggregate_id = nondet_uint64();
     double time = 1000.0;
-    assume_endpoint_preconditions( &endpoint, sequence );
+    assume_endpoint_preconditions( endpoint, sequence );
     __ESBMC_assume( !( has_packet_id && aggregate_id != 0 ) );
-    endpoint.sent_lock = 0;
+    endpoint->sent_lock = 0;
     // Every other field, including the selected sent record and both
     // bitmaps, keeps its arbitrary initial value: a wider state than the
     // ring invariant allows, so the claim covers every reachable state.
 
     const rocketnet_ack_sent_result_t result =
-        rocketnet_ack_endpoint_record_sent_classified( &endpoint, sequence,
+        rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence,
                                                        wire_bytes, packet_id,
                                                        has_packet_id, aggregate_id,
                                                        time );
     __ESBMC_assert( result >= ROCKETNET_ACK_SENT_RECORDED &&
                     result <= ROCKETNET_ACK_SENT_REFUSED_STALE,
                     "sent classification is one of the documented outcomes" );
-    const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    __ESBMC_assert( slot < ROCKETNET_SENT_PACKET_BUFFER_SIZE,
-                    "sent sequence indexes inside the sent ring" );
-    __ESBMC_assert( ( slot >> 6 ) < ROCKETNET_SENT_BITMAP_WORDS,
-                    "sent sequence indexes inside both sent bitmaps" );
+    // ESBMC checks a dereference against the whole endpoint object, not
+    // against the sent array inside it, so an index past the ring that
+    // lands in a later field is not a bounds failure. The record the sdk
+    // selects is a function of the sequence alone (sdk/rocketnet_ack.cpp:244),
+    // so pinning the written record to sent[sequence % SIZE] pins every
+    // access of the call inside the ring.
+    if ( result != ROCKETNET_ACK_SENT_REFUSED_STALE )
+        __ESBMC_assert( endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].sequence == sequence,
+                        "a recorded sequence is written to its slot in the sent ring" );
+}
+
+void harness_ack_record_sent_classified( void )
+{
+    rocketnet_ack_endpoint_t endpoint;
+    sent_classified_claim( &endpoint );
+}
+
+void harness_ack_record_sent_classified_heap( void )
+{
+    rocketnet_ack_endpoint_t * endpoint = (rocketnet_ack_endpoint_t *) malloc( sizeof( rocketnet_ack_endpoint_t ) );
+    __ESBMC_assume( endpoint != NULL );
+    sent_classified_claim( endpoint );
 }
 
 void harness_ack_mark_keep_alive( void )
@@ -168,12 +197,17 @@ void harness_ack_mark_keep_alive( void )
     uint64_t sequence = nondet_uint64();
     assume_endpoint_preconditions( &endpoint, sequence );
     endpoint.sent_lock = 0;
-    endpoint.sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].sequence = nondet_uint64();
+    const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    endpoint.sent[slot].sequence = nondet_uint64();
+    endpoint.sent[slot].was_keep_alive = 0;
+    const int recorded = endpoint.sent[slot].sequence == sequence;
 
     rocketnet_ack_endpoint_mark_keep_alive( &endpoint, sequence );
-    const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    __ESBMC_assert( slot < ROCKETNET_SENT_PACKET_BUFFER_SIZE,
-                    "keep-alive sequence indexes inside the sent ring" );
+    // As for the sent record above: the record the sdk selects is a
+    // function of the sequence alone (sdk/rocketnet_ack.cpp:331), so pinning
+    // the tagged record to sent[sequence % SIZE] pins the access in the ring.
+    __ESBMC_assert( endpoint.sent[slot].was_keep_alive == recorded,
+                    "keep-alive tags exactly the sent ring slot of its sequence" );
 }
 
 static rn_region_t * symbolic_region( uint32_t window )
@@ -216,7 +250,7 @@ void harness_window_receive_init( void )
     __ESBMC_assert( receive.R == first_number, "init retains the first message number" );
 }
 
-static void window_accept_claim( uint32_t max_window )
+static void window_accept_claim( uint32_t max_window, int step )
 {
     const uint32_t window = symbolic_window( max_window );
     rn_region_t * region = symbolic_region( window );
@@ -227,6 +261,14 @@ static void window_accept_claim( uint32_t max_window )
     receive.R = nondet_uint64();
     record.number = nondet_uint();
     receive.violation = ROCKETNET_MESSAGE_VIOLATION_NONE;
+    if ( step )
+    {
+        for ( uint64_t ahead = 1; ahead <= 2; ++ahead )
+        {
+            const uint32_t index = (uint32_t) ( ( receive.R + ahead ) & ( window - 1 ) );
+            __ESBMC_assume( !( region->received_bits[index >> 6] & ( 1ULL << ( index & 63 ) ) ) );
+        }
+    }
 
     const int result = rn_window_receive_accept( &receive, &record, &slot );
     __ESBMC_assert( result == RN_WINDOW_RECEIVE_ACCEPT ||
@@ -239,10 +281,20 @@ static void window_accept_claim( uint32_t max_window )
 
 // Full claim: every power-of-two window up to 1 << 20. The advance loop
 // runs up to W times, so its unwinding is the cost of the claim.
-void harness_window_receive_accept( void ) { window_accept_claim( SEQUENCE_BUFFERS_FULL_WINDOW ); }
+void harness_window_receive_accept( void ) { window_accept_claim( SEQUENCE_BUFFERS_FULL_WINDOW, 0 ); }
 
 // Every power-of-two window up to SEQUENCE_BUFFERS_ACCEPT_WINDOW.
-void harness_window_receive_accept_bounded( void ) { window_accept_claim( SEQUENCE_BUFFERS_ACCEPT_WINDOW ); }
+void harness_window_receive_accept_bounded( void ) { window_accept_claim( SEQUENCE_BUFFERS_ACCEPT_WINDOW, 0 ); }
+
+// The step lemma for the advance loop (sdk/rocketnet_window_receive.cpp:92-101):
+// every power-of-two window up to 1 << 20, every R, every wire number and
+// every received bit, except that the bits for R + 1 and R + 2 start clear.
+// The accepted number sets at most one of them, so the loop inspects at
+// most R, R + 1 and R + 2 and the call is proved whole with unwinding
+// assertions on. Its first iteration runs at the arbitrary R the call
+// starts from, so it covers the body for every R and W; iteration k of a
+// longer run is that same body at R + k. results.md gives the argument.
+void harness_window_receive_accept_step( void ) { window_accept_claim( SEQUENCE_BUFFERS_FULL_WINDOW, 1 ); }
 
 void harness_window_receive_release( void )
 {
