@@ -207,6 +207,7 @@ static void connection_reset_inventory_covers_every_field()
                                                              ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 1000.0 );
     check( object );
     rn_message_connection_t * connection = &object->connections[0];
+    rocketnet_client_connection_reset( object );
     const rn_endpoint_t fresh_endpoint = *connection;
     const rn_message_connection_t fresh_connection = *connection;
     connection->disconnect_reason = ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT;
@@ -262,11 +263,42 @@ struct reset_loopback_t
     double now;
 };
 
+struct reset_loopback_keys_t
+{
+    int initialized;
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+};
+
+static const reset_loopback_keys_t * reset_loopback_keys()
+{
+    static reset_loopback_keys_t keys;
+    if ( !keys.initialized )
+    {
+        uint8_t seed[32];
+        for ( int i = 0; i < 32; i++ )
+            seed[i] = (uint8_t) ( 0x5A ^ i );
+        check( rocketnet_generate_backend_keypair_from_seed( seed, keys.backend_public, keys.backend_secret ) == ROCKETNET_STATUS_OK );
+        check( rocketnet_generate_server_keypair( keys.server_public, keys.server_secret ) == ROCKETNET_STATUS_OK );
+        keys.initialized = 1;
+    }
+    return &keys;
+}
+
+enum { RESET_LOOPBACK_PROTOCOL_ID = 0x5245534554ULL };
+
 static rocketnet_message_server_t * reset_loopback_server_create( double now, const rocketnet_message_config_t * message_config = NULL )
 {
+    const reset_loopback_keys_t * keys = reset_loopback_keys();
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config( &config );
+    rocketnet_server_transport_default_config( &config );
+    config.protocol_id = RESET_LOOPBACK_PROTOCOL_ID;
     config.max_clients = RESET_LOOPBACK_MAX_CLIENTS;
+    memcpy( config.backend_public_key, keys->backend_public, sizeof(config.backend_public_key) );
+    memcpy( config.server_public_key, keys->server_public, sizeof(config.server_public_key) );
+    memcpy( config.server_secret_key, keys->server_secret, sizeof(config.server_secret_key) );
     snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
     int status = -1;
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, now, &status );
@@ -282,13 +314,20 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
 static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_message_server_t * server, uint64_t client_id,
                                                                     const rocketnet_message_config_t * message_config = NULL )
 {
+    const reset_loopback_keys_t * keys = reset_loopback_keys();
     char address[64];
     snprintf( address, sizeof(address), "127.0.0.1:%u",
               (unsigned) rocketnet_server_transport_port( rocketnet_message_server_transport( server ) ) );
+    const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( address, client_id, 1000, token ) );
+    check( rocketnet_write_production_connect_token( keys->backend_secret, keys->server_public,
+                                                     RESET_LOOPBACK_PROTOCOL_ID, addresses, 1,
+                                                     client_id, 1000, 1030, 10, NULL,
+                                                     token, sizeof(token) ) == ROCKETNET_STATUS_OK );
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
+    config.step_driven = 1;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
         NULL, token, &config, 0.0, 1000, rocketnet_loopback_driver.client, NULL );
     check( transport );
@@ -504,7 +543,7 @@ static void reset_server_setup( reset_server_fixture_t * f )
     f->server.encryption_map = rocketnet_encryption_map_create( NULL, 4 );
     f->server.client_slots = rocketnet_client_slots_create( NULL, 2 );
     f->server.acks = rocketnet_server_acks_create( NULL, 2 );
-    f->server.reassembly = rocketnet_reassembly_set_create( NULL, 2, 2, 1024, 4 );
+    f->server.reassembly = rocketnet_reassembly_set_create( NULL, 2, 2, 8192, 4 );
     f->server.counters = &f->counters;
     f->server.connection_ids = f->connection_ids;
     check( f->server.encryption_map && f->server.client_slots && f->server.acks && f->server.reassembly );
@@ -548,16 +587,10 @@ static void connection_reset_server_slot_reuse_is_clean()
     memcpy( fresh_slots, f.server.reassembly->slots + a * f.server.reassembly->num_slots, sizeof(fresh_slots) );
     memset( f.server.reassembly->slots + a * f.server.reassembly->num_slots, 0xA5, sizeof(fresh_slots) );
     f.server.reassembly->newest_completed[a] = 77;
-    f.server.acks->num_acked = 2;
-    f.server.acks->acked_client_index[0] = a;
-    f.server.acks->acked_client_index[1] = a;
-    f.server.acks->acked_packet_ids[0] = 100;
-    f.server.acks->acked_packet_ids[1] = 101;
     rocketnet_server_connection_reset( &f.server, a );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( f.connection_ids[a] == 0 );
     check( memcmp( &f.server.acks->endpoints[a], &fresh_ack, sizeof(fresh_ack) ) == 0 );
-    check( f.server.acks->num_acked == 0 );
     check( memcmp( f.server.reassembly->slots + a * f.server.reassembly->num_slots,
                    fresh_slots, sizeof(fresh_slots) ) == 0 );
     check( f.server.reassembly->newest_completed[a] == 0 );
@@ -597,7 +630,7 @@ static void connection_reset_client_disconnect_is_clean()
     memset( &counters, 0, sizeof(counters) );
     rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
-    client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 2, 1024, 4 );
+    client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 2, 8192, 4 );
     check( client.reassembly );
     client.state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT;
     client.send_sequence_handshake = 7;
@@ -764,7 +797,7 @@ static void reset_loopback_server_reliable_timeout_reason_scenario( const rocket
     reset_loopback_settle_messages( &f );
 
     const uint8_t payload[] = { 't', 'i', 'm', 'e', 'o', 'u', 't' };
-    check( rocketnet_server_send( (rocketnet_server_t *) f.server, slot, 0,
+    check( rocketnet_message_server_send( f.server, slot, 0,
                                   ROCKETNET_RELIABLE_ORDERED, payload, sizeof(payload) ) != 0 );
     f.now += 0.01;
     check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_MESSAGE_OK );
@@ -803,7 +836,7 @@ static void reset_loopback_client_reliable_timeout_reason_scenario( const rocket
     reset_loopback_settle_messages( &f );
 
     const uint8_t payload[] = { 't', 'i', 'm', 'e', 'o', 'u', 't' };
-    check( rocketnet_client_send( (rocketnet_client_t *) f.clients[0], 0,
+    check( rocketnet_message_client_send( f.clients[0], 0,
                                   ROCKETNET_RELIABLE_ORDERED, payload, sizeof(payload) ) != 0 );
     f.now += 0.01;
     check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_MESSAGE_OK );

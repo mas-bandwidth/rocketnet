@@ -897,22 +897,5 @@ void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, in
 {
     rocketnet_assert( acks );
     rocketnet_assert( client_index >= 0 && client_index < acks->max_clients );
-
-    // The per-update receipt batch is shared storage but each row belongs to
-    // one slot. Compact away only this slot's rows before it can be reused.
-    int write = 0;
-    for ( int read = 0; read < acks->num_acked; read++ )
-    {
-        if ( acks->acked_client_index[read] == client_index )
-            continue;
-        if ( write != read )
-        {
-            acks->acked_client_index[write] = acks->acked_client_index[read];
-            acks->acked_packet_ids[write] = acks->acked_packet_ids[read];
-        }
-        write++;
-    }
-    acks->num_acked = write;
-
     rocketnet_ack_endpoint_reset( &acks->endpoints[client_index] );
 }

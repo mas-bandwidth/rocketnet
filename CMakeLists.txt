@@ -456,6 +456,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(functional
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
+        functional/server_receive_backlog.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp

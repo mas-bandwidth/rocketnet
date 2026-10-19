@@ -170,7 +170,8 @@ inline void rocketnet_client_io_retire_keys( rocketnet_client_io_t * io )
     if ( io->open.epoch.load( std::memory_order_relaxed ) == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
         return;
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_RETIRED, std::memory_order_seq_cst );
-    io->driver->operations->wake( io->driver->instance );
+    if ( io->driver->operations->wake )
+        io->driver->operations->wake( io->driver->instance );
 }
 
 // tla/RNClientIoDecrypt.tla IoDropKeys; I/O thread. Zeroes the copy and the
@@ -284,7 +285,8 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
 inline void rocketnet_client_io_stop( rocketnet_client_io_t * io )
 {
     io->quit.store( true, std::memory_order_release );
-    io->driver->operations->wake( io->driver->instance );
+    if ( io->driver->operations->wake )
+        io->driver->operations->wake( io->driver->instance );
 }
 
 // RNClientIo HandOff and Defer; main thread. A LATE result is the deferred
@@ -296,7 +298,7 @@ inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t co
     rocketnet_assert( !io->quit.load( std::memory_order_relaxed ) );
     io->to[io->rings.fill] = *to;
     const int result = rocketnet_client_send_rings_hand_off( &io->rings, committed );
-    if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF )
+    if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF && io->driver->operations->wake )
         io->driver->operations->wake( io->driver->instance );
     return result;
 }
@@ -313,7 +315,7 @@ inline rocketnet_client_receive_buffer_t * rocketnet_client_io_expose( rocketnet
 // Free and wakes the I/O thread when it has an owed batch.
 inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 {
-    if ( rocketnet_client_receive_handshake_update_return( &io->receive ) )
+    if ( rocketnet_client_receive_handshake_update_return( &io->receive ) && io->driver->operations->wake )
         io->driver->operations->wake( io->driver->instance );
 }
 
@@ -520,6 +522,13 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_dri
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
     const rocketnet_client_driver_operations_t * operations, void * driver_context );
+
+// As the step-driven create above, and when status is not NULL it is written
+// with ROCKETNET_STATUS_OK or the refusal's section-2.1 code (a config whose
+// step_driven field asks for a driver with no non-blocking step is refused).
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex( void * context, const uint8_t * connect_token,
+    const struct rocketnet_client_transport_config_t * config, double time,
+    const rocketnet_client_driver_operations_t * operations, void * driver_context, int * status );
 
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );

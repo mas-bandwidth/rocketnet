@@ -136,6 +136,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     transport->state_change_callback = config->state_change_callback;
     transport->time_callback = config->time_callback;
+    transport->step_driven = config->step_driven;
 
     rocketnet_message_default_config( message );
 #define RN_COPY( name ) message->name = config->name;
@@ -240,6 +241,7 @@ void rocketnet_client_default_config( struct rocketnet_client_config_t * config 
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
     config->time_callback = transport.time_callback;
+    config->step_driven = transport.step_driven;
     config->send_kbps = ROCKETNET_DEFAULT_CLIENT_SEND_KBPS;
     struct rocketnet_message_config_t message;
     rocketnet_message_default_config( &message );
