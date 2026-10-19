@@ -37,6 +37,8 @@
 ## Diagnostic Telemetry (Recorded Without Gating)
 
 At the end of every run, the single summary line records:
+- `connect_s`: wall time from the start of the connect phase until every client and the server report the full client count connected.
+- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each measured when that client first reaches `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED`.
 - `server_update_p50_us` and `server_update_p99_us`: 50th and 99th percentile durations (in microseconds) of `rocketnet_message_server_update`.
 - `rss_mb`: process resident set size (in MiB) at the end of the run.
 - `fd_limit_soft` and `fd_limit_hard`: the `RLIMIT_NOFILE` soft and hard values the run used (`infinity` when unlimited).

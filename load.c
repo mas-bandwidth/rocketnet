@@ -357,6 +357,13 @@ static int cmp_u64( const void * a, const void * b )
     return ( ua > ub ) - ( ua < ub );
 }
 
+static int cmp_double( const void * a, const void * b )
+{
+    const double da = *(const double *) a;
+    const double db = *(const double *) b;
+    return ( da > db ) - ( da < db );
+}
+
 int main( int argc, char ** argv )
 {
     if ( argc < 3 || argc > 4 )
@@ -476,6 +483,7 @@ int main( int argc, char ** argv )
     struct rocketnet_message_client_t ** clients =
         (struct rocketnet_message_client_t **) calloc( (size_t) num_clients, sizeof( *clients ) );
     int * client_ever_connected = (int *) calloc( (size_t) num_clients, sizeof( int ) );
+    double * client_connect_seconds = (double *) malloc( (size_t) num_clients * sizeof( double ) );
     uint32_t * client_next_combo = (uint32_t *) calloc( (size_t) num_clients, sizeof( uint32_t ) );
     struct load_stream_state_t * c2s_streams = (struct load_stream_state_t *) calloc(
         (size_t) num_clients * LOAD_NUM_COMBOS, sizeof( struct load_stream_state_t ) );
@@ -486,12 +494,14 @@ int main( int argc, char ** argv )
     size_t update_count = 0;
     uint64_t * update_us = (uint64_t *) malloc( update_cap * sizeof( uint64_t ) );
 
-    if ( !clients || !client_ever_connected || !client_next_combo ||
+    if ( !clients || !client_ever_connected || !client_connect_seconds || !client_next_combo ||
          !c2s_streams || !s2c_streams || !update_us )
     {
         fprintf( stderr, "load: allocation failed\n" );
         return 1;
     }
+    for ( int i = 0; i < num_clients; i++ )
+        client_connect_seconds[i] = -1.0;
 
     const uint64_t token_now = (uint64_t) time( NULL );
 
@@ -538,6 +548,8 @@ int main( int argc, char ** argv )
             const int st = rocketnet_message_client_state( clients[i] );
             if ( st == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
+                if ( client_connect_seconds[i] < 0.0 )
+                    client_connect_seconds[i] = now - start_time;
                 client_ever_connected[i] = 1;
                 connected_count++;
             }
@@ -850,6 +862,23 @@ int main( int argc, char ** argv )
         p50_us = update_us[( update_count * 50 ) / 100];
         p99_us = update_us[( update_count * 99 ) / 100];
     }
+    int connected_samples = 0;
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        if ( client_connect_seconds[i] >= 0.0 )
+            connected_samples++;
+    }
+    double connect_p50_s = 0.0;
+    double connect_max_s = 0.0;
+    if ( connected_samples > 0 )
+    {
+        qsort( client_connect_seconds, (size_t) num_clients, sizeof( double ), cmp_double );
+        const int first = num_clients - connected_samples;
+        const int median = ( connected_samples * 50 ) / 100;
+        connect_p50_s = client_connect_seconds[first + ( median < connected_samples ? median : connected_samples - 1 )];
+        connect_max_s = client_connect_seconds[num_clients - 1];
+    }
+
     const uint64_t rss_bytes = query_rss_bytes();
     const double rss_mb = (double) rss_bytes / ( 1024.0 * 1024.0 );
 
@@ -880,6 +909,7 @@ int main( int argc, char ** argv )
     rocketnet_message_server_destroy( server );
     free( clients );
     free( client_ever_connected );
+    free( client_connect_seconds );
     free( client_next_combo );
     free( c2s_streams );
     free( s2c_streams );
@@ -891,13 +921,14 @@ int main( int argc, char ** argv )
 
     if ( pass )
     {
-        printf( "load: connected=%d connect_s=%.3f connect_within_10s=PASS no_unexpected_disconnect=PASS "
+        printf( "load: connected=%d connect_s=%.3f connect_p50_s=%.3f connect_max_s=%.3f "
+                "connect_within_10s=PASS no_unexpected_disconnect=PASS "
                 "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS\n",
-                connected_count, connect_elapsed,
+                connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
                 fd_limit_soft_text, fd_limit_hard_text,
@@ -906,14 +937,15 @@ int main( int argc, char ** argv )
     }
     else
     {
-        printf( "load: connected=%d connect_s=%.3f connect_within_10s=%s no_unexpected_disconnect=%s "
+        printf( "load: connected=%d connect_s=%.3f connect_p50_s=%.3f connect_max_s=%.3f "
+                "connect_within_10s=%s no_unexpected_disconnect=%s "
                 "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
                 "failed_criterion=%s verdict=FAIL\n",
-                connected_count, connect_elapsed,
+                connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 crit1_connect_within_10s ? "PASS" : "FAIL",
                 crit2_no_unexpected_disconnect ? "PASS" : "FAIL",
                 crit3_reliable_delivery ? "PASS" : "FAIL",
