@@ -54,6 +54,12 @@ kernel for an ephemeral port; read the granted port with
 monotonic clock in seconds; use the same clock for every call that takes a
 time, and keep it finite and non-decreasing.
 
+The connect-token create and expire checks read the wall clock unless the
+config sets `game_clock_epoch`, the unix time at the game clock's zero. With an
+epoch, the check reads epoch plus the caller's time, floored to whole seconds,
+so a test can hold time still and a fixed token still connects. Zero, the
+default, keeps the wall clock.
+
 ## Configuration
 
 The client and the server each take one plain config struct. Fill it with
@@ -124,6 +130,7 @@ row per field of both public structs.
 | transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | state_change_callback | none | `void (*)( void *, int, int )` | `NULL` | no environment form |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | no environment form |
+| game_clock_epoch | ROCKETNET_CLIENT_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
 | send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer, or above `10000000`: refuses the create; `0` or less disables the budget in this direction (not recommended) |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_CLIENT_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
@@ -152,6 +159,7 @@ row per field of both public structs.
 | num_reassembly_slots | ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
+| game_clock_epoch | ROCKETNET_SERVER_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` or less disables the budget in this direction (not recommended) |

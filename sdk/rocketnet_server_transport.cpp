@@ -219,6 +219,7 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_payload_ring_t payload_ring;
 
     double time;                                        // the game's clock, last seen
+    uint64_t game_clock_epoch;                          // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
 
     // the fragmentation shape from the config, and the send arena for
@@ -992,6 +993,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
 
     server_transport->context = context;
     server_transport->time = time;
+    server_transport->game_clock_epoch = config->game_clock_epoch;
 
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
@@ -1468,7 +1470,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     }
 
     const double current_time = time;
-    const uint64_t current_timestamp = (uint64_t) ::time( NULL );
+    const uint64_t current_timestamp = server_transport->game_clock_epoch != 0 ?
+        server_transport->game_clock_epoch + (uint64_t) current_time : (uint64_t) ::time( NULL );
 
     server_transport->payloads.num_payloads = 0;
 
