@@ -1091,7 +1091,7 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
  * @param context Allocator and callback context supplied at create.
  * @param connect_token Input connect token of ROCKETNET_CONNECT_TOKEN_BYTES; NULL is refused.
  * @param config Input config copied at create; NULL selects defaults.
- * @param config_bytes Caller config size in bytes; unknown sizes are refused.
+ * @param config_bytes Caller config size in bytes; checked only when config is non-NULL, and unknown sizes are refused.
  * @param memory Optional caller-owned aligned block; NULL requests library allocation.
  * @param memory_bytes Size of a supplied memory block in bytes; ignored when memory is NULL.
  * @return Owned client handle, or NULL on refusal; destroy it with rocketnet_client_destroy.
@@ -1250,7 +1250,7 @@ ROCKETNET_EXPORT void rocketnet_client_release( struct rocketnet_client_t * clie
  * @param client Client handle returned by create; NULL is a counted no-op.
  * @param out Caller-owned receipt output array; NULL returns 0.
  * @param capacity Maximum receipt entries to copy; a nonpositive value copies none.
- * @return Number of entries copied; the list is valid until the next update.
+ * @return Number of entries copied. Repeated calls see the same outcomes until the next update; the output array remains caller-owned.
  */
 ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity );
 
@@ -1353,7 +1353,7 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
  * @param context Allocator and callback context supplied at create.
  * @param address Server bind address as a.b.c.d:port or [v6]:port; NULL is refused and port 0 requests an ephemeral port.
  * @param config Input config copied at create; NULL selects defaults, which lack production keys.
- * @param config_bytes Caller config size in bytes; unknown sizes are refused.
+ * @param config_bytes Caller config size in bytes; checked only when config is non-NULL, and unknown sizes are refused.
  * @param memory Optional caller-owned aligned block; NULL requests library allocation.
  * @param memory_bytes Size of a supplied memory block in bytes; ignored when memory is NULL.
  * @return Owned server handle, or NULL on refusal; destroy it with rocketnet_server_destroy.
@@ -1546,7 +1546,7 @@ ROCKETNET_EXPORT void rocketnet_server_release( struct rocketnet_server_t * serv
  * @param client_index Server slot index from 0 through max_clients - 1; invalid slots are refused or return 0.
  * @param out Caller-owned receipt output array; NULL returns 0.
  * @param capacity Maximum receipt entries to copy; a nonpositive value copies none.
- * @return Number of entries copied, or 0 for an invalid slot or argument.
+ * @return Number of entries copied, or 0 for an invalid slot or argument. Repeated calls see the same outcomes until the next update; the output array remains caller-owned.
  */
 ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity );
 
