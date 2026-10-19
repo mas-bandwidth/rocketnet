@@ -1950,14 +1950,13 @@ static void unreliable_store_full_exhausts_and_kicks()
     mo_pair_teardown( &pair );
 }
 
-// an unreliable message past the one-packet limit is refused and counted
-// (SEND_FAILED) at the send call, never queued, so the queue never holds a
-// message it can never send; the one at the limit goes, and a valid message
-// behind the refused one still arrives
-static void unreliable_past_limit_refused_counted_and_not_wedged()
+// an unreliable message past the one-packet limit is promoted to its reliable
+// twin and counted (RakNet ReliabilityLayer); the one at the limit still goes
+// as unreliable, and a valid message behind the promotion still arrives
+static void unreliable_past_limit_promotes_counted_and_not_wedged()
 {
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1 );
+    mo_pair_setup( &pair, 1, NULL, 100000, 100000 );
     mo_step( &pair );
 
     rocketnet_message_client_t * client = pair.clients[0];
@@ -1969,30 +1968,45 @@ static void unreliable_past_limit_refused_counted_and_not_wedged()
     mo_fill( message, 1, (uint32_t) limit );
     check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, limit ) != 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 0 );
 
-    // past the limit, and far past it (the largest the config allows)
+    // past the limit, and the largest the config allows: both promoted
     mo_fill( message, 2, (uint32_t) limit + 1 );
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, limit + 1 ) == 0 );
-    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 1 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, limit + 1 ) != 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 1 );
     mo_fill( message, 3, 16384 );
-    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, 16384 ) == 0 );
-    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 2 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, 16384 ) != 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 2 );
 
-    // a refusal is not a store-full drop, and the connection stays up
+    // a promotion is not a refusal or a store-full drop, and the connection stays up
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
     check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_NONE );
 
-    // not wedged: a valid message behind the refused ones is sent
+    // not wedged: a valid message behind the promoted ones is sent
     mo_fill( message, 4, 50 );
     check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, 50 ) != 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 2 );
 
     std::vector<mo_received_t> got;
-    for ( int i = 0; i < 4; i++ )
+    for ( int i = 0; i < 512 && got.size() < 4; i++ )
         mo_step( &pair, &got );
-    check( got.size() == 2 );
-    uint32_t id = 0;
-    check( mo_verify( got[0].bytes, &id ) && id == 1 && (int) got[0].bytes.size() == limit );
-    check( mo_verify( got[1].bytes, &id ) && id == 4 && got[1].bytes.size() == 50 );
+    check( got.size() == 4 );
+    const int expected_bytes[4] = { limit, limit + 1, 16384, 50 };
+    for ( int id = 1; id <= 4; id++ )
+    {
+        int seen = 0;
+        for ( size_t k = 0; k < got.size(); k++ )
+        {
+            uint32_t got_id = 0;
+            if ( mo_verify( got[k].bytes, &got_id ) && got_id == (uint32_t) id )
+            {
+                seen++;
+                check( (int) got[k].bytes.size() == expected_bytes[id - 1] );
+            }
+        }
+        check( seen == 1 );
+    }
 
     mo_pair_teardown( &pair );
 }
@@ -2234,7 +2248,7 @@ REGISTER_UNIT_TEST( rnslots_witness_replays );
 REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );
 REGISTER_UNIT_TEST( message_send_refused_counts_bad_arguments );
 REGISTER_UNIT_TEST( unreliable_store_full_exhausts_and_kicks );
-REGISTER_UNIT_TEST( unreliable_past_limit_refused_counted_and_not_wedged );
+REGISTER_UNIT_TEST( unreliable_past_limit_promotes_counted_and_not_wedged );
 REGISTER_UNIT_TEST( unreliable_failed_packet_drops_and_counts_each_record );
 REGISTER_UNIT_TEST( unreliable_chunks_freed_when_written );
 REGISTER_UNIT_TEST( unreliable_over_a_lossy_link_arrives_intact_at_most_once );

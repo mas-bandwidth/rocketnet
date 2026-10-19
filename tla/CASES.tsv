@@ -190,3 +190,5 @@ MCServerSessionTouchesOtherSlot.cfg	MCServerSession.tla	invariant	ResetTouchesOn
 MCRNSimFaults.cfg	MCRNSimFaults.tla	pass	-	check	rnsimfaults	required	-
 MCRNSimFaultsBrokenRestartKeepsSession.cfg	MCRNSimFaults.tla	invariant	RestartIsFresh	check	rnsimfaults	required	-
 MCRNSimFaultsBrokenCrashedSends.cfg	MCRNSimFaults.tla	invariant	CrashedPeerSilent	check	rnsimfaults	required	-
+MCRNClientIoStepDriven.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
+MCRNClientIoBrokenStepStartsThread.cfg	MCRNClientIo.tla	invariant	NoIoThreadActionInStepMode	check	rnclientio	required	-

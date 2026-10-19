@@ -334,6 +334,16 @@ def main():
     if cell is not None:
         compare("SINGLE message bytes", ints(cell)[0], code["ROCKETNET_MESSAGE_SINGLE_BYTES"])
 
+    cell = row("Unreliable one-record threshold")
+    if cell is not None:
+        published = ints(cell)
+        compare("unreliable one-record threshold", published[0],
+                code["ROCKETNET_MESSAGE_UNRELIABLE_RECORD_BYTES"])
+        compare("unreliable sequenced threshold narrow", published[1],
+                code["ROCKETNET_MESSAGE_SEQUENCED_RECORD_BYTES_NARROW"])
+        compare("unreliable sequenced threshold WIDE", published[2],
+                code["ROCKETNET_MESSAGE_SEQUENCED_RECORD_BYTES_WIDE"])
+
     cell = row("Fragment stride")
     if cell is not None:
         published = ints(cell)

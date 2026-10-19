@@ -846,7 +846,19 @@
     /* learned MAC that answers no received frame (DRIVERS.md, xdp). Never */ \
     /* sent and never counted as sent. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS: Counts sends refused because the driver has no link-layer destination. Unit: occurrences. Class: refusal; family: none. */ \
-    X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE )
+    X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE ) \
+    \
+    /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
+    /* too big for one packet's record is promoted to its reliable twin, as */ \
+    /* RakNet's ReliabilityLayer does. EXPECTED: promotion is the normal path */ \
+    /* for a large unreliable send, one count per send. appended: indices are */ \
+    /* the contract. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE: Counts UNRELIABLE sends too big for one packet's record, promoted to their reliable twin. Unit: sends. Class: expected; family: none. */ \
+    X( MESSAGE_PROMOTED_UNRELIABLE, EXPECTED, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED: Counts UNRELIABLE_SEQUENCED sends too big for one packet's record, promoted to their reliable twin. Unit: sends. Class: expected; family: none. */ \
+    X( MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED, EXPECTED, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT: Counts UNRELIABLE_WITH_ACK_RECEIPT sends too big for one packet's record, promoted to their reliable twin. Unit: sends. Class: expected; family: none. */ \
+    X( MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT, EXPECTED, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.
