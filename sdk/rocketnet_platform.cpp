@@ -643,7 +643,7 @@ receive_again:
 #if defined(__linux__)
 
 // The client I/O wake on Linux: an eventfd beside the socket. The wake is
-// level-triggered (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's
+// level-triggered (tla/RNClientIo.tla's
 // IoWake, IoWait and Wake), so a set made while no wait runs makes the next
 // wait return at once. wait polls the eventfd (and the socket only when
 // readable is true); a readable eventfd is drained by reading its 8-byte
@@ -741,7 +741,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 // per-packet send_packet/receive_packet, so a packet is sent, dropped or
 // delivered exactly as the portable path would.
 //
-// docs/CLIENT-IO.md The design (the batch seam, the I/O step) and Measured;
+// The design (the batch seam, the I/O step) and Measured;
 // tla/RNClientIo.tla IoSend and IoReceive.
 
 #define ROCKETNET_MSS_BATCH 64
@@ -2871,7 +2871,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 // ---------------------------------------------------
 
 // The client I/O wake on macOS and iOS: one kqueue holding the socket's
-// EVFILT_READ and an EVFILT_USER trigger (docs/CLIENT-IO.md "The wake" and
+// EVFILT_READ and an EVFILT_USER trigger (
 // its macOS and iOS card). The trigger is EV_CLEAR, so it is
 // level-triggered until a wait returns it: a set made while no wait runs
 // makes the next wait return at once, and that wait consumes it.
@@ -2886,7 +2886,7 @@ struct rocketnet_platform_wake_t
     bool read_enabled;
 };
 
-// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla Init: no wake set, the
+// tla/RNClientIo.tla Init: no wake set, the
 // read filter enabled.
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
@@ -2917,7 +2917,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     return wake;
 }
 
-// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla IoExit and Free: the
+// tla/RNClientIo.tla IoExit and Free: the
 // kqueue, and with it both filters, goes with the I/O thread.
 
 void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
@@ -2931,7 +2931,7 @@ void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 // tla/RNClientIo.tla IoWait and IoWake: the wait returns on the trigger, or on
 // a readable socket only while readable is true (waitReadable). When readable
 // changes, the same kevent call carries EV_ENABLE or EV_DISABLE for the read
-// filter, so a full buffer waits on the trigger alone (docs/CLIENT-IO.md "The
+// filter, so a full buffer waits on the trigger alone (
 // wake"). A returned EV_CLEAR trigger is consumed (IoWake's wake' = FALSE).
 
 bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
@@ -2975,7 +2975,7 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     return woken;
 }
 
-// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla HandOff, Return and Stop
+// tla/RNClientIo.tla HandOff, Return and Stop
 // (the actions that set wake'): any thread triggers the EVFILT_USER event; it
 // stays set until a wait returns it.
 
@@ -3796,7 +3796,7 @@ static int get_connection_type()
 // ---------------------------------------------------
 
 // The client I/O wake on Windows: a manual-reset event beside an event the
-// socket signals on FD_READ (docs/CLIENT-IO.md "The wake" and
+// socket signals on FD_READ (
 // rocketnet-client-io-windows; tla/RNClientIo.tla's IoWait, IoWake and Wake).
 // The wake is level-triggered: a set made while no wait runs leaves the event
 // signalled, so the next wait returns at once. FD_READ is re-armed by the
@@ -3810,7 +3810,7 @@ struct rocketnet_platform_wake_t
     HANDLE wake_event;
 };
 
-// docs/CLIENT-IO.md "The wake": the socket's FD_READ event and an unset
+// the socket's FD_READ event and an unset
 // manual-reset wake event (tla/RNClientIo.tla's Init: wake = FALSE)
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
@@ -3854,7 +3854,7 @@ void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 }
 
 // tla/RNClientIo.tla's IoWait and IoWake: wait on the wake and, only when
-// readable is true, the socket (docs/CLIENT-IO.md "The wake": a full buffer
+// readable is true, the socket (a full buffer
 // waits on the wake alone). The wake event is first in the array, so when both
 // are signalled WaitForMultipleObjects reports the wake and the wake is
 // consumed (IoWake's wake' = FALSE). The signalled handle is reset before the

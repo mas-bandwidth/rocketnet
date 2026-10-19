@@ -9,10 +9,10 @@
 
 #include <string.h>
 
-// Layer 2, message records: STANDARD.md _Messages_ and docs/CHANNELS.md
+// Layer 2, message records: standard/MESSAGES.md _Messages_ and standard/MESSAGES.md
 // sections 5 and 13. No TLA+ module covers this layer: it holds no state
 // between calls, so it is checked by known-answer vectors, the pack/parse
-// property test and the fuzz target (CHANNELS.md 3, layer 2 row).
+// property test and the fuzz target (standard/MESSAGES.md 3, layer 2 row).
 
 const char * rocketnet_message_violation_name( int violation )
 {
@@ -39,7 +39,7 @@ const char * rocketnet_message_violation_name( int violation )
 //                     the fields of a code
 // -----------------------------------------
 
-// Which fields a record carries, from its flags byte alone (STANDARD.md
+// Which fields a record carries, from its flags byte alone (standard/MESSAGES.md
 // _Messages_, the record table). Defined for every flags byte, valid or not,
 // so the receiver can run check 2 (the header fits) before check 3 (the
 // flags are allowed), in the standard's order.
@@ -68,7 +68,7 @@ static int rocketnet_message_flags_header_bytes( uint8_t flags )
     return bytes;
 }
 
-// Check 3 (STANDARD.md _Messages_): the flag combinations a correct sender writes.
+// Check 3 (standard/MESSAGES.md _Messages_): the flag combinations a correct sender writes.
 
 static bool rocketnet_message_flags_allowed( uint8_t flags )
 {
@@ -81,11 +81,11 @@ static bool rocketnet_message_flags_allowed( uint8_t flags )
     if ( flags & ROCKETNET_MESSAGE_FLAG_RESERVED )
         return false;
     if ( block && ( code == ROCKETNET_MESSAGE_CODE_UNRELIABLE || code == ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED ) )
-        return false;                                               // only reliable messages are blocks (CHANNELS.md 8)
+        return false;                                               // only reliable messages are blocks (standard/MESSAGES.md 8)
     if ( wide && !rocketnet_message_code_has_channel( code ) )
         return false;
     if ( control && ( code != ROCKETNET_MESSAGE_CODE_RELIABLE || block ) )
-        return false;                                               // CONTROL is code 2, never a block (CHANNELS.md 10.3)
+        return false;                                               // CONTROL is code 2, never a block (standard/MESSAGES.md 10.3)
     return true;
 }
 
@@ -180,8 +180,8 @@ int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * wr
     return space > 0 ? space : 0;
 }
 
-// The record layout, field by field in the standard's order (STANDARD.md
-// _Messages_; CHANNELS.md 13.2): flags, length, then number, ring,
+// The record layout, field by field in the standard's order (standard/MESSAGES.md
+// _Messages_; standard/MESSAGES.md 13.2): flags, length, then number, ring,
 // sequencing, ordering, channel, fragment, fragments, each only when its
 // code or flags carry it, then the data.
 
@@ -204,7 +204,7 @@ static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * wri
     const uint8_t flags = rocketnet_message_record_flags( record );
     const int header = rocketnet_message_flags_header_bytes( flags );
     if ( header + record->bytes > rocketnet_message_writer_space( writer ) )
-        return 0;                                                   // never split: the record ends this packet (CHANNELS.md 9.3)
+        return 0;                                                   // never split: the record ends this packet (standard/MESSAGES.md 9.3)
     if ( !copy && record->data != writer->payload + writer->bytes + header )
         return 0;                                                   // in place: the data starts where its header ends
 
@@ -237,7 +237,7 @@ static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * wri
 #if defined(ROCKETNET_MESSAGE_COPY_TEST_HOOKS)
         rocketnet_platform_atomic_add_u64( &rn_message_payload_copies, 1 );
 #endif
-        rocketnet_write_bytes( &p, record->data, record->bytes );   // the one copy, store to frame (CHANNELS.md R5)
+        rocketnet_write_bytes( &p, record->data, record->bytes );   // the one copy, store to frame (standard/MESSAGES.md R5)
     }
 
     writer->bytes += header + record->bytes;
@@ -259,13 +259,13 @@ int rocketnet_message_writer_finish( struct rocketnet_message_writer_t * writer 
 {
     rocketnet_assert( writer );
     if ( writer->records == 0 )
-        return 0;                                                   // an empty plan writes nothing (CHANNELS.md 9.3)
+        return 0;                                                   // an empty plan writes nothing (standard/MESSAGES.md 9.3)
     rocketnet_assert( writer->bytes + 1 <= writer->capacity );
     writer->payload[writer->bytes] = ROCKETNET_MESSAGE_FORM_RECORDS;
     return writer->bytes + 1;
 }
 
-// SINGLE (CHANNELS.md 5, 11.2): the form byte goes last, so the message is
+// SINGLE (standard/MESSAGES.md 5, 11.2): the form byte goes last, so the message is
 // at payload offset 0, the transport's 16-aligned root, with nothing before it.
 
 int rocketnet_message_single_capacity( int payload_capacity )
@@ -305,7 +305,7 @@ static inline int rocketnet_message_round16( int bytes )
 }
 
 // One record at body[offset], with remaining = body bytes from offset on.
-// Runs checks 2 to 9 of STANDARD.md _Messages_ in order and stops at the
+// Runs checks 2 to 9 of standard/MESSAGES.md _Messages_ in order and stops at the
 // first that fails. Reads only [body + offset, body + offset + remaining).
 
 static int rocketnet_message_decode_record( const uint8_t * record_start, int remaining, int payload_bytes,
@@ -371,14 +371,14 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
             return ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL;
     }
 
-    // check 6: the type is enabled (CHANNELS.md 7.5); CONTROL is exempt
+    // check 6: the type is enabled (standard/MESSAGES.md 7.5); CONTROL is exempt
 
     if ( !control && ( limits->enabled_codes & ( 1u << code ) ) == 0 )
         return ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED;
 
     // check 7, the part a record shows alone: a count of at least two, the
     // index inside it, k <= W, k * F <= max_message_bytes + F - 1, and every
-    // fragment but the last exactly F bytes (CHANNELS.md 8). The agreement
+    // fragment but the last exactly F bytes (standard/MESSAGES.md 8). The agreement
     // with a live block descriptor is layer 5's.
 
     const int F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
@@ -427,7 +427,7 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
 }
 
 // Check 1, then each record of the body in turn; the first failure refuses
-// the whole payload (CHANNELS.md R6).
+// the whole payload (standard/MESSAGES.md R6).
 
 int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits )
 {
@@ -516,7 +516,7 @@ int rocketnet_message_reader_next( struct rocketnet_message_reader_t * reader, s
 //                           CONFIG control
 // -----------------------------------------
 
-// The CONFIG body (STANDARD.md _Messages_; CHANNELS.md 13.4):
+// The CONFIG body (standard/MESSAGES.md _Messages_; standard/MESSAGES.md 13.4):
 // kind, version, enabled, zero, then five u32 and four zero bytes.
 
 void rocketnet_message_write_config_body( uint8_t * output, const struct rocketnet_message_config_body_t * body )

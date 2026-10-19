@@ -18,13 +18,13 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_slots.h"
 
-// Layers 7 and 8 of the message layer (docs/CHANNELS.md 10 and 11), condensed
+// Layers 7 and 8 of the message layer (standard/MESSAGES.md 10 and 11), condensed
 // to what the C API in sdk/rocketnet.h needs: the client and the server message
 // objects over the transports. tla/RNSlots.tla is the spec of the object's
 // update, release and slot rules; tla/RNConnectionMemory.tla of exhaustion and
 // reuse; each function in sdk/rocketnet_message_client.cpp and
 // sdk/rocketnet_message_server.cpp names the action it implements (R7). Each
-// connection's own message state is its endpoint (layer 7, CHANNELS.md 10.1,
+// connection's own message state is its endpoint (layer 7, standard/MESSAGES.md 10.1,
 // sdk/rocketnet_endpoint.h), which the object calls for everything per
 // connection; the object keeps the transport link, the slots and the update
 // order.
@@ -101,7 +101,7 @@ struct rn_message_link_t
 #define RN_MESSAGE_VIEW_HELD                1   // handed out by receive, not yet released
 #define RN_MESSAGE_VIEW_RELEASED            2   // released, or refused because the connection ended
 
-// A connection is its endpoint (CHANNELS.md 10.1, sdk/rocketnet_endpoint.h:
+// A connection is its endpoint (standard/MESSAGES.md 10.1, sdk/rocketnet_endpoint.h:
 // the region, layers 3 to 6, the budget, the queued sends and the write pass)
 // plus what the object keeps per slot: the slot binding and the receive views.
 
@@ -142,7 +142,7 @@ struct rn_message_object_t
     rocketnet_counters_t counters;              // the message counters of every region of this object
     rn_arena_t * arena;
     rn_message_connection_t * connections;
-    struct rn_slots_t slots;                    // the slots machine (CHANNELS.md 10.2)
+    struct rn_slots_t slots;                    // the slots machine (standard/MESSAGES.md 10.2)
     int32_t default_kbps;                       // a new connection's send budget; 0 or lower uncapped
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     double time;                                // the last update's time
@@ -181,7 +181,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
                                                        int32_t default_kbps, double time );
 
-// R6 (docs/CHANNELS.md 11.5): false when ROCKETNET_MESSAGE_CLIENT_SEND_KBPS
+// R6 (standard/MESSAGES.md 11.5): false when ROCKETNET_MESSAGE_CLIENT_SEND_KBPS
 // (is_server 0) or ROCKETNET_MESSAGE_SERVER_SEND_KBPS (1) is set to a value
 // that does not parse or is above ROCKETNET_SEND_BUDGET_MAX_KBPS, logged with
 // the variable and its value. The public creates refuse on it before the

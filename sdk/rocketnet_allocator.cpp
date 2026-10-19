@@ -12,7 +12,7 @@
 #include <inttypes.h>
 #include <stddef.h>
 
-// Layer 1, the region: docs/CHANNELS.md section 4, sized by section 14, the
+// Layer 1, the region: standard/MESSAGES.md section 4, sized by section 14, the
 // send store checked by the section 4 tests.
 
 // ----------------------------------------------------------------

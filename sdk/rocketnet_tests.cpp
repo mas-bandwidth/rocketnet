@@ -420,7 +420,7 @@ void rocketnet_test_read_write()
         rocketnet_check( rocketnet_read_uint8( &r ) == 0 );
     rocketnet_check( r - buffer == w - buffer );
 
-    // exact bytes on the wire, anchored to STANDARD.md Appendix A: the
+    // exact bytes on the wire, anchored to standard/TRANSPORT.md Appendix A: the
     // associated data vectors begin with the version then the protocol id,
     // little-endian. these must match the published hex exactly.
     uint8_t ad[12];
@@ -1065,7 +1065,7 @@ void rocketnet_test_random_float()
 
 // Crypto expectations: call every libsodium primitive the standard uses and
 // pin its behavior, before any protocol code exists to depend on it. The
-// vector data mirrors STANDARD.md Appendix A byte for byte.
+// vector data mirrors standard/TRANSPORT.md Appendix A byte for byte.
 
 static void rocketnet_test_sodium_ready()
 {
@@ -3111,7 +3111,7 @@ void rocketnet_test_request_path_state_refusals()
     struct rocketnet_counters_t before;
 
     // the used-token history binds the token to the first address whose
-    // response opens under it, never at the request (STANDARD.md, Processing
+    // response opens under it, never at the request (standard/TRANSPORT.md, Processing
     // Connection Response Packets): a replay from elsewhere before that is
     // answered with a challenge, and binds nothing
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
@@ -3171,8 +3171,7 @@ void rocketnet_test_request_path_state_refusals()
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
 
     // once the first connection has closed, its slot is free and the token
-    // may connect again inside its expiry: the accepted residual risk
-    // (docs/SESSION.md, Token reuse)
+    // may connect again inside its expiry: the accepted residual risk.
     uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
     int burst_bytes = 0;
@@ -3909,7 +3908,7 @@ void rocketnet_test_client_slots()
 
 void rocketnet_test_client_slots_free_list()
 {
-    // STANDARD.md's free-list rule (1598-1615): every lookup a server
+    // standard/TRANSPORT.md's free-list rule (1598-1615): every lookup a server
     // performs per connection is constant time in the number of client
     // slots, and "a free slot is found from a free list, not a search --
     // a stack of unused indices, popped on connect and pushed on
@@ -5404,7 +5403,7 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
     // Every automatic terminal transition -- connect token expired, a timed
     // out waiting state, connection denied, and the server's disconnect --
     // must release the attempt's secrets: the derived session keys, the
-    // token's keys and the ephemeral secret. STANDARD.md requires both sides
+    // token's keys and the ephemeral secret. standard/TRANSPORT.md requires both sides
     // to zero their own ephemeral secret once it is no longer needed for a
     // handshake in progress (1095-1098) and, on a denied, to "release all
     // connection state" (2425-2426); tla/ClientConnection.tla holds the
@@ -5721,7 +5720,7 @@ void rocketnet_test_integrity_limit()
 
         // a response of any size but the wire size is WRONG_SIZE before the
         // mapping lookup, so it never reaches the open and never counts
-        // against the mapping's integrity (STANDARD.md: a connection response
+        // against the mapping's integrity (standard/TRANSPORT.md: a connection response
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
         // never a later refusal"; card rnfix-response-wrong-size-counted-r2:
         // "an exact-size check before the lookup"). two such: one too short
@@ -11241,7 +11240,7 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
     // a fragment is accepted only on a connected slot: a client in
     // sending-connection-response and a server mapping without a slot each
     // refuse a valid sealed fragment under its counter, and neither
-    // reassembly set changes by a byte (STANDARD.md _Fragmentation_)
+    // reassembly set changes by a byte (standard/TRANSPORT.md _Fragmentation_)
 
     static struct rocketnet_test_fragment_pair_t pair;
     static uint8_t before[1 << 24];
@@ -11599,7 +11598,7 @@ static void rocketnet_test_pass_cookie_gate_from( struct rocketnet_test_server_t
 }
 
 // The token is bound to an address only once that address opens a response
-// (STANDARD.md, Processing Connection Response Packets; tla/RNSecurityTables.tla,
+// (standard/TRANSPORT.md, Processing Connection Response Packets; tla/RNSecurityTables.tla,
 // BoundOnlyToOpener). An on-path attacker copies the real client's
 // cookie-bearing request off the in-memory wire, earns a cookie at its own
 // address, and replays the request from there ahead of the real one. The
@@ -13439,7 +13438,7 @@ void rocketnet_test_suite_environment()
 
 void rocketnet_test_server_transport_entries_carry_connection_id()
 {
-    // docs/CHANNELS.md P9a, P9b (card C0a): a slot released and reassigned
+    // standard/MESSAGES.md P9a, P9b (card C0a): a slot released and reassigned
     // inside one update. Client A holds slot 0; A's payload, whose ack block
     // acknowledges three server packets, then A's disconnect, then client B
     // connecting into the freed slot 0, then B's payload -- with no batch
@@ -13626,7 +13625,7 @@ void rocketnet_test_server_transport_entries_carry_connection_id()
 
 void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 {
-    // P2 (docs/CHANNELS.md section 2): for an unfragmented payload (type 5),
+    // P2 (standard/MESSAGES.md section 2): for an unfragmented payload (type 5),
     // an acked packet id means the payload was in exactly one delivered
     // batch at the peer. Both directions over the in-memory network
     // simulator with loss, duplication and reordering, ten thousand packets
@@ -13812,7 +13811,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
 void rocketnet_test_transport_reply_opens_a_later_update()
 {
-    // P6 (docs/CHANNELS.md section 2): if the peer sends anything in reply
+    // P6 (standard/MESSAGES.md section 2): if the peer sends anything in reply
     // to a packet this end opened in update j, this end opens the reply in
     // update j+1 or later. A fixed receive batch per update is what makes
     // the claim: update j's batch is closed before any packet that update

@@ -13,7 +13,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_encryption_map.h"
 
-// The general ack system, per STANDARD.md _Acks_: the transport tells a
+// The general ack system, per standard/TRANSPORT.md _Acks_: the transport tells a
 // sender which of its packets arrived, and never resends anything. The
 // sealed plaintext of every session packet begins with an ack block built
 // from the receiver's replay state; a sender that reads one marks its own

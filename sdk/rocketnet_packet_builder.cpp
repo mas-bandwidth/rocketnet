@@ -9,7 +9,7 @@
 
 #include "rocketnet_platform.h"
 
-// Layer 6's packet builder (docs/CHANNELS.md 9.3). tla/RNChannel.tla's
+// Layer 6's packet builder (standard/MESSAGES.md 9.3). tla/RNChannel.tla's
 // WritePacket is the packet, tla/RNSendBudget.tla's Send, Wait and Drop are
 // the budget's answers, tla/RNScheduler.tla's Write is the order items are
 // taken in; each function names the action it implements.
@@ -20,7 +20,7 @@ static void rn_builder_count( rocketnet_counters_t * counters, int counter )
         rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], 1 );
 }
 
-// RakNet's per-level stride and seed (docs/RAKNET-RELIABILITY.md 5.3,
+// RakNet's per-level stride and seed (
 // RL.cpp:3926-3949): stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.
 // tla/RNScheduler.tla's Stride and Seed.
 
@@ -99,7 +99,7 @@ static void rn_builder_record( const struct rn_packet_item_t * item, struct rock
             record->ordering = item->ordering;
             if ( item->block )
             {
-                record->block = 1;                                      // one fragment of a block: its index and the count - 1 (CHANNELS.md 8)
+                record->block = 1;                                      // one fragment of a block: its index and the count - 1 (standard/MESSAGES.md 8)
                 record->fragment = item->fragment;
                 record->fragments = item->fragments;
             }
