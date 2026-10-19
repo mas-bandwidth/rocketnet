@@ -610,7 +610,7 @@ struct rocketnet_address_t
     uint8_t type; ///< ROCKETNET_ADDRESS_NONE, ROCKETNET_ADDRESS_IPV4, or ROCKETNET_ADDRESS_IPV6.
 };
 
-/** @brief Filters packets from sources without an encryption mapping. @param context Application context supplied at registration. @param from Borrowed source address, valid during the callback. @param packet_data Borrowed packet bytes, valid during the callback. @param packet_bytes Packet length in bytes. @return ROCKETNET_SERVER_ADMISSION_ADMIT or ROCKETNET_SERVER_ADMISSION_DROP. Runs on the receive thread and must be fast and thread-safe; mapped sources bypass it. */
+/** @brief Filters packets from sources without an encryption mapping. @param context Application context supplied at registration. @param from Borrowed source address, valid during the callback. @param packet_data Borrowed packet bytes, valid during the callback. @param packet_bytes Packet length in bytes. @return ROCKETNET_SERVER_ADMISSION_ADMIT or ROCKETNET_SERVER_ADMISSION_DROP. Runs synchronously inside rocketnet_server_transport_update on the caller's thread, before any protocol or crypto work, for unmapped sources only, and must be fast. */
 typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives
@@ -860,7 +860,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
  * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
  * @param callback [in] Callback, or NULL to admit every source through this gate.
  * @param context [in] Opaque application pointer passed to callback; may be NULL. The caller retains ownership.
- * @return Nothing. The callback runs on the receive thread and must be fast and thread-safe; mapped sources bypass it. Set the callback on the main thread between updates.
+ * @return Nothing. The callback runs synchronously inside rocketnet_server_transport_update on the caller's thread, before any protocol or crypto work, for unmapped sources only, and must be fast. Set the callback on the main thread between updates.
  */
 void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context );
 
