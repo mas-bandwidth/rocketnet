@@ -6,6 +6,7 @@
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 #include "sdk/rocketnet.h"
+#include "sdk/rocketnet_internal.h"
 #include "sdk/rocketnet_client_io.h"
 #include "sdk/rocketnet_counters.h"
 #include "sdk/rocketnet_driver.h"
@@ -65,9 +66,14 @@ static rocketnet_server_t * destroy_disconnect_server_create( const destroy_disc
 
     rn_message_link_t link;
     rn_message_server_link( &link, transport );
-    rocketnet_server_t * server = (rocketnet_server_t *) rn_message_object_create(
+    rocketnet_message_server_t * running = (rocketnet_message_server_t *) rn_message_object_create(
         NULL, &link, 1, DESTROY_DISCONNECT_MAX_CLIENTS, NULL, NULL, 0,
         ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, now );
+    check( running != NULL );
+
+    // the public server wraps the running message server: its destroy is
+    // rocketnet_server_destroy, the path the cases exercise
+    rocketnet_server_t * server = rocketnet_server_adopt( NULL, running );
     check( server != NULL );
     return server;
 }
@@ -98,9 +104,14 @@ static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disc
 
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
-    rocketnet_client_t * client = (rocketnet_client_t *) rn_message_object_create(
+    rocketnet_message_client_t * connection = (rocketnet_message_client_t *) rn_message_object_create(
         NULL, &link, 0, 1, NULL, NULL, 0,
         ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+    check( connection != NULL );
+
+    // the public client wraps the message client: its destroy is
+    // rocketnet_client_destroy, the path the cases exercise
+    rocketnet_client_t * client = rocketnet_client_adopt( NULL, connection );
     check( client != NULL );
     return client;
 }
@@ -128,13 +139,13 @@ static int destroy_disconnect_connect_client( rocketnet_server_t * server, rocke
 
 static const uint64_t * destroy_disconnect_server_counters( rocketnet_server_t * server )
 {
-    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( (rocketnet_message_server_t *) server );
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( server ) );
     return rocketnet_server_transport_counters( transport )->values;
 }
 
 static const uint64_t * destroy_disconnect_client_counters( rocketnet_client_t * client )
 {
-    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( (rocketnet_message_client_t *) client );
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
     return rocketnet_client_transport_counters( transport )->values;
 }
 
@@ -178,9 +189,14 @@ static rocketnet_client_t * destroy_disconnect_observed_client_create( const des
 
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
-    rocketnet_client_t * client = (rocketnet_client_t *) rn_message_object_create(
+    rocketnet_message_client_t * connection = (rocketnet_message_client_t *) rn_message_object_create(
         NULL, &link, 0, 1, NULL, NULL, 0,
         ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+    check( connection != NULL );
+
+    // the public client wraps the message client: its destroy is
+    // rocketnet_client_destroy, the path the cases exercise
+    rocketnet_client_t * client = rocketnet_client_adopt( NULL, connection );
     check( client != NULL );
     return client;
 }
