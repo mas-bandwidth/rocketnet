@@ -1019,7 +1019,8 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     {
         // store quit, then wake the receive thread's wait explicitly: the
         // thread exits on its next check without depending on its wait's
-        // timeout firing, then join
+        // timeout firing (on Windows the wake is a no-op and the thread
+        // exits after its 1 ms sleep), then join
         client_transport->quit.store( true, std::memory_order_release );
         rocketnet_platform_thread_wake( client_transport->thread );
         rocketnet_platform_thread_join( client_transport->thread );
@@ -2071,7 +2072,7 @@ static void rocketnet_client_thread_function( void * data )
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) data;
 
     // quit is read with acquire on every iteration; the wait between polls is
-    // bounded at 1 ms and destroy's thread_wake ends it at once
+    // bounded at 1 ms and destroy's thread_wake ends it at once (POSIX)
     while ( !client_transport->quit.load( std::memory_order_acquire ) )
     {
         rocketnet_client_receive_packets( client_transport );

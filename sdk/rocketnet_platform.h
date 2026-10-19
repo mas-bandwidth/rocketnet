@@ -535,8 +535,9 @@ void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thr
  * once. The wake is an explicit signal, so a woken thread does not depend on
  * its wait's timeout firing. POSIX waits on a condition variable, macOS and
  * iOS on a mach semaphore (the primitive usleep waits on there, so the
- * per-wait cost matches usleep), Windows on an event. Called on a thread that
- * thread_create did not start, it sleeps for the duration.
+ * per-wait cost matches usleep). Windows sleeps for the duration and its wake
+ * is a no-op, so a Windows thread observes a quit flag within one wait. Called
+ * on a thread that thread_create did not start, it sleeps for the duration.
  * @param time Requested seconds; must be positive.
  * @return None.
  */
@@ -805,8 +806,6 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         void * context;
         HANDLE handle;
-        HANDLE wake_event;              // manual-reset: set once by thread_wake, never reset
-        HANDLE wake_timer;              // high-resolution waitable timer: thread_wait waits on it alone, thread_wake fires it at once; NULL falls back to the event
     };
 
     struct rocketnet_platform_mutex_t

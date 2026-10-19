@@ -7256,6 +7256,8 @@ extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
 // wakes the receive thread's wait explicitly before the join. These cases use
 // real threads and real waits, so they run here, not in the unit suite.
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 struct rocketnet_test_receive_thread_quit_waiter_t
 {
     std::atomic<int> about_to_wait;
@@ -7298,6 +7300,8 @@ void rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait()
     }
 }
 
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 // 1000 create and destroy cycles of a client transport whose receive thread
 // polls the in-memory loopback driver: every destroy returns
 void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
@@ -7320,6 +7324,8 @@ void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
         rocketnet_client_transport_destroy( client );
     }
 }
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 static void rocketnet_test_receive_thread_quit_wait_after_wake( void * data )
 {
@@ -7352,12 +7358,17 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
     }
 }
 
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait },
     { "client_receive_thread_quit_wake_before_wait_returns", rocketnet_test_client_receive_thread_quit_wake_before_wait_returns },
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times },
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
     { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn },
