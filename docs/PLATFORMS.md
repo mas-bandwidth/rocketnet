@@ -29,6 +29,9 @@ names.
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | none | none | unsupported | - | - |
 
+The macOS x86_64 row is the x86_64 slice of the universal build, run under
+Rosetta 2 on the Apple-silicon fleet member the runner label names.
+
 The drivers column names the backends the row actually exercises or proves in
 CI. The registry (`rocketnet_drivers.inc`) also lists portable on every
 platform, gso and xdp on Linux, msgx on macOS and iocp on Windows. A driver

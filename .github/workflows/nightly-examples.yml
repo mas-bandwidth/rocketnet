@@ -102,10 +102,10 @@ jobs:
       - name: Check both slices of the static and shared libraries
         run: |
           set -euo pipefail
-          for library in librocketnet.a librocketnet.dylib; do
-            lipo -info "bin/$library" | tee "bin/$library.lipo"
-            grep -q arm64 "bin/$library.lipo"
-            grep -q x86_64 "bin/$library.lipo"
+          for library in build-universal/librocketnet.a bin/librocketnet.dylib; do
+            lipo -info "$library" | tee "$library.lipo"
+            grep -q arm64 "$library.lipo"
+            grep -q x86_64 "$library.lipo"
           done
 
       - name: Run the x86_64 slice under Rosetta 2
