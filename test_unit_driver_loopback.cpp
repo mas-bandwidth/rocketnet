@@ -212,6 +212,17 @@ static void driver_loopback_destroy_frees_the_port()
     printf( "driver_loopback_destroy_frees_the_port\n" );
 }
 
+
+// The test binary does not link the vendored sodium directly (the production
+// archive carries it under renamed symbols), so the transport compiled into
+// this TU needs its two original-name sodium entry points. Route them to the
+// renamed implementations the archive does provide; the test never exercises
+// real randomness or cleanup past the fake driver's staging.
+extern "C" void rocketnet_sodium_randombytes_buf( void * const buf, const size_t size );
+extern "C" void rocketnet_sodium_sodium_memzero( void * const pnt, const size_t len );
+void randombytes_buf( void * const buf, const size_t size ) { rocketnet_sodium_randombytes_buf( buf, size ); }
+void sodium_memzero( void * const pnt, const size_t len ) { rocketnet_sodium_sodium_memzero( pnt, len ); }
+
 struct wire_totals_staged_fixture_t
 {
     rocketnet_address_t reserved_to;
