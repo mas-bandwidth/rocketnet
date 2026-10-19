@@ -17,8 +17,12 @@ Z3 is the default solver. Bitwuzla is used where it finishes and Z3 does not: `h
 | `harness_ack_mark_keep_alive` | proved | 23/23 | every nonzero `uint64_t` sequence against the 4096-entry sent ring | 2 | Z3 | 7 s |
 | `harness_window_receive_init` | proved | 39/39 | every first number, every power-of-two W from 64 to 1 << 20 | 2 | Z3 | 8 s |
 | `harness_window_receive_accept` | out of memory, unproved | 71 passed, rest not checked | none (full claim: every W to 1 << 20) | 1048577 | Z3 | 55 s |
-| `harness_window_receive_accept_bounded` | proved | 161/161 | every wire u24 number and arbitrary receiver state at W = 64 | 65 | Bitwuzla | 725 s |
+| `harness_window_receive_accept_bounded` | proved | 161/161 | every wire u24 number and arbitrary receiver state at W = 64 | 65 | Bitwuzla | 548 s |
 | `harness_window_receive_release` | proved | 50/50 | every `uint64_t` number, every power-of-two W from 64 to 1 << 20 | 2 | Z3 | 12 s |
+
+Every row comes from one run of the make target at the merged head, except `harness_window_receive_accept_bounded`, which was rerun through the same target (`SEQUENCE_BUFFERS_HARNESSES=harness_window_receive_accept_bounded:65:--bitwuzla`) after its bound moved from 128 (timed out at 1800 s) to 64. That macro is read by no other harness. The target exits nonzero while the three resource-limited harnesses stay unproved, so the nightly is red by design until those bounds finish.
+
+The window harnesses set `region->counters = NULL`, so the duplicate counter's atomic add (sdk/rocketnet_window_receive.cpp:15) is not reached. Its index is the fixed `ROCKETNET_COUNTER_MESSAGE_DUPLICATE`, not derived from a sequence.
 
 No property was refuted, so there is no counterexample to check against the sdk. Every unproved property below is a tool or harness limit, not a defect.
 
