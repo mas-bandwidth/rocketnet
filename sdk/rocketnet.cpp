@@ -526,11 +526,18 @@ const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t b
     return buffer;
 }
 
+// The hash of "major.minor". The dot keeps 1.10 and 11.0 apart.
+uint64_t rocketnet_protocol_version_hash( int major, int minor )
+{
+    char text[64];
+    snprintf( text, sizeof(text), "%d.%d", major, minor );
+    return rocketnet_hash_string( text );
+}
+
 uint64_t rocketnet_protocol_version()
 {
 #if !ROCKETNET_DEVELOPMENT
-    #define VERSION_STRING(major,minor) #major #minor
-    return rocketnet_hash_string( VERSION_STRING(ROCKETNET_VERSION_MAJOR_INT, ROCKETNET_VERSION_MINOR_INT) );
+    return rocketnet_protocol_version_hash( ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR );
 #else // #if !ROCKETNET_DEVELOPMENT
     return 0;
 #endif // #if !ROCKETNET_DEVELOPMENT

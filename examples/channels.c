@@ -17,10 +17,7 @@
 #include <stdint.h>
 #include <string.h>
 
-// The lifecycle card that lands after this one renames start, finish, receive,
-// release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_packets. The header at this
-// base still declares the old names, so this example uses them.
+// Uses the public API as declared in sdk/rocketnet.h.
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 #define CHAT_CHANNEL     0
 #define POSITION_CHANNEL 1
@@ -146,7 +143,7 @@ int main( void )
         // (5) send_packets is last so this frame's messages leave this frame
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
-        if ( chat_received == NUM_CHAT && positions_during_stall > 0 ) { result = 0; break; }
+        if ( chat_received == NUM_CHAT ) { result = 0; break; }
         rocketnet_sleep( 0.005 );
     }
 

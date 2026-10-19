@@ -1,4 +1,4 @@
-# MrDocs configuration for the RocketNet public C and C++ SDK headers.
+# MrDocs configuration for the RocketNet public C SDK header.
 source-root: .
 compilation-database: docs/mrdocs/CMakeLists.txt
 cmake-build-dir: build/docs/cmake
@@ -6,18 +6,11 @@ input:
   - sdk
 file-patterns:
   - rocketnet.h
-  - rocketnet.hpp
-  - rocketnet_address.h
-  - rocketnet_connect_token.h
-  - rocketnet_platform.h
-  - rocketnet_counters.h
-  - rocketnet_route.h
 extract-all-macros: true
 include-macros:
   - ROCKETNET_*
 exclude-macros:
   - "*_H"
-  - ROCKETNET_HPP
   - ROCKETNET_ADDRESS_ALREADY_DEFINED
   - ROCKETNET_PLATFORM*
   - ROCKETNET_BIG_ENDIAN
