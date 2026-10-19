@@ -82,6 +82,41 @@ jobs:
       - name: Run the examples
         run: python3 tools/run_examples.py --build build
 
+  macos-universal:
+    name: macos-universal
+    # The fleet's Apple-silicon member. Rosetta 2 runs the x86_64 slice; a
+    # member without it fails at the first `arch -x86_64` rather than passing.
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure universal
+        run: >-
+          cmake -S . -B build-universal
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build universal
+        run: cmake --build build-universal --config Release --parallel 4
+
+      - name: Check both slices of the static and shared libraries
+        run: |
+          set -euo pipefail
+          for library in build-universal/librocketnet.a bin/librocketnet.dylib; do
+            lipo -info "$library" | tee "$library.lipo"
+            grep -q arm64 "$library.lipo"
+            grep -q x86_64 "$library.lipo"
+          done
+
+      - name: Run the x86_64 slice under Rosetta 2
+        run: |
+          set -euo pipefail
+          arch -x86_64 ./bin/test
+          arch -x86_64 ./bin/test_lifecycle
+          arch -x86_64 ./bin/functional
+          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable arch -x86_64 ./bin/functional
+          ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx arch -x86_64 ./bin/functional
+
   examples-windows:
     name: windows-2025
     # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine

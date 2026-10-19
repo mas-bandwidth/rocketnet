@@ -4,12 +4,33 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from check_xdp_archive import check_archive, embedded_bytes, inputs_for
 
 
 def run(*args, **kwargs):
     subprocess.run([str(arg) for arg in args], check=True, **kwargs)
+
+
+def universal_consumers(consumer, architectures):
+    """Refuse a multi-architecture producer whose consumers carry one slice."""
+    archs = [arch for arch in architectures.split(";") if arch]
+    if sys.platform != "darwin" or len(archs) < 2:
+        return
+    names = ("consumer_rocketnet_c", "consumer_rocketnet_cpp",
+             "consumer_rocketnet_shared_c", "consumer_rocketnet_shared_cpp")
+    for name in names:
+        matches = [path for path in consumer.rglob(name)
+                   if path.is_file() and os.access(path, os.X_OK)]
+        if not matches:
+            raise RuntimeError(f"{name} was not built")
+        info = subprocess.run(["lipo", "-info", str(matches[0])], check=True,
+                              capture_output=True, text=True).stdout.strip()
+        for arch in archs:
+            if arch not in info:
+                raise RuntimeError(f"{name} is missing the {arch} slice: {info}")
+    print(f"Universal consumers: {', '.join(archs)} in C and C++, static and shared")
 
 
 def main():
@@ -53,7 +74,8 @@ def main():
                    # which does not exist in this independently installed Debug prefix.
                    f"-DCMAKE_CONFIGURATION_TYPES={args.config}",
                    "-G", cache["CMAKE_GENERATOR"]]
-        for key in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_GENERATOR_TOOLSET"):
+        for key in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_GENERATOR_TOOLSET",
+                    "CMAKE_OSX_ARCHITECTURES", "CMAKE_OSX_DEPLOYMENT_TARGET"):
             if cache.get(key):
                 command.append(f"-D{key}={cache[key]}")
         run(*command)
@@ -61,6 +83,7 @@ def main():
         env = os.environ.copy()
         # Installed DLL plus vcpkg's copied runtime dependency on Windows.
         env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
+        universal_consumers(consumer, cache.get("CMAKE_OSX_ARCHITECTURES", ""))
         run("ctest", "--test-dir", consumer, "-C", args.config, "--output-on-failure", env=env)
         if args.embedded:
             embedded = root / "embedded build"

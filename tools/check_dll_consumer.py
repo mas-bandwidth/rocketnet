@@ -168,6 +168,18 @@ def cmake_cache(build):
     return values
 
 
+def architectures(build):
+    """The slices the producer built; the consumer compiles for all of them."""
+    return [arch for arch in cmake_cache(build).get("CMAKE_OSX_ARCHITECTURES", "").split(";") if arch]
+
+
+def arch_flags(build):
+    flags = []
+    for arch in architectures(build):
+        flags += ["-arch", arch]
+    return flags
+
+
 def system_libraries(build):
     if sys.platform == "darwin":
         return ["-lc++", "-framework", "CoreFoundation", "-framework", "SystemConfiguration"]
@@ -214,7 +226,7 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
         else:
             compiler = cc if language == "C" else cxx
             standard = ["-std=c99"] if language == "C" else ["-std=c++11"]
-            flags = standard + ["-pedantic", "-Wall", "-Wextra", "-Werror", "-I", str(directory)]
+            flags = standard + arch_flags(build) + ["-pedantic", "-Wall", "-Wextra", "-Werror", "-I", str(directory)]
             if linkage == "shared":
                 flags += ["-DROCKETNET_SHARED=1"]
             executable = directory / ("dll_consumer_%s_%s" % (language.lower(), linkage))
@@ -233,6 +245,14 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
                       ["exit %d" % result.returncode])[-1]
             report(False, f"{language} client against the {linkage} library builds: {detail}")
             return
+        slices = architectures(build)
+        if sys.platform == "darwin" and len(slices) > 1:
+            info = subprocess.check_output(["lipo", "-info", str(executable)], text=True).strip()
+            missing = [arch for arch in slices if arch not in info]
+            if missing:
+                report(False, f"{language} {linkage} consumer is missing slices {missing}: {info}")
+                return
+            report(True, f"{language} {linkage} consumer built for {', '.join(slices)}")
         try:
             run = subprocess.run([str(executable)], capture_output=True, text=True,
                                  cwd=directory, env=environment, timeout=30)
