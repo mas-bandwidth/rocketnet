@@ -7,10 +7,14 @@ first. After them come the client and server objects the space game integrates,
 and only then the other six types. This document also shows that adding the
 other six later changes neither the wire nor the per-channel state.
 
+> **The message tier's normative text is
+> [standard/MESSAGES.md](../standard/MESSAGES.md).** This document is the
+> design record behind it; where the two disagree, the standard governs.
+
 Read it beside [RAKNET-RELIABILITY.md](RAKNET-RELIABILITY.md) (cited "the
 study", with its invariants written I1 to I17). The transport facts are cited
-as `file:line` at origin/main `7314a3d`. `S:n` is STANDARD.md line n and `U:n`
-is USAGE.md line n. Layer 1 is built (`sdk/rocketnet_allocator.h`, section 4)
+as `file:line` at origin/main `7314a3d`. `S:n` is a line in the retired
+standard text this design was written against, and `U:n` is USAGE.md line n. Layer 1 is built (`sdk/rocketnet_allocator.h`, section 4)
 and layer 2 is built (`sdk/rocketnet_message.h`, section 5); layer 3's receive
 window is built (`sdk/rocketnet_window_receive.h`, section 6). `ROCKETNET_MAX_CHANNELS` is in `sdk/rocketnet.h`. Names that
 are not yet in the tree (`rocketnet_server_t`, the public object surface) are
@@ -182,8 +186,9 @@ the design these points:
   `MESSAGE_SEND_QUEUE_FULL`; a full store counts `MESSAGE_SEND_STORE_FULL`.
   Each counts once per refused send, on the owner's counters, atomically,
   because an object's regions share them. A size outside 1 to
-  `max_message_bytes` is the caller's refusal to count (`MESSAGE_SEND_REFUSED`,
-  layer 8) and takes nothing here.
+  `max_message_bytes` is the caller's refusal: the unreliable modes count
+  `MESSAGE_UNRELIABLE_SEND_FAILED`, the rest `MESSAGE_SEND_REFUSED` (layer 8),
+  and it takes nothing here.
 - **Each class's links live inside its third.** The thirds are 64-aligned
   (`floor(S/3)` rounded down to 64). Each holds its chunks, then one u32 link
   per chunk, so a class has `floor(third / (chunk + 4))` chunks and nothing
@@ -1444,10 +1449,10 @@ covers the following protocol needs:
 - This layer does not reserve the first payload byte for a message id. That
   remains a consumer adapter choice (study §13).
 
-## 13. The wire, to the bit, ready for STANDARD.md
+## 13. The wire, to the bit, as the standard states it
 
-This section is written to be pasted under a new STANDARD.md heading,
-_Messages_, as is. All integers are little endian and byte aligned; no field is
+This section is the design record for the _Messages_ sections of
+[standard/MESSAGES.md](../standard/MESSAGES.md). All integers are little endian and byte aligned; no field is
 narrower than a byte (CLAUDE.md, 2026-08-26 ruling). The subject is the
 transport *payload*, the application data of a type 5 or type 9 packet (S:638).
 
@@ -2076,8 +2081,8 @@ requires.
   that elicited it. Both on every transport.
 - **C1.** Layer 1: region carve, send store, and
   `rocketnet_message_connection_bytes`.
-- **C2.** Layer 2: codec, checks, vectors and fuzz target. The STANDARD.md
-  _Messages_ section lands with it (G4).
+- **C2.** Layer 2: codec, checks, vectors and fuzz target. The
+  standard/MESSAGES.md _Messages_ section lands with it (G4).
 - **C3.** Layer 3: window, ring, sent map, RTO; `RNWindow`, `RNRing`.
 - **C4.** Layer 4: channels and dispatch, all eight codes enabled; `RNChannel`.
 - **C5.** Layer 5: blocks; `RNBlocks`.
@@ -2105,12 +2110,10 @@ requires.
   by `W`, `B` and `max_packets_per_update`, and the send budget (R6,
   retransmits first) limits resend storms; there is no back-off (6.4). RakNet's sliding window (study §9) could sit at layer 6 later
   without a wire change.
-- **G4. STANDARD.md's scope.** It specifies the transport today, and S:7-10
-  says messages are specified nowhere in it. Section 13
-  here is written to drop in as a _Messages_ section. Whether the standard
-  grows to cover messages is Glenn's ruling. The C2 card (layer 2) added
-  STANDARD.md _Messages_ with the wire only, behaviour staying here, as its
-  card asked; it is one section to revert if the ruling goes the other way.
+- **G4. standard/MESSAGES.md's scope.** The transport standard specifies the
+  transport, and the message standard specifies the message tier: section 13
+  here is its design record. The C2 card (layer 2) added standard/MESSAGES.md
+  _Messages_ with the wire only, behaviour staying here, as its card asked.
 - **G5. The fragment stride** of 1152. 1168 is the largest stride that fits,
   and 1152 leaves 16 bytes of header headroom.
 - **G6. A wire violation disconnects** (R6). The alternative, counting and

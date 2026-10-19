@@ -1,5 +1,7 @@
 # ClientConnection: the client's connection state machine
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 `tla/ClientConnection.tla` is the client of `sdk/rocketnet_client_protocol.cpp` (driven
 by `sdk/rocketnet_client_transport.cpp`'s update cycle), checked over two instances of
 the shared lossy link `tla/Link.tla`: `C2S` carries what the client sends, `S2C` what
