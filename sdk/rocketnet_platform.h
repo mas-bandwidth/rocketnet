@@ -828,20 +828,11 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     typedef _W64 unsigned int rocketnet_platform_socket_handle_t;
     #endif
 
-    // One overlapped UDP send: the platform copies the caller's datagram into
-    // data before WSASendTo, so the caller may reuse its slot as soon as the
-    // send call returns. The send ring is released when the completion lands,
-    // reaped by the next send on this socket.
-    struct rocketnet_platform_socket_send_slot_t
-    {
-        WSAOVERLAPPED overlapped;
-        WSAEVENT event;
-        WSABUF buffer;
-        sockaddr_storage to;
-        int to_length;
-        bool in_use;
-        uint8_t data[ROCKETNET_MAX_PACKET_BYTES];
-    };
+    // One overlapped UDP send is private to the platform implementation
+    // (sdk/rocketnet_platform.cpp); the socket owns a pool of them and copies
+    // the caller's datagram into a slot before WSASendTo, so the caller may
+    // reuse its send ring as soon as the send call returns.
+    struct rocketnet_platform_socket_send_slot_t;
 
     struct rocketnet_platform_socket_t
     {

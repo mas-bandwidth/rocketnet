@@ -3401,6 +3401,17 @@ int rocketnet_platform_id()
 // drops the datagram and counts the drop; it never sleeps or spins.
 #define ROCKETNET_PLATFORM_WINDOWS_SEND_SLOTS 512
 
+struct rocketnet_platform_socket_send_slot_t
+{
+    WSAOVERLAPPED overlapped;
+    WSAEVENT event;
+    WSABUF buffer;
+    sockaddr_storage to;
+    int to_length;
+    bool in_use;
+    uint8_t data[ROCKETNET_MAX_PACKET_BYTES];
+};
+
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
 static bool rocketnet_windows_send_slot_reap( rocketnet_platform_socket_t * socket, rocketnet_platform_socket_send_slot_t * slot )
