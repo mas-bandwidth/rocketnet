@@ -152,11 +152,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # System sodium is installed only as an independent parity reference;
       # the production targets compile the committed, namespaced vendor.
@@ -554,11 +567,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Check the fleet's Go is on PATH
         shell: bash
@@ -620,11 +646,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Configure
         run: >
@@ -696,11 +735,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # the library is built once with coverage instrumentation and the
       # sanitizers, then the harness links against it -- one parallel build
@@ -805,11 +857,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Configure the instrumented library
         run: >
@@ -939,46 +1004,28 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Add the s390x architecture and the ports archive
-        if: runner.environment == 'github-hosted'
+      - name: Check the s390x cross toolchain, libraries, and qemu are present
+        shell: bash
         run: |
           set -euo pipefail
-          sudo dpkg --add-architecture s390x
-
-          # The amd64 mirrors carry only amd64, so every EXISTING entry is
-          # pinned to it -- otherwise apt goes looking for s390x indexes that
-          # are not there and the update fails on the third-party lists the
-          # runner image ships. deb822 entries take an Architectures: field,
-          # one-line entries take [arch=amd64].
-
-          for f in /etc/apt/sources.list.d/*.sources; do
-            [ -e "$f" ] || continue
-            grep -q '^Architectures:' "$f" || sudo sed -i '/^Types: deb/a Architectures: amd64' "$f"
+          missing=0
+          for tool in cmake xxd pkg-config readelf s390x-linux-gnu-gcc s390x-linux-gnu-g++ qemu-s390x-static; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
           done
-          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
-            [ -e "$f" ] || continue
-            sudo sed -i -E 's|^deb +\[|deb [arch=amd64 |; s|^deb +([^[])|deb [arch=amd64] \1|' "$f"
+          for lib in libsodium libbpf libxdp; do
+            if ! PKG_CONFIG_LIBDIR=/usr/lib/s390x-linux-gnu/pkgconfig:/usr/share/pkgconfig pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (s390x) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
           done
-
-          sudo tee /etc/apt/sources.list.d/s390x-ports.sources > /dev/null <<'EOF'
-          Types: deb
-          URIs: http://ports.ubuntu.com/ubuntu-ports/
-          Suites: noble noble-updates
-          Components: main universe
-          Architectures: s390x
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-
-          sudo apt-get update -y
-
-      - name: Install the cross toolchain, the s390x libraries, and qemu
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            cmake xxd pkg-config qemu-user-static \
-            g++-s390x-linux-gnu \
-            libstdc++6:s390x \
-            libsodium-dev:s390x libbpf-dev:s390x libxdp-dev:s390x
+          if [ ! -e /usr/lib/s390x-linux-gnu/libstdc++.so.6 ]; then
+            echo "TOOL-MISSING libstdc++ (s390x) (no /usr/lib/s390x-linux-gnu/libstdc++.so.6) on $RUNNER_NAME"
+            missing=1
+          fi
+          exit "$missing"
 
       # CMAKE_SYSTEM_NAME=Linux keeps the linux branch of CMakeLists.txt --
       # this leg builds the same library the ubuntu leg does, xdp dataplane
@@ -1141,11 +1188,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # setarch -R runs each tsan binary with address-space randomisation off FOR THAT PROCESS ONLY (no sysctl,
       # no root). gcc 13's tsan runtime (Ubuntu 24.04: the hetzner org runners) cannot map its shadow under the
@@ -1213,11 +1273,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies (no libsodium-dev)
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential pkg-config libbpf-dev libxdp-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Restore the pinned sodium prefix
         id: sodium-cache
@@ -1326,11 +1399,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # only soak_sim, not the whole tree: build-and-test already compiles
       # everything on both these OSes in both configurations, so a second full
