@@ -39,11 +39,18 @@
 #define ROCKETNET_SERVER_OVER_MAX_DELTA      1
 #define ROCKETNET_SERVER_HELLO_NIBBLE        0xD0u
 #define ROCKETNET_SERVER_PROGRESS_NIBBLE     0xC0u
+#define ROCKETNET_SERVER_PROGRESS_CHANNEL    31
+#define ROCKETNET_SERVER_PROGRESS_SECONDS    0.05
 #define ROCKETNET_SERVER_SEND_BUFFER_HALF    400000u
 #define ROCKETNET_SERVER_SEND_QUEUE_HALF     512u
 #define ROCKETNET_SERVER_WINDOW_HALF         512u
 
 static volatile int quit;
+
+// section 2: the run seed offsets the length rule (section 4), and both ends
+// get the same seed, so every schedule computation in this program reads it
+// from here rather than a literal.
+static struct rocketnet_live_config_t g_live = { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 };
 
 void interrupt_handler( int signal )
 {
@@ -67,6 +74,7 @@ static void usage( void )
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
         "  --transport T           pin the transport (e.g. xdp); the in-tree driver refuses\n"
+        "  --self-test-result FILE write a sample result file without any socket and exit\n"
         "  --help                  this message\n"
         "environment:\n"
         "  ROCKETNET_SERVER_TRANSPORT   the transport candidate list\n"
@@ -222,6 +230,8 @@ struct server_stream_t
     uint32_t bucket_sent[ROCKETNET_LIVE_NUM_BUCKETS];
     uint32_t bucket_received[ROCKETNET_LIVE_NUM_BUCKETS];
     uint32_t confirmed;             // contiguous sequences the peer reported received (highest + 1)
+    uint32_t contiguous;            // the sequence after the highest contiguous one received (section 5)
+    uint64_t bytes_received;        // the bytes of the messages received for this stream
 };
 
 struct server_client_t
@@ -241,6 +251,8 @@ struct server_client_t
     uint32_t out_messages;
     uint32_t out_numbers;
     uint64_t paced;
+    double last_progress;           // when this slot last sent its 0xC report (section 5)
+    uint64_t progress_sent;
 };
 
 static int matrix_channels( int mode )
@@ -305,7 +317,7 @@ static void ledger_progress( struct server_client_t * c, int mode, int channel, 
         new_confirm = s->confirmed;
     if ( new_confirm <= s->confirmed )
         return;
-    const struct rocketnet_live_config_t live = { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 };
+    const struct rocketnet_live_config_t live = g_live;
     uint64_t dbytes = 0, dnums = 0;
     uint32_t dmsg = 0;
     for ( uint32_t q = s->confirmed; q < new_confirm; q++ )
@@ -345,6 +357,89 @@ static void matrix_progress( struct server_client_t * c, const uint8_t * data, i
             continue;
         ledger_progress( c, mode, channel, seq );
     }
+}
+
+// section 5: mark one received sequence and advance the stream's highest
+// contiguous sequence, which is what the progress report carries.
+static void matrix_stream_mark( struct server_stream_t * s, uint32_t q )
+{
+    if ( q >= ROCKETNET_SERVER_MAX_SEQUENCES )
+        return;
+    s->seen[q / 64] |= 1ull << ( q % 64 );
+    while ( s->contiguous < s->total && s->contiguous < ROCKETNET_SERVER_MAX_SEQUENCES &&
+            ( s->seen[s->contiguous / 64] & ( 1ull << ( s->contiguous % 64 ) ) ) )
+        s->contiguous++;
+}
+
+// section 3: a message under 7 bytes carries no sequence, so the receiver
+// matches it to the next tiny slot of the stream that the seed'd schedule
+// (section 4) places there and that has not arrived yet.
+static void matrix_mark_tiny( struct server_stream_t * s, int mode, int channel )
+{
+    for ( uint32_t q = 0; q < s->next && q < ROCKETNET_SERVER_MAX_SEQUENCES; q++ )
+    {
+        if ( s->seen[q / 64] & ( 1ull << ( q % 64 ) ) )
+            continue;
+        if ( rocketnet_live_length( &g_live, mode, channel, q ) < ROCKETNET_SERVER_TINY )
+        {
+            matrix_stream_mark( s, q );
+            return;
+        }
+    }
+}
+
+// section 5: the report is one tag byte 0xC0 then, per stream with a
+// contiguous arrival, a 10-byte record: mode (u8), channel (u8), the highest
+// contiguous sequence received (u32 little endian), and the bytes received
+// (u32 little endian).
+static int matrix_build_progress( const struct server_client_t * c, uint8_t * buffer, int capacity )
+{
+    int off = 0;
+    if ( capacity < 1 )
+        return 0;
+    buffer[off++] = ROCKETNET_SERVER_PROGRESS_NIBBLE;
+    for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
+    {
+        for ( int channel = 0; channel < matrix_channels( mode ); channel++ )
+        {
+            const struct server_stream_t * s = &c->streams[mode][channel];
+            if ( s->contiguous == 0 )
+                continue;                       // nothing contiguous received yet
+            if ( off + 10 > capacity )
+                return off;
+            const uint32_t hi = s->contiguous - 1u;
+            const uint32_t bytes = s->bytes_received > 0xffffffffu ? 0xffffffffu : (uint32_t) s->bytes_received;
+            buffer[off++] = (uint8_t) mode;
+            buffer[off++] = (uint8_t) channel;
+            buffer[off++] = (uint8_t) ( hi );
+            buffer[off++] = (uint8_t) ( hi >> 8 );
+            buffer[off++] = (uint8_t) ( hi >> 16 );
+            buffer[off++] = (uint8_t) ( hi >> 24 );
+            buffer[off++] = (uint8_t) ( bytes );
+            buffer[off++] = (uint8_t) ( bytes >> 8 );
+            buffer[off++] = (uint8_t) ( bytes >> 16 );
+            buffer[off++] = (uint8_t) ( bytes >> 24 );
+        }
+    }
+    return off;
+}
+
+// section 5: every 50 ms the server sends its own report, on the same cadence
+// as the client, driven by the update time. It is UNRELIABLE_SEQUENCED on
+// channel 31, which carries no matrix stream, so it neither supersedes nor is
+// superseded by one.
+static void matrix_send_progress( struct rocketnet_message_server_t * server, int client_index, struct server_client_t * c, double now )
+{
+    if ( c->last_progress > 0.0 && now - c->last_progress < ROCKETNET_SERVER_PROGRESS_SECONDS )
+        return;
+    c->last_progress = now;
+    uint8_t report[1 + ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * 10];
+    const int n = matrix_build_progress( c, report, (int) sizeof report );
+    if ( n <= 1 )
+        return;
+    if ( rocketnet_message_server_send( server, client_index, ROCKETNET_SERVER_PROGRESS_CHANNEL,
+                                       ROCKETNET_UNRELIABLE_SEQUENCED, report, n ) )
+        c->progress_sent++;
 }
 
 static void matrix_write_cells( struct server_client_t * c )
@@ -470,7 +565,7 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
     struct server_stream_t * s = &c->streams[mode][channel];
     const int64_t expected = matrix_ordered( mode ) ? (int64_t) s->expected : -1;
     int offset = -1;
-    const int result = rocketnet_live_check( &( (struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 } ), data, bytes, 0, mode, channel, c->cycle, expected, &offset );
+    const int result = rocketnet_live_check( &g_live, data, bytes, 0, mode, channel, c->cycle, expected, &offset );
     if ( result != ROCKETNET_LIVE_OK )
     {
         matrix_fail( c, mode, channel, bytes >= ROCKETNET_SERVER_TINY ? (int64_t) rocketnet_live_sequence( data, bytes ) : expected,
@@ -483,7 +578,9 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
         if ( c->tiny_received[mode][bytes] > c->tiny_sent[mode][bytes] )
             matrix_fail( c, mode, channel, -1, "duplicate-tiny", bytes );
         s->received++;
-        s->bucket_received[rocketnet_live_bucket( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, (uint32_t) bytes )]++;
+        s->bytes_received += (uint32_t) bytes;
+        s->bucket_received[rocketnet_live_bucket( &g_live, mode, (uint32_t) bytes )]++;
+        matrix_mark_tiny( s, mode, channel );
         c->verified++;
         return;
     }
@@ -508,10 +605,11 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
         matrix_fail( c, mode, channel, q, "not-increasing", bytes );
         return;
     }
-    s->seen[q / 64] |= 1ull << ( q % 64 );
+    matrix_stream_mark( s, q );
     s->last = q;
     s->received++;
-    s->bucket_received[rocketnet_live_bucket( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, bytes >= ROCKETNET_SERVER_TINY ? rocketnet_live_length( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, channel, q ) : (uint32_t) bytes )]++;
+    s->bytes_received += (uint32_t) bytes;
+    s->bucket_received[rocketnet_live_bucket( &g_live, mode, bytes >= ROCKETNET_SERVER_TINY ? rocketnet_live_length( &g_live, mode, channel, q ) : (uint32_t) bytes )]++;
     if ( matrix_ordered( mode ) )
         s->expected++;
     c->verified++;
@@ -537,8 +635,7 @@ static uint32_t matrix_send_one( struct rocketnet_message_server_t * server, int
     uint8_t * p = rocketnet_message_server_start( server, client_index, channel, mode, (int) length );
     if ( !p )
         return 0;
-    const struct rocketnet_live_config_t live = { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 };
-    const int written = rocketnet_live_generate( &live, 1, mode, channel, cycle, sequence, p, (int) length );
+    const int written = rocketnet_live_generate( &g_live, 1, mode, channel, cycle, sequence, p, (int) length );
     if ( written != (int) length )
     {
         rocketnet_message_server_abort( server, client_index );
@@ -549,14 +646,15 @@ static uint32_t matrix_send_one( struct rocketnet_message_server_t * server, int
 
 static void matrix_client_window( struct rocketnet_message_server_t * server, int client_index, struct server_client_t * c )
 {
-    client_streams_reset( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, c );
-    matrix_over_maximum( server, c, client_index, &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 } );
+    client_streams_reset( &g_live, c );
+    matrix_over_maximum( server, c, client_index, &g_live );
 
     int all_done = 0;
     while ( !all_done && !quit )
     {
         rocketnet_message_server_update( server, rocketnet_time() );
         matrix_receive( server, c, client_index );
+        matrix_send_progress( server, client_index, c, rocketnet_time() );
         all_done = 1;
         for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES && all_done; mode++ )
         {
@@ -565,7 +663,7 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
                 struct server_stream_t * s = &c->streams[mode][channel];
                 while ( s->next < s->total && s->next < ROCKETNET_SERVER_MAX_SEQUENCES )
                 {
-                    const uint32_t length = rocketnet_live_length( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, channel, s->next );
+                    const uint32_t length = rocketnet_live_length( &g_live, mode, channel, s->next );
                     const uint32_t F = ROCKETNET_LIVE_BLOCK_STRIDE;
                     const uint32_t rnum = ( mode >= 2 && mode <= 7 ) ? ( length + F - 1 ) / F : 0u;
                     const int tiny = length < ROCKETNET_SERVER_TINY;
@@ -584,7 +682,7 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
                         ledger_push( c, length, rnum );
                     s->next++;
                     s->sent++;
-                    s->bucket_sent[rocketnet_live_bucket( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, length )]++;
+                    s->bucket_sent[rocketnet_live_bucket( &g_live, mode, length )]++;
                     if ( tiny )
                         c->tiny_sent[mode][length]++;
                 }
@@ -598,11 +696,79 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
     matrix_write_cells( c );
 }
 
+// The server-side checks the card asks for without a socket: a nonzero seed
+// moves the length schedule (sections 2 and 4), and the 0xC report of section
+// 5 encodes a stream's highest contiguous sequence and bytes received. Writes
+// a sample result file and returns 0 when both hold.
+static int run_self_test( const char * path, const char * label, uint32_t seed )
+{
+    int failures = 0;
+
+    struct rocketnet_live_config_t zero = g_live;
+    zero.seed = 0;
+    struct rocketnet_live_config_t seeded = g_live;
+    seeded.seed = seed ? seed : 1u;
+    int changed = 0;
+    for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
+    {
+        for ( int channel = 0; channel < matrix_channels( mode ); channel++ )
+        {
+            for ( uint32_t sequence = 1; sequence < 32; sequence++ )
+            {
+                if ( rocketnet_live_length( &zero, mode, channel, sequence ) !=
+                     rocketnet_live_length( &seeded, mode, channel, sequence ) )
+                    changed++;
+            }
+        }
+    }
+    printf( "server self-test seed-lengths %d\n", changed );
+    if ( changed == 0 )
+        failures++;
+
+    struct server_client_t c;
+    memset( &c, 0, sizeof c );
+    c.streams[0][3].contiguous = 2;
+    c.streams[0][3].bytes_received = 40;
+    c.streams[2][0].contiguous = 5;
+    c.streams[2][0].bytes_received = 100;
+    uint8_t report[1 + ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * 10];
+    const int n = matrix_build_progress( &c, report, (int) sizeof report );
+    const int records = n > 1 ? ( n - 1 ) / 10 : 0;
+    printf( "server self-test report tag %u records %d bytes %d\n", (unsigned) report[0], records, n );
+    if ( report[0] != ROCKETNET_SERVER_PROGRESS_NIBBLE || records != 2 )
+        failures++;
+    else
+    {
+        const uint32_t hi0 = (uint32_t) report[3] | ( (uint32_t) report[4] << 8 ) | ( (uint32_t) report[5] << 16 ) | ( (uint32_t) report[6] << 24 );
+        const uint32_t bytes0 = (uint32_t) report[7] | ( (uint32_t) report[8] << 8 ) | ( (uint32_t) report[9] << 16 ) | ( (uint32_t) report[10] << 24 );
+        if ( report[1] != 0 || report[2] != 3 || hi0 != 1u || bytes0 != 40u )
+            failures++;
+    }
+
+    if ( path )
+    {
+        g_results = fopen( path, "w" );
+        if ( g_results )
+        {
+            results_line( "bench", "%s\t%u\t500\t1000\tself-test", label, seed );
+            results_line( "cell", "%s\t1\t1\t2\t0\tsmall\t5\t5\t0\t0\t0\t0\t0\t0\t0\t0\t0", label );
+            results_event( "self-test %s", failures ? "FAIL" : "PASS" );
+            fclose( g_results );
+            g_results = NULL;
+        }
+    }
+
+    printf( "server self-test %s\n", failures ? "FAIL" : "PASS" );
+    return failures ? 1 : 0;
+}
+
 int main( int argc, char ** argv )
 {
     signal( SIGINT, interrupt_handler );
 
     int matrix = 0;
+    int self_test = 0;
+    const char * self_test_path = NULL;
     const char * address = NULL;
     const char * label = "server";
     const char * transport = NULL;
@@ -635,6 +801,7 @@ int main( int argc, char ** argv )
         else if ( strcmp( a, "--results" ) == 0 && i + 1 < argc ) results_path = argv[++i];
         else if ( strcmp( a, "--status" ) == 0 && i + 1 < argc ) status_path = argv[++i];
         else if ( strcmp( a, "--transport" ) == 0 && i + 1 < argc ) transport = argv[++i];
+        else if ( strcmp( a, "--self-test-result" ) == 0 && i + 1 < argc ) { self_test = 1; self_test_path = argv[++i]; }
         else if ( a[0] != '-' && !address ) address = a;
         else
         {
@@ -646,6 +813,11 @@ int main( int argc, char ** argv )
 
     if ( !address )
         address = "127.0.0.1:40000";
+
+    g_live.seed = seed;
+
+    if ( self_test )
+        return run_self_test( self_test_path, label, seed );
 
     if ( !rocketnet_init( NULL ) )
     {
@@ -678,6 +850,8 @@ int main( int argc, char ** argv )
     struct rocketnet_message_config_t message_config;
     rocketnet_message_default_config( &message_config );
     message_config.max_packets_per_update = max_packets_per_update;
+    g_live.max_message_bytes = (uint32_t) message_config.max_message_bytes;
+    g_live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, address, &config, &message_config, NULL, 0, send_kbps );
     if ( !server )
@@ -767,7 +941,9 @@ int main( int argc, char ** argv )
                     matrix_client_window( server, i, &clients[i] );
                     clients[i].window_done = 1;
                 }
+                matrix_send_progress( server, i, &clients[i], rocketnet_time() );
             }
+            rocketnet_message_server_send_packets( server );
             const double now = rocketnet_time();
             if ( counters_every > 0.0 && now - last_counters >= counters_every )
             {
@@ -776,6 +952,11 @@ int main( int argc, char ** argv )
             }
             check_stdin_closed();
             rocketnet_platform_sleep( 0.0005 );
+        }
+        for ( int i = 0; i < max_clients; i++ )
+        {
+            if ( clients[i].progress_sent )
+                printf( "server progress %s %llu\n", clients[i].label, (unsigned long long) clients[i].progress_sent );
         }
         free( clients );
     }
