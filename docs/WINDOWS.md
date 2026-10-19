@@ -107,7 +107,8 @@ lost (`sdk/rocketnet_server_iocp_windows.cpp`).
 
 What the host gave is in the info line `iocp` logs when it starts
 (`sdk/rocketnet_server_iocp_windows.cpp`); info is the default log level
-(`sdk/rocketnet.cpp`):
+(`sdk/rocketnet.cpp`). For a server on port 40000 with one worker on a host
+that grants both, the line has this form:
 
     iocp transport: 1 workers on port 40000, USO yes, URO yes
 
@@ -134,7 +135,8 @@ At start it makes one `VirtualAlloc` region and registers it once with
 of 2048 bytes, and a source address per receive slice, each element rounded
 up to 64 bytes and the total rounded up to a 4096-byte page. The region is
 held for the life of the server, and its size is in the info line `rio` logs
-when it starts (`sdk/rocketnet_server_rio_windows.cpp`):
+when it starts (`sdk/rocketnet_server_rio_windows.cpp`), in this form for a
+server on port 40000:
 
     rio transport: port 40000, 4096 receive slices, 16384 send frames per phase, 61079552 registered bytes
 
