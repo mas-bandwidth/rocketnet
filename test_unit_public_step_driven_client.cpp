@@ -13,6 +13,7 @@
 
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include "rocketnet_client_io.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
@@ -20,6 +21,7 @@
 
 #include <dirent.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
@@ -324,3 +326,55 @@ static void public_step_driven_client_refused_on_a_threaded_only_transport()
     check( fake.destroy_calls == 1 );
 }
 REGISTER_UNIT_TEST( public_step_driven_client_refused_on_a_threaded_only_transport );
+
+// The field's env overlay: ROCKETNET_CLIENT_STEP_DRIVEN selects the mode on
+// the same config table the struct field comes from, and 0 leaves it off.
+static int public_step_setenv( const char * name, const char * value )
+{
+#ifdef _WIN32
+    return _putenv_s( name, value );
+#else
+    return setenv( name, value, 1 );
+#endif
+}
+
+static int public_step_unsetenv( const char * name )
+{
+#ifdef _WIN32
+    return _putenv_s( name, "" );
+#else
+    return unsetenv( name );
+#endif
+}
+
+static void public_step_driven_client_env_selects_the_mode()
+{
+    const char * prior = getenv( "ROCKETNET_CLIENT_STEP_DRIVEN" );
+    char saved[64] = {};
+    const bool present = prior && prior[0] != '\0';
+    if ( present )
+        strncpy( saved, prior, sizeof( saved ) - 1 );
+
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
+    check( fields != NULL && num_fields > 0 );
+
+    struct rocketnet_client_transport_config_t config;
+
+    check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) == 0 );
+    rocketnet_client_transport_default_config( &config );
+    check( config.step_driven == 0 );
+    check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
+    check( config.step_driven == 1 );
+
+    check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "0" ) == 0 );
+    rocketnet_client_transport_default_config( &config );
+    check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
+    check( config.step_driven == 0 );
+
+    if ( present )
+        check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
+    else
+        check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
+}
+REGISTER_UNIT_TEST( public_step_driven_client_env_selects_the_mode );
