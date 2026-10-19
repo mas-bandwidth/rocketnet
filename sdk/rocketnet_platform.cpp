@@ -68,6 +68,22 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
 // no IPv6 stack. the client's availability probe reads the same flag.
 static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
 
+// Every platform send that answers -1 without delivering increments this
+// count. The transports take it when their counter block is read, so a
+// dropped send is visible as PLATFORM_SEND_FAILED. Atomic: a client's I/O
+// thread and a game thread can both send.
+static volatile uint64_t rocketnet_platform_send_failures_total = 0;
+
+static inline void rocketnet_platform_note_send_failure( void )
+{
+    rocketnet_platform_atomic_add_u64( &rocketnet_platform_send_failures_total, 1 );
+}
+
+uint64_t rocketnet_platform_take_send_failures( void )
+{
+    return __atomic_exchange_n( &rocketnet_platform_send_failures_total, 0, __ATOMIC_RELAXED );
+}
+
 // Test-only send-failure seam, compiled into the development library only.
 // The next N sendto and sendmsg_x calls report the chosen errno without
 // reaching the kernel, so a functional case can drive the send error arms.
@@ -543,6 +559,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( to_input, address_string );
         rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+        rocketnet_platform_note_send_failure();
         return;
     }
 #endif
@@ -572,6 +589,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( &to, address_string );
             rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+            rocketnet_platform_note_send_failure();
         }
     }
     else
@@ -586,6 +604,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                 rocketnet_address_to_string( &to, address_string );
                 rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+                rocketnet_platform_note_send_failure();
             }
         }
         else
@@ -925,6 +944,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
                     const rocketnet_platform_send_t * send = &sends[map[i]];
                     rocketnet_address_to_string( send->to, address_string );
                     rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( errno ) );
+                    rocketnet_platform_note_send_failure();
                 }
                 sent = count;
                 break;
@@ -938,6 +958,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
             const rocketnet_platform_send_t * send = &sends[map[sent]];
             rocketnet_address_to_string( send->to, address_string );
             rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+            rocketnet_platform_note_send_failure();
             sent += 1;
         }
 
@@ -2226,6 +2247,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( input_to, address_string );
         rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+        rocketnet_platform_note_send_failure();
         return;
     }
 #endif
@@ -2255,6 +2277,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( &to, address_string );
             rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+            rocketnet_platform_note_send_failure();
         }
     }
     else
@@ -2271,6 +2294,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                 rocketnet_address_to_string( &to, address_string );
                 rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+                rocketnet_platform_note_send_failure();
             }
         }
         else

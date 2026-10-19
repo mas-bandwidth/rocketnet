@@ -409,6 +409,16 @@ void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t 
  */
 int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
+/**
+ * @brief Takes the platform's count of dropped sends since the last take.
+ *
+ * Every sendto, sendmmsg and sendmsg_x that answers -1 with a packet not
+ * delivered increments the count, including the test seam's injected errors.
+ * The transport adds the returned count to its PLATFORM_SEND_FAILED counter.
+ * @return Number of dropped sends since the previous call.
+ */
+uint64_t rocketnet_platform_take_send_failures( void );
+
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 /**
  * @brief Test-only seam: makes the next sends report a chosen error.

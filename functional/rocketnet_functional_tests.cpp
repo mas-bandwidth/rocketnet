@@ -8182,6 +8182,9 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 void rocketnet_test_posix_platform_send_seam();
+void rocketnet_test_posix_receive_weather();
+void rocketnet_test_posix_send_burst();
+void rocketnet_test_posix_transport_send_seam();
 #endif
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
@@ -8252,6 +8255,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam },
+    { "test_posix_receive_weather", rocketnet_test_posix_receive_weather },
+    { "test_posix_send_burst", rocketnet_test_posix_send_burst },
+    { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam },
 #endif
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
