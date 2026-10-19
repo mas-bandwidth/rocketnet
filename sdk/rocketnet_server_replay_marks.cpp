@@ -5,6 +5,7 @@
 
 #include "rocketnet_server_replay_marks.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_connection_reset.h"
 
 #include <string.h>
 
@@ -92,7 +93,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         if ( forget )
         {
             sink->forget( sink->context, &slot->marked_address );
-            slot->has_mark = 0;
+            memset( slot, 0, sizeof(*slot) );
         }
     }
 
@@ -122,4 +123,62 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         slot->marked_value = high_water;
         slot->marked_address = *address;
     }
+}
+
+
+static void rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
+{
+    (*(int *) context)++;
+}
+
+static void rocketnet_replay_witness_mark( void *, const rocketnet_address_t *, uint32_t ) {}
+
+bool rocketnet_server_replay_marks_reset_witness_for_test()
+{
+    rocketnet_server_replay_slot_mark_t layout;
+    size_t end = 0;
+#define REPLAY_LAYOUT( decision, field ) \
+    do { const size_t offset = offsetof( rocketnet_server_replay_slot_mark_t, field ); \
+         if ( offset < end ) return false; end = offset + sizeof(layout.field); } while (0);
+    ROCKETNET_SERVER_REPLAY_MARK_FIELDS( REPLAY_LAYOUT )
+#undef REPLAY_LAYOUT
+    if ( end > sizeof(layout) || sizeof(layout) - end >= alignof(rocketnet_server_replay_slot_mark_t) )
+        return false;
+
+    rocketnet_server_replay_marks_t * marks = rocketnet_server_replay_marks_create( NULL, 1 );
+    rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
+    rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 1 );
+    if ( !marks || !slots || !map )
+    {
+        if ( marks ) rocketnet_server_replay_marks_destroy( marks );
+        if ( slots ) rocketnet_client_slots_destroy( slots );
+        if ( map ) rocketnet_encryption_map_destroy( map );
+        return false;
+    }
+    rocketnet_address_t address;
+    const bool parsed = rocketnet_address_parse( &address, "198.51.100.91:4091" );
+    uint8_t user[ROCKETNET_USER_DATA_BYTES] = {};
+    const int mapping = parsed ? rocketnet_encryption_map_add( map, &address, 1005.0 ) : -1;
+    const int index = mapping >= 0 ? rocketnet_client_slots_assign( slots, 1, mapping, user ) : -1;
+    if ( index == 0 )
+    {
+        rocketnet_encryption_mapping_t * entry = rocketnet_encryption_map_entry( map, mapping );
+        entry->client_index = index;
+        entry->replay_session.highest_opened = 0xA5A5;
+    }
+    int forgets = 0;
+    rocketnet_server_replay_sink_t sink = { &forgets, rocketnet_replay_witness_forget, rocketnet_replay_witness_mark };
+    if ( index == 0 )
+    {
+        rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
+        rocketnet_client_slots_release( slots, index );
+        rocketnet_encryption_map_remove( map, mapping );
+        rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
+    }
+    const uint8_t zero[sizeof(rocketnet_server_replay_slot_mark_t)] = {};
+    const bool clean = index == 0 && forgets == 1 && memcmp( &marks->slots[0], zero, sizeof(zero) ) == 0;
+    rocketnet_server_replay_marks_destroy( marks );
+    rocketnet_client_slots_destroy( slots );
+    rocketnet_encryption_map_destroy( map );
+    return clean;
 }

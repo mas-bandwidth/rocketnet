@@ -38,6 +38,9 @@ struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( v
 
 void rocketnet_server_replay_marks_destroy( struct rocketnet_server_replay_marks_t * marks );
 
+// Unit-test poison/forget witness for the private per-slot mark cache.
+bool rocketnet_server_replay_marks_reset_witness_for_test();
+
 // tla/RNXdpReplay.tla Walk: PASS 1 forgets the marked address of every slot
 // with a mark that is no longer connected or whose mapping address differs;
 // PASS 2 marks every connected slot whose highest_opened is nonzero and

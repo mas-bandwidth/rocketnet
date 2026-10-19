@@ -13,6 +13,7 @@
 struct rocketnet_client_protocol_t;
 struct rocketnet_server_protocol_t;
 struct rocketnet_client_transport_t;
+struct rocketnet_server_transport_t;
 struct rn_message_object_t;
 
 /*
@@ -42,9 +43,50 @@ struct rn_message_object_t;
     X( KEEP, reassembly ) X( KEEP, publish_keys ) X( KEEP, retire_keys ) X( KEEP, keys_context ) \
     X( RESET, record_verdict ) X( RESET, record_sequence )
 
+#define ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( X ) \
+    X( KEEP, context ) X( KEEP, max_clients ) X( KEEP, num_connected ) X( KEEP, hash_key ) \
+    X( KEEP, bucket_head ) X( KEEP, next ) X( KEEP, num_buckets ) X( KEEP, free_stack ) \
+    X( KEEP, free_stack_count ) X( KEEP, client_id ) X( KEEP, connected ) \
+    X( KEEP, mapping_index ) X( KEEP, confirmed ) X( KEEP, user_data )
+
+#define ROCKETNET_SERVER_REPLAY_MARK_FIELDS( X ) \
+    X( RESET, has_mark ) X( RESET, marked_value ) X( RESET, marked_address )
+
+#define ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( X ) \
+    X( RESET, packet_leases ) X( KEEP, context ) X( KEEP, bound_port ) X( KEEP, driver ) \
+    X( KEEP, io ) X( KEEP, thread ) X( KEEP, mutex ) X( KEEP, quit ) \
+    X( KEEP, receive_buffer_index ) X( RESET, received_packets ) X( KEEP, receive_buffer ) \
+    X( KEEP, time ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
+    X( KEEP, max_payload_bytes ) X( KEEP, send_arena ) X( KEEP, reassembly ) \
+    X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, client_io ) \
+    X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, counters ) X( RESET, protocol ) \
+    X( KEEP, client_stats ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \
+    X( RESET, packet_loss_tracker ) X( RESET, jitter_tracker )
+
+#define ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( X ) \
+    X( RESET, keys ) X( RESET, connection_salt ) X( RESET, session_nonce ) \
+    X( RESET, server_ephemeral_public_key ) X( RESET, client_ephemeral_public_key ) \
+    X( RESET, challenge_packet ) X( RESET, client_id ) X( RESET, user_data ) \
+    X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) X( RESET, timeout_seconds ) \
+    X( RESET, established ) X( RESET, client_index ) X( RESET, handshake_deadline ) \
+    X( RESET, last_receive_time ) X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
+    X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) X( RESET, send_fragment_payload_id ) \
+    X( RESET, replay_handshake ) X( RESET, replay_session ) X( RESET, integrity_failures )
+
+#define ROCKETNET_ENDPOINT_CONNECTION_FIELDS( X ) \
+    X( KEEP, region ) X( RESET, ordered ) X( RESET, unreliable_builder ) X( RESET, budget ) \
+    X( KEEP, config ) X( KEEP, default_kbps ) X( RESET, send_budget_enabled ) \
+    X( KEEP, unreliable_limit ) X( KEEP, max_payload_bytes ) X( RESET, send_error ) \
+    X( RESET, config_wait_start ) X( RESET, config_error ) X( RESET, serial ) \
+    X( RESET, pending_type ) X( RESET, pending_descriptor ) X( RESET, pending_bytes ) \
+    X( RESET, unreliable_head ) X( RESET, unreliable_tail ) X( RESET, unreliable_count ) \
+    X( RESET, write_phase ) X( RESET, written ) X( RESET, packet_kind ) X( RESET, packet_written ) \
+    X( RESET, large_bytes ) X( RESET, large_admitted ) X( RESET, large_descriptor ) \
+    X( RESET, packet_records ) X( RESET, receipt_count ) X( RESET, receipt_serials )
+
 #define ROCKETNET_MESSAGE_CONNECTION_FIELDS( X ) \
-    X( RESET, endpoint ) X( RESET, connection_id ) X( RESET, state ) \
-    X( KEEP, disconnect_reason ) X( KEEP, views ) X( KEEP, cursors ) X( RESET, held )
+    X( RESET, connection_id ) X( RESET, state ) X( KEEP, disconnect_reason ) \
+    X( KEEP, views ) X( KEEP, cursors ) X( RESET, held )
 
 /*
     Reset order is part of the contract:
@@ -71,5 +113,9 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
 
 void rocketnet_client_connection_reset( struct rn_message_object_t * client );
 void rocketnet_server_connection_reset( struct rn_message_object_t * server, int client_index );
+
+// Unit-test witness for the private transport layout and RESET fields.
+bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_transport_t * client );
+void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index );
 
 #endif // #ifndef ROCKETNET_CONNECTION_RESET_H

@@ -515,6 +515,12 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_dri
     const struct rocketnet_client_transport_config_t * config, double time,
     const rocketnet_client_driver_operations_t * operations, void * driver_context );
 
+// Unit tests only: as create_step_driven, with the Unix timestamp supplied by
+// the test so token expiry is deterministic and no wall clock is read.
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
+    const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
+    const rocketnet_client_driver_operations_t * operations, void * driver_context );
+
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );
 

@@ -180,6 +180,81 @@ struct rocketnet_client_transport_t
     struct rocketnet_jitter_tracker_t jitter_tracker;
 };
 
+struct rocketnet_private_reset_field_t
+{
+    size_t offset;
+    size_t bytes;
+};
+
+#define PRIVATE_RESET_FIELD( decision, field ) { offsetof( rocketnet_client_transport_t, field ), sizeof( ((rocketnet_client_transport_t*)0)->field ) },
+static const rocketnet_private_reset_field_t rocketnet_client_transport_reset_fields[] =
+{
+    ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( PRIVATE_RESET_FIELD )
+};
+#undef PRIVATE_RESET_FIELD
+
+static bool rocketnet_all_zero( const void * data, size_t bytes )
+{
+    const uint8_t * p = (const uint8_t *) data;
+    for ( size_t i = 0; i < bytes; i++ )
+        if ( p[i] != 0 )
+            return false;
+    return true;
+}
+
+bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_transport_t * client )
+{
+    if ( !client || client->io_thread )
+        return false;
+    size_t end = 0;
+    for ( size_t i = 0; i < sizeof(rocketnet_client_transport_reset_fields) / sizeof(rocketnet_client_transport_reset_fields[0]); i++ )
+    {
+        if ( rocketnet_client_transport_reset_fields[i].offset < end )
+            return false;
+        end = rocketnet_client_transport_reset_fields[i].offset + rocketnet_client_transport_reset_fields[i].bytes;
+    }
+    if ( end > sizeof(*client) || sizeof(*client) - end >= alignof(rocketnet_client_transport_t) )
+        return false;
+
+    uint8_t * arena_first = rocketnet_send_arena_acquire( client->send_arena );
+    if ( !arena_first )
+        return false;
+    memset( arena_first, 0xA5, (size_t) client->send_arena->slot_bytes );
+    for ( int ring = 0; ring < 2; ring++ )
+    {
+        client->payload_ring[ring].num_packets = 7;
+        memset( client->payload_ring[ring].info, 0xA5, sizeof(client->payload_ring[ring].info) );
+        memset( client->payload_ring[ring].data, 0xA5, sizeof(client->payload_ring[ring].data) );
+    }
+    memset( &client->received_packets, 0xA5, sizeof(client->received_packets) );
+    memset( &client->packet_loss_tracker, 0xA5, sizeof(client->packet_loss_tracker) );
+    memset( &client->jitter_tracker, 0xA5, sizeof(client->jitter_tracker) );
+    client->stats_counted = UINT64_MAX;
+    rocketnet_client_connection_reset( client );
+
+    rocketnet_packet_loss_tracker_t fresh_loss;
+    rocketnet_jitter_tracker_t fresh_jitter;
+    memset( &fresh_loss, 0, sizeof(fresh_loss) );
+    memset( &fresh_jitter, 0, sizeof(fresh_jitter) );
+    rocketnet_packet_loss_tracker_reset( &fresh_loss );
+    rocketnet_jitter_tracker_reset( &fresh_jitter );
+    for ( int ring = 0; ring < 2; ring++ )
+    {
+        if ( client->payload_ring[ring].num_packets != 0 ||
+             !rocketnet_all_zero( client->payload_ring[ring].info, sizeof(client->payload_ring[ring].info) ) ||
+             !rocketnet_all_zero( client->payload_ring[ring].data, sizeof(client->payload_ring[ring].data) ) )
+            return false;
+    }
+    const bool arena_clean = client->send_arena->num_used == 0 &&
+        rocketnet_send_arena_acquire( client->send_arena ) == arena_first;
+    rocketnet_send_arena_reset( client->send_arena );
+    return arena_clean &&
+           rocketnet_all_zero( &client->received_packets, sizeof(client->received_packets) ) &&
+           client->stats_counted == 0 &&
+           memcmp( &client->packet_loss_tracker, &fresh_loss, sizeof(fresh_loss) ) == 0 &&
+           memcmp( &client->jitter_tracker, &fresh_jitter, sizeof(fresh_jitter) ) == 0;
+}
+
 static void rocketnet_client_thread_function( void * data );
 
 // The transport-owned part of ClientSession End. The protocol overload has
@@ -201,8 +276,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
         memset( client->payload_ring[1].data, 0, sizeof(client->payload_ring[1].data) );
     }
     rocketnet_send_arena_reset( client->send_arena );
-    client->received_packets.num_packets = 0;
-    client->received_packets.receive_index = 0;
+    memset( &client->received_packets, 0, sizeof(client->received_packets) );
     rocketnet_packet_loss_tracker_reset( &client->packet_loss_tracker );
     rocketnet_jitter_tracker_reset( &client->jitter_tracker );
     client->stats_counted = 0;
@@ -323,11 +397,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context );
+    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context, uint64_t test_timestamp );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, 0 );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
@@ -335,7 +409,16 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( vo
 {
     if ( !operations )
         return NULL;
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, driver_context );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, driver_context, 0 );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
+    const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
+    const rocketnet_client_driver_operations_t * operations, void * driver_context )
+{
+    if ( !operations || current_timestamp == 0 )
+        return NULL;
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, driver_context, current_timestamp );
 }
 
 rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_transport_t * client_transport )
@@ -344,7 +427,7 @@ rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_t
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context )
+    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context, uint64_t test_timestamp )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -541,7 +624,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->time = time;
     client_transport->last_state = client_transport->protocol.state;
 
-    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, (uint64_t) ::time( NULL ) ) )
+    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, test_timestamp ? test_timestamp : (uint64_t) ::time( NULL ) ) )
     {
         const int connect_failure = client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED ?
             ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED : ROCKETNET_STATUS_INVALID_CONNECT_TOKEN;

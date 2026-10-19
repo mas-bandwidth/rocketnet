@@ -219,6 +219,7 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_payload_ring_t payload_ring;
 
     double time;                                        // the game's clock, last seen
+    uint64_t test_timestamp;                            // unit-only Unix time; zero reads the wall clock
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
 
     // the fragmentation shape from the config, and the send arena for
@@ -254,6 +255,13 @@ struct rocketnet_server_transport_t
     // the end of its data -- this is the last member, so the slack is real.
     uint8_t payload_storage[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
+
+void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( client_index >= 0 && client_index < server->client_wire_totals_capacity );
+    memset( &server->client_wire_totals[client_index], 0xA5, sizeof(server->client_wire_totals[client_index]) );
+}
 
 static struct rocketnet_server_pending_wire_totals_t * rocketnet_server_pending_wire_find(
     struct rocketnet_server_transport_t * server_transport, const rocketnet_address_t * address, bool create )
@@ -1439,6 +1447,13 @@ void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_
 }
 
 // tla/RNDriverSendStaging.tla Update
+void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( timestamp != 0 );
+    server_transport->test_timestamp = timestamp;
+}
+
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -1468,7 +1483,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     }
 
     const double current_time = time;
-    const uint64_t current_timestamp = (uint64_t) ::time( NULL );
+    const uint64_t current_timestamp = server_transport->test_timestamp ? server_transport->test_timestamp : (uint64_t) ::time( NULL );
 
     server_transport->payloads.num_payloads = 0;
 
