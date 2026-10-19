@@ -164,7 +164,7 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] =
     "000000e9539e77000000b9172c0700000034b485d8000000b0cb42af01000000"
     "d9dfbc002100bdb0385c0100009f8d1dfd000000bea9a8b8004e0022203fb100"
     "54006ac070be000800176f7f780008008b6d57dc000000bf7a1aaf0100009b86"
-    "1b950100007987fe4c010000" ),
+    "1b950100007987fe4c010000f984f06e010000" ),
 };
 
 static void standard_timing_and_counters_vectors()

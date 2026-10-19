@@ -127,14 +127,14 @@ The server transports below the connection layer, one column each, in the order 
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Server transport | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Server transport | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Selectable by pin at runtime | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | IPv6 and dual-stack binds | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | Receive coalescing by the kernel (UDP_GRO on Linux, URO on Windows), split by stride | — | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | — |
 | Send segmentation by the kernel (UDP GSO on Linux, USO on Windows), probed with fallback | — | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | — |
 | Registered I/O (RIO) on Windows | — | — | — | — | — | — | ✅ | — |
 | The loopback transport holds max clients plus the server | — | — | — | — | — | — | — | ✅ |
-| complete | 67% | 40% | 100% | 60% | 60% | 80% | 67% | 75% |
+| complete | 67% | 40% | 100% | 60% | 60% | 60% | 67% | 75% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -261,7 +261,7 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | Sanitizers: ASan, UBSan, TSan, MSan, LSan | ✅ | ❌ | ❌ |
 | The MSan gate fails on crashed tests | ✅ | — | — |
 | The staged-finish wire totals case and the MemorySanitizer check pass | ✅ | ❌ | ❌ |
-| Big-endian (s390x) runs | ✅ | — | — |
+| Big-endian (s390x) runs | ❌ | — | — |
 | An instruction-count gate for the client frame and the server tick, on every push | ✅ | — | — |
 | A clang-format configuration derived from the netcode style, with a format check | ✅ | — | — |
 | The per-push workflows run on the self-hosted runners, held there by a lint | ✅ | ✅ | ✅ |
@@ -270,6 +270,7 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | Deterministic simulation: the fault injector, as a TLA+ model first | ✅ | — | — |
 | Deterministic simulation, layer 1: the seeded core, N clients and a server, one seed, exact replay | ✅ | ❌ | ❌ |
 | Deterministic simulation, layer 3: the TLA+ properties as runtime checks | ✅ | ❌ | ❌ |
+| Deterministic simulation, layer 2: the fault injectors (reorder, delay, clock skew, crash and restart), built from their model (later) | ❌ | ❌ | ❌ |
 | Deterministic simulation, layer 4: per-push shards, the nightly campaign, and the planted-bug proof (later) | ❌ | ❌ | ❌ |
 | The simulator and reset tests catch the bugs they exist to catch (later) | ❌ | ❌ | ❌ |
 | CBMC proofs of bounded readers and fragment bounds | ✅ | — | — |
@@ -286,7 +287,7 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | The proof tools and Frama-Clang prerequisites in place before the Frama-Clang trial (later) | ❌ | — | — |
 | Frama-Clang trial: can WP prove rocketnet_ack_block_read from the C++ source? (later) | ❌ | — | — |
 | The MSan known-findings list matches every toolchain the runners use (later) | ❌ | — | — |
-| complete | 68% | 56% | 56% |
+| complete | 63% | 53% | 53% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -296,11 +297,11 @@ Where RocketNet builds and passes. Every push runs the unit and functional suite
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Per-commit CI, Debug and Release | ✅ | ✅ | ❌ |
+| Per-commit CI, Debug and Release | ✅ | ❌ | ❌ |
 | Shared export list compared | ✅ | ✅ | ✅ |
 | Nightly soak | ✅ | ❌ | ❌ |
 | The library is callable from a shared library and a static library, from C and C++ | ✅ | ✅ | ✅ |
-| complete | 100% | 75% | 50% |
+| complete | 100% | 50% | 50% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -313,7 +314,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Connection layer C surface: rocketnet_client_transport_* and rocketnet_server_transport_* | ✅ | ✅ | ✅ |
 | Root header pure C: the client and server with their functions, the address type, nothing else | ✅ | ✅ | ✅ |
 | Message objects in C: rocketnet_message_client_* and rocketnet_message_server_* | ✅ | ✅ | ✅ |
-| ABI revision and layout queries | ✅ | ❌ | ❌ |
+| ABI revision and layout queries | ✅ | ✅ | ✅ |
 | Installable CMake package with C and C++ consumers | ✅ | ✅ | ✅ |
 | Vendored sodium, no system libsodium | ✅ | ✅ | ✅ |
 | Structured create errors and FFI-safe logging | ✅ | ✅ | ✅ |
@@ -326,7 +327,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | API reference comments: reliability | ✅ | — | — |
 | USAGE.md: the client and server API, with worked usage | ✅ | — | — |
 | The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 94% | 91% | 91% |
+| complete | 94% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -375,17 +376,41 @@ The normative standard in standard/: standard/TRANSPORT.md (the t sections) and 
 
 [Source data](docs/roadmap.sexp)
 
+## Second deliverable: keys and backends (later)
+
+What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. After v1.0.0, by the owner's call.
+
+| feature | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production | ❌ | ❌ | ❌ |
+| Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token | ❌ | — | — |
+| Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect | ❌ | ❌ | ❌ |
+| complete | 0% | 0% | 0% |
+
+[Source data](docs/roadmap.sexp)
+
+## Correctness after v1.0.0 (later)
+
+Correctness work that follows the v1.0.0 milestone, by the owner's call.
+
+| feature | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client | ❌ | ❌ | ❌ |
+| complete | 0% | 0% | 0% |
+
+[Source data](docs/roadmap.sexp)
+
 ## Release and process
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Release hardening flags | ✅ | ❌ | ❌ |
+| Release hardening flags | ❌ | ❌ | ❌ |
 | Reproducible vendored sources | ✅ | ❌ | ❌ |
 | First integrating game vendors the SDK and proves it (release gate) | ❌ | ❌ | ❌ |
-| Supported-platform policy | ✅ | — | — |
+| Supported-platform policy | ❌ | — | — |
 | Security disclosure and release process | ✅ | — | — |
 | Independent review of the connection layer repair diff, received | ❌ | — | — |
 | The old to-do and readiness files retired into this roadmap | ✅ | — | — |
-| complete | 71% | 0% | 0% |
+| complete | 43% | 0% | 0% |
 
 [Source data](docs/roadmap.sexp)

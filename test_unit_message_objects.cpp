@@ -96,6 +96,7 @@ struct mo_net_t
     bool drop_to_client;
     int drop_next_to_server;                        // drop this many packets to the server, then deliver
     int fail_finish;                                // the next this many finish_packet calls fail (return 0, nothing sent)
+    bool refuse_start;                              // start_packet gives no frame while set (a full send ring)
     bool hold_acks;                                 // opened ids are not reported back while set
     bool keep_log;
 };
@@ -116,6 +117,7 @@ static mo_net_t * mo_net_new()
     net->drop_to_client = false;
     net->drop_next_to_server = 0;
     net->fail_finish = 0;
+    net->refuse_start = false;
     net->hold_acks = false;
     net->keep_log = true;
     return net;
@@ -225,7 +227,7 @@ static uint8_t * mo_start_packet( void * transport, int client_index, int reques
 {
     mo_endpoint_t * e = (mo_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
-    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PAYLOAD_BYTES || e->net->refuse_start )
         return NULL;
     if ( e->is_server ? e->net->slot_connection[client_index] == 0 : !e->connected )
         return NULL;
@@ -558,8 +560,11 @@ static void message_send_refused_counts_bad_arguments()
 }
 
 // ---------------------------------------------------------------------------
-// R3: the pointer start returns is the region record the transport frame's
-// bytes are copied from: THE COPIES (a), the one copy on the send path
+// R3: on the queued path -- a reliable message, or an unreliable one the
+// transport gave no frame at start -- the pointer start returns is the region
+// record the transport frame's bytes are copied from: THE COPIES (a), the one
+// copy on the send path. A fitting unreliable message written in place is
+// test_unit_unreliable_in_place.cpp's.
 // ---------------------------------------------------------------------------
 
 static const uint8_t * mo_find( const uint8_t * haystack, int haystack_bytes, const uint8_t * needle, int needle_bytes )
@@ -583,7 +588,9 @@ static void start_finish_pointer_reaches_the_frame()
     for ( int r = 0; r < 2; r++ )
     {
         const int bytes = 300;
+        pair.net->refuse_start = reliabilities[r] == ROCKETNET_UNRELIABLE;           // no frame at start: the queued path
         uint8_t * p = rocketnet_message_client_start( client, 1, reliabilities[r], bytes );
+        pair.net->refuse_start = false;
         check( p != NULL );
         check( rn_region_contains( connection->region, p, (uint64_t) bytes ) );        // in place, in the connection's region
         mo_fill( p, 7000 + (uint32_t) r, (uint32_t) bytes );
@@ -1924,6 +1931,7 @@ static void unreliable_store_full_exhausts_and_kicks()
     mo_step( &pair );
 
     int started = 0;
+    pair.net->refuse_start = true;                              // no frame at start: every send takes the queued path
     for ( ;; )
     {
         uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_UNRELIABLE, 16 );
@@ -1934,6 +1942,7 @@ static void unreliable_store_full_exhausts_and_kicks()
         started++;
         check( started < 100000 );
     }
+    pair.net->refuse_start = false;
     check( started > 0 );
 
     const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
@@ -2023,12 +2032,14 @@ static void unreliable_failed_packet_drops_and_counts_each_record()
     rocketnet_message_client_t * client = pair.clients[0];
     const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
 
+    pair.net->refuse_start = true;                              // no frame at start: the three are queued, one packet
     for ( uint32_t i = 0; i < 3; i++ )
     {
         uint8_t message[16];
         mo_fill( message, 10 + i, sizeof( message ) );
         check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
     }
+    pair.net->refuse_start = false;
 
     pair.net->fail_finish = 1;
     std::vector<mo_received_t> got;
@@ -2071,8 +2082,10 @@ static void unreliable_chunks_freed_when_written()
     uint8_t small[64], medium[400];
     mo_fill( small, 20, sizeof( small ) );
     mo_fill( medium, 21, sizeof( medium ) );
+    pair.net->refuse_start = true;                              // no frame at start: the queued path holds store chunks
     check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, small, (int) sizeof( small ) ) != 0 );
     check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, medium, (int) sizeof( medium ) ) != 0 );
+    pair.net->refuse_start = false;
 
     uint32_t used = 0;
     for ( int cl = 0; cl < RN_STORE_NUM_CLASSES; cl++ )

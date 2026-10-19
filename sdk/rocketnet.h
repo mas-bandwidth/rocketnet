@@ -54,11 +54,6 @@
 // rocketnet_version returns the value the library was built with.
 #define ROCKETNET_VERSION   ( ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH )
 
-// the earlier names of the three parts
-#define ROCKETNET_VERSION_MAJOR_INT                 ROCKETNET_VERSION_MAJOR
-#define ROCKETNET_VERSION_MINOR_INT                 ROCKETNET_VERSION_MINOR
-#define ROCKETNET_VERSION_PATCH_INT                 ROCKETNET_VERSION_PATCH
-
 /**
  * @brief Identifies the public C struct and calling-convention revision.
  *
@@ -751,7 +746,7 @@ struct rocketnet_client_config_t
     int send_buffer_bytes;                          // ROCKETNET_CLIENT_SEND_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        // ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          // ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     // ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets send_packets sends per update; 1 .. 256; default 4
+    int max_packets_per_update;                     // ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finishes and send_packets together; 1 .. 256; default 4
     int unreliable_deliveries;                      // ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            // ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /** @brief Maximum queued client send receipts, 16 through 65536 (default 256).
@@ -809,7 +804,7 @@ struct rocketnet_server_config_t
     int send_buffer_bytes;                          // ROCKETNET_SERVER_SEND_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        // ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          // ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     // ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets send_packets sends per update; per client; 1 .. 256; default 4
+    int max_packets_per_update;                     // ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finishes and send_packets together; per client; 1 .. 256; default 4
     int unreliable_deliveries;                      // ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            // ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /** @brief Maximum queued receipts per server client, 16 through 65536 (default 256).
@@ -1027,8 +1022,11 @@ ROCKETNET_EXPORT int rocketnet_client_index( const struct rocketnet_client_t * c
 ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client );
 
 // the first step of the send: a pointer into the connection's region for a
-// message of bytes, or NULL when refused. Write the message there once, or
-// copy it in when the caller already holds a buffer:
+// message of bytes, or, for an unreliable message whose declared bytes fit one
+// packet with every header, into the transport packet buffer itself
+// (docs/OUTGOING-BUILD.md; written in place, with no copy between the message
+// layer and the transport), or NULL when refused. Write the message there once,
+// or copy it in when the caller already holds a buffer:
 //
 //     uint8_t * out = rocketnet_client_start( client, channel, reliability, bytes );
 //     if ( out )
@@ -1041,7 +1039,7 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 // at a time. a NULL client is a counted no-op that returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_client_start( struct rocketnet_client_t * client, int channel, int reliability, int bytes );
 
-// the queued message's receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. a NULL client is a counted no-op that returns 0.
+// the queued message's receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. for a message written in place, finish completes and stages that packet buffer, with no copy. a NULL client is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint32_t rocketnet_client_finish( struct rocketnet_client_t * client, int bytes_written );
 
 // a NULL client is a counted no-op.
@@ -1157,8 +1155,11 @@ ROCKETNET_EXPORT void rocketnet_server_disconnect_client( struct rocketnet_serve
 ROCKETNET_EXPORT int rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, int client_index );
 
 // the first step of the send: a pointer into the connection's region for a
-// message of bytes, or NULL when refused. Write the message there once, or
-// copy it in when the caller already holds a buffer:
+// message of bytes, or, for an unreliable message whose declared bytes fit one
+// packet with every header, into the transport packet buffer itself
+// (docs/OUTGOING-BUILD.md; written in place, with no copy between the message
+// layer and the transport), or NULL when refused. Write the message there once,
+// or copy it in when the caller already holds a buffer:
 //
 //     uint8_t * out = rocketnet_server_start( server, client_index, channel, reliability, bytes );
 //     if ( out )
@@ -1171,7 +1172,7 @@ ROCKETNET_EXPORT int rocketnet_server_disconnect_reason( const struct rocketnet_
 // at a time. a NULL server is a counted no-op that returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_server_start( struct rocketnet_server_t * server, int client_index, int channel, int reliability, int bytes );
 
-// the queued message's receipt serial, nonzero; 0 when no start is pending, bytes_written is outside 1 to the bytes started, or client_index is not a connected client. a NULL server is a counted no-op that returns 0.
+// the queued message's receipt serial, nonzero; 0 when no start is pending, bytes_written is outside 1 to the bytes started, or client_index is not a connected client. for a message written in place, finish completes and stages that packet buffer, with no copy. a NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint32_t rocketnet_server_finish( struct rocketnet_server_t * server, int client_index, int bytes_written );
 
 // a NULL server is a counted no-op.
