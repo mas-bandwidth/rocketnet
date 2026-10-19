@@ -53,6 +53,34 @@ static void connection_reset_inventory_covers_every_field()
     check( last_end == sizeof(rocketnet_client_protocol_t) );
     check( reset_fields == 33 );
     check( keep_fields == 8 );
+
+    // Poison every RESET decision, preserve every KEEP decision, and compare
+    // the result field-by-field with a freshly initialized protocol object.
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rocketnet_client_protocol_t value;
+    rocketnet_client_protocol_init( &value, &counters );
+    value.state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED;
+#define POISON_RESET( field ) memset( &value.field, 0xA5, sizeof(value.field) );
+#define POISON_KEEP( field )
+#define POISON_FIELD( decision, field ) POISON_##decision( field )
+    ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS( POISON_FIELD )
+#undef POISON_FIELD
+#undef POISON_KEEP
+#undef POISON_RESET
+    value.state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED;
+    const rocketnet_client_protocol_t before = value;
+    rocketnet_client_connection_reset( &value );
+
+    rocketnet_client_protocol_t fresh;
+    rocketnet_client_protocol_init( &fresh, &counters );
+#define CHECK_RESET( field ) check( memcmp( &value.field, &fresh.field, sizeof(value.field) ) == 0 );
+#define CHECK_KEEP( field ) check( memcmp( &value.field, &before.field, sizeof(value.field) ) == 0 );
+#define CHECK_FIELD( decision, field ) CHECK_##decision( field )
+    ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS( CHECK_FIELD )
+#undef CHECK_FIELD
+#undef CHECK_KEEP
+#undef CHECK_RESET
 }
 REGISTER_UNIT_TEST( connection_reset_inventory_covers_every_field );
 
