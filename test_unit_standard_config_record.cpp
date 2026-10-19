@@ -93,13 +93,79 @@ static int standard_config_record_generate( const char * id, uint8_t * out, int 
     return standard_config_record_payload( &body, out, capacity );
 }
 
+static int standard_config_record_body_equal( const struct rocketnet_message_config_body_t * a, const struct rocketnet_message_config_body_t * b )
+{
+    return a->version == b->version &&
+        a->enabled == b->enabled &&
+        a->num_channels == b->num_channels &&
+        a->window_messages == b->window_messages &&
+        a->receive_ring_bytes == b->receive_ring_bytes &&
+        a->max_message_bytes == b->max_message_bytes &&
+        a->fragment_bytes == b->fragment_bytes;
+}
+
 static void standard_config_record_vectors()
 {
     const int count = (int) ( sizeof( standard_config_record_table ) / sizeof( standard_config_record_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_config_record_table, count, standard_config_record_generate ) == count );
 
+    struct rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    const struct rocketnet_message_limits_t limits =
+    {
+        config.num_channels,
+        rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION ),
+        config.window_messages,
+        config.max_message_bytes,
+        config.receive_ring_bytes
+    };
+    for ( int i = 0; i < count; ++i )
+    {
+        uint8_t payload[ROCKETNET_MESSAGE_CONFIG_BYTES + 7];
+        const int payload_bytes = standard_config_record_generate( standard_config_record_table[i].id, payload, (int) sizeof( payload ) );
+        rocketnet_unit_check( payload_bytes == ROCKETNET_MESSAGE_CONFIG_BYTES + 7 );
+        if ( payload_bytes != ROCKETNET_MESSAGE_CONFIG_BYTES + 7 )
+            continue;
+
+        struct rocketnet_message_reader_t reader;
+        const int reader_violation = rocketnet_message_reader_begin( &reader, payload, payload_bytes, &limits );
+        rocketnet_unit_check( reader_violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        if ( reader_violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+            continue;
+        struct rocketnet_message_record_t record;
+        const int has_record = rocketnet_message_reader_next( &reader, &record );
+        rocketnet_unit_check( has_record );
+        if ( !has_record )
+            continue;
+        rocketnet_unit_check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE && record.control && record.number == 0 );
+        rocketnet_unit_check( record.bytes == ROCKETNET_MESSAGE_CONFIG_BYTES );
+        struct rocketnet_message_config_body_t decoded;
+        const int body_violation = rocketnet_message_read_config_body( record.data, record.bytes, &decoded );
+        rocketnet_unit_check( body_violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        if ( body_violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+            continue;
+        struct rocketnet_message_config_body_t expected;
+        standard_config_record_default_body( &expected );
+        if ( strcmp( standard_config_record_table[i].id, "m11.version-mismatch" ) == 0 )
+            expected.version = 2;
+        else if ( strcmp( standard_config_record_table[i].id, "m11.enabled-mismatch" ) == 0 )
+            expected.enabled = 1;
+        else if ( strcmp( standard_config_record_table[i].id, "m11.num-channels-mismatch" ) == 0 )
+            expected.num_channels = 16;
+        else if ( strcmp( standard_config_record_table[i].id, "m11.window-messages-mismatch" ) == 0 )
+            expected.window_messages = 512;
+        else if ( strcmp( standard_config_record_table[i].id, "m11.receive-ring-bytes-mismatch" ) == 0 )
+            expected.receive_ring_bytes = 131072;
+        else if ( strcmp( standard_config_record_table[i].id, "m11.max-message-bytes-mismatch" ) == 0 )
+            expected.max_message_bytes = 131072;
+        else if ( strcmp( standard_config_record_table[i].id, "m11.fragment-bytes-mismatch" ) == 0 )
+            expected.fragment_bytes = 1024;
+        rocketnet_unit_check( standard_config_record_body_equal( &decoded, &expected ) );
+        rocketnet_unit_check( !rocketnet_message_reader_next( &reader, &record ) );
+    }
+
     // a vector the generator does not know is refused
-    uint8_t scratch[ROCKETNET_MESSAGE_CONFIG_BYTES];
+    uint8_t scratch[ROCKETNET_MESSAGE_CONFIG_BYTES + 7];
     rocketnet_unit_check( standard_config_record_generate( "m11.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
 }
 
