@@ -471,9 +471,9 @@ at create with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` and one log line naming
 `step_driven`.
 
 The model's `StepDriven` mode is this one: create starts no I/O thread, and
-the I/O core actions run only inside `update` and `send_packets`
-(`StepBegin`, `CallerStep`, `StepEnd`), never overlapping the main thread's
-own actions and never blocking. `NoIoThreadActionInStepMode` holds there with
+the I/O core actions run only inside `update`, `send_packets` and `destroy`
+(`StepBegin`, `CallerStep`, `StepEnd`), one pass at a time, never
+overlapping the main thread's own actions and never blocking. `NoIoThreadActionInStepMode` holds there with
 every other invariant, `MCRNClientIoStepDriven.cfg` checks it and the
 liveness properties, and `MCRNClientIoBrokenStepStartsThread.cfg` is its
 reversed witness.

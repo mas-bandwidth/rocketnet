@@ -438,9 +438,9 @@ Done ==
     /\ phase = "Freed"
     /\ UNCHANGED vars
 
-\* step mode: update or send_packets (or destroy, after Stop) begins the
-\* I/O step on the caller's thread; the main thread runs nothing else
-\* until the step ends
+\* step mode: update or send_packets (or destroy, while it waits for the
+\* other ring to be Sent and after Stop) begins the I/O step on the
+\* caller's thread; the main thread runs nothing else until the step ends
 StepBegin ==
     /\ StepDriven
     /\ ~inCall
@@ -452,11 +452,16 @@ StepBegin ==
                    waiting, waitReadable, phase, ioAlive, lastExec>>
     /\ UNCHANGED recvVars
 
-\* the step never blocks: it returns once no core action has work
+\* the step is one pass that never blocks (rocketnet_client_io_step with
+\* block false): it finishes the ring it takes, exits once stopped, and
+\* ends its drain with a publish or an owe.  It may return with datagrams
+\* still in the socket (a drain stops at a publish, and the code drains
+\* only into the buffer it holds), so receive work does not hold it, and
+\* the wake, which no step mode wait reads, is consumed or left.
 StepWork ==
     \/ \E r \in Rings, s \in Slots : IoSend(r, s)
     \/ \E r \in Rings : IoFinishRing(r)
-    \/ IoReceive \/ IoPublish \/ IoOwe \/ IoClearWake \/ IoExit
+    \/ IoPublish \/ IoOwe \/ IoExit
 
 StepEnd ==
     /\ inCall
@@ -509,8 +514,8 @@ Spec == Init /\ [][Next]_vars
 \* is retried every frame.  A game thread mid-write disables the hand-off
 \* only until it commits, and a ring has NumSlots slots, so weak fairness
 \* is enough.  In step mode the I/O core runs only inside a caller step:
-\* the game calls update every frame (StepBegin), and a step runs until no
-\* core action has work (StepEnd), so the caller also consumes the wake.
+\* the game calls update every frame (StepBegin), and a step finishes its
+\* ring, its exit and its publish or owe before it returns (StepEnd).
 SpecFair ==
     /\ Spec
     /\ WF_vars(Exec(\E r \in Rings, s \in Slots : IoSend(r, s)))
@@ -520,7 +525,6 @@ SpecFair ==
     /\ WF_vars(Exec(IoOwe))
     /\ WF_vars(Exec(IoWake))
     /\ WF_vars(Exec(IoExit))
-    /\ WF_vars(OnCaller(IoClearWake))
     /\ WF_vars(StepBegin)
     /\ WF_vars(StepEnd)
     /\ WF_vars(OnMain(Join))
@@ -533,7 +537,8 @@ SpecFair ==
 \* Step mode: the main thread's own actions are disabled while it runs a
 \* step, so they are enabled only intermittently.  update makes its two
 \* receive steps and a hand-off every frame and send_packets hands off
-\* before its step, so they are strongly fair here.
+\* before its step, so they are strongly fair here; a step may return
+\* with datagrams in the socket, and every step drains, so receive is too.
 SpecStepFair ==
     /\ SpecFair
     /\ SF_vars(OnMain(\E r \in Rings : Reopen(r)))
@@ -541,6 +546,7 @@ SpecStepFair ==
     /\ SF_vars(OnMain(Expose))
     /\ SF_vars(OnMain(Return))
     /\ SF_vars(OnMain(Join))
+    /\ SF_vars(Exec(IoReceive))
 
 (* ---- what the design must keep ---- *)
 
