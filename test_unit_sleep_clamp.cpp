@@ -4,7 +4,7 @@
 */
 
 // rocketnet_sleep clamps its argument before the platform sleep: a negative,
-// zero or NaN request sleeps not at all, and a request longer than
+// zero or NaN request is a zero-length sleep, and a request longer than
 // ROCKETNET_SLEEP_MAX_SECONDS sleeps that long, so the microsecond conversion
 // never overflows. The durations are arguments; the only real sleeps here are
 // the zero-length ones a refused request takes.
@@ -38,7 +38,7 @@ static void sleep_clamp_bounds_negative_nan_and_huge()
     // the longest clamped request still fits the platform's int microseconds
     check( ROCKETNET_SLEEP_MAX_SECONDS * 1000000.0 < 2147483647.0 );
 
-    // a refused request returns at once rather than reaching the platform
+    // a refused request becomes a zero-length sleep rather than overflowing
     rocketnet_sleep( -1.0 );
     rocketnet_sleep( NAN );
     rocketnet_sleep( -INFINITY );

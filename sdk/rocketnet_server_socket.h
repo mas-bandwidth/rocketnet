@@ -93,7 +93,6 @@ void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_soc
 
 int rocketnet_server_socket_state( struct rocketnet_server_socket_t * server_socket );
 
-
 int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * server_socket );
 
 // The kernel prefilter's counters, summed across CPUs into an array of

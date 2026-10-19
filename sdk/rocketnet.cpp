@@ -482,9 +482,9 @@ double rocketnet_time()
     return rocketnet_platform_time();
 }
 
-// a negative, zero or NaN request sleeps not at all, and a request longer
-// than ROCKETNET_SLEEP_MAX_SECONDS (or infinite) sleeps that long, so the
-// platform's microsecond conversion never overflows
+// a negative, zero or NaN request becomes a zero-length sleep (the platform's
+// yield), and a request longer than ROCKETNET_SLEEP_MAX_SECONDS (or infinite)
+// sleeps that long, so the platform's microsecond conversion never overflows
 double rocketnet_sleep_clamp( double seconds )
 {
     if ( !( seconds > 0.0 ) )
@@ -496,9 +496,7 @@ double rocketnet_sleep_clamp( double seconds )
 
 void rocketnet_sleep( double seconds )
 {
-    const double clamped = rocketnet_sleep_clamp( seconds );
-    if ( clamped > 0.0 )
-        rocketnet_platform_sleep( clamped );
+    rocketnet_platform_sleep( rocketnet_sleep_clamp( seconds ) );
 }
 
 void rocketnet_clear_and_free( void * context, void * p, size_t p_size )

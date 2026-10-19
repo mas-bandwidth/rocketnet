@@ -473,8 +473,7 @@
     /* application record whose code the mask does not admit, an unreliable */ \
     /* record dropped because the send budget could not pay the packet that */ \
     /* would carry it, and the counters the sequenced and receipt types use. */ \
-    /* An ordered */ \
-    /* record behind its channel's read index is MESSAGE_ORDERING_BEHIND (7.2: */ \
+    /* An ordered record behind its channel's read index is MESSAGE_ORDERING_BEHIND (7.2: */ \
     /* layer 3 already caught the duplicates, so it is a violation). */ \
     /* appended: indices are the contract. */ \
     X( MESSAGE_SEND_TYPE_NOT_ENABLED, REFUSAL, NONE ) \
