@@ -524,7 +524,8 @@ incarnation equals the receiving session's. With one global generation counter t
 restart does not reset, the generation compare alone keeps every delivery on its own session: the
 switch `CompareGeneration <- FALSE` fails `DeliverOnlyToLiveGeneration`, while
 `CompareIncarnation <- FALSE` leaves every property of `MCRNSimFaults.cfg` holding (the same
-641,068 states). The incarnation compare is a second, independent check, and its own invariant is
+641,068 states). The incarnation compare is a second, independent check; the incarnation's own
+rule, that every session the server holds was admitted under its current incarnation, is
 `LiveSessionOnCurrentIncarnation`. Actions:
 `Crash(p)`, `Restart(p)` (the down time ends), `Rejoin(p)` (the objects are built fresh; the server
 takes a new incarnation), `Tick` (time advances, each clock moves by its rate), `EndFaults`,
@@ -539,7 +540,7 @@ the ghost tag), `LiveSessionOnCurrentIncarnation`
 backwards). Liveness under weak fairness on restarts, the handshake, the timeouts and the end of
 the fault window: `EveryLiveClientConnects`. Cases: `MCRNSimFaults.cfg` passes; the reversed
 witnesses `MCRNSimFaultsBrokenRestartKeepsSession.cfg` (restart keeps the old generation; violates
-`RestartIsFresh`, and with that invariant alone listed, `DeliverOnlyToLiveGeneration`: the server
+`RestartIsFresh`, and when `DeliverOnlyToLiveGeneration` is the only invariant listed, fails it too: the server
 still sends on the dead session until its timeout, and that packet reaches the restarted session
 under the same generation) and `MCRNSimFaultsBrokenCrashedSends.cfg` (a crash leaves the peer
 running, so a crashed peer still sends; violates `CrashedPeerSilent`) each fail on the property
