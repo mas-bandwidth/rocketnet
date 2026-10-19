@@ -226,7 +226,10 @@ void sodium_memzero( void * const pnt, const size_t len ) { rocketnet_sodium_sod
 struct wire_totals_staged_fixture_t
 {
     rocketnet_address_t reserved_to;
-    uint8_t frame[ROCKETNET_FRAME_STRIDE];
+    // start_packet hands back a FRAME_STRIDE root, and the transport asserts
+    // it is 16-byte aligned (rocketnet_server_transport_start_packet). Placed
+    // after the address with no alignas, the frame is not.
+    alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
     int used;
     int capacity;
 };
@@ -349,8 +352,169 @@ static void wire_totals_staged_finish_counts_exactly()
     printf( "wire_totals_staged_finish_counts_exactly\n" );
 }
 
+static void driver_loopback_holds_max_clients_plus_server()
+{
+    const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
+    const int live_before = rocketnet_loopback_endpoints_live();
+
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    const rocketnet_server_driver_config_t server_setup = { "loopback", &server_config, NULL };
+    rocketnet_address_t server_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    rocketnet_server_driver_t server = {};
+    rocketnet_unit_check( rocketnet_server_driver_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( server_address.port != 0 );
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    const rocketnet_client_driver_config_t client_setup = { "loopback", &client_config };
+    rocketnet_client_driver_t * clients = (rocketnet_client_driver_t*) calloc( ROCKETNET_MAX_CLIENTS, sizeof( rocketnet_client_driver_t ) );
+    rocketnet_address_t * client_addresses = (rocketnet_address_t*) calloc( ROCKETNET_MAX_CLIENTS, sizeof( rocketnet_address_t ) );
+    rocketnet_unit_check( clients && client_addresses );
+
+    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
+    {
+        rocketnet_unit_check( rocketnet_address_parse( &client_addresses[i], "127.0.0.1:0" ) );
+        rocketnet_unit_check( rocketnet_client_driver_open( backend->client, NULL, &client_setup, &client_addresses[i], &clients[i] ) );
+        rocketnet_unit_check( client_addresses[i].port != 0 );
+    }
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
+    if ( live_before == 0 )
+        rocketnet_unit_check( rocketnet_loopback_endpoints_live() == ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
+
+    const uint8_t data[] = { 1, 2, 3, 4 };
+    rocketnet_address_t to = server_address;
+    set_ipv4_loopback( to );
+    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
+        clients[i].operations->send( clients[i].instance, &to, data, sizeof( data ) );
+
+    const int capacity = 64;
+    const int stride = ROCKETNET_RECEIVE_CEILING;
+    uint8_t * batch = (uint8_t*) malloc( (size_t) stride * capacity );
+    rocketnet_address_t * froms = (rocketnet_address_t*) malloc( sizeof( rocketnet_address_t ) * capacity );
+    int * batch_bytes = (int*) malloc( sizeof( int ) * capacity );
+    bool * seen = (bool*) calloc( ROCKETNET_MAX_CLIENTS, sizeof( bool ) );
+    rocketnet_unit_check( batch && froms && batch_bytes && seen );
+
+    int total = 0;
+    while ( total < ROCKETNET_MAX_CLIENTS )
+    {
+        const int received = server.operations->receive_batch( server.instance, froms, batch, stride, batch_bytes, capacity );
+        rocketnet_unit_check( received > 0 );
+        for ( int i = 0; i < received; ++i )
+        {
+            rocketnet_unit_check( batch_bytes[i] == (int) sizeof( data ) );
+            rocketnet_unit_check( memcmp( batch + (size_t) i * stride, data, sizeof( data ) ) == 0 );
+            int index = -1;
+            for ( int c = 0; c < ROCKETNET_MAX_CLIENTS; ++c )
+                if ( client_addresses[c].port == froms[i].port )
+                    { index = c; break; }
+            rocketnet_unit_check( index >= 0 );
+            rocketnet_unit_check( !seen[index] );
+            seen[index] = true;
+            ++total;
+        }
+    }
+    rocketnet_unit_check( total == ROCKETNET_MAX_CLIENTS );
+
+    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
+    {
+        rocketnet_platform_send_t packet = { &client_addresses[i], data, (int) sizeof( data ) };
+        server.operations->send_batch( server.instance, &packet, 1 );
+    }
+    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
+    {
+        rocketnet_address_t from;
+        uint8_t buf[64];
+        const int bytes = clients[i].operations->receive( clients[i].instance, &from, buf, 64 );
+        rocketnet_unit_check( bytes == (int) sizeof( data ) );
+        rocketnet_unit_check( memcmp( buf, data, sizeof( data ) ) == 0 );
+        rocketnet_unit_check( from.port == server_address.port );
+    }
+
+    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
+        rocketnet_client_driver_close( &clients[i] );
+    rocketnet_server_driver_close( &server );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
+
+    free( batch );
+    free( froms );
+    free( batch_bytes );
+    free( seen );
+    free( clients );
+    free( client_addresses );
+    printf( "driver_loopback_holds_max_clients_plus_server\n" );
+}
+
+static char g_loopback_refusal_log[1024];
+static int g_loopback_refusal_log_count;
+
+static void loopback_refusal_log_capture( void *, int, const char * message, size_t length )
+{
+    g_loopback_refusal_log_count++;
+    const size_t copy = length < sizeof( g_loopback_refusal_log ) - 1 ? length : sizeof( g_loopback_refusal_log ) - 1;
+    memcpy( g_loopback_refusal_log, message, copy );
+    g_loopback_refusal_log[copy] = '\0';
+}
+
+static void driver_loopback_refuses_past_max_endpoints()
+{
+    const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
+    const int live_before = rocketnet_loopback_endpoints_live();
+    const int saved_level = rocketnet_get_log_level();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_set_log_callback( loopback_refusal_log_capture, NULL );
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    const rocketnet_client_driver_config_t client_setup = { "loopback", &client_config };
+    rocketnet_client_driver_t * clients = (rocketnet_client_driver_t*) calloc( ROCKETNET_LOOPBACK_MAX_ENDPOINTS, sizeof( rocketnet_client_driver_t ) );
+    rocketnet_unit_check( clients );
+
+    for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+    {
+        rocketnet_address_t address;
+        rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+        rocketnet_unit_check( rocketnet_client_driver_open( backend->client, NULL, &client_setup, &address, &clients[i] ) );
+    }
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
+
+    g_loopback_refusal_log_count = 0;
+    g_loopback_refusal_log[0] = '\0';
+    rocketnet_address_t extra;
+    rocketnet_unit_check( rocketnet_address_parse( &extra, "127.0.0.1:0" ) );
+    rocketnet_client_driver_t refused = {};
+    rocketnet_unit_check( !rocketnet_client_driver_open( backend->client, NULL, &client_setup, &extra, &refused ) );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
+
+    char value[32];
+    snprintf( value, sizeof( value ), "%d", (int) ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
+    rocketnet_unit_check( g_loopback_refusal_log_count == 1 );
+    rocketnet_unit_check( strstr( g_loopback_refusal_log, "ROCKETNET_LOOPBACK_MAX_ENDPOINTS" ) != NULL );
+    rocketnet_unit_check( strstr( g_loopback_refusal_log, value ) != NULL );
+
+    rocketnet_client_driver_close( &clients[0] );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + ROCKETNET_LOOPBACK_MAX_ENDPOINTS - 1 );
+
+    rocketnet_address_t again;
+    rocketnet_unit_check( rocketnet_address_parse( &again, "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_client_driver_open( backend->client, NULL, &client_setup, &again, &clients[0] ) );
+
+    for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+        rocketnet_client_driver_close( &clients[i] );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
+
+    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_log_level( saved_level );
+    free( clients );
+    printf( "driver_loopback_refuses_past_max_endpoints\n" );
+}
+
 REGISTER_UNIT_TEST( driver_loopback_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( driver_loopback_exchanges_both_ways );
 REGISTER_UNIT_TEST( driver_loopback_full_queue_drops_and_counts );
 REGISTER_UNIT_TEST( driver_loopback_destroy_frees_the_port );
+REGISTER_UNIT_TEST( driver_loopback_holds_max_clients_plus_server );
+REGISTER_UNIT_TEST( driver_loopback_refuses_past_max_endpoints );
 REGISTER_UNIT_TEST( wire_totals_staged_finish_counts_exactly );
