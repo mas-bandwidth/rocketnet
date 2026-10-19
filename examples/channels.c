@@ -146,7 +146,7 @@ int main( void )
         // (5) send_packets is last so this frame's messages leave this frame
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
-        if ( chat_received == NUM_CHAT && positions_during_stall > 0 ) { printf( "PASS\n" ); result = 0; break; }
+        if ( chat_received == NUM_CHAT && positions_during_stall > 0 ) { result = 0; break; }
         rocketnet_sleep( 0.005 );
     }
 
@@ -154,5 +154,9 @@ cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

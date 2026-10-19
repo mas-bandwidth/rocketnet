@@ -209,12 +209,16 @@ int main( int argc, char ** argv )
 
     if ( events_received != events_sent ) printf( "FAIL: %llu of %llu events arrived\n", (unsigned long long) events_received, (unsigned long long) events_sent );
     else if ( wrong_order ? extra < 1 : extra != 0 ) printf( "FAIL: %d extra frame(s) in the %s order\n", extra, wrong_order ? "wrong" : "correct" );
-    else { printf( "PASS\n" ); result = 0; }
+    else result = 0;
 
 cleanup:
     for ( int i = 0; i < num_clients; i++ ) rocketnet_client_destroy( clients[i] );
     rocketnet_server_destroy( server );
     rocketnet_term();
     free( clients );
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

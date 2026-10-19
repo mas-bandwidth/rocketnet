@@ -338,7 +338,7 @@ int main( int argc, char ** argv ) {
     for ( int m = 0; m < 21; m++ )
         fprintf( fp, m < 8 ? "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.0f\n" : "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.2f\n", num_clients, seconds, seed, transport_name, m_names[m], m_vals[m] );
     fclose( fp );
-    printf( "soak: clients=%d seconds=%d seed=%" PRIu64 " transport=%s rel=%" PRIu64 "/%" PRIu64 " seq=%" PRIu64 "/%" PRIu64 " srv_p50=%.1fus srv_p99=%.1fus cli_peer_p50=%.2fus cli_peer_p99=%.2fus (budget 100us) allocs/tick=%.2f peak_bytes=%" PRIu64 "\nPASS\n",
+    printf( "soak: clients=%d seconds=%d seed=%" PRIu64 " transport=%s rel=%" PRIu64 "/%" PRIu64 " seq=%" PRIu64 "/%" PRIu64 " srv_p50=%.1fus srv_p99=%.1fus cli_peer_p50=%.2fus cli_peer_p99=%.2fus (budget 100us) allocs/tick=%.2f peak_bytes=%" PRIu64 "\n",
             num_clients, seconds, seed, transport_name, recv_rel, sent_rel, recv_seq, sent_seq,
             srv_p50, srv_p99, cli_p50 / num_clients, cli_p99 / num_clients,
             (double) g_alloc.steady_allocs / soak_ticks, g_alloc.peak_bytes );
@@ -349,5 +349,8 @@ cleanup:
     if ( server ) rocketnet_server_destroy( server );
     if ( inited ) rocketnet_term();
     free( clients ); free( c2s ); free( s2c ); free( srv_us ); free( cli_us );
+    // PASS after the cleanup, so it stays the last line
+    if ( exit_code == 0 )
+        printf( "PASS\n" );
     return exit_code;
 }

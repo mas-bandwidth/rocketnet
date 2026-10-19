@@ -153,11 +153,14 @@ int main( int argc, char ** argv )
     CHECK( wrong_protocol ? refused : received );
     rocketnet_client_disconnect( client );
     printf( "client disconnect reason: %s\n", reason_name( rocketnet_client_disconnect_reason( client ) ) );
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

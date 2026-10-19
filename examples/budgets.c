@@ -151,12 +151,15 @@ int main( void )
     printf( "reliable messages arrived: %d/%d\n", reliable_received, RELIABLE_COUNT );
     CHECK( drops > 0 );
     CHECK( reliable_received == RELIABLE_COUNT );
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

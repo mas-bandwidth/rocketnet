@@ -156,11 +156,14 @@ int main( void )
     }
     printf( "client after disconnect state %s reason %d\n", rocketnet_client_state_name( rocketnet_client_state( client ) ), rocketnet_client_disconnect_reason( client ) );
     printf( "server client %d disconnect reason %d\n", client_index, rocketnet_server_disconnect_reason( server, client_index ) );
-    printf( "PASS\n" );
     result = 0;
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }
