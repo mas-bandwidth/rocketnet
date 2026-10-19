@@ -551,4 +551,15 @@ with `fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
 (`crash-*`, `oom-*`, `timeout-*`, `leak-*`) names the bug; a minimized input
 belongs in the target's seed corpus as `regress_<name>` together with its
 pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
-workflow's `fuzz-macos` job runs this same build for each target.
+workflow's `fuzz-macos` job runs this same build for each target. `ci.yml`'s
+`Replay the fuzz corpora without libFuzzer` step stays the gate for the four
+committed corpora: build `fuzz_replay_rocketnet_fuzz`,
+`fuzz_replay_rocketnet_fuzz_message`,
+`fuzz_replay_rocketnet_fuzz_connect_token` and
+`fuzz_replay_rocketnet_fuzz_receive_structured` and run each against its
+`fuzz/corpus*` inputs, which executes every committed file exactly once. The
+`ROCKETNET_FUZZ_CC`/`ROCKETNET_FUZZ_CXX` variable mechanism is not Apple
+silicon specific: building the instrumented library with LLVM clang and
+running `make -C fuzz ROCKETNET_FUZZ_CXX=...` produces the four harnesses with
+`-fsanitize=fuzzer,address,undefined` on any host that carries a libFuzzer
+runtime.
