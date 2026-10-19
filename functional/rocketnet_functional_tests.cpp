@@ -8072,6 +8072,24 @@ extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// oversize, runt and garbage datagrams at every Windows receive path (functional/windows_socket_errors.cpp)
+extern void windows_server_drops_oversize_datagram_portable_ipv4();
+extern void windows_server_drops_oversize_datagram_portable_ipv6();
+extern void windows_server_drops_oversize_datagram_iocp_ipv4();
+extern void windows_server_drops_oversize_datagram_iocp_ipv6();
+extern void windows_server_drops_oversize_datagram_rio_ipv4();
+extern void windows_server_drops_oversize_datagram_rio_ipv6();
+extern void windows_server_drops_runt_and_garbage_portable_ipv4();
+extern void windows_server_drops_runt_and_garbage_portable_ipv6();
+extern void windows_server_drops_runt_and_garbage_iocp_ipv4();
+extern void windows_server_drops_runt_and_garbage_iocp_ipv6();
+extern void windows_server_drops_runt_and_garbage_rio_ipv4();
+extern void windows_server_drops_runt_and_garbage_rio_ipv6();
+extern void windows_client_drops_oversize_and_garbage_ipv4();
+extern void windows_client_drops_oversize_and_garbage_ipv6();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 // A destroyed client's receive thread always exits: destroy stores quit and
 // wakes the receive thread's wait explicitly before the join. These cases use
 // real threads and real waits, so they run here, not in the unit suite.
@@ -8374,6 +8392,22 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family },
     { "live_message_matrix_loopback", live_message_matrix_loopback },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "windows_server_drops_oversize_datagram_portable_ipv4", windows_server_drops_oversize_datagram_portable_ipv4 },
+    { "windows_server_drops_oversize_datagram_portable_ipv6", windows_server_drops_oversize_datagram_portable_ipv6 },
+    { "windows_server_drops_oversize_datagram_iocp_ipv4", windows_server_drops_oversize_datagram_iocp_ipv4 },
+    { "windows_server_drops_oversize_datagram_iocp_ipv6", windows_server_drops_oversize_datagram_iocp_ipv6 },
+    { "windows_server_drops_oversize_datagram_rio_ipv4", windows_server_drops_oversize_datagram_rio_ipv4 },
+    { "windows_server_drops_oversize_datagram_rio_ipv6", windows_server_drops_oversize_datagram_rio_ipv6 },
+    { "windows_server_drops_runt_and_garbage_portable_ipv4", windows_server_drops_runt_and_garbage_portable_ipv4 },
+    { "windows_server_drops_runt_and_garbage_portable_ipv6", windows_server_drops_runt_and_garbage_portable_ipv6 },
+    { "windows_server_drops_runt_and_garbage_iocp_ipv4", windows_server_drops_runt_and_garbage_iocp_ipv4 },
+    { "windows_server_drops_runt_and_garbage_iocp_ipv6", windows_server_drops_runt_and_garbage_iocp_ipv6 },
+    { "windows_server_drops_runt_and_garbage_rio_ipv4", windows_server_drops_runt_and_garbage_rio_ipv4 },
+    { "windows_server_drops_runt_and_garbage_rio_ipv6", windows_server_drops_runt_and_garbage_rio_ipv6 },
+    { "windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4 },
+    { "windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6 },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;

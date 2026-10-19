@@ -2723,6 +2723,13 @@ uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_serve
     return rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index );
 }
 
+// test seam: the instance of the granted driver, so a functional test reads
+// the counters and posted operations of that driver through a live transport
+void * rocketnet_server_transport_test_driver_instance( struct rocketnet_server_transport_t * server_transport )
+{
+    return server_transport ? server_transport->io.instance : NULL;
+}
+
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )

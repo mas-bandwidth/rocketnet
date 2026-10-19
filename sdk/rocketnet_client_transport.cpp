@@ -1966,6 +1966,13 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     }
 }
 
+// test seam: the port the client socket is bound to, so a functional test
+// sends datagrams at it
+uint16_t rocketnet_client_transport_test_bound_port( rocketnet_client_transport_t * client_transport )
+{
+    return client_transport ? client_transport->bound_port : 0;
+}
+
 const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
