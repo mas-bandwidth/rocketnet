@@ -361,6 +361,16 @@ none changes SDK behaviour. "Session" below is (client index, generation) on the
 | `liveness_connected` | ClientSession: `ConnectReachesConnectedOrError`; ServerSession: `HandshakeResolves`; RNSimFaults: `EveryLiveClientConnects` | Every client that is not crashed is CONNECTED and the server holds its session, by the last step (the quiet window: 20 s in `full`, 15 s in `push`, after the fault window) | the last step |
 | `liveness_delivered` | RNChannel: `EveryOrderedMessageDelivered`; RNChannelTypes: `EveryReliableAckedAndDelivered`; RNReceipts: `ReceiptProgress` | Every message of types 2, 3, 6, 7 sent on a session still live at the last step is delivered; for type 4 the stream's last sent sequence is delivered; every receipt serial on a live session has its outcome | the last step |
 
+The checks run from `dst_checks.h`, called by the harness at the hooks the table names: every
+delivery, every link `acked()` call, every server slot change and client state change, every step,
+and the last step. Each check function carries the module and invariant it mirrors in its comment.
+The quiet window is the liveness bound: `liveness_delivered` checks the reliable sequences sent
+once the fault window ended, so a message still inside the bound at the last step is not called
+lost. The run's refusal table gains `CLIENT_PAYLOAD_ALREADY_RECEIVED`, the client-side counterpart
+of `PAYLOAD_ALREADY_RECEIVED`, which duplication explains; it moved at seeds 1, 6, 7 and 8 of the
+push shape before the row was added. The seam gives every sealed frame a fresh packet id, the join
+key the ack checks read; a fixed id per endpoint loses that join and stalls reliable delivery.
+
 Not mirrored at runtime: ReceiveOrder's `CheapRefusalsFirst` (the order of the server's receive
 rungs is not observable from outside the protocol object; its unit tests hold it), RNReceipts'
 `UnreliableNeverResent` (a packet's contents are not decoded by the harness), and the TypeOK and
