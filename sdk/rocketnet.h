@@ -689,7 +689,7 @@ ROCKETNET_EXPORT bool rocketnet_allocator( void * (*malloc_function)( void * con
 // are.
 //
 // transport is an ORDERED CANDIDATE LIST, comma separated, tried left to right
-// at create; the first transport that starts wins, and a list that every
+// at client connect and server start; the first transport that starts wins, and a list that every
 // candidate refuses fails loudly. "auto" (the default, also NULL or the empty
 // string) is this platform's recommended order: a linux server tries
 // xdp,gso,portable, a macOS server msgx,portable, and everything else
@@ -752,16 +752,16 @@ struct rocketnet_client_config_t
 #define ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_CONFIG_BYTES_1, ROCKETNET_CLIENT_CONFIG_BYTES_2
 
 // The server is configured explicitly: rocketnet_server_default_config gives
-// the shape with no keys, and create refuses it until keys are supplied
+// the shape with no keys, and start refuses it until keys are supplied
 // (through the struct or the environment), because default keys are how
 // every deployment of a protocol ends up sharing one identity.
 // rocketnet_server_dev_config fills the published development keys and test
 // filter for local work, loudly.
 //
-// public_address, when set, displaces the create call's address, so the
+// public_address, when set, displaces the create call's address at start, so the
 // address the transport binds and the address connect tokens are checked
 // against are always the same one. ROCKETNET_SERVER_PUBLIC_ADDRESS applies to
-// the first server create in the process only, and says so in the log, so a
+// the first server start in the process only, and says so in the log, so a
 // process with several servers is never redirected wholesale by one variable.
 
 struct rocketnet_server_config_t
@@ -819,7 +819,7 @@ struct rocketnet_server_config_t
 // create. memory is optional: NULL makes the one allocation, and a caller
 // block of at least the _required_memory bytes, aligned to
 // ROCKETNET_ALLOCATION_ALIGNMENT, makes none (the transport underneath still
-// allocates its own at create).
+// allocates its own at client connect and server start).
 //
 // time is the game's clock, a double in seconds, monotonic; pass the same
 // clock to every call that takes one. The library reads no clock of its own
@@ -993,7 +993,8 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void
 // ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED and leaves the matching error state;
 // a socket or thread the platform refuses returns its status and leaves the
 // client DISCONNECTED. connect reads no clock: the attempt's clock starts at
-// the next update. A connection the server ended is ended here first. a NULL
+// the next update. A connection the server ended (DISCONNECTED, its object
+// still held) is ended here first, its reason kept. a NULL
 // client or connect_token is a counted no-op that returns
 // ROCKETNET_STATUS_INVALID_ARGUMENT.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const uint8_t * connect_token );

@@ -146,12 +146,15 @@ int main( void )
     printf( "receipts resolved: %d/%d (acked %d, loss %d)\n", resolved, NUM_UPDATES, acked, lost );
     CHECK( sent == NUM_UPDATES && resolved == NUM_UPDATES );
     CHECK( acked > 0 && lost > 0 );
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }
