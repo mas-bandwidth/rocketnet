@@ -244,8 +244,8 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
 
     // RNChannel!Enqueue: ordered_write' = ordered_write + 1, and
     // sequenced_write' = 0 on the same channel. The reset runs although no
-    // sequenced type is enabled (7.1), so a later sequenced card changes no
-    // ordered trace.
+    // sequenced type is enabled (7.1), so enabling a sequenced type changes
+    // no ordered trace.
     rn_channel_send_t * send = channels->region->channel_send + channel;
     const uint32_t ordering = send->ordered_write;
     send->ordered_write = ordering + 1;

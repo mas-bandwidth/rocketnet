@@ -5712,8 +5712,8 @@ void rocketnet_test_integrity_limit()
         // mapping lookup, so it never reaches the open and never counts
         // against the mapping's integrity (STANDARD.md: a connection response
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
-        // never a later refusal"; card rnfix-response-wrong-size-counted-r2:
-        // "an exact-size check before the lookup"). two such: one too short
+        // never a later refusal": an exact-size check runs before the
+        // lookup). two such: one too short
         // to carry a tag, one that would open to the wrong size. the class
         // still filed as DID_NOT_OPEN is a response that opens to non-zero
         // padding.
@@ -13415,7 +13415,7 @@ void rocketnet_test_suite_environment()
 
 void rocketnet_test_server_transport_entries_carry_connection_id()
 {
-    // docs/CHANNELS.md P9a, P9b (card C0a): a slot released and reassigned
+    // docs/CHANNELS.md P9a, P9b: a slot released and reassigned
     // inside one update. Client A holds slot 0; A's payload, whose ack block
     // acknowledges three server packets, then A's disconnect, then client B
     // connecting into the freed slot 0, then B's payload -- with no batch

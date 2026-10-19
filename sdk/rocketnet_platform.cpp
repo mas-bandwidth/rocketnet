@@ -2691,8 +2691,8 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 // ---------------------------------------------------
 
 // The client I/O wake on macOS and iOS: one kqueue holding the socket's
-// EVFILT_READ and an EVFILT_USER trigger (docs/CLIENT-IO.md "The wake" and
-// its macOS and iOS card). The trigger is EV_CLEAR, so it is
+// EVFILT_READ and an EVFILT_USER trigger (docs/CLIENT-IO.md "The wake").
+// The trigger is EV_CLEAR, so it is
 // level-triggered until a wait returns it: a set made while no wait runs
 // makes the next wait return at once, and that wait consumes it.
 

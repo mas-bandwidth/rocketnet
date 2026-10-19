@@ -34,8 +34,7 @@
 // 7.5 admits a type; a disabled type is refused on send
 // (ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED) and counted as a violation
 // on receive (ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED). Each later type's
-// case lives in its own file so its card runs
-// without touching this one:
+// case lives in its own file:
 //
 //   sdk/rocketnet_channel_reliable.cpp    code 2
 //   sdk/rocketnet_channel_sequenced.cpp   codes 1 and 4
@@ -64,7 +63,7 @@
 
 // what a dispatch did with one record (docs/CHANNELS.md 7.2)
 
-#define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused, counted, or held by a later card
+#define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused or counted
 #define ROCKETNET_CHANNEL_DISPATCH_DELIVERED                    1   // a view into the batch, or a delivery from the ring
 #define ROCKETNET_CHANNEL_DISPATCH_HELD                         2   // kept ahead of its turn, live (7.2, 7.3)
 #define ROCKETNET_CHANNEL_DISPATCH_STALE                        3   // dropped, counted (7.3)
