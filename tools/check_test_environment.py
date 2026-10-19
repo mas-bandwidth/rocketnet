@@ -182,7 +182,8 @@ def main():
     if functional:
         # the functional suite opens loopback sockets and walks the driver
         # ladder; its CI job invokes it with the ambient environment (and any
-        # ROCKETNET_DRIVER pin) rather than the unit suite's hostile config.
+        # ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin) rather than the
+        # unit suite's hostile config.
         result = run_binary(binary, env, timeout=1200)
         lines = result.stdout.splitlines()
         printed = printed_names(lines)
@@ -208,7 +209,8 @@ def main():
                 sys.exit("functional suite failed: %s" % result.returncode)
         return
 
-    # Preserve any caller's explicit ROCKETNET_DRIVER pin. Other values exercise
+    # Preserve any caller's explicit ROCKETNET_SERVER_TRANSPORT and
+    # ROCKETNET_CLIENT_TRANSPORT pins. Other values exercise
     # exact names, legacy aliases, an invalid key and a long value without ever
     # printing their contents. The suite derives its cleanup list from the tables.
     env.update({

@@ -38,7 +38,7 @@ def header_declared_names(header_path):
                 in_dev = False
             continue
         if buffer is None:
-            if line.startswith("ROCKETNET_EXPORT_FUNC"):
+            if line.startswith(("ROCKETNET_EXPORT ", "ROCKETNET_EXPORT_FUNC")):
                 buffer, depth = line, line.count("(") - line.count(")")
         else:
             buffer += " " + line

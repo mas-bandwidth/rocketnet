@@ -1,0 +1,5 @@
+# Rows owned by RN-1 t15 in TRANSPORT.md.
+# Format: document row name, SDK expression, value.
+#include "rocketnet_wire.h"
+#include "rocketnet_ack.h"
+range count maximum	ROCKETNET_ACK_BLOCK_MAX_RANGES	255

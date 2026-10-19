@@ -26,7 +26,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_server_replay_marks.h"
@@ -53,7 +53,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 
 // The transport driver is selected at RUNTIME (#106): one build carries
 // every driver its platform has, and create walks the config's ordered
-// candidate list -- config->driver, overridden by ROCKETNET_SERVER_DRIVER --
+// candidate list -- config->driver, overridden by ROCKETNET_SERVER_TRANSPORT --
 // left to right, first grant wins. On linux that is the runtime ladder:
 // probe XDP (privilege and NIC support), fall to the non-root GSO driver
 // (SO_REUSEPORT sharding + sendmmsg/recvmmsg + UDP GSO/GRO, per the #81
@@ -66,7 +66,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 // and degradation remains runtime inside the driver, below this ladder.
 
 #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
-#error driver selection is runtime now (#106): drop ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO and select with config driver or ROCKETNET_SERVER_DRIVER
+#error driver selection is runtime now (#106): drop ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO and select with config driver or ROCKETNET_SERVER_TRANSPORT
 #endif // #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
 
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS 256
@@ -299,6 +299,28 @@ static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_trans
     {
         pending->totals.packets_sent++;
         pending->totals.bytes_sent += wire_bytes;
+    }
+}
+
+// The staged producers (any game thread) fold the whole-server sent counters
+// and the per-client sent totals with relaxed atomics, as the fill-phase
+// atomics in rocketnet_platform.h do for stats_pending_packets_sent and
+// stats_pending_bytes_sent: each counter is meaningful alone and nothing is
+// ordered behind it. The pending-by-address table is main-thread only, so a
+// producer whose client_index is out of range drops the count rather than
+// touch it.
+
+static void rocketnet_server_wire_totals_add_sent_atomic( struct rocketnet_server_transport_t * server_transport,
+                                                          int client_index, int packet_bytes )
+{
+    const uint64_t wire_bytes = (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &server_transport->server_stats.packets_sent, 1 );
+    rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &server_transport->server_stats.bytes_sent, wire_bytes );
+    if ( client_index >= 0 && client_index < server_transport->client_wire_totals_capacity )
+    {
+        struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &totals->packets_sent, 1 );
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &totals->bytes_sent, wire_bytes );
     }
 }
 
@@ -562,7 +584,9 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     for (uint64_t bytes : {rocketnet_encryption_map_allocation_bytes(clients * ROCKETNET_ENCRYPTION_MAP_RATIO),
         rocketnet_token_table_allocation_bytes(clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO),
         rocketnet_client_slots_allocation_bytes(clients), rocketnet_server_acks_allocation_bytes(clients),
-        rocketnet_memory_allocations({(uint64_t)clients*sizeof(uint64_t), (uint64_t)clients*ROCKETNET_SENT_PACKET_BUFFER_SIZE*sizeof(uint64_t)})})
+        rocketnet_memory_allocations({(uint64_t)clients*sizeof(uint64_t), (uint64_t)clients*ROCKETNET_SENT_PACKET_BUFFER_SIZE*sizeof(uint64_t)}),
+        // The plan counts what the transport allocates, once: the per-client wire totals are a separate allocation.
+        rocketnet_memory_allocations({(uint64_t)clients*sizeof(rocketnet_server_wire_totals_t)})})
     {
         if (!bytes || !rocketnet_memory_add(plan.protocol_bytes, 1, bytes)) return false;
     }
@@ -877,7 +901,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
     if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
     {
         if ( status )
-            *status = ROCKETNET_STATUS_INVALID_DRIVER_LIST;
+            *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
         return NULL;
     }
 
@@ -928,7 +952,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                 (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
             if ( memory_budget > 0 && plan.total_bytes > memory_budget )
             {
-                rocketnet_warn("server driver %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
+                rocketnet_warn("server transport %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
                     name, (unsigned long long)plan.total_bytes, (unsigned long long)memory_budget);
                 budget_refused[candidate] = true;
                 budget_refused_total++;
@@ -937,14 +961,14 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                 budget_allowed++;
         }
         else
-            rocketnet_info("server memory plan [%s]: unavailable; consult this driver's resource policy", name);
+            rocketnet_info("server memory plan [%s]: unavailable; consult this transport's resource policy", name);
     }
 
     if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
     {
         if ( status )
-            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
-        rocketnet_error("server driver ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+        rocketnet_error("server transport ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
             (unsigned long long)memory_budget);
         return NULL;
     }
@@ -1073,7 +1097,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                 snprintf( port_zero_refused_names + used, sizeof(port_zero_refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
             }
 
-            rocketnet_warn( "server driver %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s driver binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a driver that discovers one in the list",
+            rocketnet_warn( "server transport %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s transport binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a transport that discovers one in the list",
                             rocketnet_driver_name( candidate ), rocketnet_driver_name( candidate ) );
         }
         else
@@ -1087,7 +1111,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
 
         if ( granted_driver < 0 )
         {
-            rocketnet_warn( "server driver %s refused%s", rocketnet_driver_name( candidate ),
+            rocketnet_warn( "server transport %s refused%s", rocketnet_driver_name( candidate ),
                             i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
 
             // deduped on the same rule as the port-zero list below it: a
@@ -1116,7 +1140,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
             snprintf( skipped_names + used, sizeof(skipped_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( ladder.skipped[i] ) );
         }
 
-        rocketnet_error( "server driver ladder exhausted with no grant. refused: %s. skipped for platform: %s",
+        rocketnet_error( "server transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
 
@@ -1133,13 +1157,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
             // exists precisely because the reader is at ERROR level, where
             // those warns are invisible. it has to stand alone.
 
-            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a driver that discovers a granted port (%s). raise the log level to WARN to see why each candidate refused",
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a transport that discovers a granted port (%s). raise the log level to WARN to see why each candidate refused",
                              port_zero_refused_names, rocketnet_driver_discovering_names() );
         }
 
         if ( status )
-            *status = ( port_zero_refused_names[0] != '\0' ) ? ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED
-                                                             : ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
+            *status = ( port_zero_refused_names[0] != '\0' ) ? ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED
+                                                             : ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
@@ -1148,7 +1172,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
 
     if ( refused_names[0] != '\0' )
     {
-        rocketnet_info( "server driver ladder granted %s after refusals: %s", rocketnet_driver_name( granted_driver ), refused_names );
+        rocketnet_info( "server transport ladder granted %s after refusals: %s", rocketnet_driver_name( granted_driver ), refused_names );
     }
 
     // the started line names the granted tier -- performance claims attach
@@ -2052,7 +2076,7 @@ static void rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
         rocketnet_server_driver_finish_packet( server_transport, frame->socket_packet_id, frame->data, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
-        rocketnet_server_wire_totals_add_sent( server_transport, frame->client_index, NULL, wire_bytes );
+        rocketnet_server_wire_totals_add_sent_atomic( server_transport, frame->client_index, wire_bytes );
         return;
     }
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
@@ -2226,7 +2250,7 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         rocketnet_server_driver_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
-        rocketnet_server_wire_totals_add_sent( server_transport, context->client_index, NULL, wire_bytes );
+        rocketnet_server_wire_totals_add_sent_atomic( server_transport, context->client_index, wire_bytes );
     }
     else
     {
@@ -2459,9 +2483,9 @@ void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * ser
     stats->packets_received_per_second = server_transport->server_stats.packets_received_per_second;
     stats->bandwidth_sent_kbps = server_transport->server_stats.bandwidth_sent_kbps;
     stats->bandwidth_received_kbps = server_transport->server_stats.bandwidth_received_kbps;
-    stats->packets_sent = server_transport->server_stats.packets_sent;
+    stats->packets_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &server_transport->server_stats.packets_sent );
     stats->packets_received = server_transport->server_stats.packets_received;
-    stats->bytes_sent = server_transport->server_stats.bytes_sent;
+    stats->bytes_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &server_transport->server_stats.bytes_sent );
     stats->bytes_received = server_transport->server_stats.bytes_received;
 }
 
@@ -2545,9 +2569,9 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     if ( client_index < server_transport->client_wire_totals_capacity )
     {
         const struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
-        stats->packets_sent = totals->packets_sent;
+        stats->packets_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &totals->packets_sent );
         stats->packets_received = totals->packets_received;
-        stats->bytes_sent = totals->bytes_sent;
+        stats->bytes_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &totals->bytes_sent );
         stats->bytes_received = totals->bytes_received;
     }
 }
