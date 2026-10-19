@@ -137,7 +137,7 @@ StartInPlace ==
     /\ pending' = next
     /\ next' = next + 1
     /\ outcome' = [outcome EXCEPT ![next] = "started"]
-    /\ UNCHANGED << fellback, regionData, queue, staged, wire, acksDue, acksMade, finished, faults, packetsThisUpdate, starved >>
+    /\ UNCHANGED << fellback, regionData, queue, staged, wire, acksDue, acksMade, finished, faults, packetsThisUpdate >>
 
 \* start on the queued path: a reliable or oversize message always; a fitting
 \* unreliable one when the transport gave no frame (it may refuse at any
