@@ -142,6 +142,48 @@ def main():
     failures = []
     checked = 0
 
+    # The token-time refusals are an ordered protocol rule, not just counter
+    # names: keep the documented checks and their counter rows in code order.
+    order_heading = "In this exact order, on a _connection request packet_:"
+    if order_heading not in text:
+        failures.append("STANDARD.md has no ordered connection-request check list")
+        request_order = ""
+    else:
+        request_order = re.sub(r"\s+", " ", text.split(order_heading, 1)[1].split("\n\n**", 1)[0])
+
+    refusal_rules = (
+        ("expired token", "If the expire timestamp is <= the current time, ignore it."),
+        ("future-created token",
+         "If `max_token_lifetime_seconds` is above 0 and the create timestamp is more than five seconds ahead of the current time, ignore it."),
+        ("overlong token",
+         "If `max_token_lifetime_seconds` is above 0 and the token's lifetime (`expire - create`) exceeds that maximum, ignore it."),
+    )
+    refusal_positions = []
+    for name, rule in refusal_rules:
+        checked += 1
+        position = request_order.find(rule)
+        if position < 0:
+            failures.append("STANDARD.md's connection-request order omits the %s rule" % name)
+        refusal_positions.append(position)
+    if all(position >= 0 for position in refusal_positions) and refusal_positions != sorted(refusal_positions):
+        failures.append("STANDARD.md's token-time refusal checks are not in code order")
+
+    # Keep both distinct refusal reasons in the ordered request-counter table.
+    counter_heading = "The connection request path is the one that matters most"
+    counter_start = text.find("| Counter | Fires when |", text.find(counter_heading))
+    counter_text = text[counter_start:] if counter_start >= 0 else ""
+    counter_names = ("..._TOKEN_EXPIRED", "..._TOKEN_CREATED_IN_FUTURE",
+                     "..._TOKEN_LIFETIME_TOO_LONG")
+    counter_positions = []
+    for name in counter_names:
+        checked += 1
+        position = counter_text.find("| `%s` |" % name)
+        if position < 0:
+            failures.append("STANDARD.md's connection-request counter table omits %s" % name)
+        counter_positions.append(position)
+    if all(position >= 0 for position in counter_positions) and counter_positions != sorted(counter_positions):
+        failures.append("STANDARD.md's token-time refusal counters are not in request order")
+
     def compare(what, published, implemented):
         nonlocal checked
         checked += 1

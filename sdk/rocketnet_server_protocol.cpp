@@ -306,7 +306,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             if ( token_create_timestamp > current_timestamp + 5 )
             {
                 rocketnet_debug( "server ignored connection request. connect token created in future" );
-                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
+                // one counter per refusal reason (STANDARD.md, Counters).
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
 
@@ -315,7 +316,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             if ( lifetime > (uint64_t) server->max_token_lifetime_seconds )
             {
                 rocketnet_debug( "server ignored connection request. connect token lifetime exceeds maximum" );
-                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
+                // one counter per refusal reason (STANDARD.md, Counters).
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
         }
