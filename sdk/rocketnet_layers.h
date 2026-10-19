@@ -248,12 +248,12 @@ struct rocketnet_client_transport_config_t
     int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
+    void (*state_change_callback)( void * context, int previous_state, int current_state );
+    double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
     int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
     int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
     int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off
     int simulated_duplicate_percent;                // development only: simulated duplicate 0..100, 0 off
-    void (*state_change_callback)( void * context, int previous_state, int current_state );
-    double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
 };
 
 // a NULL config is a counted no-op.
