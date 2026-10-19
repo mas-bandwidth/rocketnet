@@ -269,30 +269,29 @@ void rocketnet_client_default_config( struct rocketnet_client_config_t * config 
     memcpy( config, &defaults, ROCKETNET_CLIENT_CONFIG_BYTES_1 );
 }
 
-static size_t rn_client_config_bytes_1()
+static const size_t rn_client_config_known_bytes[] = { ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES };
+static const size_t rn_server_config_known_bytes[] = { ROCKETNET_SERVER_CONFIG_KNOWN_BYTES };
+
+static bool rn_public_config_size_known( const char * endpoint, const char * type_name, size_t bytes,
+                                         const size_t * known, int known_count, size_t current )
 {
-    return ROCKETNET_CLIENT_CONFIG_BYTES_1;
+    for ( int i = 0; i < known_count; i++ )
+        if ( bytes == known[i] )
+            return true;
+    rocketnet_error( "%s config size refused: %d bytes for %s; current size is %d",
+                     endpoint, (int) bytes, type_name, (int) current );
+    return false;
 }
 
-static size_t rn_server_config_bytes_1()
-{
-    return ROCKETNET_SERVER_CONFIG_BYTES_1;
-}
-
-static bool rn_public_config_size_known( size_t bytes, size_t revision_1, size_t current )
-{
-    return bytes == revision_1 || bytes == current;
-}
+#define RN_CLIENT_CONFIG_SIZE_KNOWN( bytes ) rn_public_config_size_known( "client", "rocketnet_client_config_t", (bytes), rn_client_config_known_bytes, (int) ( sizeof(rn_client_config_known_bytes) / sizeof(rn_client_config_known_bytes[0]) ), sizeof(struct rocketnet_client_config_t) )
+#define RN_SERVER_CONFIG_SIZE_KNOWN( bytes ) rn_public_config_size_known( "server", "rocketnet_server_config_t", (bytes), rn_server_config_known_bytes, (int) ( sizeof(rn_server_config_known_bytes) / sizeof(rn_server_config_known_bytes[0]) ), sizeof(struct rocketnet_server_config_t) )
 
 int rocketnet_client_default_config_sized( struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return 0;
-    if ( !rn_public_config_size_known( config_bytes, rn_client_config_bytes_1(), sizeof( struct rocketnet_client_config_t ) ) )
-    {
-        rocketnet_error( "client default config refused: %d is not a known size of rocketnet_client_config_t (%d)", (int) config_bytes, (int) sizeof( struct rocketnet_client_config_t ) );
+    if ( !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
-    }
     struct rocketnet_client_config_t defaults;
     rn_client_default_config_current( &defaults );
     memcpy( config, &defaults, config_bytes );
@@ -333,7 +332,7 @@ int rocketnet_client_validate_config( const struct rocketnet_client_config_t * c
 
 int rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
 {
-    if ( config && !rn_public_config_size_known( config_bytes, ROCKETNET_CLIENT_CONFIG_BYTES_1, sizeof(*config) ) )
+    if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
     struct rocketnet_client_config_t current;
     return rn_client_validate_config_current( rn_client_config_read( &current, config, config_bytes ) );
@@ -358,7 +357,7 @@ uint64_t rocketnet_client_required_memory( const struct rocketnet_client_config_
 
 uint64_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
 {
-    if ( config && !rn_public_config_size_known( config_bytes, ROCKETNET_CLIENT_CONFIG_BYTES_1, sizeof(*config) ) )
+    if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
     struct rocketnet_client_config_t current;
     return rn_client_required_memory_current( rn_client_config_read( &current, config, config_bytes ) );
@@ -385,11 +384,8 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8
 
 struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
 {
-    if ( config && !rn_public_config_size_known( config_bytes, rn_client_config_bytes_1(), sizeof( struct rocketnet_client_config_t ) ) )
-    {
-        rocketnet_error( "client create refused: %d is not a known size of rocketnet_client_config_t (%d)", (int) config_bytes, (int) sizeof( struct rocketnet_client_config_t ) );
+    if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return NULL;
-    }
     if ( !config || config_bytes == sizeof( struct rocketnet_client_config_t ) )
         return rn_client_create_current( context, connect_token, config, memory, memory_bytes );
     struct rocketnet_client_config_t current;
@@ -627,11 +623,8 @@ int rocketnet_server_default_config_sized( struct rocketnet_server_config_t * co
 {
     if ( !rocketnet_api_null_guard( config ) )
         return 0;
-    if ( !rn_public_config_size_known( config_bytes, rn_server_config_bytes_1(), sizeof( struct rocketnet_server_config_t ) ) )
-    {
-        rocketnet_error( "server default config refused: %d is not a known size of rocketnet_server_config_t (%d)", (int) config_bytes, (int) sizeof( struct rocketnet_server_config_t ) );
+    if ( !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
-    }
     struct rocketnet_server_config_t defaults;
     rn_server_default_config_current( &defaults );
     memcpy( config, &defaults, config_bytes );
@@ -659,7 +652,9 @@ void rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
 
 int rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes )
 {
-    if ( !rocketnet_api_null_guard( config ) || !rn_public_config_size_known( config_bytes, ROCKETNET_SERVER_CONFIG_BYTES_1, sizeof(*config) ) )
+    if ( !rocketnet_api_null_guard( config ) )
+        return 0;
+    if ( !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
     struct rocketnet_server_config_t current;
     rn_server_dev_config_current( &current );
@@ -701,7 +696,7 @@ int rocketnet_server_validate_config( const struct rocketnet_server_config_t * c
 
 int rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
 {
-    if ( config && !rn_public_config_size_known( config_bytes, ROCKETNET_SERVER_CONFIG_BYTES_1, sizeof(*config) ) )
+    if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
     struct rocketnet_server_config_t current;
     return rn_server_validate_config_current( rn_server_config_read( &current, config, config_bytes ) );
@@ -726,7 +721,7 @@ uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_
 
 uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
 {
-    if ( config && !rn_public_config_size_known( config_bytes, ROCKETNET_SERVER_CONFIG_BYTES_1, sizeof(*config) ) )
+    if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
     struct rocketnet_server_config_t current;
     return rn_server_required_memory_current( rn_server_config_read( &current, config, config_bytes ) );
@@ -753,11 +748,8 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
 
 struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
 {
-    if ( config && !rn_public_config_size_known( config_bytes, rn_server_config_bytes_1(), sizeof( struct rocketnet_server_config_t ) ) )
-    {
-        rocketnet_error( "server create refused: %d is not a known size of rocketnet_server_config_t (%d)", (int) config_bytes, (int) sizeof( struct rocketnet_server_config_t ) );
+    if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return NULL;
-    }
     if ( !config || config_bytes == sizeof( struct rocketnet_server_config_t ) )
         return rn_server_create_current( context, address, config, memory, memory_bytes );
     struct rocketnet_server_config_t current;

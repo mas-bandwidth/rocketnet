@@ -30,10 +30,18 @@
 
 static void sized_config_quiet_assert( const char *, const char *, const char *, int ) {}
 static double sized_config_time( void * ) { return 1000.0; }
+static int sized_public_size_log_count = 0;
+static void sized_public_size_log( void *, int, const char * message, size_t )
+{
+    if ( strstr( message, "config size refused" ) && strstr( message, "current size" ) )
+        sized_public_size_log_count++;
+}
 
 static const size_t client_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };
 static const size_t server_known_bytes[] = { ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES };
 static const size_t message_known_bytes[] = { ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES };
+static const size_t public_client_known_bytes[] = { ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES };
+static const size_t public_server_known_bytes[] = { ROCKETNET_SERVER_CONFIG_KNOWN_BYTES };
 
 #define COUNT( a ) ( (int) ( sizeof( a ) / sizeof( a[0] ) ) )
 
@@ -333,6 +341,8 @@ REGISTER_UNIT_TEST( server_default_config_max_clients_is_1000 );
 
 static void sized_public_config_revisions_and_simulator_fields()
 {
+    sized_config_check_table( public_client_known_bytes, COUNT( public_client_known_bytes ), sizeof( struct rocketnet_client_config_t ) );
+    sized_config_check_table( public_server_known_bytes, COUNT( public_server_known_bytes ), sizeof( struct rocketnet_server_config_t ) );
     alignas(16) uint8_t client_buffer[ROCKETNET_CLIENT_CONFIG_BYTES_1 + 16];
     memset( client_buffer, 0xa5, sizeof(client_buffer) );
     check( rocketnet_client_default_config_sized( (rocketnet_client_config_t*) client_buffer,
@@ -413,6 +423,29 @@ static void sized_public_config_revisions_and_simulator_fields()
     rocketnet_client_destroy( public_client );
     rocketnet_server_destroy( public_server );
 #endif
+
+    sized_public_size_log_count = 0;
+    rocketnet_set_log_callback( sized_public_size_log, NULL );
+    const size_t client_unknown[] = { ROCKETNET_CLIENT_CONFIG_BYTES_1 - 1, ROCKETNET_CLIENT_CONFIG_BYTES_1 + sizeof(int), ROCKETNET_CLIENT_CONFIG_BYTES_2 + 8 };
+    for ( int i = 0; i < COUNT( client_unknown ); i++ )
+    {
+        check( rocketnet_client_validate_config_sized( &client, client_unknown[i] ) == 0 );
+        check( rocketnet_client_required_memory_sized( &client, client_unknown[i] ) == 0 );
+    }
+    const size_t server_unknown[] = { ROCKETNET_SERVER_CONFIG_BYTES_1 - 1, ROCKETNET_SERVER_CONFIG_BYTES_1 + sizeof(int), ROCKETNET_SERVER_CONFIG_BYTES_2 + 8 };
+    for ( int i = 0; i < COUNT( server_unknown ); i++ )
+    {
+        check( rocketnet_server_validate_config_sized( &server, server_unknown[i] ) == 0 );
+        check( rocketnet_server_required_memory_sized( &server, server_unknown[i] ) == 0 );
+        alignas(16) uint8_t refused[sizeof(server) + 16];
+        memset( refused, 0x6b, sizeof(refused) );
+        check( rocketnet_server_dev_config_sized( (rocketnet_server_config_t*) refused, server_unknown[i] ) == 0 );
+        for ( size_t j = 0; j < sizeof(refused); j++ )
+            check( refused[j] == 0x6b );
+    }
+
+    rocketnet_set_log_callback( NULL, NULL );
+    check( sized_public_size_log_count == 15 );
 
     const char * names[] = { "simulated_loss_percent", "simulated_latency_ms", "simulated_jitter_ms", "simulated_duplicate_percent" };
     for ( int type = 0; type < 2; type++ )

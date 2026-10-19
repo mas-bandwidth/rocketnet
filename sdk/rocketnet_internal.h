@@ -375,7 +375,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 // smaller, is refused with a log line and nothing is read or written. The
 // unsized entry points stay, and read and write exactly revision 1.
 
-#define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
 
 // Internal to the SDK: the one read and the one write every sized entry point
 // makes (docs/ABI-EVOLUTION.md 3). write copies the first config_bytes of

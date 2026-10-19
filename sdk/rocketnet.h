@@ -15,6 +15,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
+
 // -----------------------------------------
 //                     version and ABI
 // -----------------------------------------
@@ -726,8 +728,9 @@ struct rocketnet_client_config_t
     int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
 };
 
-#define ROCKETNET_CLIENT_CONFIG_BYTES_1 offsetof( struct rocketnet_client_config_t, simulated_loss_percent )
-#define ROCKETNET_CLIENT_CONFIG_BYTES_2 sizeof( struct rocketnet_client_config_t )
+#define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_CONFIG_BYTES_1, ROCKETNET_CLIENT_CONFIG_BYTES_2
 
 // The server is configured explicitly: rocketnet_server_default_config gives
 // the shape with no keys, and create refuses it until keys are supplied
@@ -780,8 +783,9 @@ struct rocketnet_server_config_t
     int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
 };
 
-#define ROCKETNET_SERVER_CONFIG_BYTES_1 offsetof( struct rocketnet_server_config_t, simulated_loss_percent )
-#define ROCKETNET_SERVER_CONFIG_BYTES_2 sizeof( struct rocketnet_server_config_t )
+#define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_CONFIG_BYTES_1, ROCKETNET_SERVER_CONFIG_BYTES_2
 
 // -----------------------------------------
 //                           messages
@@ -911,11 +915,13 @@ ROCKETNET_EXPORT int rocketnet_client_default_config_sized( struct rocketnet_cli
 // 1 when create would accept the config's own values, else 0 with a log line
 // naming the rule. The environment is not read. NULL means the defaults.
 ROCKETNET_EXPORT int rocketnet_client_validate_config( const struct rocketnet_client_config_t * config );
+// Validates a known-size client config; an unknown non-NULL size logs and returns 0.
 ROCKETNET_EXPORT int rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 // the bytes a caller memory block for this client needs; 0 for a refused
 // config. NULL means the defaults.
 ROCKETNET_EXPORT uint64_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
+// Queries a known-size client config; an unknown non-NULL size logs and returns 0.
 ROCKETNET_EXPORT uint64_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 #if ROCKETNET_DEVELOPMENT
@@ -1023,17 +1029,20 @@ ROCKETNET_EXPORT int rocketnet_server_default_config_sized( struct rocketnet_ser
 // unsized form writes the revision-1 prefix; use the sized form for current fields.
 // a NULL config is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_dev_config( struct rocketnet_server_config_t * config );
+// Writes development defaults for a known server config size; unknown sizes log and are untouched.
 ROCKETNET_EXPORT int rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
 // 1 when create would accept the config's own values, else 0 with a log line
 // naming the rule. The environment is not read and the keys are not checked.
 // NULL means the defaults.
 ROCKETNET_EXPORT int rocketnet_server_validate_config( const struct rocketnet_server_config_t * config );
+// Validates a known-size server config; an unknown non-NULL size logs and returns 0.
 ROCKETNET_EXPORT int rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 // the bytes a caller memory block for this server needs, at the config's
 // max_clients; 0 for a refused config. NULL means the defaults.
 ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
+// Queries a known-size server config; an unknown non-NULL size logs and returns 0.
 ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 // address is where clients reach the server, "a.b.c.d:port" or "[v6]:port"; a
