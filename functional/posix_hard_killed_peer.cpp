@@ -65,6 +65,21 @@ static rocketnet_platform_socket_t * rocketnet_posix_bind( const char * host, in
     return rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
 }
 
+// bind an ephemeral port and keep it bound: asking the kernel for a port and
+// releasing it, then rebinding somewhere later, races other sockets on the
+// host and can hand the same port to two of this case's own sockets. bind(0)
+// updates the address with the port the kernel actually granted.
+static rocketnet_platform_socket_t * rocketnet_posix_bind_any( const char * host, int * port )
+{
+    rocketnet_address_t address;
+    rocketnet_address_parse( &address, host );
+    address.port = 0;
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_check( socket );
+    *port = address.port;
+    return socket;
+}
+
 static void rocketnet_posix_settle()
 {
     // loopback arrival is asynchronous; a short settle after a send keeps the
@@ -108,12 +123,12 @@ int rocketnet_posix_hard_killed_child_main( const char * host, int port )
     if ( !rocketnet_init( NULL ) )
         return 1;
 
-    const int free_port = rocketnet_posix_free_port();
-    rocketnet_platform_socket_t * socket = rocketnet_posix_bind( "127.0.0.1", free_port );
+    int child_port = 0;
+    rocketnet_platform_socket_t * socket = rocketnet_posix_bind_any( "127.0.0.1", &child_port );
     if ( !socket )
         return 1;
 
-    printf( "posix-hard-killed-child %d\n", free_port );
+    printf( "posix-hard-killed-child %d\n", child_port );
     fflush( stdout );
 
     const double deadline = rocketnet_platform_time() + 30.0;
@@ -170,18 +185,17 @@ static void rocketnet_posix_start_child( pid_t * pid, const char * host, int por
 // receive arm must still drain behind the ICMP-class error.
 void rocketnet_test_posix_hard_killed_client()
 {
-    const int server_port = rocketnet_posix_free_port();
-    rocketnet_platform_socket_t * server = rocketnet_posix_bind( "127.0.0.1", server_port );
+    int server_port = 0;
+    rocketnet_platform_socket_t * server = rocketnet_posix_bind_any( "127.0.0.1", &server_port );
     rocketnet_check( server );
 
     const char * pump_at_create = rocketnet_platform_socket_pump( server );
 
     rocketnet_platform_socket_t * live[3];
-    const int live_port[3] = { rocketnet_posix_free_port(), rocketnet_posix_free_port(), rocketnet_posix_free_port() };
+    int live_port[3] = { 0, 0, 0 };
     for ( int i = 0; i < 3; i++ )
     {
-        live[i] = rocketnet_posix_bind( "127.0.0.1", live_port[i] );
-        rocketnet_check( live[i] );
+        live[i] = rocketnet_posix_bind_any( "127.0.0.1", &live_port[i] );
         rocketnet_posix_send_to( live[i], "127.0.0.1", server_port, 0x10 + i );
     }
     rocketnet_posix_settle();
@@ -240,11 +254,12 @@ void rocketnet_test_posix_hard_killed_client()
     rocketnet_posix_settle();
 
     int received = 0;
+    int live_received = 0;
     static rocketnet_address_t from_many[512];
     static int packet_bytes[512];
     static uint8_t packet_data[512 * 64];
     const double drain_deadline = rocketnet_platform_time() + 5.0;
-    while ( received < expected && rocketnet_platform_time() < drain_deadline )
+    while ( live_received < expected && rocketnet_platform_time() < drain_deadline )
     {
         const int got = rocketnet_platform_socket_receive_packets( server, from_many, packet_data, 64, packet_bytes, 512 );
         if ( got == 0 )
@@ -252,13 +267,28 @@ void rocketnet_test_posix_hard_killed_client()
             rocketnet_posix_settle();
             continue;
         }
-        received += got;
+        // a heartbeat the child sent just before SIGKILL can still arrive
+        // after the warmup drain; it is not a live-client datagram and says
+        // nothing about the drain, so count only the live ports.
+        for ( int i = 0; i < got; i++ )
+        {
+            received++;
+            for ( int c = 0; c < 3; c++ )
+            {
+                if ( from_many[i].port == live_port[c] )
+                {
+                    live_received++;
+                    break;
+                }
+            }
+        }
     }
 
-    rocketnet_check( received == expected );
+    printf( "posix_hard_killed_client received=%d live=%d expected=%d\n", received, live_received, expected );
+    rocketnet_check( live_received == expected );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( server ), pump_at_create ) == 0 );
 
-    printf( "posix_hard_killed_client pump=%s live=%d/%d dead_port=%d\n", pump_at_create, received, expected, dead_address.port );
+    printf( "posix_hard_killed_client pump=%s live=%d/%d dead_port=%d\n", pump_at_create, live_received, expected, dead_address.port );
 
     for ( int i = 0; i < 3; i++ )
         rocketnet_platform_socket_destroy( live[i] );
@@ -269,15 +299,14 @@ void rocketnet_test_posix_hard_killed_client()
 // exchange traffic: no stall, no early drain.
 void rocketnet_test_posix_send_to_closed_port()
 {
-    const int server_port = rocketnet_posix_free_port();
-    rocketnet_platform_socket_t * server = rocketnet_posix_bind( "127.0.0.1", server_port );
+    int server_port = 0;
+    rocketnet_platform_socket_t * server = rocketnet_posix_bind_any( "127.0.0.1", &server_port );
     rocketnet_check( server );
 
     const char * pump_at_create = rocketnet_platform_socket_pump( server );
 
-    const int live_port = rocketnet_posix_free_port();
-    rocketnet_platform_socket_t * live = rocketnet_posix_bind( "127.0.0.1", live_port );
-    rocketnet_check( live );
+    int live_port = 0;
+    rocketnet_platform_socket_t * live = rocketnet_posix_bind_any( "127.0.0.1", &live_port );
 
     const int closed_port = rocketnet_posix_free_port();
     rocketnet_address_t closed;
@@ -315,6 +344,7 @@ void rocketnet_test_posix_send_to_closed_port()
         received += got;
     }
 
+    printf( "posix_send_to_closed_port received=%d expected=%d\n", received, expected );
     rocketnet_check( received == expected );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( server ), pump_at_create ) == 0 );
     printf( "posix_send_to_closed_port pump=%s live=%d/%d closed_port=%d\n", pump_at_create, received, expected, closed_port );
@@ -328,7 +358,8 @@ void rocketnet_test_posix_send_to_closed_port()
 // tears the client down.
 void rocketnet_test_posix_client_server_gone()
 {
-    rocketnet_platform_socket_t * client = rocketnet_posix_bind( "127.0.0.1", rocketnet_posix_free_port() );
+    int client_port = 0;
+    rocketnet_platform_socket_t * client = rocketnet_posix_bind_any( "127.0.0.1", &client_port );
     rocketnet_check( client );
 
     const int server_port = rocketnet_posix_free_port();
@@ -372,10 +403,9 @@ void rocketnet_test_posix_client_server_gone()
 // pump must stay up. an unknown errno still pauses msgx.
 static void rocketnet_posix_seam_one( const char * pump, int error, int expect_skip )
 {
-    const int port = rocketnet_posix_free_port();
     rocketnet_address_t address;
     rocketnet_address_parse( &address, "127.0.0.1" );
-    address.port = port;
+    address.port = 0;
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024, pump );
     rocketnet_check( socket );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
@@ -413,10 +443,9 @@ static void rocketnet_posix_seam_one( const char * pump, int error, int expect_s
 // the datagrams already queued are delivered rather than lost.
 static void rocketnet_posix_seam_unknown()
 {
-    const int port = rocketnet_posix_free_port();
     rocketnet_address_t address;
     rocketnet_address_parse( &address, "127.0.0.1" );
-    address.port = port;
+    address.port = 0;
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024, "msgx" );
     rocketnet_check( socket );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
