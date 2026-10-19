@@ -87,6 +87,15 @@ int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * 
                                          struct rocketnet_address_t * out_from,
                                          uint8_t * out_packet );
 
+// Receives the lowest-slot due packet regardless of destination. This is the
+// transport-facing drain: it preserves simulator slot order while also
+// returning the destination the driver must send to.
+int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t * simulator,
+                                             double current_time,
+                                             struct rocketnet_address_t * out_from,
+                                             struct rocketnet_address_t * out_to,
+                                             uint8_t * out_packet );
+
 // The audit: the instrument's failure state. With it on, every receive() also
 // runs the original full-array scan as a reference and compares which slot the
 // two selections chose, then checks the whole index against the packet arrays.

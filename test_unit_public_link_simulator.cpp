@@ -96,6 +96,8 @@ REGISTER_UNIT_TEST( public_link_simulator_production_refusal );
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
+#include "rocketnet_connect_token.h"
+#include "test/fake_client_driver.h"
 
 struct public_link_wire_t
 {
@@ -139,28 +141,56 @@ static int public_link_wire_receive( struct public_link_wire_t * wire )
     return rocketnet_network_simulator_receive( wire->simulator, &wire->to, wire->time, &from, wire->received );
 }
 
+static void public_link_simulator_token( uint8_t * token )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof(signed_fields) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    signed_fields.create_timestamp = 1;
+    signed_fields.expire_timestamp = UINT64_C(1) << 40;
+    signed_fields.timeout_seconds = 300;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    signed_fields.ipv4_address[0] = 127;
+    signed_fields.ipv4_address[3] = 1;
+    signed_fields.ipv4_address[4] = 0x40;
+    signed_fields.ipv4_address[5] = 0x9c;
+    memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES );
+    memset( token, 0, ROCKETNET_CONNECT_TOKEN_BYTES );
+    rocketnet_write_signed_connect_data( &signed_fields, token );
+}
+
+static rocketnet_client_transport_t * public_link_simulator_client(
+    rocketnet_fake_client_driver_t * driver, const rocketnet_client_transport_config_t * config )
+{
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    public_link_simulator_token( token );
+    return rocketnet_client_transport_create_step_driven( driver, token, config, 1000.0,
+                                                           &rocketnet_fake_client_operations_base, driver );
+}
+
 static void public_link_simulator_drops_at_loss()
 {
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.simulated_loss_percent = 100;
-
-    struct public_link_wire_t wire;
-    public_link_wire_begin( &wire, &config, 7 );
-    for ( int i = 0; i < 32; i++ )
-        public_link_wire_send( &wire, (uint8_t) i );
-    check( public_link_wire_receive( &wire ) == 0 );
-    public_link_wire_end( &wire );
+    rocketnet_fake_client_driver_t * dropped = new rocketnet_fake_client_driver_t();
+    rocketnet_client_transport_t * transport = public_link_simulator_client( dropped, &config );
+    check( transport != NULL );
+    rocketnet_client_transport_update( transport, 1000.0 );
+    rocketnet_client_transport_update( transport, 1001.0 );
+    check( dropped->num_sent == 0 );
+    rocketnet_client_transport_destroy( transport );
+    delete dropped;
 
     config.simulated_loss_percent = 0;
-    public_link_wire_begin( &wire, &config, 7 );
-    for ( int i = 0; i < 32; i++ )
-        public_link_wire_send( &wire, (uint8_t) i );
-    int delivered = 0;
-    while ( public_link_wire_receive( &wire ) > 0 )
-        delivered++;
-    check( delivered == 32 );
-    public_link_wire_end( &wire );
+    rocketnet_fake_client_driver_t * direct = new rocketnet_fake_client_driver_t();
+    transport = public_link_simulator_client( direct, &config );
+    check( transport != NULL );
+    rocketnet_client_transport_update( transport, 1000.0 );
+    check( direct->num_sent == 1 );
+    rocketnet_client_transport_destroy( transport );
+    delete direct;
 }
 
 static void public_link_simulator_latency()
@@ -168,16 +198,17 @@ static void public_link_simulator_latency()
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.simulated_latency_ms = 25;
-
-    struct public_link_wire_t wire;
-    public_link_wire_begin( &wire, &config, 11 );
-    public_link_wire_send( &wire, 1 );
-    check( public_link_wire_receive( &wire ) == 0 );
-    wire.time += 0.024;
-    check( public_link_wire_receive( &wire ) == 0 );
-    wire.time += 0.001;
-    check( public_link_wire_receive( &wire ) == 1 );
-    public_link_wire_end( &wire );
+    rocketnet_fake_client_driver_t * driver = new rocketnet_fake_client_driver_t();
+    rocketnet_client_transport_t * transport = public_link_simulator_client( driver, &config );
+    check( transport != NULL );
+    rocketnet_client_transport_update( transport, 1000.0 );
+    check( driver->num_sent == 0 );
+    rocketnet_client_transport_update( transport, 1000.024 );
+    check( driver->num_sent == 0 );
+    rocketnet_client_transport_update( transport, 1000.025 );
+    check( driver->num_sent == 1 );
+    rocketnet_client_transport_destroy( transport );
+    delete driver;
 }
 
 static void public_link_simulator_jitter()
@@ -215,16 +246,15 @@ static void public_link_simulator_duplicate()
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.simulated_duplicate_percent = 100;
-
-    struct public_link_wire_t wire;
-    public_link_wire_begin( &wire, &config, 17 );
-    for ( int i = 0; i < 16; i++ )
-        public_link_wire_send( &wire, (uint8_t) i );
-    int delivered = 0;
-    while ( public_link_wire_receive( &wire ) > 0 )
-        delivered++;
-    check( delivered == 32 );
-    public_link_wire_end( &wire );
+    rocketnet_fake_client_driver_t * driver = new rocketnet_fake_client_driver_t();
+    rocketnet_client_transport_t * transport = public_link_simulator_client( driver, &config );
+    check( transport != NULL );
+    rocketnet_client_transport_update( transport, 1000.0 );
+    check( driver->num_sent == 0 );
+    rocketnet_client_transport_update( transport, 1000.001 );
+    check( driver->num_sent == 2 );
+    rocketnet_client_transport_destroy( transport );
+    delete driver;
 }
 
 static void public_link_simulator_same_seed_same_schedule()
