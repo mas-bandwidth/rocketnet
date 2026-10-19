@@ -1319,6 +1319,7 @@ bool rocketnet_platform_read_route_table(
 
         const size_t IFLIST_REPLY_BUFFER = 8192;
         char reply[IFLIST_REPLY_BUFFER];
+        memset( reply, 0, sizeof( reply ) );
         io_reply.iov_base = reply;
         io_reply.iov_len = IFLIST_REPLY_BUFFER;
         rtnl_reply.msg_iov = &io_reply;
