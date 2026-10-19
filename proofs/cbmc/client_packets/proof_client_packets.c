@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    CBMC proof of the client's packet readers, for packets from the server:
+    ESBMC proof of the client's packet readers, for packets from the server:
     the dispatcher rocketnet_client_protocol_process_packet, the per-type
     readers behind it (cookie, challenge, denied, the shared session open,
     keep-alive, payload, ack, fragment, disconnect) and
@@ -11,30 +11,33 @@
     The readers are sdk/rocketnet_client_protocol.cpp, included below with
     the sdk code they call: rocketnet_protocol.cpp (prefilter, sealed open,
     sequence reconstruction), rocketnet_keys.cpp (key derivation) and
-    rocketnet_replay.cpp (replay check). Each harness checks no out-of-bounds read or
-    write, no integer overflow and no division by zero on any packet of
-    0..ROCKETNET_MAX_PACKET_BYTES bytes, over a buffer object of exactly
+    rocketnet_replay.cpp (replay check). Each harness checks no out-of-bounds
+    read or write, no integer overflow and no division by zero on any packet
+    of 0..ROCKETNET_MAX_PACKET_BYTES bytes, over a buffer object of exactly
     packet_bytes symbolic bytes, and that every malformed packet is refused.
 
+    Checker: ESBMC 8.5 as C++17 with Z3 and --overflow-check, through the
+    shared ../esbmc_shim.h (proof.mk has the command and the loop bounds).
+
     Models, not proved here (each checks its own buffer arguments):
-    - libsodium: every call is a model that checks __CPROVER_r_ok on what it
-      reads and __CPROVER_w_ok on what it writes at the lengths libsodium
-      documents, writes nondet bytes, and returns nondet success or failure.
+    - libsodium: every call is a model that checks the extent it reads and
+      the extent it writes at the lengths libsodium documents, writes nondet
+      bytes, and returns nondet success or failure.
+    - memset and memcpy, for the included sdk code: each checks its extents,
+      then fills or copies byte by byte (see proof_memset).
     - rocketnet_replay_advance: its precondition (a nonzero sequence not
-      already received) is asserted, then the window is havocked and the
-      high-water mark moves to the larger of the two. The real advance runs
-      a clear loop of up to 4095 steps (proved separately for deltas 1..3:
-      replay-delta-1-3).
-    - the four rocketnet_ack.cpp calls the readers make. rocketnet_ack.cpp
-      is C++ (a template and std::initializer_list through
-      rocketnet_memory.h), so a C proof cannot include it.
-      rocketnet_ack_block_read asserts it may read data for data_bytes and
-      returns 0 or a block of 7 + 4 * num_ranges bytes inside data_bytes,
-      with the validity rules the code documents (its own card proves the
-      reader). rocketnet_ack_endpoint_process_block asserts the block it is
-      given is one the read accepted and that the acked id batch is
-      writable. rocketnet_ack_endpoint_record_received and
-      rocketnet_ack_endpoint_reset assert their endpoint is writable.
+      already received) is asserted, then the window is made arbitrary and
+      the high-water mark moves to the larger of the two. The real advance
+      runs a clear loop of up to 4095 steps (proved separately for deltas
+      1..3: replay-delta-1-3).
+    - the four rocketnet_ack.cpp calls the readers make, each proved by its
+      own card. rocketnet_ack_block_read asserts it may read data for
+      data_bytes and returns 0 or a block of 7 + 4 * num_ranges bytes inside
+      data_bytes, with the validity rules the code documents.
+      rocketnet_ack_endpoint_process_block asserts the block it is given is
+      one the read accepted and that the acked id batch is writable.
+      rocketnet_ack_endpoint_record_received and rocketnet_ack_endpoint_reset
+      assert their endpoint is writable.
     - rocketnet_reassembly_process_fragment: asserts its type data is
       readable for type_data_bytes, at least the header and one byte; the
       reassembly itself is proved by its own card.
@@ -50,15 +53,6 @@
     ack-debt fields, and the I/O verdict of the record being consumed.
     Sequences stay below 2^63 (an attempt starts its sequences at one).
 
-    Flags: --bounds-check --pointer-check --signed-overflow-check
-           --unsigned-overflow-check --div-by-zero-check
-           --unwinding-assertions
-    Unwinding: 64. The longest loop on these paths is the 32-byte key
-    write in the associated data writer.
-    Solver: --arrays-uf-always and --slice-formula (results.md says why:
-    memory on the payload copies without the first, a CBMC 6.6.0 internal
-    failure on the dispatcher with the first alone).
-
     Reversed witnesses: built with -DPROOF_WITNESS, every harness must fail
     exactly its witness assertions (proof.mk checks it), so each accepting
     path is reachable and no harness passes vacuously.
@@ -72,9 +66,95 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../esbmc_shim.h"
+
+#ifndef __CPROVER__
+#define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
+#define __CPROVER_assume( c ) ( (void) ( c ) )
+static int nondet_int( void ) { return 0; }
+static unsigned char nondet_uchar( void ) { return 0; }
+static uint64_t nondet_uint64( void ) { return 0; }
+static double nondet_double( void ) { return 0.0; }
+#define PROOF_R_OK( p, n ) ( (void) ( p ), (void) ( n ), 1 )
+#define PROOF_W_OK( p, n ) ( (void) ( p ), (void) ( n ), 1 )
+#define PROOF_HAVOC( p, n ) ( memset( (p), 0, (size_t) (n) ) )
+#else
+int nondet_int( void );
+unsigned char nondet_uchar( void );
+uint64_t nondet_uint64( void );
+double nondet_double( void );
+#if defined(ROCKETNET_ESBMC)
+/* ESBMC 8.5's __ESBMC_r_ok (the shim's __CPROVER_r_ok) reports false for a
+   range inside a malloc of symbolic size, and its object-size intrinsic is
+   unconstrained for a struct member, so an extent is checked by touching its
+   first and last byte: ESBMC's own bounds check on those two reads holds
+   exactly when the whole range lies inside one object. A write's extent is
+   checked the same way (no object here is read-only). */
+static inline int proof_extent_ok( const void * p, size_t n )
+{
+    if ( n == 0 )
+        return 1;
+    const uint8_t * bytes = (const uint8_t *) p;
+    const uint8_t first = bytes[0];
+    const uint8_t last = bytes[n - 1];
+    (void) first; (void) last;
+    return 1;
+}
+#define PROOF_R_OK( p, n ) proof_extent_ok( (p), (size_t) (n) )
+#define PROOF_W_OK( p, n ) proof_extent_ok( (p), (size_t) (n) )
+#else
+#define PROOF_R_OK( p, n ) __CPROVER_r_ok( (p), (size_t) (n) )
+#define PROOF_W_OK( p, n ) __CPROVER_w_ok( (p), (size_t) (n) )
+#endif
+#define PROOF_HAVOC( p, n ) __CPROVER_havoc_slice( (p), (size_t) (n) )
+#endif
+
 #include "rocketnet_replay.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_client_protocol.h"
+
+/* the client the harnesses run on, a static object the language zeroes */
+
+static struct rocketnet_client_protocol_t proof_client;
+
+/* the platform memset and memcpy, for every call the included sdk code
+   makes: each checks that the bytes it reads and writes lie inside their
+   objects, then does what the library does. memcpy copies byte by byte
+   through uint8_t, the type of every buffer these readers copy; under
+   ESBMC 8.5 the library's own memcpy writes a field of the client through a
+   char pointer as an update of the whole client object, which runs the
+   solver out of memory. A zero fill of the whole client object, as
+   rocketnet_client_protocol_init makes, is the value-initialized object
+   (every byte zero), assigned at once rather than one write per byte. */
+
+static void * proof_memset( void * s, int c, size_t n )
+{
+    __CPROVER_assert( PROOF_W_OK( s, n ), "memset writes inside its object" );
+    if ( c == 0 && s == (void *) &proof_client && n == sizeof( proof_client ) )
+    {
+        proof_client = rocketnet_client_protocol_t();
+        return s;
+    }
+    uint8_t * bytes = (uint8_t *) s;
+    for ( size_t i = 0; i < n; ++i )
+        bytes[i] = (uint8_t) c;
+    return s;
+}
+
+static void * proof_memcpy( void * dst, const void * src, size_t n )
+{
+    __CPROVER_assert( PROOF_R_OK( src, n ), "memcpy reads inside its source" );
+    __CPROVER_assert( PROOF_W_OK( dst, n ), "memcpy writes inside its destination" );
+    uint8_t * to = (uint8_t *) dst;
+    const uint8_t * from = (const uint8_t *) src;
+    for ( size_t i = 0; i < n; ++i )
+        to[i] = from[i];
+    return dst;
+}
+
+#define memset proof_memset
+#define memcpy proof_memcpy
 
 #include "rocketnet_protocol.cpp"
 #include "rocketnet_keys.cpp"
@@ -85,30 +165,23 @@
 
 #include "rocketnet_client_protocol.cpp"
 
-#ifndef __CPROVER__
-#define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
-#define __CPROVER_assume( c ) ( (void) ( c ) )
-static int nondet_int( void ) { return 0; }
-static unsigned char nondet_uchar( void ) { return 0; }
-static unsigned long long nondet_uint64( void ) { return 0; }
-static double nondet_double( void ) { return 0.0; }
-#define PROOF_R_OK( p, n ) ( (void) ( p ), (void) ( n ), 1 )
-#define PROOF_W_OK( p, n ) ( (void) ( p ), (void) ( n ), 1 )
-#define PROOF_HAVOC( p, n ) ( memset( (p), 0, (size_t) (n) ) )
-#else
-int nondet_int( void );
-unsigned char nondet_uchar( void );
-unsigned long long nondet_uint64( void );
-double nondet_double( void );
-#define PROOF_R_OK( p, n ) __CPROVER_r_ok( (p), (size_t) (n) )
-#define PROOF_W_OK( p, n ) __CPROVER_w_ok( (p), (size_t) (n) )
-#define PROOF_HAVOC( p, n ) __CPROVER_havoc_slice( (p), (size_t) (n) )
-#endif
+#undef memcpy
+#undef memset
+
 
 #define PROOF_SEQUENCE_LIMIT ( 1ULL << 63 )
 
+/* a replay struct of arbitrary contents, assigned whole: a function with no
+   body returns a symbolic value under the checker */
+
+#ifndef __CPROVER__
+static struct rocketnet_replay_protection_t proof_nondet_replay( void ) { struct rocketnet_replay_protection_t r; memset( &r, 0, sizeof(r) ); return r; }
+#else
+struct rocketnet_replay_protection_t proof_nondet_replay( void );
+#endif
+
 /* reversed witnesses: built with -DPROOF_WITNESS, each harness asserts that
-   its accepting path never runs, and CBMC must refute exactly those
+   its accepting path never runs, and the checker must refute exactly those
    assertions, so no proof above passes because its path is unreachable */
 
 #ifdef PROOF_WITNESS
@@ -245,9 +318,9 @@ void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, ui
     __CPROVER_assert( PROOF_W_OK( replay, sizeof(*replay) ), "advance writes its replay struct" );
     __CPROVER_assert( sequence != 0, "advance is given a nonzero sequence" );
     __CPROVER_assert( !rocketnet_replay_already_received( replay, sequence ), "advance is given a sequence not yet received" );
-    PROOF_HAVOC( replay->window, sizeof(replay->window) );
-    if ( sequence > replay->highest_opened )
-        replay->highest_opened = sequence;
+    const uint64_t highest_opened = replay->highest_opened;
+    *replay = proof_nondet_replay();
+    replay->highest_opened = sequence > highest_opened ? sequence : highest_opened;
 }
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
@@ -345,7 +418,6 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
    on made symbolic */
 
 static struct rocketnet_counters_t proof_counters;
-static struct rocketnet_client_protocol_t proof_client;
 static struct rocketnet_reassembly_set_t proof_reassembly;
 
 static uint64_t proof_sequence( uint64_t low )
@@ -366,10 +438,10 @@ static struct rocketnet_client_protocol_t * proof_make_client( int any_verdict )
                       state <= ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     client->state = state;
 
+    client->replay_handshake = proof_nondet_replay();
+    client->replay_session = proof_nondet_replay();
     client->replay_handshake.highest_opened = proof_sequence( 0 );
     client->replay_session.highest_opened = proof_sequence( 0 );
-    PROOF_HAVOC( client->replay_handshake.window, sizeof(client->replay_handshake.window) );
-    PROOF_HAVOC( client->replay_session.window, sizeof(client->replay_session.window) );
 
     client->send_sequence_handshake = proof_sequence( 1 );
     client->send_sequence_session = proof_sequence( 1 );

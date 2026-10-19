@@ -1,19 +1,30 @@
-# Client packet reader proofs: the dispatcher, the per-type readers for
-# packets from the server, and the record consumer. Included by
+# Client packet reader proofs under ESBMC 8.5: the dispatcher, the per-type
+# readers for packets from the server, and the record consumer. Included by
 # proofs/cbmc/Makefile through the nightly scaffold; this file alone puts
 # the readers on the nightly list. Each harness runs on the full bound,
 # 0..ROCKETNET_MAX_PACKET_BYTES bytes; results.md records each result.
-# Each harness then runs again with -DPROOF_WITNESS, where it must fail
-# exactly its "witness:" assertions (its accepting paths are reachable);
-# otherwise its one line reads VERIFICATION FAILED. A timeout also reads
-# VERIFICATION FAILED, with the reason.
+#
+# The harness is copied to a .cpp under a fixed name so ESBMC selects its
+# C++ front end and the named loop bounds below match its static functions.
+# A harness that proves runs again with -DPROOF_WITNESS and only its own
+# assertions checked (--multi-property): every failed property must be one
+# of its "witness:" assertions, so its accepting paths are reachable.
+# One line per harness: VERIFICATION SUCCESSFUL, VERIFICATION FAILED,
+# unwinding assertion failed, out of memory, timed out, or not proved.
 
 NIGHTLY += proofs-client_packets
 
+ESBMC ?= esbmc
 CLIENT_PACKETS_SOURCE = client_packets/proof_client_packets.c
-CLIENT_PACKETS_FLAGS = --object-bits 12 --arrays-uf-always --slice-formula -I$(SDK) -I$(SDK)/../sodium
-CLIENT_PACKETS_UNWIND = 64
+CLIENT_PACKETS_FLAGS = --std c++17 --z3 --overflow-check -DROCKETNET_ESBMC \
+    -I$(SDK) -I$(SDK)/../sodium -Iclient_packets
+# 65 covers every sdk loop on these paths (the longest is the 32-byte key
+# write); 1473 covers a copy, fill or havoc of up
+# to one maximum packet (1472 bytes). The unwinding assertions check both.
+CLIENT_PACKETS_UNWIND = 65
+CLIENT_PACKETS_LOOPS = --unwindsetname proof_client_packets.cpp@proof_memcpy:0:1473,proof_client_packets.cpp@proof_memset:0:1473,esbmc_shim.h@rocketnet_esbmc_havoc_slice:0:1473
 CLIENT_PACKETS_TIMEOUT = 1800
+CLIENT_PACKETS_MEMORY = 12884901888
 
 CLIENT_PACKETS_HARNESSES = \
     harness_process_cookie \
@@ -33,39 +44,44 @@ CLIENT_PACKETS_HARNESSES = \
 proofs-client_packets:
 	@echo "proofs-client_packets"; \
 	failed=0; \
+	dir=$$(mktemp -d); \
+	cp $(CLIENT_PACKETS_SOURCE) "$$dir/proof_client_packets.cpp"; \
 	for harness in $(CLIENT_PACKETS_HARNESSES); do \
 	    output=$$(mktemp); \
 	    status=0; \
-	    timeout $(CLIENT_PACKETS_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(CLIENT_PACKETS_UNWIND) \
-	        $(CLIENT_PACKETS_FLAGS) --function $$harness \
-	        $(CLIENT_PACKETS_SOURCE) > "$$output" 2>&1 || status=$$?; \
+	    timeout $(CLIENT_PACKETS_TIMEOUT) prlimit --as=$(CLIENT_PACKETS_MEMORY) -- \
+	        $(ESBMC) $(CLIENT_PACKETS_FLAGS) --unwind $(CLIENT_PACKETS_UNWIND) $(CLIENT_PACKETS_LOOPS) \
+	        --function $$harness "$$dir/proof_client_packets.cpp" > "$$output" 2>&1 || status=$$?; \
 	    if grep -q "VERIFICATION SUCCESSFUL" "$$output"; then \
 	        verdict="VERIFICATION SUCCESSFUL"; \
-	    elif grep -q "unwinding assertion.*FAILURE" "$$output"; then \
+	    elif grep -q "unwinding assertion" "$$output" && grep -q "VERIFICATION FAILED" "$$output"; then \
 	        verdict="unwinding assertion failed"; cat "$$output"; \
 	    elif grep -q "VERIFICATION FAILED" "$$output"; then \
 	        verdict="VERIFICATION FAILED"; cat "$$output"; \
 	    elif [ $$status -eq 124 ]; then \
-	        verdict="VERIFICATION FAILED (timed out after $(CLIENT_PACKETS_TIMEOUT)s)"; \
+	        verdict="timed out after $(CLIENT_PACKETS_TIMEOUT)s"; \
+	    elif grep -qi "out of memory\|SMT solver failed" "$$output"; then \
+	        verdict="out of memory"; \
 	    else \
-	        verdict="VERIFICATION FAILED (cbmc exit $$status)"; cat "$$output"; \
+	        verdict="not proved (esbmc exit $$status)"; tail -20 "$$output"; \
 	    fi; \
 	    rm -f "$$output"; \
-	    if [ $$status -ne 0 ]; then failed=1; fi; \
-	    output=$$(mktemp); \
-	    status=0; \
-	    timeout $(CLIENT_PACKETS_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(CLIENT_PACKETS_UNWIND) \
-	        $(CLIENT_PACKETS_FLAGS) -DPROOF_WITNESS --function $$harness \
-	        $(CLIENT_PACKETS_SOURCE) > "$$output" 2>&1 || status=$$?; \
-	    failures=$$(grep -c ": FAILURE$$" "$$output"); \
-	    witnesses=$$(grep ": FAILURE$$" "$$output" | grep -c "witness: "); \
-	    if [ $$status -ne 10 ] || [ $$failures -lt 1 ] || [ $$failures -ne $$witnesses ]; then \
-	        cat "$$output"; failed=1; \
-	        if [ "$$verdict" = "VERIFICATION SUCCESSFUL" ]; then \
-	            verdict="VERIFICATION FAILED (a witness was not reached)"; \
+	    if [ "$$verdict" = "VERIFICATION SUCCESSFUL" ]; then \
+	        output=$$(mktemp); \
+	        status=0; \
+	        timeout $(CLIENT_PACKETS_TIMEOUT) prlimit --as=$(CLIENT_PACKETS_MEMORY) -- \
+	            $(ESBMC) $(CLIENT_PACKETS_FLAGS) -DPROOF_WITNESS --unwind $(CLIENT_PACKETS_UNWIND) $(CLIENT_PACKETS_LOOPS) \
+	            --no-bounds-check --no-pointer-check --no-div-by-zero-check --no-align-check --no-unwinding-assertions \
+	            --multi-property --function $$harness "$$dir/proof_client_packets.cpp" > "$$output" 2>&1 || status=$$?; \
+	        failures=$$(grep -c "^  FAILED " "$$output"); \
+	        witnesses=$$(grep "^  FAILED " "$$output" | grep -c "witness: "); \
+	        if [ $$failures -lt 1 ] || [ $$failures -ne $$witnesses ]; then \
+	            cat "$$output"; verdict="VERIFICATION FAILED (a witness was not reached)"; \
 	        fi; \
+	        rm -f "$$output"; \
 	    fi; \
-	    rm -f "$$output"; \
+	    if [ "$$verdict" != "VERIFICATION SUCCESSFUL" ]; then failed=1; fi; \
 	    echo "$$harness $$verdict"; \
 	done; \
+	rm -rf "$$dir"; \
 	exit $$failed
