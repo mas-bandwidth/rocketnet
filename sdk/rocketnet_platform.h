@@ -421,6 +421,28 @@ int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_
  */
 const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
+#if ROCKETNET_DEVELOPMENT
+/**
+ * @brief Injects one errno into the next portable receive (recvmsg) call.
+ *
+ * Tests only: the value is consumed by exactly one call and then cleared.
+ * Compiled into the development library only, never a release library.
+ * @param error A positive errno value, or zero to cancel.
+ * @return None.
+ */
+void rocketnet_platform_set_recvmsg_error_for_testing( int error );
+
+/**
+ * @brief Injects one errno into the next batch receive (recvmsg_x) call.
+ *
+ * Tests only: the value is consumed by exactly one call and then cleared.
+ * Compiled into the development library only, never a release library.
+ * @param error A positive errno value, or zero to cancel.
+ * @return None.
+ */
+void rocketnet_platform_set_recvmsg_x_error_for_testing( int error );
+#endif // #if ROCKETNET_DEVELOPMENT
+
 #ifdef __cplusplus
 }
 #endif

@@ -34,6 +34,22 @@ and `rocketnet_server_uring_leaked_drivers` are internal driver helpers
 `rocketnet_server_required_memory` and the other server entry points in
 `sdk/rocketnet.h`.
 
+## ICMP errors
+
+A UDP peer that vanishes without a disconnect makes the stack return an ICMP
+port-unreachable; on a BSD socket this surfaces on a later receive as
+`ECONNREFUSED`, and `EHOSTUNREACH`, `ENETUNREACH`, `EHOSTDOWN` and `ENETDOWN`
+arrive the same way. The contract for every receive arm, portable `recvmsg`
+and the macOS batch `recvmsg_x`, is that these errors, plus `ENOBUFS`, are
+weather about one destination: the drain skips the error and keeps reading, so
+a datagram queued behind it is still delivered in the same call. Such an error
+is never fatal and never pauses the batch pump. `EAGAIN` and `EWOULDBLOCK` end
+the drain, `EINTR` retries, and only a genuinely unknown errno pauses `msgx`
+for `ROCKETNET_MSGX_RETRY_SECONDS` (one log line per pause). The sockets stay
+unconnected, so xnu has no connected-UDP control block to report the ICMP error
+against; the receive paths still hold the contract for a host or a future
+connected socket that does.
+
 ## Server capabilities and ownership
 
 Two I/O shapes preserve the existing implementations:

@@ -6946,6 +6946,15 @@ void rocketnet_test_platform_wake_windows_wakes_and_reads()
 
 extern void rocketnet_test_lifecycle_driver();
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_posix_hard_killed_client();
+extern void rocketnet_test_posix_send_to_closed_port();
+extern void rocketnet_test_posix_client_server_gone();
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_posix_hard_killed_receive_errno_seam();
+#endif
+
 // a test a platform's build compiles out still registers its name, printing a
 // named skip instead of vanishing from the count (a skipped test is named and
 // logged, never silent)
@@ -8374,6 +8383,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family },
     { "live_message_matrix_loopback", live_message_matrix_loopback },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "posix_hard_killed_client", rocketnet_test_posix_hard_killed_client },
+    { "posix_send_to_closed_port", rocketnet_test_posix_send_to_closed_port },
+    { "posix_client_server_gone", rocketnet_test_posix_client_server_gone },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "posix_hard_killed_receive_errno_seam", rocketnet_test_posix_hard_killed_receive_errno_seam },
+#endif
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
