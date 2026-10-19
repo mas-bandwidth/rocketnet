@@ -813,8 +813,8 @@ struct rocketnet_server_config_t
 // UNRELIABLE_WITH_ACK_RECEIPT is the code-0 wire form up to 1411 bytes and
 // promotes to RELIABLE_WITH_ACK_RECEIPT semantics (the code-2 block path)
 // above that, keeping its ACKED-only receipt. The reliable types and promoted
-// sends are bounded by the config's max_message_bytes; a send above it, or
-// above the u16 record length for UNRELIABLE_SEQUENCED, is still refused.
+// sends are bounded by the config's max_message_bytes; a send above it is
+// refused in every unreliable mode, with no second record-length refusal.
 //
 // A send the connection's region has no room for ends the connection: the
 // server disconnects that client, the client disconnects itself, with the

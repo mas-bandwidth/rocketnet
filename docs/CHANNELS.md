@@ -368,9 +368,9 @@ Rules of this layer:
   (and code 5's single-packet wire form) promotes above 1411 bytes to code 2;
   code 1 promotes above 1405 bytes (1404 on a WIDE channel) to code 4; code 5
   above 1411 bytes takes the code-2 block path and keeps its ACKED-only
-  receipt. The receiver sees the twin's code. A send above `max_message_bytes`,
-  or above the u16 record length for code 1, is still refused. No unreliable
-  record rides a fragmented payload. There is no
+  receipt. The receiver sees the twin's code. A send above `max_message_bytes`
+  is refused in every unreliable mode; there is no second record-length
+  refusal. No unreliable record rides a fragmented payload. There is no
   UNRELIABLE_SEQUENCED_WITH_ACK_RECEIPT mode.
 - **L2.4** No reliable record and no CONTROL record ever rides a fragmented
   payload (P3).

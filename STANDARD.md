@@ -2171,9 +2171,9 @@ sent as RELIABLE_SEQUENCED (code 4). UNRELIABLE_WITH_ACK_RECEIPT (code 5) uses
 the code-0 wire form up to 1411 bytes; above that it takes the reliable code-2
 block path and keeps its ACKED-only receipt. **The receiver sees the twin's
 code on the wire, and an implementation MUST count every promotion, once per
-send, in a counter for the source mode.** A send above `max_message_bytes`, or
-above the u16 record length for code 1, is still refused and is never
-promoted. There is no UNRELIABLE_SEQUENCED_WITH_ACK_RECEIPT mode. The block
+send, in a counter for the source mode.** A send above `max_message_bytes` is refused in every unreliable mode; there is
+no second record-length refusal. There is no
+UNRELIABLE_SEQUENCED_WITH_ACK_RECEIPT mode. The block
 stride is the wire constant
 **F = 1152** bytes, a multiple of 16: fragments 0 to k−2 of a block carry
 exactly F bytes and fragment k−1 carries 1 to F (_CHANNELS 8_).
