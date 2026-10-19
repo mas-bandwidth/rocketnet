@@ -457,6 +457,20 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
                         (unsigned long long) values[ROCKETNET_COUNTER_SEND_RING_FULL],
                         (unsigned long long) values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED],
                         (unsigned long long) values[ROCKETNET_COUNTER_SEND_LEASE_FULL] );
+                // the two send rings (FILLING 0, HANDED_OFF 1, SENDING 2, SENT 3): a held
+                // ring is HANDED_OFF (the I/O thread never took it) or SENDING (the I/O
+                // thread is inside the driver send); pump on and time how long it is held
+                rocketnet_client_io_t * held_io = rocketnet_client_transport_client_io( client );
+                const int held_fill = held_io->rings.fill;
+                const int held_state = held_io->rings.state[held_fill ^ 1].load();
+                printf( "%s: rings fill=%d state0=%d state1=%d committed0=%llu committed1=%llu fill_slots=%d\n", name, held_fill,
+                        held_io->rings.state[0].load(), held_io->rings.state[1].load(),
+                        (unsigned long long) held_io->rings.committed[0], (unsigned long long) held_io->rings.committed[1], held_io->fill_slots );
+                const double held_start = rocketnet_platform_time();
+                while ( rocketnet_platform_time() - held_start < 15.0 && held_io->rings.state[held_fill ^ 1].load() == held_state )
+                    rocketnet_platform_sleep( 0.001 );
+                printf( "%s: the held ring left state %d after a further %.3f s (now %d)\n", name, held_state,
+                        rocketnet_platform_time() - held_start, held_io->rings.state[held_fill ^ 1].load() );
                 fflush( stdout );
             }
             rocketnet_check( payload );
@@ -545,8 +559,12 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
     // burst is committed to the Filling ring and handed off (or handed off by
     // destroy), and destroy runs Stop, Join, close, free (docs/CLIENT-IO.md
     // Stop and destroy order). The server must still read the disconnect.
+    // SEND_RING_FULL is the backpressure the fill loop above retries through:
+    // a start refused while the I/O thread is still sending the other ring
+    // (every payload still arrives, checked above), so it is the one refusal
+    // this case explains.
     rocketnet_client_transport_disconnect( client );
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
 
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
