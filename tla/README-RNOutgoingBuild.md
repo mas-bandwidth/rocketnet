@@ -24,7 +24,7 @@ Code: `sdk/rocketnet_message_server.cpp` (`rn_message_object_start`,
   `FinishQueued`, `Abort`, `SendPackets` (one packet of the write pass; a
   packet holding fewer than the whole queue is the packet full),
   `TransportSend`, `AckDue`, `BeginUpdate` (the sole packet-quota reset).
-- Invariants: `TypeOK`, `PacketQuota` (queued and in-place attempts share one per-update allowance), `BytesUnchangedInPlace`, `NoCopy` (buffer identity
+- Invariants: `TypeOK`, `PacketQuota` (queued and in-place attempts share one per-update allowance), `ReliableSlotKept` (an in-place start never takes an update's last slot while a reliable message waits), `BytesUnchangedInPlace`, `NoCopy` (buffer identity
   for every fitting unreliable message that did not fall back),
   `AcksNeverLost`, `ModeOrder` (per kind, what the transport has is a prefix
   of the finish order less drops; nothing lost or duplicated).

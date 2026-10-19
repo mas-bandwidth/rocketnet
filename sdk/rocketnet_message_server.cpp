@@ -589,7 +589,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     // decides the frame
     if ( unreliable && object->link.start_packet )
     {
-        int header = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max );
+        int header = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
         if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
             header = RN_ENDPOINT_IN_PLACE_QUEUED;               // the bucket cannot pay it now: the write pass decides
         if ( header >= 0 )

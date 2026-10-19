@@ -342,7 +342,7 @@ static int rn_endpoint_sequenced_header_bytes( int channel )
     return 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 );              // flags and length, sequencing, ordering, channel
 }
 
-int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes )
+int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, double now )
 {
     if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
         return RN_ENDPOINT_IN_PLACE_NO;
@@ -369,8 +369,12 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
     }
 
     // RNOutgoingBuild StartInPlace: a message never overtakes an unreliable
-    // one queued before it; direct and queued packets share the update cap.
-    if ( endpoint->unreliable_count > 0 || endpoint->packets_this_update >= endpoint->config->max_packets_per_update )
+    // one queued before it; direct and queued packets share the update cap;
+    // and while reliable work is due, one slot of the cap stays for the write
+    // pass, so in-place packets never take every slot of every update and
+    // starve reliable sends and resends (ReliableSlotKept)
+    const int reserve = rn_endpoint_ordered_due( endpoint, now ) ? 1 : 0;
+    if ( endpoint->unreliable_count > 0 || endpoint->packets_this_update + reserve >= endpoint->config->max_packets_per_update )
         return RN_ENDPOINT_IN_PLACE_QUEUED;
     return header;
 }

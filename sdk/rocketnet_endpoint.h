@@ -151,14 +151,15 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 // twin's code-0 record; 10 or 11 for a code-1 record) when the message takes
 // this path, RN_ENDPOINT_IN_PLACE_QUEUED when it fits but unreliable messages
 // wait in the queue ahead of it (it queues behind them, so no mode is
-// reordered), and RN_ENDPOINT_IN_PLACE_NO otherwise (the region path decides
+// reordered) or the update's packet cap is spent, keeping one slot for the
+// write pass while reliable work is due at now, and RN_ENDPOINT_IN_PLACE_NO otherwise (the region path decides
 // and refuses). It changes nothing and counts nothing. The frame the owner
 // asks for holds header + bytes + 1 payload bytes (the declared maximum, the
 // header and the form byte).
 #define RN_ENDPOINT_IN_PLACE_NO             -1
 #define RN_ENDPOINT_IN_PLACE_QUEUED         -2
 
-int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
+int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, double now );
 
 // Whether the send budget can pay an in-place packet of payload_bytes now
 // (R6, RNSendBudget Fits at the unreliable class): the bucket refilled to now,

@@ -107,7 +107,13 @@ and stages the packet; `send_packets` flushes it with everything else.
   is spent, a fitting in-place message takes the queued path (counted as a
   fallback), and queued packets wait for the next update. Failed transport
   attempts consume a slot, matching the queued write path. An uncapped
-  connection is still bounded.
+  connection is still bounded. While reliable work is due at start (a
+  reliable message waiting, a resend or chunk resend due), one slot of the
+  allowance stays for the write pass: a fitting message that would take the
+  last slot takes the queued path instead. In-place packets are sent at
+  finish, before send_packets, so without that slot a game sending
+  `max_packets_per_update` fitting unreliable messages every update would
+  starve every reliable send and resend.
 
 ## Option (b): written into the connection's current outgoing packet
 
