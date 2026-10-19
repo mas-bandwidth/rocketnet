@@ -64,25 +64,28 @@ wrong-size packet no longer counts as an integrity failure. Every harness
 proved, both passes, in 317 s for the whole target. Each time in the table
 covers both of that harness's passes.
 
-The translation unit holds 4891 instrumented properties. The planted-bug
-run prints that total; the gate prints only one line per harness. The total
-includes code the harness never reaches. Each row below lists the harness's own assertions on
+The translation unit holds 4891 instrumented properties. Under each
+harness's line the gate prints its counts: properties passed out of the
+total, then the harness's own assertions passed out of its total. The total
+includes code the harness never reaches. Refuted: 0 and timed out: 0 for
+every harness. The counts come from a run on 2026-10-19 merged with base
+1581cc4 (1025 s for the whole target, both passes, on a loaded bench). Each row below lists the harness's own assertions on
 top of the shared bounds, pointer, overflow, division-by-zero, unwinding and
 `rocketnet_assert` checks.
 
-| harness | result | time | harness assertions |
-|---|---|---|---|
-| harness_process_cookie | proved | 5 s | returns 0/1; the wrong size (not 38) is refused; the wrong state is refused with the state unchanged; a salt mismatch is refused; an accepted cookie is stored and the client moves to sending connection request |
-| harness_process_challenge | proved | 5 s | returns 0/1; the wrong size (not 66) is refused; any state but sending connection request is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted challenge moves the client to sending connection response |
-| harness_process_denied | proved | 5 s | returns 0/1; the wrong size (not 34) is refused; any state but sending connection request or response is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted denied ends the attempt as denied |
-| harness_open_session_packet | proved | 14 s | covers every session type's floor and size rule (keep-alive with its validator, disconnect, ack, fragment, payload): a packet below the floor is refused; outside sending connection response and connected the packet is refused; a zero sequence, a replayed sequence (read from the window before the call), a packet that does not open, and a packet whose ack block the read refuses are all refused; a keep-alive with an invalid index or slot count is refused; an opened packet's block plus type data fill exactly packet_bytes - 26; a fixed-size type opens only at its size, a ranged type only above its floor |
-| harness_process_keep_alive | proved | 11 s | the session reader asserts below; the first keep-alive connects with 0 <= index < max_clients <= 1000 |
-| harness_process_payload | proved | 8 s | the session reader asserts below; a refused payload delivers 0 bytes; a delivered payload is 1..packet_bytes - 33 bytes and at most 1439 |
-| harness_process_ack | proved | 14 s | the session reader asserts below |
-| harness_process_fragment | proved | 9 s | the session reader asserts below; outside connected a fragment is refused |
-| harness_process_disconnect | proved | 7 s | the session reader asserts below; an accepted disconnect disconnects |
-| harness_process_packet | proved | 28 s | the dispatcher asserts below |
-| harness_process_record | proved | 211 s | the dispatcher asserts below, over every I/O verdict; the record is left raw afterwards |
+| harness | result | properties passed | own assertions passed | time | harness assertions |
+|---|---|---|---|---|---|
+| harness_process_cookie | proved | 4891 of 4891 | 29 of 29 | 5 s | returns 0/1; the wrong size (not 38) is refused; the wrong state is refused with the state unchanged; a salt mismatch is refused; an accepted cookie is stored and the client moves to sending connection request |
+| harness_process_challenge | proved | 4891 of 4891 | 30 of 30 | 5 s | returns 0/1; the wrong size (not 66) is refused; any state but sending connection request is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted challenge moves the client to sending connection response |
+| harness_process_denied | proved | 4891 of 4891 | 30 of 30 | 5 s | returns 0/1; the wrong size (not 34) is refused; any state but sending connection request or response is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted denied ends the attempt as denied |
+| harness_open_session_packet | proved | 4891 of 4891 | 33 of 33 | 14 s | covers every session type's floor and size rule (keep-alive with its validator, disconnect, ack, fragment, payload): a packet below the floor is refused; outside sending connection response and connected the packet is refused; a zero sequence, a replayed sequence (read from the window before the call), a packet that does not open, and a packet whose ack block the read refuses are all refused; a keep-alive with an invalid index or slot count is refused; an opened packet's block plus type data fill exactly packet_bytes - 26; a fixed-size type opens only at its size, a ranged type only above its floor |
+| harness_process_keep_alive | proved | 4891 of 4891 | 37 of 37 | 11 s | the session reader asserts below; the first keep-alive connects with 0 <= index < max_clients <= 1000 |
+| harness_process_payload | proved | 4891 of 4891 | 10 of 10 | 8 s | the session reader asserts below; a refused payload delivers 0 bytes; a delivered payload is 1..packet_bytes - 33 bytes and at most 1439 |
+| harness_process_ack | proved | 4891 of 4891 | 6 of 6 | 14 s | the session reader asserts below |
+| harness_process_fragment | proved | 4891 of 4891 | 7 of 7 | 9 s | the session reader asserts below; outside connected a fragment is refused |
+| harness_process_disconnect | proved | 4891 of 4891 | 13 of 13 | 7 s | the session reader asserts below; an accepted disconnect disconnects |
+| harness_process_packet | proved | 4891 of 4891 | 6 of 6 | 28 s | the dispatcher asserts below |
+| harness_process_record | proved | 4891 of 4891 | 19 of 19 | 211 s | the dispatcher asserts below, over every I/O verdict; the record is left raw afterwards |
 
 The session reader asserts: returns 0/1; a packet below the type's wire
 floor is refused; outside sending connection response and connected the

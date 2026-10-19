@@ -51,6 +51,11 @@ proofs-client_packets:
 	    else \
 	        verdict="VERIFICATION FAILED (cbmc exit $$status)"; cat "$$output"; \
 	    fi; \
+	    passed=$$(grep -c ": SUCCESS$$" "$$output"); \
+	    refuted=$$(grep -c ": FAILURE$$" "$$output"); \
+	    own_passed=$$(grep "^\[$$harness\." "$$output" | grep -c ": SUCCESS$$"); \
+	    own_total=$$(grep "^\[$$harness\." "$$output" | grep -c -E ": (SUCCESS|FAILURE)$$"); \
+	    counts="properties $$passed of $$(( passed + refuted )) passed, harness's own $$own_passed of $$own_total; unwind $(CLIENT_PACKETS_UNWIND)"; \
 	    rm -f "$$output"; \
 	    if [ $$status -ne 0 ]; then \
 	        failed=1; \
@@ -74,5 +79,6 @@ proofs-client_packets:
 	    fi; \
 	    rm -f "$$output"; \
 	    echo "$$harness $$verdict"; \
+	    echo "  $$counts"; \
 	done; \
 	exit $$failed
