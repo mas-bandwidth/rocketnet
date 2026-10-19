@@ -58,13 +58,11 @@ static int public_step_thread_count()
 
 static void public_step_identity( public_step_identity_t * identity )
 {
-    check( rocketnet_init( NULL ) != 0 );
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
         seed[i] = (uint8_t) ( 0xA5 ^ i );
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( identity->server_public, identity->server_secret ) == ROCKETNET_STATUS_OK );
-    rocketnet_term();
 }
 
 static void public_step_server_config( rocketnet_server_config_t * config, const public_step_identity_t * identity )
@@ -104,7 +102,6 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 {
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
-    check( rocketnet_init( NULL ) != 0 );
     rocketnet_quiet( 1 );
 
     rocketnet_server_config_t server_config;
@@ -133,7 +130,6 @@ static void public_step_pair_destroy( public_step_pair_t * pair )
 {
     rocketnet_client_destroy( pair->client );
     rocketnet_server_destroy( pair->server );
-    rocketnet_term();
 }
 
 // RNClientIo CallerStep: update and send_packets execute the non-blocking I/O
