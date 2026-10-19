@@ -242,7 +242,7 @@ static void receipts_listed_per_update_by_the_c_api()
     uint8_t * payload = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, 3 );
     rocketnet_unit_check( payload != NULL );
     rn_message_connection_t * connection = &client->object.connections[0];
-    rocketnet_unit_check( payload == rn_region_send_write_pointer( connection->region, connection->pending_descriptor ) );
+    rocketnet_unit_check( !rn_region_contains( connection->region, payload, 3 ) );     // written in place in the packet buffer (docs/OUTGOING-BUILD.md)
     payload[0] = 1; payload[1] = 2; payload[2] = 3;
     const uint32_t serial = rocketnet_message_client_finish( client, 3 );
     rocketnet_unit_check( serial != 0 );
