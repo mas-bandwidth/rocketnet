@@ -9,6 +9,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
 #include "rocketnet_client_protocol.h"
+#include "rocketnet_connection_reset.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_protocol.h"
@@ -180,6 +181,32 @@ struct rocketnet_client_transport_t
 };
 
 static void rocketnet_client_thread_function( void * data );
+
+// The transport-owned part of ClientSession End. The protocol overload has
+// already retired keys and cleared protocol state. Only the main-thread fill
+// ring is touched when an I/O thread is active; a handed-off ring is owned by
+// that thread and is already sealed under the ended session.
+void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * client )
+{
+    rocketnet_assert( client );
+    client->packet_leases.reset();
+    struct rocketnet_client_payload_ring_t * fill = &client->payload_ring[client->client_io.rings.fill];
+    fill->num_packets = 0;
+    memset( fill->info, 0, sizeof(fill->info) );
+    memset( fill->data, 0, sizeof(fill->data) );
+    if ( !client->io_thread )
+    {
+        client->payload_ring[1].num_packets = 0;
+        memset( client->payload_ring[1].info, 0, sizeof(client->payload_ring[1].info) );
+        memset( client->payload_ring[1].data, 0, sizeof(client->payload_ring[1].data) );
+    }
+    rocketnet_send_arena_reset( client->send_arena );
+    client->received_packets.num_packets = 0;
+    client->received_packets.receive_index = 0;
+    rocketnet_packet_loss_tracker_reset( &client->packet_loss_tracker );
+    rocketnet_jitter_tracker_reset( &client->jitter_tracker );
+    client->stats_counted = 0;
+}
 
 // the ring game threads fill: the one rings.fill names (always ring 0 on the
 // BASE path, which never hands off)
@@ -1079,6 +1106,9 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client_transport->protocol, current_time, packet, &packet_bytes );
+    if ( state_before > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED &&
+         client_transport->protocol.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        rocketnet_client_connection_reset( client_transport );
     if ( client_transport->io_thread )
     {
         // the protocol packet is sealed into a slot of the Filling ring
@@ -1623,10 +1653,16 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
 
     const int state_before = client_transport->protocol.state;
 
+    // The protocol reset erases the connection address. Like the server side,
+    // retain the destination locally so the already-sealed disconnect burst is
+    // the only connection data that outlives reset.
+    const rocketnet_address_t server_address = client_transport->protocol.server_address;
+
     uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
     int burst_bytes = 0;
     rocketnet_client_protocol_disconnect( &client_transport->protocol, burst, &burst_count, &burst_bytes );
+    rocketnet_client_connection_reset( client_transport );
 
     // every state change reaches the callback, from update or from disconnect:
     // this transition never crosses an update, so it is reported here
@@ -1655,7 +1691,7 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
         client_transport->client_stats.packets_sent++;
         client_transport->client_stats.bytes_sent += (uint64_t) ( burst_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-        client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address,
+        client_transport->io.operations->send( client_transport->io.instance, &server_address,
                                                burst + i * ROCKETNET_SEND_BUDGET,
                                                burst_bytes );
     }

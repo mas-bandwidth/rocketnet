@@ -40,6 +40,7 @@
 #include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
 #include "rocketnet_message_object.h"
+#include "rocketnet_connection_reset.h"
 #include "rocketnet_packet_builder.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_send_budget.h"
@@ -125,16 +126,6 @@ static void rn_message_count( rn_message_object_t * object, int counter, uint64_
 // every layer bound to it fresh, so nothing of the previous connection is
 // reachable from the slot. Also the first bind at create.
 
-static void rn_message_connection_reset( rn_message_object_t * object, rn_message_connection_t * connection )
-{
-    rn_endpoint_reset( connection, object->time );     // RNEndpoint Reset: the endpoint's layers, fresh
-
-    connection->connection_id = 0;
-    connection->state = RN_MESSAGE_CONNECTION_FREE;
-    memset( connection->views, 0, connection->region->delivery_entries );
-    memset( connection->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
-    connection->held = 0;
-}
 
 struct rn_message_connection_t * rn_message_object_connection( struct rn_message_object_t * object, int index )
 {
@@ -287,7 +278,10 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         connection->views = block + layout.views + layout.view_stride * (uint64_t) i;
         connection->cursors = (uint32_t *) ( block + layout.cursors + layout.cursor_stride * (uint64_t) i );
         connection->disconnect_reason = ROCKETNET_MESSAGE_ERROR_NONE;
-        rn_message_connection_reset( object, connection );
+        if ( object->is_server )
+            rocketnet_server_connection_reset( object, (int) ( connection - object->connections ) );
+        else
+            rocketnet_client_connection_reset( object );
     }
 
     // CHANNELS 11.3: the client's one connection is bound at create, because
@@ -427,10 +421,11 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // slots machine sees the slot free until Observe reads the transport
         if ( connection->state == RN_MESSAGE_CONNECTION_KICKED )
         {
-            const int reason = connection->disconnect_reason;
-            rn_message_connection_reset( object, connection );
+            if ( object->is_server )
+                rocketnet_server_connection_reset( object, i );
+            else
+                rocketnet_client_connection_reset( object );
             rn_slots_observe( &object->slots, i, 0 );
-            connection->disconnect_reason = reason;
         }
     }
 
@@ -449,9 +444,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
             if ( action == RN_SLOTS_NONE )
                 continue;
 
-            const int reason = connection->disconnect_reason;
-            rn_message_connection_reset( object, connection );
-            connection->disconnect_reason = reason;
+            rocketnet_server_connection_reset( object, i );
 
             if ( action == RN_SLOTS_RESET )
             {
