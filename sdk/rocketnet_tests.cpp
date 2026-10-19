@@ -7417,7 +7417,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_start",
     "rocketnet_client_finish",
     "rocketnet_client_abort",
-    "rocketnet_client_send",
     "rocketnet_client_receive",
     "rocketnet_client_release",
     "rocketnet_client_receipts",
@@ -7445,7 +7444,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_start",
     "rocketnet_server_finish",
     "rocketnet_server_abort",
-    "rocketnet_server_send",
     "rocketnet_server_broadcast",
     "rocketnet_server_receive",
     "rocketnet_server_release",
@@ -7479,7 +7477,6 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_start",
     "rocketnet_client_finish",
     "rocketnet_client_abort",
-    "rocketnet_client_send",
     "rocketnet_client_receive",
     "rocketnet_client_release",
     "rocketnet_client_receipts",
@@ -7504,7 +7501,6 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_server_start",
     "rocketnet_server_finish",
     "rocketnet_server_abort",
-    "rocketnet_server_send",
     "rocketnet_server_broadcast",
     "rocketnet_server_receive",
     "rocketnet_server_release",
@@ -7936,7 +7932,6 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start( NULL, 0, ROCKETNET_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_abort( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_send( NULL, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive( NULL, 0, &view, &bytes ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_release( NULL, data ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receipts( NULL, receipts, 2 ) == 0 ) );
@@ -7964,7 +7959,6 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL, 0, 0, ROCKETNET_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish( NULL, 0, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_abort( NULL, 0 ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_send( NULL, 0, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_broadcast( NULL, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive( NULL, 0, 0, &view, &bytes ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_release( NULL, 0, data ) );

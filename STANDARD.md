@@ -2099,7 +2099,8 @@ The payload's **last** byte, the _form byte_, says how the bytes before it are
 laid out. Putting it last is what makes the zero-copy form possible: a SINGLE
 message starts at payload offset 0, which is the transport's 16-aligned
 payload root, so an application writes it in place in the frame and a
-receiver reads it in place in the delivered batch.
+receiver reads it in place in the delivered batch. The public send is
+zero-copy only: start, finish and abort, with no copying send form.
 
 ```
 payload := body form            L = len(payload) >= 2

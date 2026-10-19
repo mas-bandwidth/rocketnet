@@ -24,7 +24,6 @@ rocketnet_client_receipts
 rocketnet_client_receive
 rocketnet_client_release
 rocketnet_client_required_memory
-rocketnet_client_send
 rocketnet_client_send_packets
 rocketnet_client_set_send_kbps
 rocketnet_client_start
@@ -66,7 +65,6 @@ rocketnet_server_receipts
 rocketnet_server_receive
 rocketnet_server_release
 rocketnet_server_required_memory
-rocketnet_server_send
 rocketnet_server_send_packets
 rocketnet_server_set_send_kbps
 rocketnet_server_start
