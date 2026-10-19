@@ -269,7 +269,7 @@ struct rocketnet_test_state_recorder_t
     int current_state[16];
 };
 
-static void rocketnet_test_state_change_callback( void * context, int previous_state, int current_state )
+static void rocketnet_test_state_change_callback( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state )
 {
     struct rocketnet_test_state_recorder_t * recorder = (struct rocketnet_test_state_recorder_t *) context;
     if ( recorder->count < 16 )
@@ -4377,14 +4377,14 @@ void rocketnet_test_server_port_zero_driver()
         snprintf( config.driver, sizeof(config.driver), "%s", name );
 
         rocketnet_test_captured_log[0] = '\0';
-        const int saved_level = rocketnet_get_log_level();
-        rocketnet_log_function( rocketnet_test_capture_log );
+        const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
+        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
         rocketnet_set_log_level( saved_level );
-        rocketnet_log_function( rocketnet_test_suite_log_function );
+        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "cannot discover the port it was granted and hand it back" ) != NULL );
@@ -4398,13 +4398,13 @@ void rocketnet_test_server_port_zero_driver()
         snprintf( expected_rung_refusal, sizeof(expected_rung_refusal), "server transport %s refused: a port-zero public address", name );
 
         rocketnet_test_captured_log[0] = '\0';
-        rocketnet_log_function( rocketnet_test_capture_log );
+        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
         rocketnet_set_log_level( saved_level );
-        rocketnet_log_function( rocketnet_test_suite_log_function );
+        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, expected_rung_refusal ) != NULL );
@@ -4419,13 +4419,13 @@ void rocketnet_test_server_port_zero_driver()
         // short-circuits the port-zero pins that would otherwise reach it.
 
         rocketnet_test_captured_log[0] = '\0';
-        rocketnet_log_function( rocketnet_test_capture_log );
+        rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", &config);
 
         rocketnet_set_log_level( saved_level );
-        rocketnet_log_function( rocketnet_test_suite_log_function );
+        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
@@ -5383,14 +5383,14 @@ static bool rocketnet_test_server_uring_skipped( const char * test_name )
     rocketnet_check( rocketnet_address_parse( &refused_address, "127.0.0.1" ) );
 
     rocketnet_test_captured_log[0] = '\0';
-    const int saved_level = rocketnet_get_log_level();
-    rocketnet_log_function( rocketnet_test_capture_log );
+    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
+    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_server_uring_t * refused = rocketnet_server_uring_create( NULL, &refused_address, 2 );
 
     rocketnet_set_log_level( saved_level );
-    rocketnet_log_function( rocketnet_test_suite_log_function );
+    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( refused == NULL );
 
@@ -5473,15 +5473,15 @@ void rocketnet_test_server_uring_probe()
     const uint64_t leaked_drivers_before = rocketnet_server_uring_leaked_drivers();
 
     rocketnet_test_captured_log[0] = '\0';
-    const int stall_saved_level = rocketnet_get_log_level();
-    rocketnet_log_function( rocketnet_test_capture_log );
+    const enum rocketnet_log_level_t stall_saved_level = rocketnet_get_log_level();
+    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
 
     rocketnet_server_uring_test_stall_destroy( stalled );
     rocketnet_server_uring_destroy( stalled );
 
     rocketnet_set_log_level( stall_saved_level );
-    rocketnet_log_function( rocketnet_test_suite_log_function );
+    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "destroy gave up waiting" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "leaked, not freed" ) != NULL );
@@ -7453,7 +7453,7 @@ void rocketnet_functional_prepare()
     if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
-        rocketnet_log_function( rocketnet_test_suite_log_function );
+        rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
     if ( rocketnet_functional_environment == NULL )

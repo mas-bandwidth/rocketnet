@@ -606,7 +606,7 @@ static void message_config_mismatch_ends_both_connections()
     mc_net_connect( pair.net, 0 );
     pair.time = MC_T0;
 
-    const int saved_level = rocketnet_get_log_level();
+    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     g_mc_mismatch_lines = 0;
     rocketnet_set_log_callback( mc_capture, NULL );

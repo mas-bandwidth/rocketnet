@@ -459,7 +459,7 @@ static void driver_loopback_refuses_past_max_endpoints()
 {
     const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
     const int live_before = rocketnet_loopback_endpoints_live();
-    const int saved_level = rocketnet_get_log_level();
+    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
     rocketnet_set_log_callback( loopback_refusal_log_capture, NULL );
 

@@ -63,16 +63,15 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
 static char rocketnet_test_log_ring[ROCKETNET_FUNCTIONAL_LOG_RING_LINES][ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES];
 static int rocketnet_test_log_ring_lines;
-static void (*rocketnet_test_suite_log_function)( int level, const char * format, ... ) = NULL;
+static rocketnet_log_callback_t rocketnet_test_suite_log_function = NULL;
 static char rocketnet_test_captured_log[16384];
 
-static void rocketnet_test_log_capture( int level, const char * format, ... )
+static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
-    va_list args;
-    va_start( args, format );
+    (void) context;
+    (void) length;
     char line[ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES];
-    vsnprintf( line, sizeof(line), format, args );
-    va_end( args );
+    snprintf( line, sizeof(line), "%s", message );
 
     if ( level == ROCKETNET_LOG_LEVEL_NONE )
     {
@@ -148,14 +147,13 @@ static void rocketnet_test_env_restore( struct rocketnet_test_env_guard_t * guar
         unsetenv( guard->name );
 }
 
-static void rocketnet_test_capture_log( int level, const char * format, ... )
+static void rocketnet_test_capture_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
+    (void) context;
+    (void) length;
     (void) level;
-    va_list args;
-    va_start( args, format );
     char line[1024];
-    vsnprintf( line, sizeof(line), format, args );
-    va_end( args );
+    snprintf( line, sizeof(line), "%s", message );
     const size_t used = strlen( rocketnet_test_captured_log );
     snprintf( rocketnet_test_captured_log + used, sizeof(rocketnet_test_captured_log) - used, "%s\n", line );
 }

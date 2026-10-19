@@ -34,13 +34,8 @@
 // every resend. An ack of `packet_id` therefore measures the exact send that
 // produced that packet (study §7.2 item 21: no Karn ambiguity).
 
-#ifndef ROCKETNET_DISCONNECT_REASON_NONE
-#define ROCKETNET_DISCONNECT_REASON_NONE                0
-#define ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH     1
-#define ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT      2
-#define ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION  3
-#define ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT    4
-#endif
+// the disconnect reasons (enum rocketnet_disconnect_reason_t)
+#include "rocketnet.h"
 
 #if ROCKETNET_DEVELOPMENT
 

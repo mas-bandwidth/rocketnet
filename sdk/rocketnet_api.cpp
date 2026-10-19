@@ -1255,7 +1255,7 @@ enum rocketnet_update_result_t rocketnet_server_update( struct rocketnet_server_
         rocketnet_api_misuse_record();
         return ROCKETNET_UPDATE_OK;
     }
-    return rocketnet_message_server_update( server->running, time );
+    return (enum rocketnet_update_result_t) rocketnet_message_server_update( server->running, time );
 }
 
 void rocketnet_server_send_packets( struct rocketnet_server_t * server )

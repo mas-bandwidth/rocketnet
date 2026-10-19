@@ -961,13 +961,12 @@ void operator delete[]( void * p, size_t ) noexcept
 static char rn_log_last[1024];
 static int rn_log_lines = 0;
 
-static void rn_test_log_function( int level, const char * format, ... )
+static void rn_test_log_function( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
+    (void) context;
+    (void) length;
     (void) level;
-    va_list args;
-    va_start( args, format );
-    vsnprintf( rn_log_last, sizeof(rn_log_last), format, args );
-    va_end( args );
+    snprintf( rn_log_last, sizeof(rn_log_last), "%s", message );
     rn_log_lines++;
 }
 
@@ -1580,7 +1579,7 @@ static void test_channels_allocator_sizing()
     // the print form logs the same lines at info level and returns the region bytes
 
     rocketnet_message_default_config( &config );
-    const int old_level = rocketnet_get_log_level();
+    const enum rocketnet_log_level_t old_level = rocketnet_get_log_level();
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
     const int lines_before = rn_log_lines;
     check( rocketnet_message_print_connection_sizing( &config, 16 ) == 1588480 );
@@ -4419,5 +4418,5 @@ void rocketnet_channels_prepare_log( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_log_function( rn_test_log_function );
+    rocketnet_set_log_callback( rn_test_log_function, NULL );
 }

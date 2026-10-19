@@ -55,7 +55,7 @@ static const char * reason_name( int reason )
                                     "reliable timeout", "message memory exhausted" };
     return reason >= 0 && reason < 6 ? names[reason] : "unknown";
 }
-static void state_changed( void * context, int previous, int current )
+static void state_changed( void * context, enum rocketnet_client_state_t previous, enum rocketnet_client_state_t current )
 {
     (void) context;
     printf( "client state: %s -> %s\n", rocketnet_client_state_name( previous ), rocketnet_client_state_name( current ) );
