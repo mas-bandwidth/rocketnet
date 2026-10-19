@@ -151,22 +151,54 @@ static void token_time_refuse( struct token_time_server_t * t, uint64_t create, 
                                  { counter, 1 } } );
 }
 
+// the accept side of a boundary: the server answers with a cookie, so the move
+// is the arrival and the cookie issue, and no refusal counter
+
+static void token_time_accept( struct token_time_server_t * t, uint64_t create, uint64_t expire )
+{
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    token_time_build_request( request, create, expire );
+
+    const struct rocketnet_counters_t before = t->counters;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = -1;
+    const int result = rocketnet_server_protocol_process_connection_request( &t->server, &t->client_address,
+                                                                             request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                             TOKEN_TIME_NOW, TOKEN_TIME_NOW_SECONDS,
+                                                                             response, &response_bytes );
+
+    check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+    rocketnet_counters_expect( &before, &t->counters,
+                               { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
+                                 { ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE, 1 } } );
+}
+
 static void token_time_refusals_are_distinct()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
 
-    // expire <= now: the expired token, and only that counter
+    // expire <= now: the expired token, and only that counter; one second past
+    // the boundary the same token is accepted
     token_time_refuse( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED );
 
-    // create more than five seconds ahead: the skew, not expiry or lifetime
+    // create more than five seconds ahead: the skew, not expiry or lifetime;
+    // exactly five seconds ahead is inside the allowance
     token_time_refuse( &t, TOKEN_TIME_NOW + 6, TOKEN_TIME_NOW + 10,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
 
-    // lifetime above the server's maximum: not expiry or skew
+    // lifetime above the server's maximum: not expiry or skew; exactly the
+    // maximum is allowed
     token_time_refuse( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + TOKEN_TIME_MAX_LIFETIME + 1,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG );
+
+    // the accepted side of each boundary: expire now+1, create now+5, and a
+    // lifetime of exactly the maximum, each answering with a cookie
+    token_time_accept( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW + 1 );
+    token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10 );
+    token_time_accept( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + TOKEN_TIME_MAX_LIFETIME );
 
     token_time_teardown( &t );
 }
