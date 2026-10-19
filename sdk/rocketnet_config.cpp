@@ -42,7 +42,7 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
     struct rocketnet_client_transport_config_t defaults;
     rocketnet_client_transport_default_config_current( &defaults );
     memset( config, 0, sizeof(*config) );
-    memcpy( config, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 );
+    memcpy( config, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR );
 }
 
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config )
@@ -149,8 +149,8 @@ ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_
 ROCKETNET_CONFIG_LAYOUT_FIELD( state_change_callback )
 ROCKETNET_CONFIG_LAYOUT_FIELD( time_callback )
 ROCKETNET_CONFIG_LAYOUT_FIELD( step_driven )
-static_assert( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, "client revision 1 ends at step_driven" );
-static_assert( offsetof( struct rocketnet_client_transport_config_t, simulated_loss_percent ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, "client revision 2 appends after revision 1" );
+static_assert( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, "client revision 1 ends at step_driven" );
+static_assert( offsetof( struct rocketnet_client_transport_config_t, simulated_loss_percent ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, "client revision 2 appends after revision 1" );
 static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h client transport config matches its table" );
 #undef ROCKETNET_CONFIG_LAYOUT_PUBLIC
 #undef ROCKETNET_CONFIG_LAYOUT_TABLE

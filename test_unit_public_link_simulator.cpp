@@ -307,7 +307,7 @@ static void public_link_simulator_revision_1_prefixes()
 {
     struct alignas(16) client_revision_1_t
     {
-        uint8_t bytes[ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1];
+        uint8_t bytes[ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR];
         uint8_t guard[16];
     } client;
     memset( &client, 0xa5, sizeof(client) );
