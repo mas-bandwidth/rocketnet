@@ -379,11 +379,11 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
 /** @brief Size in bytes of client transport config revision 1. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, game_clock_epoch ) + 2 * sizeof( void * ), sizeof( void * ) )
-/** @brief Current known client transport config size, in bytes. */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ), sizeof( void * ) )
+/** @brief Size in bytes of client transport config revision 2. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
-/** @brief Current known client transport config size, in bytes. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2
+/** @brief Known client transport config sizes, in bytes, oldest first. */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2
 
 // The server transport config table -- the single declaration everything
 // derives from, per the config system comment above. num_xdp_queues' range
