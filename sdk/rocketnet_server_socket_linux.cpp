@@ -2576,9 +2576,9 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                         const int payload_bytes = send_buffer->packet_info[i].packet_bytes;
 
-                        // The server's own source address is IPv4 until the
-                        // integration card wires IPv6 receive; the codec
-                        // writes the family the destination addresses.
+                        // The AF_XDP transport serves IPv4, so the server's
+                        // own source address is IPv4; the codec writes the
+                        // family the destination addresses.
                         rocketnet_address_t server_address;
                         rocketnet_address_load_ipv4( &server_address, socket->server_address_big_endian, socket->server_port_big_endian );
 

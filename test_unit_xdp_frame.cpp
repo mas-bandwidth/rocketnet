@@ -479,6 +479,20 @@ static void xdp_ipv6_capture( void *, int level, const char * message, size_t )
 static void xdp_ipv6_pin_is_refused_at_create()
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    // a Linux build without the xdp row falls to the auto order, which opens
+    // a real socket: the case is a named skip there
+
+    int num_available = 0;
+    const int * available = rocketnet_server_driver_availability( &num_available );
+    bool xdp_available = false;
+    for ( int i = 0; i < num_available; i++ )
+        xdp_available = xdp_available || available[i] == ROCKETNET_DRIVER_XDP;
+    if ( !xdp_available )
+    {
+        printf( "xdp_ipv6_pin_is_refused_at_create [SKIPPED: this build has no xdp row]\n" );
+        return;
+    }
+
     // the env pin wins over the struct's list: set it aside for the case
 
     const char * pinned = getenv( "ROCKETNET_SERVER_TRANSPORT" );

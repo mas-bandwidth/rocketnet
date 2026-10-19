@@ -399,7 +399,7 @@ static void xdp_host_ipv4_rocketnet_packet_redirects()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_rocketnet_packet_redirects()
+static void xdp_host_ipv6_rocketnet_packet_passes()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_redirect_rows( 6, rows );
@@ -590,8 +590,8 @@ static void xdp_host_ipv4_options_pass()
 }
 
 // ---------------------------------------------------------------------------
-// short headers: a frame that names an IP family but cannot hold its fixed
-// header drops, uncounted
+// short headers: an IPv4 frame that cannot hold its fixed header drops,
+// uncounted; an IPv6 one passes to the kernel stack, uncounted
 
 static void xdp_host_ipv4_short_header_drops()
 {
@@ -620,7 +620,7 @@ static void xdp_host_ipv4_short_header_drops()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_short_header_drops()
+static void xdp_host_ipv6_short_header_passes()
 {
     std::vector<xdp_host_row_t> rows;
     const int cuts[3] = { 14, 15, 14 + 39 };
@@ -629,20 +629,20 @@ static void xdp_host_ipv6_short_header_drops()
         xdp_host_row_t row = xdp_host_row( "IPv6 header cut short", 6 );
         row.label += " (frame " + std::to_string( cuts[i] ) + " bytes)";
         row.frame.truncate_to = cuts[i];
-        rows.push_back( xdp_host_expect( row, XDP_HOST_DROP, XDP_HOST_NO_COUNTER ) );
+        rows.push_back( xdp_host_expect( row, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
     }
 
     xdp_host_row_t whole = xdp_host_row( "IPv6 header whole, no UDP", 6 );
     whole.frame.truncate_to = 14 + 40;
     rows.push_back( xdp_host_expect( whole, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
 
-    // a short header behind an extension next header still drops: the
-    // length check comes first
+    // a short header behind an extension next header passes uncounted: the
+    // extension count needs the whole fixed header
 
     xdp_host_row_t extension = xdp_host_row( "IPv6 header cut short, next header hop-by-hop", 6 );
     extension.frame.protocol = 0;
     extension.frame.truncate_to = 14 + 39;
-    rows.push_back( xdp_host_expect( extension, XDP_HOST_DROP, XDP_HOST_NO_COUNTER ) );
+    rows.push_back( xdp_host_expect( extension, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
 
     xdp_host_run_rows( rows );
 }
@@ -1219,7 +1219,7 @@ static void xdp_host_every_counter_has_a_case()
     }
 
 XDP_HOST_SKIPPED( xdp_host_ipv4_rocketnet_packet_redirects )
-XDP_HOST_SKIPPED( xdp_host_ipv6_rocketnet_packet_redirects )
+XDP_HOST_SKIPPED( xdp_host_ipv6_rocketnet_packet_passes )
 XDP_HOST_SKIPPED( xdp_host_redirect_needs_a_populated_slot )
 XDP_HOST_SKIPPED( xdp_host_unconfigured_passes )
 XDP_HOST_SKIPPED( xdp_host_other_port_passes )
@@ -1227,7 +1227,7 @@ XDP_HOST_SKIPPED( xdp_host_ipv4_wrong_address_passes )
 XDP_HOST_SKIPPED( xdp_host_ipv6_wrong_address_passes )
 XDP_HOST_SKIPPED( xdp_host_ipv4_options_pass )
 XDP_HOST_SKIPPED( xdp_host_ipv4_short_header_drops )
-XDP_HOST_SKIPPED( xdp_host_ipv6_short_header_drops )
+XDP_HOST_SKIPPED( xdp_host_ipv6_short_header_passes )
 XDP_HOST_SKIPPED( xdp_host_ipv6_extension_headers_pass_counted )
 XDP_HOST_SKIPPED( xdp_host_ipv6_fragment_passes_counted )
 XDP_HOST_SKIPPED( xdp_host_icmpv6_passes_uncounted )
@@ -1245,7 +1245,7 @@ XDP_HOST_SKIPPED( xdp_host_replay_never_writes_the_map )
 #endif // #if ROCKETNET_XDP_FILTER_HOST
 
 REGISTER_UNIT_TEST( xdp_host_ipv4_rocketnet_packet_redirects );
-REGISTER_UNIT_TEST( xdp_host_ipv6_rocketnet_packet_redirects );
+REGISTER_UNIT_TEST( xdp_host_ipv6_rocketnet_packet_passes );
 REGISTER_UNIT_TEST( xdp_host_redirect_needs_a_populated_slot );
 REGISTER_UNIT_TEST( xdp_host_unconfigured_passes );
 REGISTER_UNIT_TEST( xdp_host_other_port_passes );
@@ -1253,7 +1253,7 @@ REGISTER_UNIT_TEST( xdp_host_ipv4_wrong_address_passes );
 REGISTER_UNIT_TEST( xdp_host_ipv6_wrong_address_passes );
 REGISTER_UNIT_TEST( xdp_host_ipv4_options_pass );
 REGISTER_UNIT_TEST( xdp_host_ipv4_short_header_drops );
-REGISTER_UNIT_TEST( xdp_host_ipv6_short_header_drops );
+REGISTER_UNIT_TEST( xdp_host_ipv6_short_header_passes );
 REGISTER_UNIT_TEST( xdp_host_ipv6_extension_headers_pass_counted );
 REGISTER_UNIT_TEST( xdp_host_ipv6_fragment_passes_counted );
 REGISTER_UNIT_TEST( xdp_host_icmpv6_passes_uncounted );
