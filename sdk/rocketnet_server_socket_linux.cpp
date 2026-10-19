@@ -4,7 +4,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #if ROCKETNET_XDP
 
@@ -13,6 +13,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_frame.h"
+#include "rocketnet_driver.h"
 #include "rocketnet_hash.h"
 
 #include <ifaddrs.h>
@@ -59,6 +60,7 @@ struct alignas(64) rocketnet_server_socket_send_packet_info_t
 {
     rocketnet_address_t to;
     size_t packet_bytes;
+    uint8_t destination_mac[ETH_ALEN];  // chosen at start by the reply-MAC rule
 };
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing. Each field
@@ -172,9 +174,18 @@ struct rocketnet_server_socket_t
 
     uint8_t server_ethernet_address[ETH_ALEN];
     uint8_t gateway_ethernet_address[ETH_ALEN];
+    bool gateway_known;
 
     uint32_t server_address_big_endian;
     uint16_t server_port_big_endian;
+
+    // the reply-MAC rule (rocketnet_xdp_frame.h): learned from the source MAC
+    // of each packet the transport accepts for a connection (peer_accepted),
+    // written on the main thread while the transport processes a receive
+    // view, read by start_packet; fill threads only read it, and they are
+    // joined before each receive
+    struct rocketnet_xdp_reply_macs_t reply_macs;
+    uint8_t process_eth[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS][ETH_ALEN];
 
     int interface_index;
     struct xdp_program * program;
@@ -240,9 +251,14 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
     return true;
 }
 
-static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_address )
+// false refuses create (a malformed, zero or multicast MAC, or a discovery
+// that could not complete). true with *found false: this interface has no
+// default route, the one case the server starts without a gateway.
+
+static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_address, bool * found )
 {
     memset( mac_address, 0, 6 );
+    *found = false;
 
     char mac_address_string[18];
     memset( mac_address_string, 0, sizeof(mac_address_string) );
@@ -308,7 +324,7 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
 
         if ( !gateway_ip_string )
         {
-            return false;
+            return true;
         }
 
         // parse the address and make sure it's a valid ipv4
@@ -364,6 +380,14 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
     mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
     mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
 
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
+    if ( ( mac_address[0] & 1 ) || memcmp( mac_address, zero_mac, 6 ) == 0 )
+    {
+        rocketnet_error( "gateway mac address %s is zero or multicast", mac_address_string );
+        return false;
+    }
+
+    *found = true;
     return true;
 }
 
@@ -676,6 +700,24 @@ uint64_t rocketnet_server_socket_memory_required(int num_queues)
     return bytes;
 }
 
+static bool rocketnet_server_socket_interface_is_veth( const char * interface_name )
+{
+    // the driver name the kernel reports for the interface (ETHTOOL_GDRVINFO)
+    const int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
+    if ( probe_fd < 0 )
+        return false;
+    struct ethtool_drvinfo info;
+    memset( &info, 0, sizeof(info) );
+    info.cmd = ETHTOOL_GDRVINFO;
+    struct ifreq ifr;
+    memset( &ifr, 0, sizeof(ifr) );
+    strncpy( ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1 );
+    ifr.ifr_data = (char*) &info;
+    const bool veth = ioctl( probe_fd, SIOCETHTOOL, &ifr ) == 0 && strcmp( info.driver, "veth" ) == 0;
+    close( probe_fd );
+    return veth;
+}
+
 bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
 {
     rocketnet_assert( public_address_string );
@@ -902,7 +944,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 // verified BY NAME here, and saying so is different from
                 // claiming there is nothing to pin
 
-                rocketnet_info( "xdp pre-flight: no /proc/interrupts line names %s (R4): either this NIC has no per-queue vectors, or its driver's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be verified by name here; pin and verify via the NIC driver's own tooling", interface_name );
+                rocketnet_info( "xdp pre-flight: no /proc/interrupts line names %s (R4): either this NIC has no per-queue vectors, or its transport's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be verified by name here; pin and verify via the NIC transport's own tooling", interface_name );
             }
             else if ( have_isolated && matched_irqs > rocketnet_server_socket_count_cpu_list( isolated ) )
             {
@@ -974,12 +1016,21 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 // surface means the count cannot be wrong, and saying so
                 // is different from silence
 
-                rocketnet_info( "xdp pre-flight: %s has no channel surface (R7 passes: the driver does not support channel queries)", interface_name );
+                rocketnet_info( "xdp pre-flight: %s has no channel surface (R7 passes: the transport does not support channel queries)", interface_name );
             }
             else if ( ethtool_result != 0 )
             {
                 rocketnet_warn( "xdp pre-flight: the channel query on %s failed (%s) (R7): cannot verify the queue count", interface_name, strerror( errno ) );
                 provisioned = false;
+            }
+            else if ( channels.combined_count == 0 && (int) channels.rx_count == num_queues && (int) channels.tx_count == num_queues &&
+                      rocketnet_server_socket_interface_is_veth( interface_name ) )
+            {
+                // veth reports separate rx and tx channels and never combined
+                // ones, so the queue count is carried in both: the kernel
+                // tier's on-link case binds the server on a veth pair
+
+                rocketnet_info( "xdp pre-flight: %s has %u rx and %u tx channels and no combined ones (R7 passes: the queue count is %d)", interface_name, channels.rx_count, channels.tx_count, num_queues );
             }
             else
             {
@@ -1140,21 +1191,33 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     // look up the gateway ethernet address for the network interface
 
-    if ( !get_gateway_mac_address( interface_name, server_socket->gateway_ethernet_address ) )
+    if ( !get_gateway_mac_address( interface_name, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
     {
         rocketnet_error( "server could not get gateway mac address" );
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
 
-    rocketnet_info( "gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x", 
-        server_socket->gateway_ethernet_address[0], 
-        server_socket->gateway_ethernet_address[1], 
-        server_socket->gateway_ethernet_address[2], 
-        server_socket->gateway_ethernet_address[3], 
-        server_socket->gateway_ethernet_address[4], 
-        server_socket->gateway_ethernet_address[5] 
-    );
+    if ( server_socket->gateway_known )
+    {
+        rocketnet_info( "gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x",
+            server_socket->gateway_ethernet_address[0],
+            server_socket->gateway_ethernet_address[1],
+            server_socket->gateway_ethernet_address[2],
+            server_socket->gateway_ethernet_address[3],
+            server_socket->gateway_ethernet_address[4],
+            server_socket->gateway_ethernet_address[5]
+        );
+    }
+    else
+    {
+        rocketnet_warn( "server found no gateway on %s: replies go only to peers learned on link, and a reply to an unlearned address is refused", interface_name );
+    }
+
+    // replies go to the source MAC learned from each answered peer, else
+    // to the gateway
+
+    rocketnet_xdp_reply_macs_reset( &server_socket->reply_macs, server_socket->gateway_known ? server_socket->gateway_ethernet_address : NULL );
 
     // STATE IDENTITY (re-derived twice on the #110 gate): the identity
     // input contains NOTHING process-derived -- a random 64-bit token
@@ -1783,7 +1846,7 @@ uint64_t rocketnet_server_socket_id( rocketnet_server_socket_t * server_socket )
 
 static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket );
 
-uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to )
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac )
 {
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
@@ -1814,6 +1877,7 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
 
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
+    memcpy( send_buffer->packet_info[packet_index].destination_mac, destination_mac, ETH_ALEN );
 
     return send_buffer->packet_data[packet_index];
 }
@@ -1824,11 +1888,33 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     rocketnet_assert( to );
     rocketnet_assert( packet_id );
 
+    // the reply-MAC rule (rocketnet_xdp_frame.h), before a send slot is
+    // taken: a response the transport reserves while processing a receive
+    // view passes that view's own from[] entry, which names the frame it
+    // answers, used only with no gateway. no MAC (no gateway, nothing
+    // learned, no frame answered) is a refusal the transport counts
+    // (ROCKETNET_DRIVER_PACKET_UNREACHABLE)
+
+    const uint8_t * answered_mac = NULL;
+    const uintptr_t view_begin = (uintptr_t) &server_socket->process_packets.from[0];
+    const uintptr_t view_end = (uintptr_t) &server_socket->process_packets.from[server_socket->process_packets.num_packets];
+    const uintptr_t to_pointer = (uintptr_t) to;
+    if ( to_pointer >= view_begin && to_pointer < view_end )
+        answered_mac = server_socket->process_eth[( to_pointer - view_begin ) / sizeof( rocketnet_address_t )];
+
+    uint64_t refused = 0;
+    const uint8_t * destination_mac = rocketnet_xdp_reply_mac( &server_socket->reply_macs, to, answered_mac, &refused );
+    if ( !destination_mac )
+    {
+        *packet_id = ROCKETNET_DRIVER_PACKET_UNREACHABLE;
+        return NULL;
+    }
+
     *packet_id = server_socket->packet_id.fetch_add(1);
 
     const int queue = *packet_id % server_socket->num_queues;
 
-    return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to );
+    return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to, destination_mac );
 }
 
 void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
@@ -1937,6 +2023,15 @@ void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
     rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
+    rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
+}
+
+void rocketnet_server_socket_peer_accepted( struct rocketnet_server_socket_t * server_socket, int view_index )
+{
+    rocketnet_assert( server_socket );
+    if ( view_index < 0 || view_index >= server_socket->process_packets.num_packets )
+        return;
+    rocketnet_xdp_reply_macs_learn( &server_socket->reply_macs, &server_socket->process_packets.from[view_index], server_socket->process_eth[view_index] );
 }
 
 void rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water )
@@ -2038,6 +2133,8 @@ bool rocketnet_server_socket_test_inactive_generation()
     auto * socket = new (socket_storage) rocketnet_server_xdp_socket_t();
     server->num_queues = 1;
     server->socket = socket;
+    static const uint8_t test_gateway_mac[ETH_ALEN] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
+    rocketnet_xdp_reply_macs_reset(&server->reply_macs, test_gateway_mac);
     rocketnet_platform_mutex_create(&socket->send_mutex);
     rocketnet_server_socket_acquire_send_buffer(socket);
     rocketnet_address_t to = {};
@@ -2140,8 +2237,6 @@ bool rocketnet_server_socket_test_replay_marks()
 
 void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * server_socket, uint8_t * eth, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
 {
-    (void) eth;
-
     if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
         return;
 
@@ -2167,6 +2262,7 @@ void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * 
     server_socket->process_packets.from[index] = *from;
     server_socket->process_packets.packet_data[index] = packet_data;
     server_socket->process_packets.packet_bytes[index] = packet_bytes;
+    memcpy( server_socket->process_eth[index], eth, ETH_ALEN );
 }
 
 static void pin_thread_to_cpu( int cpu ) 
@@ -2482,7 +2578,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                         memcpy( packet_data + header_bytes, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, payload_bytes );
 
                         batch_frames[num_batch_packets] = frame;
-                        batch_packet_bytes[num_batch_packets] = rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, socket->gateway_ethernet_address, &server_address, &send_buffer->packet_info[i].to, payload_bytes );
+                        batch_packet_bytes[num_batch_packets] = rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, &server_address, &send_buffer->packet_info[i].to, payload_bytes );
                         num_batch_packets++;
                     }
 

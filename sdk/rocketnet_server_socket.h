@@ -82,6 +82,12 @@ void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_s
 
 void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address );
 
+// The transport accepted receive-view packet view_index for a connection:
+// its source MAC becomes the reply MAC for its address (rocketnet_xdp_frame.h,
+// the reply-MAC rule). Main thread only, while that view is current.
+
+void rocketnet_server_socket_peer_accepted( struct rocketnet_server_socket_t * server_socket, int view_index );
+
 void rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water );
 
 void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * server_socket );

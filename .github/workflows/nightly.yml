@@ -39,10 +39,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: nightly-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
@@ -63,9 +59,17 @@ jobs:
   build-and-test-windows-debug:
     name: windows-2025 / Debug
     runs-on: windows-2025
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-windows-debug-${{ matrix.ref }}
+      cancel-in-progress: true
     steps:
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Check committed XDP fallback source on Windows
         # Uses Python and CMake preinstalled on the windows-2025 runner.
@@ -90,13 +94,14 @@ jobs:
       - name: Full transport suite with IOCP selected
         timeout-minutes: 10
         env:
-          ROCKETNET_DRIVER: iocp
+          ROCKETNET_SERVER_TRANSPORT: iocp
         run: ./bin/Debug/test.exe
 
       - name: Run serialization surface (portable)
         shell: bash
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/Debug/test_serialize.exe
           ./bin/Debug/test_lifecycle.exe
@@ -147,9 +152,17 @@ jobs:
   windows-driver-extension:
     name: external driver backend / windows-2025
     runs-on: windows-2025
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-windows-driver-extension-${{ matrix.ref }}
+      cancel-in-progress: true
     steps:
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Configure
         run: cmake -B build -A x64

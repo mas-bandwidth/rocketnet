@@ -37,17 +37,21 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: nightly-bigendian-system-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   bigendian-system:
     name: s390x full system
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 180
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-bigendian-system-${{ matrix.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Install qemu-system-s390x when the runner does not have it
         run: |
@@ -185,7 +189,7 @@ jobs:
           a=$?
           echo FUNC_AUTO_EXIT:$a
           [ "$a" -eq 0 ] || rc=$a
-          ROCKETNET_DRIVER=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional
+          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional
           p=$?
           echo FUNC_PORT_EXIT:$p
           [ "$p" -eq 0 ] || rc=$p

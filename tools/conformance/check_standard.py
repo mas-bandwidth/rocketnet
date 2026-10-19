@@ -142,6 +142,48 @@ def main():
     failures = []
     checked = 0
 
+    # The token-time refusals are an ordered protocol rule, not just counter
+    # names: keep the documented checks and their counter rows in code order.
+    order_heading = "In this exact order, on a _connection request packet_:"
+    if order_heading not in text:
+        failures.append("STANDARD.md has no ordered connection-request check list")
+        request_order = ""
+    else:
+        request_order = re.sub(r"\s+", " ", text.split(order_heading, 1)[1].split("\n\n**", 1)[0])
+
+    refusal_rules = (
+        ("expired token", "If the expire timestamp is <= the current time, ignore it."),
+        ("future-created token",
+         "If `max_token_lifetime_seconds` is above 0 and the create timestamp is more than five seconds ahead of the current time, ignore it."),
+        ("overlong token",
+         "If `max_token_lifetime_seconds` is above 0 and the token's lifetime (`expire - create`) exceeds that maximum, ignore it."),
+    )
+    refusal_positions = []
+    for name, rule in refusal_rules:
+        checked += 1
+        position = request_order.find(rule)
+        if position < 0:
+            failures.append("STANDARD.md's connection-request order omits the %s rule" % name)
+        refusal_positions.append(position)
+    if all(position >= 0 for position in refusal_positions) and refusal_positions != sorted(refusal_positions):
+        failures.append("STANDARD.md's token-time refusal checks are not in code order")
+
+    # Keep both distinct refusal reasons in the ordered request-counter table.
+    counter_heading = "The connection request path is the one that matters most"
+    counter_start = text.find("| Counter | Fires when |", text.find(counter_heading))
+    counter_text = text[counter_start:] if counter_start >= 0 else ""
+    counter_names = ("..._TOKEN_EXPIRED", "..._TOKEN_CREATED_IN_FUTURE",
+                     "..._TOKEN_LIFETIME_TOO_LONG")
+    counter_positions = []
+    for name in counter_names:
+        checked += 1
+        position = counter_text.find("| `%s` |" % name)
+        if position < 0:
+            failures.append("STANDARD.md's connection-request counter table omits %s" % name)
+        counter_positions.append(position)
+    if all(position >= 0 for position in counter_positions) and counter_positions != sorted(counter_positions):
+        failures.append("STANDARD.md's token-time refusal counters are not in request order")
+
     def compare(what, published, implemented):
         nonlocal checked
         checked += 1
@@ -174,7 +216,7 @@ def main():
         published = re.search(r"0x[0-9A-Fa-f]+", cell)
         compare("version constant",
                 published.group(0).upper().replace("0X", "0x") if published else cell,
-                code["ROCKETNET_VERSION"])
+                code["ROCKETNET_WIRE_VERSION"])
 
     cell = row("Prefilter header")
     if cell is not None:
@@ -244,6 +286,16 @@ def main():
     cell = row("Receive ceiling")
     if cell is not None:
         compare("receive ceiling", ints(cell)[0], code["ROCKETNET_RECEIVE_CEILING"])
+
+    # R6: the send bandwidth budget's configured defaults, per direction, from
+    # the message config table (dump_constants prints CFG_MESSAGE_DEFAULT_<field>)
+    cell = row("Send bandwidth budget")
+    if cell is not None:
+        published = ints(cell)
+        compare("message config client_send_kbps default", published[0],
+                code["CFG_MESSAGE_DEFAULT_client_send_kbps"])
+        compare("message config server_send_kbps default", published[1],
+                code["CFG_MESSAGE_DEFAULT_server_send_kbps"])
 
     # the packet size and its derivations: the document's numbers against the
     # compiler's, and each document number against the arithmetic the
@@ -448,6 +500,12 @@ def main():
         if implemented is not None:
             compare("handshake deadline (timing table)", ints(cell)[0], implemented)
 
+    cell = timing_row("Half-open idle deadline")
+    if cell is not None:
+        implemented = require("HALF_OPEN_IDLE_TIMEOUT_SECONDS")
+        if implemented is not None:
+            compare("half-open idle deadline (timing table)", ints(cell)[0], implemented)
+
     cell = timing_row("Cookie lifetime")
     if cell is not None:
         implemented = require("DEFAULT_COOKIE_LIFETIME_SECONDS")
@@ -491,6 +549,24 @@ def main():
         if implemented is not None:
             compare("handshake deadline (glance table)", ints(cell)[0], implemented)
 
+    # The two server handshake budgets: each row's number and window are the
+    # implementation's macros, so a doc number and a code number move together.
+    cell = row("Handshake work budget")
+    if cell is not None:
+        implemented = require("ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE")
+        if implemented is not None:
+            compare("handshake work budget (glance table)", ints(cell)[0], implemented)
+
+    cell = row("Failed-signature budget")
+    if cell is not None:
+        published = ints(cell)
+        implemented = require("ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET")
+        if implemented is not None:
+            compare("failed-signature budget (glance table)", published[0], implemented)
+        implemented = require("ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS")
+        if implemented is not None:
+            compare("failed-signature window (glance table)", published[1], implemented)
+
     cell = row("Cookie lifetime / key rotation")
     if cell is not None:
         numbers = ints(cell)
@@ -509,9 +585,16 @@ def main():
     cell = row("Replay buffer")
     if cell is not None:
         compare("replay buffer at least", ints(cell)[0],
-                code["ROCKETNET_HISTORY_PACKETS"])
+                code["ROCKETNET_HISTORY_PACKETS_MIN"])
         compare("replay window bits", ints(cell)[0],
                 code["ROCKETNET_REPLAY_WINDOW_BITS"])
+
+    # the depth's upper bound is a message-tier precondition (STANDARD.md
+    # _Numbers_), so its own row must track the implementation's macro
+    cell = row("Replay buffer maximum")
+    if cell is not None:
+        compare("replay buffer maximum", ints(cell)[0],
+                code["ROCKETNET_HISTORY_PACKETS_MAX"])
 
     cell = row("Kernel replay prefilter")
     if cell is not None:

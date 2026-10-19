@@ -23,20 +23,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-latest, runner: '["self-hosted","Linux","X64","fleet"]' }   # the fleet's org runners (ci.yml build-and-test's note)
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        os:
+          # the fleet's org runners (ci.yml build-and-test's note)
+          - ubuntu-latest
           # the macOS soak: HOSTED macos-latest as a stopgap (2026-10-13). No self-hosted macOS ARM64 runner exists yet;
           # hosted macOS is $0.16/min and this 90-minute job was the largest single line of September's Actions bill
           # (up to ~$14 a night), so it moves to mini-m5's org runner as soon as Glenn registers it.
-          - { os: macos-latest }
+          - macos-latest
           # the windows soak: hosted windows-2025, MSVC via the cmake configure/build
           # steps below. The only leg with no self-hosted runner, so the billing leg.
-          - { os: windows-2025 }
-    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+          - windows-2025
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON('["self-hosted","Linux","X64","fleet"]') || matrix.os }}
     timeout-minutes: 90
     steps:
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Install dependencies (Linux)
         if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
@@ -133,9 +137,14 @@ jobs:
   sanitized-soak:
     name: soak_sim (asan + ubsan + lsan, bounded)
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Install dependencies
         if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
@@ -177,6 +186,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: sanitized-soak-log
+          name: sanitized-soak-log-${{ replace(matrix.ref, '/', '-') }}
           path: soak_sim.log
           if-no-files-found: ignore

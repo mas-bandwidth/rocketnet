@@ -58,7 +58,7 @@
                                   scripts/soak-sim-selftest runs both.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"
@@ -571,7 +571,7 @@ int main( int argc, char ** argv )
             struct rocketnet_connect_token_private_t private_fields;
             memset( &signed_fields, 0, sizeof(signed_fields) );
             memset( &private_fields, 0, sizeof(private_fields) );
-            signed_fields.version = ROCKETNET_VERSION;
+            signed_fields.version = ROCKETNET_WIRE_VERSION;
             signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
             signed_fields.create_timestamp = timestamp;
             signed_fields.expire_timestamp = timestamp + 300;

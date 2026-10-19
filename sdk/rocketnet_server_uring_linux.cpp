@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet_memory.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_server_uring.h"
 
 #include <new>
@@ -203,14 +203,14 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     if ( fd < 0 )
     {
-        rocketnet_error( "io_uring driver: failed to create socket: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to create socket: %s", strerror( errno ) );
         return -1;
     }
 
     int one = 1;
     if ( setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
     {
-        rocketnet_error( "io_uring driver: failed to set SO_REUSEPORT: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -220,7 +220,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         int zero = 0;
         if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero) ) != 0 )
         {
-            rocketnet_error( "io_uring driver: failed to clear socket ipv6 only: %s", strerror( errno ) );
+            rocketnet_error( "io_uring transport: failed to clear socket ipv6 only: %s", strerror( errno ) );
             close( fd );
             return -1;
         }
@@ -231,14 +231,14 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(int) ) != 0 )
     {
-        rocketnet_error( "io_uring driver: failed to set socket send buffer size: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set socket send buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
     if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof(int) ) != 0 )
     {
-        rocketnet_error( "io_uring driver: failed to set socket receive buffer size: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set socket receive buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -256,12 +256,12 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     {
         if ( granted_send < send_buffer_size || granted_receive < receive_buffer_size )
         {
-            rocketnet_warn( "io_uring driver: socket buffers granted below request: send %d/%d receive %d/%d (raise net.core.wmem_max/rmem_max)",
+            rocketnet_warn( "io_uring transport: socket buffers granted below request: send %d/%d receive %d/%d (raise net.core.wmem_max/rmem_max)",
                             granted_send, send_buffer_size, granted_receive, receive_buffer_size );
         }
         else
         {
-            rocketnet_info( "io_uring driver: socket buffers granted: send %d receive %d", granted_send, granted_receive );
+            rocketnet_info( "io_uring transport: socket buffers granted: send %d receive %d", granted_send, granted_receive );
         }
     }
 
@@ -273,7 +273,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     if ( socklen == 0 || bind( fd, (struct sockaddr*) &sockaddr, socklen ) < 0 )
     {
-        rocketnet_error( "io_uring driver: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -285,14 +285,14 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         socklen_t bound_length = sizeof(bound);
         if ( getsockname( fd, (struct sockaddr*) &bound, &bound_length ) != 0 )
         {
-            rocketnet_error( "io_uring driver: failed to get bound socket port: %s", strerror( errno ) );
+            rocketnet_error( "io_uring transport: failed to get bound socket port: %s", strerror( errno ) );
             close( fd );
             return -1;
         }
         rocketnet_address_t bound_address;
         if ( !rocketnet_uring_sockaddr_to_address( &bound, (int) bound_length, ipv6, &bound_address ) )
         {
-            rocketnet_error( "io_uring driver: could not read bound socket address" );
+            rocketnet_error( "io_uring transport: could not read bound socket address" );
             close( fd );
             return -1;
         }
@@ -301,7 +301,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     if ( fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == -1 )
     {
-        rocketnet_error( "io_uring driver: failed to set socket non-blocking: %s", strerror( errno ) );
+        rocketnet_error( "io_uring transport: failed to set socket non-blocking: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -453,7 +453,7 @@ static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring,
     struct io_uring_sqe * sqe = rocketnet_server_uring_get_sqe( uring );
     if ( !sqe )
     {
-        rocketnet_error( "io_uring driver: no submission entry to arm queue %d", queue_index );
+        rocketnet_error( "io_uring transport: no submission entry to arm queue %d", queue_index );
         return false;
     }
     io_uring_prep_recvmsg_multishot( sqe, queue->fd, &queue->receive_message, 0 );
@@ -621,7 +621,7 @@ static void rocketnet_server_uring_submit( struct rocketnet_server_uring_t * uri
     const int result = io_uring_submit( &uring->ring );
     uring->counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS]++;
     if ( result < 0 && result != -EINTR && result != -EAGAIN && result != -EBUSY )
-        rocketnet_error( "io_uring driver: submit failed: %s", strerror( -result ) );
+        rocketnet_error( "io_uring transport: submit failed: %s", strerror( -result ) );
 }
 
 // wait for at least one CQE, submitting anything queued on the way
@@ -672,13 +672,13 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 
     if ( num_queues > ROCKETNET_URING_MAX_QUEUES )
     {
-        rocketnet_error( "io_uring driver num_queues %d is out of range (1 to %d)", num_queues, ROCKETNET_URING_MAX_QUEUES );
+        rocketnet_error( "io_uring transport num_queues %d is out of range (1 to %d)", num_queues, ROCKETNET_URING_MAX_QUEUES );
         return NULL;
     }
 
     if ( !rocketnet_server_uring_available() )
     {
-        rocketnet_error( "io_uring driver refused: this kernel does not accept the io_uring ring, opcodes or provided buffer ring the driver needs" );
+        rocketnet_error( "io_uring transport refused: this kernel does not accept the io_uring ring, opcodes or provided buffer ring the transport needs" );
         return NULL;
     }
 
@@ -736,14 +736,14 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     const int init_result = io_uring_queue_init_params( ROCKETNET_URING_ENTRIES, &uring->ring, &params );
     if ( init_result < 0 )
     {
-        rocketnet_error( "io_uring driver: io_uring_queue_init_params failed: %s", strerror( -init_result ) );
+        rocketnet_error( "io_uring transport: io_uring_queue_init_params failed: %s", strerror( -init_result ) );
         rocketnet_server_uring_destroy( uring );
         return NULL;
     }
     uring->ring_ready = true;
 
     if ( ( params.features & IORING_FEAT_NODROP ) == 0 )
-        rocketnet_warn( "io_uring driver: this kernel drops completions on overflow (no IORING_FEAT_NODROP)" );
+        rocketnet_warn( "io_uring transport: this kernel drops completions on overflow (no IORING_FEAT_NODROP)" );
 
     // per queue: the provided buffer ring (bgid = queue), filled, and the
     // multishot RECVMSG armed over it
@@ -756,7 +756,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
         queue->buf_ring = rocketnet_server_uring_setup_buf_ring( &uring->ring, ROCKETNET_URING_RECV_BUFFERS, i, &queue->buf_ring_inverted_resv, &error );
         if ( !queue->buf_ring )
         {
-            rocketnet_error( "io_uring driver: io_uring_setup_buf_ring failed for queue %d: %s", i, strerror( -error ) );
+            rocketnet_error( "io_uring transport: io_uring_setup_buf_ring failed for queue %d: %s", i, strerror( -error ) );
             rocketnet_server_uring_destroy( uring );
             return NULL;
         }
@@ -779,7 +779,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 
     rocketnet_server_uring_submit( uring );
 
-    rocketnet_info( "io_uring driver: %d queue reuseport group on port %d, %d entry ring, %d receive buffers per queue",
+    rocketnet_info( "io_uring transport: %d queue reuseport group on port %d, %d entry ring, %d receive buffers per queue",
                     num_queues, bound_port, ROCKETNET_URING_ENTRIES, ROCKETNET_URING_RECV_BUFFERS );
 
     return uring;
@@ -872,7 +872,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
             rocketnet_server_uring_leaked_bytes_total += leaked;
             rocketnet_server_uring_leaked_drivers_total++;
 
-            rocketnet_warn( "io_uring driver: destroy gave up waiting for the receive cancels; %" PRIu64 " bytes the kernel may still write are leaked, not freed", leaked );
+            rocketnet_warn( "io_uring transport: destroy gave up waiting for the receive cancels; %" PRIu64 " bytes the kernel may still write are leaked, not freed", leaked );
             return;
         }
 
@@ -945,7 +945,7 @@ uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t *
 
     if ( slot >= ROCKETNET_URING_SEND_QUEUE_SIZE || slot < 0 )
     {
-        rocketnet_spam( "io_uring driver send staging full. packet dropped" );
+        rocketnet_spam( "io_uring transport send staging full. packet dropped" );
         return NULL;
     }
 
@@ -1173,7 +1173,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     (void) context;
     (void) bind_address;
     (void) num_queues;
-    rocketnet_error( "io_uring driver refused: built without liburing" );
+    rocketnet_error( "io_uring transport refused: built without liburing" );
     return NULL;
 }
 

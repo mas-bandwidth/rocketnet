@@ -7,7 +7,7 @@
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -173,6 +173,106 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
     return rocketnet_write_connect_token_sealed( signed_fields, private_fields, backend_secret_key, ephemeral_secret_key, token );
 }
 
+int rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key )
+{
+    if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( crypto_sign_keypair( public_key, secret_key ) != 0 )
+        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    return ROCKETNET_STATUS_OK;
+}
+
+int rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key )
+{
+    if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( crypto_box_keypair( public_key, secret_key ) != 0 )
+        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    return ROCKETNET_STATUS_OK;
+}
+
+int rocketnet_write_production_connect_token( const uint8_t * backend_secret_key,
+                                              const uint8_t * server_public_key,
+                                              uint64_t protocol_id,
+                                              const char * const * server_address_strings,
+                                              int server_address_count,
+                                              uint64_t client_id,
+                                              uint64_t create_timestamp,
+                                              uint64_t expire_timestamp,
+                                              int32_t timeout_seconds,
+                                              const uint8_t * user_data,
+                                              uint8_t * connect_token,
+                                              size_t connect_token_bytes )
+{
+    if ( !rocketnet_api_null_guard( backend_secret_key ) ||
+         !rocketnet_api_null_guard( server_public_key ) ||
+         !rocketnet_api_null_guard( server_address_strings ) ||
+         !rocketnet_api_null_guard( connect_token ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( server_address_count < 1 || server_address_count > 2 )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( protocol_id == 0 )
+        return ROCKETNET_STATUS_INVALID_PROTOCOL_ID;
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof(signed_fields) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = protocol_id;
+    signed_fields.create_timestamp = create_timestamp;
+    signed_fields.expire_timestamp = expire_timestamp;
+    signed_fields.timeout_seconds = timeout_seconds;
+    memcpy( signed_fields.server_public_key, server_public_key, ROCKETNET_KEY_BYTES );
+
+    for ( int i = 0; i < server_address_count; i++ )
+    {
+        if ( !rocketnet_api_null_guard( server_address_strings[i] ) )
+            return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
+        struct rocketnet_address_t address;
+        if ( !rocketnet_address_parse( &address, server_address_strings[i] ) )
+            return ROCKETNET_STATUS_INVALID_ADDRESS;
+
+        uint8_t * p;
+        if ( address.type == ROCKETNET_ADDRESS_IPV4 )
+        {
+            if ( signed_fields.address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 )
+                return ROCKETNET_STATUS_INVALID_ARGUMENT;
+            signed_fields.address_flags |= ROCKETNET_ADDRESS_FLAG_IPV4;
+            p = signed_fields.ipv4_address;
+            rocketnet_write_bytes( &p, address.data.ipv4, 4 );
+            rocketnet_write_uint16( &p, address.port );
+        }
+        else if ( address.type == ROCKETNET_ADDRESS_IPV6 )
+        {
+            if ( signed_fields.address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
+                return ROCKETNET_STATUS_INVALID_ARGUMENT;
+            signed_fields.address_flags |= ROCKETNET_ADDRESS_FLAG_IPV6;
+            p = signed_fields.ipv6_address;
+            for ( int j = 0; j < 8; j++ )
+                rocketnet_write_uint16( &p, address.data.ipv6[j] );
+            rocketnet_write_uint16( &p, address.port );
+        }
+        else
+        {
+            return ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+    }
+
+    struct rocketnet_connect_token_private_t private_fields;
+    memset( &private_fields, 0, sizeof(private_fields) );
+    private_fields.client_id = client_id;
+    randombytes_buf( private_fields.client_to_server_key, ROCKETNET_KEY_BYTES );
+    randombytes_buf( private_fields.server_to_client_key, ROCKETNET_KEY_BYTES );
+    if ( user_data != NULL )
+        memcpy( private_fields.user_data, user_data, ROCKETNET_USER_DATA_BYTES );
+
+    const int result = rocketnet_write_connect_token( &signed_fields, &private_fields, backend_secret_key, connect_token );
+    sodium_memzero( &private_fields, sizeof(private_fields) );
+    return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+}
+
 void rocketnet_read_connect_token( struct rocketnet_connect_token_t * output, const uint8_t * token )
 {
     const uint8_t * p = token;
@@ -278,7 +378,7 @@ int rocketnet_write_dev_connect_token( const char * server_address_string,
 
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof(signed_fields) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = current_timestamp;
     signed_fields.expire_timestamp = current_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;

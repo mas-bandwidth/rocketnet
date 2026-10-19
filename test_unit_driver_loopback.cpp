@@ -11,11 +11,16 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet.h"
-#include "rocketnet_connect_token.h"
-#include "sodium/sodium.h"
 
 #include <stdio.h>
 #include <string.h>
+
+// The staged finish-path wire-total fold: single-threaded, no sockets, no
+// real time (the clock is an argument, starting at 1000.0). Compiling the
+// transport here gives the test the internal layout it swaps the fake staged
+// driver into, exactly as test_transport_control.cpp does; the loopback
+// backend's in-memory create is used so no real socket is ever opened.
+#include "sdk/rocketnet_server_transport.cpp"
 
 extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
 
@@ -208,326 +213,144 @@ static void driver_loopback_destroy_frees_the_port()
 }
 
 
-// Cumulative wire totals over the in-process loopback driver: time is only an
-// argument, no socket is opened, and every datagram the driver carries is
-// counted on both ends, handshake and keep-alives included.
+// The test binary does not link the vendored sodium directly (the production
+// archive carries it under renamed symbols), so the transport compiled into
+// this TU needs its two original-name sodium entry points. Route them to the
+// renamed implementations the archive does provide; the test never exercises
+// real randomness or cleanup past the fake driver's staging.
+extern "C" void rocketnet_sodium_randombytes_buf( void * const buf, const size_t size );
+extern "C" void rocketnet_sodium_sodium_memzero( void * const pnt, const size_t len );
+void randombytes_buf( void * const buf, const size_t size ) { rocketnet_sodium_randombytes_buf( buf, size ); }
+void sodium_memzero( void * const pnt, const size_t len ) { rocketnet_sodium_sodium_memzero( pnt, len ); }
 
-struct wire_totals_t
+struct wire_totals_staged_fixture_t
 {
-    uint64_t packets_sent;
-    uint64_t packets_received;
-    uint64_t bytes_sent;
-    uint64_t bytes_received;
+    rocketnet_address_t reserved_to;
+    uint8_t frame[ROCKETNET_FRAME_STRIDE];
+    int used;
+    int capacity;
 };
 
-static void wire_totals_client( struct rocketnet_client_transport_t * client, wire_totals_t * totals )
+static void wt_staged_destroy(void *) {}
+static bool wt_staged_stop(void *) { return true; }
+static void wt_staged_send_batch(void *, const rocketnet_platform_send_t *, int) {}
+static int wt_staged_receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity)
 {
-    struct rocketnet_client_transport_stats_t stats;
-    memset( &stats, 0, sizeof( stats ) );
-    rocketnet_client_transport_stats( client, &stats );
-    totals->packets_sent = stats.packets_sent;
-    totals->packets_received = stats.packets_received;
-    totals->bytes_sent = stats.bytes_sent;
-    totals->bytes_received = stats.bytes_received;
+    (void)p; (void)from; (void)data; (void)stride; (void)bytes; (void)capacity;
+    return 0;
 }
-
-static void wire_totals_server( struct rocketnet_server_transport_t * server, wire_totals_t * totals )
+static rocketnet_server_socket_process_packets_t * wt_staged_receive(void *) { return NULL; }
+static uint8_t * wt_staged_start_packet(void * p, const rocketnet_address_t * to, uint64_t * id)
 {
-    struct rocketnet_server_transport_stats_t stats;
-    memset( &stats, 0, sizeof( stats ) );
-    rocketnet_server_transport_stats( server, &stats );
-    totals->packets_sent = stats.packets_sent;
-    totals->packets_received = stats.packets_received;
-    totals->bytes_sent = stats.bytes_sent;
-    totals->bytes_received = stats.bytes_received;
+    wire_totals_staged_fixture_t * f = (wire_totals_staged_fixture_t*) p;
+    if ( f->used == f->capacity ) return NULL;
+    f->reserved_to = *to;
+    *id = (uint64_t) f->used;
+    return f->frame;
 }
-
-static void wire_totals_slot( struct rocketnet_server_transport_t * server, int slot, wire_totals_t * totals )
+static void wt_staged_finish_packet(void * p, uint64_t, uint8_t *, int)
 {
-    struct rocketnet_server_transport_client_stats_t stats;
-    memset( &stats, 0, sizeof( stats ) );
-    rocketnet_server_transport_client_stats( server, slot, &stats );
-    totals->packets_sent = stats.packets_sent;
-    totals->packets_received = stats.packets_received;
-    totals->bytes_sent = stats.bytes_sent;
-    totals->bytes_received = stats.bytes_received;
+    ++((wire_totals_staged_fixture_t*)p)->used;
 }
+static void wt_staged_abort_packet(void * p, uint64_t, uint8_t *) { (void)p; }
+static void wt_staged_flush(void * p) { ((wire_totals_staged_fixture_t*)p)->used = 0; }
 
-static void wire_totals_pump( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time, int steps )
+static void wire_totals_staged_finish_counts_exactly()
 {
-    for ( int i = 0; i < steps; i++ )
-    {
-        rocketnet_client_transport_update( client, *time );
-        rocketnet_server_transport_update( server, *time );
-        *time += 0.001;
-    }
-}
+    // the staged producer path seals into the fake driver's staging, bumps
+    // server_stats and the per-client totals with the relaxed atomics, and
+    // the public stats readers fold them back; a non-atomic add either loses
+    // an increment here (without a thread) or trips the tsan gate upstream.
 
-static bool wire_totals_connect( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
-{
-    for ( int i = 0; i < 8000; i++ )
-    {
-        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-             rocketnet_server_transport_num_connected_clients( server ) == 1 )
-        {
-            wire_totals_pump( client, server, time, 4 );
-            return true;
-        }
-        wire_totals_pump( client, server, time, 1 );
-    }
-    return false;
-}
+    wire_totals_staged_fixture_t fx;
+    memset( &fx, 0, sizeof(fx) );
+    fx.capacity = 1024;
 
-// drain until both directions' totals match: the server's receive is
-// synchronous in its update, but the client's loopback receive runs on the
-// transport's polling thread, so the client's received totals lag the
-// server's sent totals until that thread has run. pumping with a bounded
-// iteration count lets it catch up, then the cross-side checks below hold.
-
-static bool wire_totals_drain( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
-{
-    for ( int i = 0; i < 20000; i++ )
-    {
-        wire_totals_pump( client, server, time, 1 );
-        wire_totals_t c, s;
-        wire_totals_client( client, &c );
-        wire_totals_server( server, &s );
-        if ( s.packets_sent == c.packets_received && c.packets_sent == s.packets_received )
-            return true;
-    }
-    return false;
-}
-
-// the slot-scoped drain: for a later connection into an already-used slot,
-// the server's lifetime totals are larger than this client's, so convergence
-// is judged against the slot's current-connection totals instead.
-
-static bool wire_totals_drain_slot( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
-{
-    for ( int i = 0; i < 20000; i++ )
-    {
-        wire_totals_pump( client, server, time, 1 );
-        wire_totals_t c, slot;
-        wire_totals_client( client, &c );
-        wire_totals_slot( server, 0, &slot );
-        if ( slot.packets_sent == c.packets_received && slot.packets_received == c.packets_sent )
-            return true;
-    }
-    return false;
-}
-
-static const uint8_t wire_totals_backend_seed[32] =
-{
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f
-};
-
-static struct rocketnet_server_transport_t * wire_totals_server_create( const char * public_address, double time, uint8_t * server_public_key, uint8_t * server_secret_key )
-{
-    uint8_t backend_public_key[32];
-    uint8_t backend_secret_key[64];
-    crypto_sign_seed_keypair( backend_public_key, backend_secret_key, wire_totals_backend_seed );
-    crypto_box_keypair( server_public_key, server_secret_key );
-
-    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
-    config.max_clients = 1;
-    config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
-    memcpy( config.server_public_key, server_public_key, 32 );
-    memcpy( config.server_secret_key, server_secret_key, 32 );
-    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    config.max_clients = 4;
+    config.protocol_id = 1;
+    snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
+    // production create refuses dev keys and zero keys; any non-zero, non-dev
+    // bytes satisfy the key check for this fake-driver fixture, which never
+    // runs a real handshake
+    memset( config.backend_public_key, 0xAB, 32 );
+    memset( config.server_public_key, 0xCD, 32 );
+    memset( config.server_secret_key, 0xEF, 32 );
 
-    int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &config, time, &status );
-    rocketnet_unit_check( status == ROCKETNET_STATUS_OK );
-    return server;
-}
+    rocketnet_server_driver_operations_t operations;
+    int create_status = -1;
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    if ( !server ) printf( "create_ex status=%d\n", create_status );
+    rocketnet_unit_check( server );
+    rocketnet_server_driver_close( &server->io );
+    memset( &operations, 0, sizeof(operations) );
+    operations.destroy = wt_staged_destroy;
+    operations.stop = wt_staged_stop;
+    operations.send_batch = wt_staged_send_batch;
+    operations.receive_batch = wt_staged_receive_batch;
+    operations.flags = ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE;
+    operations.start_packet = wt_staged_start_packet;
+    operations.finish_packet = wt_staged_finish_packet;
+    operations.abort_packet = wt_staged_abort_packet;
+    operations.flush = wt_staged_flush;
+    operations.receive = wt_staged_receive;
+    server->io.instance = &fx;
+    server->io.operations = &operations;
 
-static struct rocketnet_client_transport_t * wire_totals_client_create( const char * address, int server_port, const uint8_t * server_public_key, uint64_t client_id, double time )
-{
-    struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof( signed_fields ) );
-    signed_fields.version = ROCKETNET_VERSION;
-    signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    signed_fields.create_timestamp = (uint64_t) 1 << 40;
-    signed_fields.expire_timestamp = signed_fields.create_timestamp + 30;
-    signed_fields.timeout_seconds = 10;
-    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-    signed_fields.ipv4_address[0] = 127;
-    signed_fields.ipv4_address[1] = 0;
-    signed_fields.ipv4_address[2] = 0;
-    signed_fields.ipv4_address[3] = 1;
-    signed_fields.ipv4_address[4] = (uint8_t) ( server_port & 0xff );
-    signed_fields.ipv4_address[5] = (uint8_t) ( ( server_port >> 8 ) & 0xff );
-    memcpy( signed_fields.server_public_key, server_public_key, 32 );
-
-    struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof( private_fields ) );
-    private_fields.client_id = client_id;
-    randombytes_buf( private_fields.client_to_server_key, ROCKETNET_KEY_BYTES );
-    randombytes_buf( private_fields.server_to_client_key, ROCKETNET_KEY_BYTES );
-
-    uint8_t backend_secret_key[64];
-    uint8_t backend_public_key[32];
-    crypto_sign_seed_keypair( backend_public_key, backend_secret_key, wire_totals_backend_seed );
-
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( !rocketnet_write_connect_token( &signed_fields, &private_fields, backend_secret_key, token ) )
-        return NULL;
-
-    (void) address;
-    struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
-    return rocketnet_client_transport_create( NULL, token, &config, time );
-}
-
-static void wire_totals_send_payloads( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
-{
-    uint8_t payload[32];
-    for ( int round = 0; round < 3; round++ )
+    for ( int i = 0; i < 4; i++ )
     {
-        memset( payload, round + 1, sizeof( payload ) );
-        for ( int i = 0; i < 4; i++ )
-        {
-            rocketnet_client_transport_send_packet( client, payload, (int) sizeof( payload ) );
-            rocketnet_server_transport_send_packet( server, 0, payload, (int) sizeof( payload ) );
-        }
-        rocketnet_server_transport_send_packets( server );
-        wire_totals_pump( client, server, time, 4 );
+        rocketnet_address_t address;
+        rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+        address.port = (uint16_t) ( 1000 + i );
+        const int index = rocketnet_encryption_map_add( server->protocol.encryption_map, &address, 100.0 );
+        rocketnet_unit_check( index >= 0 );
+        struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
+        uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+        rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, i + 1, index, user_data ) == i );
+        mapping->client_index = i;
+        mapping->client_id = i + 1;
+        mapping->established = 1;
+        mapping->timeout_seconds = 1000;
+        memset( &mapping->keys, i + 1, sizeof(mapping->keys) );
+        server->protocol.acks->endpoints[i].rtt_history[0] = 17.0f;
     }
 
-    const int num_payloads = rocketnet_server_transport_num_payloads( server );
-    for ( int i = 0; i < num_payloads; i++ )
+    const int N = 200;
+    uint64_t total_wire = 0;
+    for ( int i = 0; i < N; i++ )
     {
-        int payload_client_index = -1;
-        int payload_bytes = 0;
-        rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
+        rocketnet_unit_check( frame );
+        memset( frame + context.payload_index, i & 0xff, 16 );
+        const int wire_bytes = rocketnet_server_transport_finish_packet( server, &context, 16 );
+        rocketnet_unit_check( wire_bytes > 0 );
+        total_wire += (uint64_t) wire_bytes;
     }
-    uint8_t received[64];
-    while ( rocketnet_client_transport_receive_packet( client, received, (int) sizeof( received ) ) > 0 ) {}
-}
 
-static void wire_totals_count_every_packet_and_byte()
-{
-    uint8_t server_public_key[32];
-    uint8_t server_secret_key[32];
-    struct rocketnet_server_transport_t * server = wire_totals_server_create( "127.0.0.1:0", 1000.0, server_public_key, server_secret_key );
-    rocketnet_unit_check( server != NULL );
+    rocketnet_server_transport_send_packets( server );
 
-    char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    const int server_port = rocketnet_server_transport_port( server );
-    snprintf( address, sizeof( address ), "127.0.0.1:%d", server_port );
+    const uint64_t overhead = (uint64_t)( ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-    double time = 1000.0;
-    struct rocketnet_client_transport_t * client = wire_totals_client_create( address, server_port, server_public_key, 0x5701ULL, time );
-    rocketnet_unit_check( client != NULL );
-    rocketnet_unit_check( wire_totals_connect( client, server, &time ) );
+    struct rocketnet_server_transport_stats_t sstats;
+    memset( &sstats, 0, sizeof(sstats) );
+    rocketnet_server_transport_stats( server, &sstats );
+    rocketnet_unit_check( sstats.packets_sent == (uint64_t) N );
+    rocketnet_unit_check( sstats.bytes_sent == total_wire + (uint64_t) N * overhead );
 
-    wire_totals_t client_totals, server_totals, slot_totals;
-    wire_totals_client( client, &client_totals );
-    wire_totals_server( server, &server_totals );
-    wire_totals_slot( server, 0, &slot_totals );
+    struct rocketnet_server_transport_client_stats_t cstats;
+    memset( &cstats, 0, sizeof(cstats) );
+    rocketnet_server_transport_client_stats( server, 0, &cstats );
+    rocketnet_unit_check( cstats.packets_sent == (uint64_t) N );
+    rocketnet_unit_check( cstats.bytes_sent == total_wire + (uint64_t) N * overhead );
 
-    rocketnet_unit_check( client_totals.packets_sent > 0 );
-    rocketnet_unit_check( client_totals.packets_received > 0 );
-
-    wire_totals_send_payloads( client, server, &time );
-    rocketnet_unit_check( wire_totals_drain( client, server, &time ) );
-    wire_totals_client( client, &client_totals );
-    wire_totals_server( server, &server_totals );
-    wire_totals_slot( server, 0, &slot_totals );
-
-    rocketnet_unit_check( client_totals.packets_sent == server_totals.packets_received );
-    rocketnet_unit_check( client_totals.bytes_sent == server_totals.bytes_received );
-    rocketnet_unit_check( server_totals.packets_sent == client_totals.packets_received );
-    rocketnet_unit_check( server_totals.bytes_sent == client_totals.bytes_received );
-    rocketnet_unit_check( client_totals.packets_sent == slot_totals.packets_received );
-    rocketnet_unit_check( client_totals.bytes_sent == slot_totals.bytes_received );
-    rocketnet_unit_check( server_totals.packets_sent == slot_totals.packets_sent );
-    rocketnet_unit_check( server_totals.bytes_sent == slot_totals.bytes_sent );
-    rocketnet_unit_check( server_totals.packets_received == slot_totals.packets_received );
-    rocketnet_unit_check( server_totals.bytes_received == slot_totals.bytes_received );
-
-    const uint64_t packets_before_disconnect = client_totals.packets_sent;
-    rocketnet_client_transport_disconnect( client );
-    rocketnet_unit_check( wire_totals_drain( client, server, &time ) );
-    wire_totals_client( client, &client_totals );
-    wire_totals_server( server, &server_totals );
-
-    rocketnet_unit_check( client_totals.packets_sent > packets_before_disconnect );
-    rocketnet_unit_check( client_totals.packets_sent == server_totals.packets_received );
-    rocketnet_unit_check( client_totals.bytes_sent == server_totals.bytes_received );
-    rocketnet_unit_check( server_totals.packets_sent == client_totals.packets_received );
-    rocketnet_unit_check( server_totals.bytes_sent == client_totals.bytes_received );
-
-    rocketnet_client_transport_destroy( client );
     rocketnet_server_transport_destroy( server );
-    printf( "wire_totals_count_every_packet_and_byte\n" );
+    printf( "wire_totals_staged_finish_counts_exactly\n" );
 }
-
-static void wire_totals_reset_per_connection_not_per_server()
-{
-    uint8_t server_public_key[32];
-    uint8_t server_secret_key[32];
-    struct rocketnet_server_transport_t * server = wire_totals_server_create( "127.0.0.1:0", 1000.0, server_public_key, server_secret_key );
-    rocketnet_unit_check( server != NULL );
-
-    char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    const int server_port = rocketnet_server_transport_port( server );
-    snprintf( address, sizeof( address ), "127.0.0.1:%d", server_port );
-
-    double time = 1000.0;
-    struct rocketnet_client_transport_t * first = wire_totals_client_create( address, server_port, server_public_key, 0x5702ULL, time );
-    rocketnet_unit_check( first != NULL );
-    rocketnet_unit_check( wire_totals_connect( first, server, &time ) );
-    wire_totals_send_payloads( first, server, &time );
-
-    wire_totals_t first_slot, first_server;
-    wire_totals_slot( server, 0, &first_slot );
-    wire_totals_server( server, &first_server );
-    rocketnet_unit_check( first_slot.packets_sent > 0 );
-    rocketnet_unit_check( first_slot.packets_received > 0 );
-
-    rocketnet_client_transport_disconnect( first );
-    for ( int i = 0; i < 200 && rocketnet_server_transport_num_connected_clients( server ) > 0; i++ )
-        wire_totals_pump( first, server, &time, 1 );
-
-    wire_totals_t free_slot;
-    wire_totals_slot( server, 0, &free_slot );
-    rocketnet_unit_check( free_slot.packets_sent == 0 );
-    rocketnet_unit_check( free_slot.packets_received == 0 );
-    rocketnet_unit_check( free_slot.bytes_sent == 0 );
-    rocketnet_unit_check( free_slot.bytes_received == 0 );
-
-    struct rocketnet_client_transport_t * second = wire_totals_client_create( address, server_port, server_public_key, 0x5703ULL, time );
-    rocketnet_unit_check( second != NULL );
-    rocketnet_unit_check( wire_totals_connect( second, server, &time ) );
-    rocketnet_unit_check( wire_totals_drain_slot( second, server, &time ) );
-
-    wire_totals_t second_slot, second_server, second_client;
-    wire_totals_slot( server, 0, &second_slot );
-    wire_totals_server( server, &second_server );
-    wire_totals_client( second, &second_client );
-
-    rocketnet_unit_check( second_slot.packets_sent == second_client.packets_received );
-    rocketnet_unit_check( second_slot.packets_received == second_client.packets_sent );
-    rocketnet_unit_check( second_slot.bytes_sent == second_client.bytes_received );
-    rocketnet_unit_check( second_slot.bytes_received == second_client.bytes_sent );
-    rocketnet_unit_check( second_server.packets_sent > first_server.packets_sent );
-    rocketnet_unit_check( second_server.packets_received > first_server.packets_received );
-
-    rocketnet_client_transport_destroy( second );
-    rocketnet_client_transport_destroy( first );
-    rocketnet_server_transport_destroy( server );
-    printf( "wire_totals_reset_per_connection_not_per_server\n" );
-}
-
-REGISTER_UNIT_TEST( wire_totals_count_every_packet_and_byte );
-REGISTER_UNIT_TEST( wire_totals_reset_per_connection_not_per_server );
 
 REGISTER_UNIT_TEST( driver_loopback_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( driver_loopback_exchanges_both_ways );
 REGISTER_UNIT_TEST( driver_loopback_full_queue_drops_and_counts );
 REGISTER_UNIT_TEST( driver_loopback_destroy_frees_the_port );
+REGISTER_UNIT_TEST( wire_totals_staged_finish_counts_exactly );

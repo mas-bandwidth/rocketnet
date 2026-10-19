@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet_counters.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
 
 #include <stdio.h>
