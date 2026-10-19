@@ -306,7 +306,15 @@ if(ROCKETNET_BUILD_TESTS)
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
-    add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
+    # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
+    # into the suite, so its object goes first on the link line. lld-link loads
+    # an archive member as soon as an earlier object references one of its
+    # symbols, and the library's copy of the transport would then define every
+    # transport symbol a second time; link.exe searches archives only after
+    # every object, so it links in either order.
+    set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
+    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into

@@ -3031,7 +3031,6 @@ extern void rocketnet_free( void * context, void * p );
 
 static int get_connection_type();
 
-static int timer_initialized = 0;
 static LARGE_INTEGER timer_frequency;
 static LARGE_INTEGER timer_start;
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
@@ -3777,7 +3776,7 @@ static int get_connection_type()
     IP_ADAPTER_ADDRESSES * address = addresses;
     while ( address )
     {
-        if ( address->IfType == IF_TYPE_IEEE80211 && address->OperStatus == NET_IF_OPER_STATUS_UP )
+        if ( address->IfType == IF_TYPE_IEEE80211 && address->OperStatus == IfOperStatusUp )
         {
             result = ROCKETNET_CONNECTION_TYPE_WIFI;
             break;
