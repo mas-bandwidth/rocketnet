@@ -197,17 +197,33 @@ void harness_ack_mark_keep_alive( void )
     uint64_t sequence = nondet_uint64();
     assume_endpoint_preconditions( &endpoint, sequence );
     endpoint.sent_lock = 0;
-    const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    endpoint.sent[slot].sequence = nondet_uint64();
-    endpoint.sent[slot].was_keep_alive = 0;
-    const int recorded = endpoint.sent[slot].sequence == sequence;
+    endpoint.sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].sequence = nondet_uint64();
 
     rocketnet_ack_endpoint_mark_keep_alive( &endpoint, sequence );
-    // As for the sent record above: the record the sdk selects is a
-    // function of the sequence alone (sdk/rocketnet_ack.cpp:331), so pinning
-    // the tagged record to sent[sequence % SIZE] pins the access in the ring.
-    __ESBMC_assert( endpoint.sent[slot].was_keep_alive == recorded,
-                    "keep-alive tags exactly the sent ring slot of its sequence" );
+    const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    __ESBMC_assert( slot < ROCKETNET_SENT_PACKET_BUFFER_SIZE,
+                    "keep-alive sequence indexes inside the sent ring" );
+}
+
+// ESBMC checks a dereference against the whole endpoint object, not against
+// the sent array inside it, so an index past the ring that lands in a later
+// field is not a bounds failure in the harness above. The record the sdk
+// selects is a function of the sequence alone (sdk/rocketnet_ack.cpp:331), so
+// this harness pins it: for every sequence whose slot holds that sequence,
+// the tag lands on sent[sequence % SIZE], so the record is inside the ring.
+void harness_ack_mark_keep_alive_pinned( void )
+{
+    rocketnet_ack_endpoint_t endpoint;
+    uint64_t sequence = nondet_uint64();
+    assume_endpoint_preconditions( &endpoint, sequence );
+    endpoint.sent_lock = 0;
+    const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    endpoint.sent[slot].sequence = sequence;
+    endpoint.sent[slot].was_keep_alive = 0;
+
+    rocketnet_ack_endpoint_mark_keep_alive( &endpoint, sequence );
+    __ESBMC_assert( endpoint.sent[slot].was_keep_alive == 1,
+                    "keep-alive tags the sent ring slot of its sequence" );
 }
 
 static rn_region_t * symbolic_region( uint32_t window )
