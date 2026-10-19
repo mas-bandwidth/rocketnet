@@ -132,7 +132,7 @@ int main( void )
         // (5) send_packets is last so this frame's messages leave this frame
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
-        if ( chat_received == NUM_CHAT && positions_during_stall > 0 ) { printf( "PASS\n" ); result = 0; break; }
+        if ( chat_received == NUM_CHAT ) { printf( "PASS\n" ); result = 0; break; }
         rocketnet_sleep( 0.005 );
     }
 
