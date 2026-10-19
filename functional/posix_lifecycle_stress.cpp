@@ -138,9 +138,11 @@ static void posix_lifecycle_report( const char * test, const char * cell,
                                     const struct posix_lifecycle_counts_t * after,
                                     double seconds )
 {
-    printf( "posix_lifecycle %s cell=%s fds_before=%ld fds_after=%ld threads_before=%ld threads_after=%ld seconds=%.3f\n",
-            test, cell, before->file_descriptors, after->file_descriptors,
-            before->threads, after->threads, seconds );
+    const long fd_delta = after->file_descriptors - before->file_descriptors;
+    const long thread_delta = after->threads - before->threads;
+    printf( "posix_lifecycle %s cell=%s fds_before=%ld fds_after=%ld fd_delta=%ld threads_before=%ld threads_after=%ld thread_delta=%ld seconds=%.3f\n",
+            test, cell, before->file_descriptors, after->file_descriptors, fd_delta,
+            before->threads, after->threads, thread_delta, seconds );
     fflush( stdout );
 }
 
