@@ -6,8 +6,9 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/tools/format/check_format.sh"
-CLEAN="$ROOT/tools/format/testdata/clean.c"
-DIRTY="$ROOT/tools/format/testdata/dirty.c"
+cd "$ROOT" || exit 1
+CLEAN="tools/format/testdata/clean.c"
+DIRTY="tools/format/testdata/dirty.c"
 
 mkdir -p "$ROOT/build"
 tmp="$(mktemp -d "$ROOT/build/format-test.XXXXXX")"
@@ -26,7 +27,7 @@ if [ "$rc" -ne 1 ]; then
     echo "FAIL: dirty.c expected exit 1, got $rc" >&2
     exit 1
 fi
-if ! grep -q "dirty.c: not formatted" "$tmp/dirty.out"; then
+if ! grep -qx "tools/format/testdata/dirty.c: not formatted" "$tmp/dirty.out"; then
     echo "FAIL: dirty.c output does not name the file" >&2
     exit 1
 fi

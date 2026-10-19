@@ -6,6 +6,7 @@ static int round_up( int value, int multiple )
     int remainder = value % multiple;
     if ( remainder != 0 ) {
         return value + multiple - remainder;
+    }
     return value;
 }
 
