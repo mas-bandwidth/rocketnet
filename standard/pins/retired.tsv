@@ -14,7 +14,7 @@
 # ---- fields at a glance (check_standard.py, Constants at a glance) ----
 version constant	transport.tsv: version
 prefilter header bytes	transport.tsv: prefilter header
-test filter value	transport.tsv: filter value (t5 prefilter rows)
+test filter value	RN-1 t5 vectors (TRANSPORT.md t5.unkeyed-accept)
 unkeyed filter epoch (test title constant)	transport.tsv: unkeyed filter epoch
 unkeyed filter epoch (its own row)	transport.tsv: unkeyed filter epoch
 highest packet type	transport.tsv: connection payload fragment packet
@@ -44,10 +44,10 @@ payload capacity	transport.tsv: payload capacity
 receive payload	transport.tsv: received payload maximum
 payload capacity is the budget less overhead and block, floored to eight	derived from payload capacity, send budget, overhead and ack pins
 receive payload is the ceiling less overhead and block	derived from received payload and receive ceiling pins
-SINGLE message bytes	m5.tsv: SINGLE message limit
-unreliable one-record threshold	m5.tsv: UNRELIABLE record limit
-unreliable sequenced threshold narrow	m5.tsv: UNRELIABLE_SEQUENCED record limit
-unreliable sequenced threshold WIDE	m5.tsv: UNRELIABLE_SEQUENCED record limit, WIDE
+SINGLE message bytes	m2.tsv: SINGLE message limit
+unreliable one-record threshold	m2.tsv: UNRELIABLE record limit
+unreliable sequenced threshold narrow	m2.tsv: UNRELIABLE_SEQUENCED record limit
+unreliable sequenced threshold WIDE	m2.tsv: UNRELIABLE_SEQUENCED record limit, WIDE
 fragment stride sent	transport.tsv: fragment stride
 fragment stride received	transport.tsv: received fragment stride maximum
 connect token bytes	transport.tsv: connect token
