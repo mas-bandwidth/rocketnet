@@ -39,7 +39,6 @@
 #define ROCKETNET_SERVER_OVER_MAX_DELTA      1
 #define ROCKETNET_SERVER_HELLO_NIBBLE        0xD0u
 #define ROCKETNET_SERVER_PROGRESS_NIBBLE     0xC0u
-#define ROCKETNET_SERVER_LEDGER_CAP          4096
 #define ROCKETNET_SERVER_SEND_BUFFER_HALF    400000u
 #define ROCKETNET_SERVER_SEND_QUEUE_HALF     512u
 #define ROCKETNET_SERVER_WINDOW_HALF         512u
@@ -222,6 +221,7 @@ struct server_stream_t
     uint64_t seen[ROCKETNET_SERVER_MAX_SEQUENCES / 64];
     uint32_t bucket_sent[ROCKETNET_LIVE_NUM_BUCKETS];
     uint32_t bucket_received[ROCKETNET_LIVE_NUM_BUCKETS];
+    uint32_t confirmed;             // contiguous sequences the peer reported received (highest + 1)
 };
 
 struct server_client_t
@@ -241,10 +241,6 @@ struct server_client_t
     uint32_t out_messages;
     uint32_t out_numbers;
     uint64_t paced;
-    uint32_t ledger_head;
-    uint32_t ledger_tail;
-    uint32_t ledger_len[ROCKETNET_SERVER_LEDGER_CAP];
-    uint32_t ledger_num[ROCKETNET_SERVER_LEDGER_CAP];
 };
 
 static int matrix_channels( int mode )
@@ -262,6 +258,16 @@ static int matrix_sequenced( int mode )
     return mode == 1 || mode == 4;
 }
 
+// section 6: the pacing ledger holds the reliable paths (modes 2, 3, 4, 6,
+// 7, and 5 above its single-record edge, where it travels as a reliable block);
+// unreliable sends are budget-paced and never counted against the negotiated
+static int server_reliable_path( int mode, uint32_t length )
+{
+    if ( mode == 5 )
+        return length > ROCKETNET_LIVE_UNRELIABLE_LIMIT;
+    return mode == 2 || mode == 3 || mode == 4 || mode == 6 || mode == 7;
+}
+
 static uint64_t server_counter( const struct rocketnet_counters_t * counters, int index )
 {
     return counters ? counters->values[index] : 0;
@@ -277,31 +283,67 @@ static void matrix_fail( struct server_client_t * c, int mode, int channel, int6
 
 // the pacing ledger (docs/LIVE-XDP.md section 6): outstanding bytes, messages
 // and reliable numbers, admitted only while each stays under its half margin.
+// Outstanding is sent minus what the peer's progress reports have confirmed
+// (section 5: the peer reports, per stream, the highest contiguous sequence
+// it received); the ledger shrinks as those reports arrive. Tiny messages
+// carry no sequence and occupy negligible memory, so they are never admitted
+// or counted here.
 static void ledger_push( struct server_client_t * c, uint32_t length, uint32_t num )
 {
-    if ( c->ledger_tail - c->ledger_head < ROCKETNET_SERVER_LEDGER_CAP )
-    {
-        const uint32_t at = c->ledger_tail % ROCKETNET_SERVER_LEDGER_CAP;
-        c->ledger_len[at] = length;
-        c->ledger_num[at] = num;
-        c->ledger_tail++;
-    }
     c->out_bytes += length;
     c->out_messages++;
     c->out_numbers += num;
 }
 
-static void ledger_pop_acked( struct server_client_t * c )
+// a progress report confirms every sequence up to hi_seq of one stream, so the
+// ledger releases exactly the bytes, messages and numbers those sends added
+static void ledger_progress( struct server_client_t * c, int mode, int channel, uint32_t hi_seq )
 {
-    if ( c->ledger_head < c->ledger_tail )
+    struct server_stream_t * s = &c->streams[mode][channel];
+    uint32_t new_confirm = hi_seq + 1u;
+    if ( new_confirm > s->next || new_confirm < s->confirmed )
+        new_confirm = s->confirmed;
+    if ( new_confirm <= s->confirmed )
+        return;
+    const struct rocketnet_live_config_t live = { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 };
+    uint64_t dbytes = 0, dnums = 0;
+    uint32_t dmsg = 0;
+    for ( uint32_t q = s->confirmed; q < new_confirm; q++ )
     {
-        const uint32_t at = c->ledger_head % ROCKETNET_SERVER_LEDGER_CAP;
-        const uint32_t length = c->ledger_len[at];
-        const uint32_t num = c->ledger_num[at];
-        c->ledger_head++;
-        if ( c->out_bytes >= length ) c->out_bytes -= length; else c->out_bytes = 0;
-        if ( c->out_messages ) c->out_messages--;
-        if ( c->out_numbers >= num ) c->out_numbers -= num; else c->out_numbers = 0;
+        const uint32_t L = rocketnet_live_length( &live, mode, channel, q );
+        if ( L < ROCKETNET_SERVER_TINY || !server_reliable_path( mode, L ) )
+            continue;
+        const uint32_t F = ROCKETNET_LIVE_BLOCK_STRIDE;
+        dbytes += L;
+        dnums += ( L + F - 1 ) / F;
+        dmsg++;
+    }
+    if ( c->out_messages >= dmsg ) c->out_messages -= dmsg; else c->out_messages = 0;
+    if ( c->out_bytes >= dbytes ) c->out_bytes -= (uint32_t) dbytes; else c->out_bytes = 0;
+    if ( c->out_numbers >= dnums ) c->out_numbers -= (uint32_t) dnums; else c->out_numbers = 0;
+    s->confirmed = new_confirm;
+}
+
+// a progress report (docs/LIVE-XDP.md section 5): tag nibble 0xC on channel
+// 31, followed by 10-byte stream records of mode (u8), channel (u8), the
+// highest contiguous sequence (u32 little endian) and the bytes received (u32
+// little endian). Each record releases that stream's confirmed sends from the
+// pacing ledger, which is how reliable modes 2, 3 and 4 unblock.
+static void matrix_progress( struct server_client_t * c, const uint8_t * data, int bytes )
+{
+    int off = 1;
+    while ( off + 10 <= bytes )
+    {
+        const int mode = data[off];
+        const int channel = data[off + 1];
+        const uint32_t seq = (uint32_t) data[off + 2] | ( (uint32_t) data[off + 3] << 8 ) |
+                             ( (uint32_t) data[off + 4] << 16 ) | ( (uint32_t) data[off + 5] << 24 );
+        off += 10;
+        if ( mode < 0 || mode >= ROCKETNET_LIVE_NUM_MODES )
+            continue;
+        if ( channel < 0 || channel >= matrix_channels( mode ) )
+            continue;
+        ledger_progress( c, mode, channel, seq );
     }
 }
 
@@ -407,7 +449,10 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
             return;
         }
         if ( nib == ROCKETNET_SERVER_PROGRESS_NIBBLE )
+        {
+            matrix_progress( c, data, bytes );
             return;     // a progress report on channel 31, not a matrix message
+        }
     }
     if ( bytes < 1 || ( data[0] & ROCKETNET_LIVE_TAG_MASK ) != ROCKETNET_LIVE_TAG_BASE || ( ( data[0] >> 3 ) & 1 ) != 0 )
     {
@@ -512,11 +557,6 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
     {
         rocketnet_message_server_update( server, rocketnet_time() );
         matrix_receive( server, c, client_index );
-        struct rocketnet_message_receipt_t receipts[256];
-        const int nrcpt = rocketnet_message_server_receipts( server, client_index, receipts, 256 );
-        for ( int i = 0; i < nrcpt && i < 256; i++ )
-            if ( receipts[i].status == ROCKETNET_RECEIPT_ACKED )
-                ledger_pop_acked( c );
         all_done = 1;
         for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES && all_done; mode++ )
         {
@@ -528,9 +568,11 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
                     const uint32_t length = rocketnet_live_length( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, channel, s->next );
                     const uint32_t F = ROCKETNET_LIVE_BLOCK_STRIDE;
                     const uint32_t rnum = ( mode >= 2 && mode <= 7 ) ? ( length + F - 1 ) / F : 0u;
-                    if ( c->out_bytes + length > ROCKETNET_SERVER_SEND_BUFFER_HALF ||
-                         c->out_messages + 1 > ROCKETNET_SERVER_SEND_QUEUE_HALF ||
-                         c->out_numbers + rnum > ROCKETNET_SERVER_WINDOW_HALF )
+                    const int tiny = length < ROCKETNET_SERVER_TINY;
+                    const int reliable = server_reliable_path( mode, length );
+                    if ( !tiny && reliable && ( c->out_bytes + length > ROCKETNET_SERVER_SEND_BUFFER_HALF ||
+                                                c->out_messages + 1 > ROCKETNET_SERVER_SEND_QUEUE_HALF ||
+                                                c->out_numbers + rnum > ROCKETNET_SERVER_WINDOW_HALF ) )
                     {
                         c->paced++;
                         break;
@@ -538,11 +580,12 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
                     const uint32_t serial = matrix_send_one( server, client_index, mode, channel, c->cycle, s->next, length );
                     if ( serial == 0 )
                         break;
-                    ledger_push( c, length, rnum );
+                    if ( !tiny && reliable )
+                        ledger_push( c, length, rnum );
                     s->next++;
                     s->sent++;
                     s->bucket_sent[rocketnet_live_bucket( &(struct rocketnet_live_config_t) { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 }, mode, length )]++;
-                    if ( length < ROCKETNET_SERVER_TINY )
+                    if ( tiny )
                         c->tiny_sent[mode][length]++;
                 }
                 if ( s->next < s->total )
