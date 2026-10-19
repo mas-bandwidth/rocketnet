@@ -126,7 +126,35 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
 // termination. refuses loudly, never clamps. driver list content is
 // validated by the ladder parse below, at create.
 
+void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_driver_operations_t * operations, void * driver_context );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
+void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
+void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config );
+
 bool rocketnet_config_validate( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields );
+
+// The public link simulator fields (simulated_loss_percent,
+// simulated_latency_ms, simulated_jitter_ms, simulated_duplicate_percent) are
+// a development and test instrument. A production library refuses a nonzero
+// value at create with CONFIG_OUT_OF_RANGE and one error line naming the
+// field; the same walk is exposed here so a unit suite that links only the
+// development library can pin the refusal. development is the caller's build
+// posture, normally ROCKETNET_DEVELOPMENT.
+
+bool rocketnet_config_validate_public_link_simulator( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields, bool development );
+
+// Whether the public link simulator is honoured: true in a development
+// library, and, only in a build carrying the unit suite's test hooks, when
+// the suite has explicitly enabled it. A production library never answers
+// true.
+
+bool rocketnet_public_link_simulator_development( void );
+
+#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+void rocketnet_public_link_simulator_test_development( int enabled );
+#endif
 
 // ----------------------------------------------------------------
 //                        the driver ladder

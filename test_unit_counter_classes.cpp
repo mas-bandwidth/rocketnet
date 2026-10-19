@@ -303,6 +303,9 @@ static const char * const counters_appended_names[] =
     "CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE",
     "CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG",
     "SEND_NO_LINK_ADDRESS",
+    "MESSAGE_PROMOTED_UNRELIABLE",
+    "MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED",
+    "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

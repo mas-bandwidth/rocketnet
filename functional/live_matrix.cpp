@@ -10,7 +10,9 @@
     test/live_verify.h; the reliable modes are checked for completeness and
     order, the sequenced modes for strictly increasing sequences, the receipt
     modes for exactly one receipt per serial, and the over-maximum start is
-    refused with its named counter.
+    refused with its named counter. Codes 0 and 1 one past their
+    single-record maxima start as their reliable twins (promotion, as
+    RakNet's ReliabilityLayer does); their over-maximum is max_message_bytes.
 
     One window on one connection, ending in a clean disconnect the server
     sees: every mode at once on every channel the config allows, both
@@ -100,12 +102,19 @@ static int live_matrix_sequenced( int mode )
     return mode == 1 || mode == 4;
 }
 
-// every sequence arrives exactly once: 2, 3, 6, 7, and 5 above 1,411 where
-// it travels as a reliable block (section 5, the receive checks)
+// RakNet ReliabilityLayer promotion: code 0 above 1,411 travels as code 2,
+// and code 1 above 1,405 (channels below 256) as code 4
+static int live_matrix_promoted( int mode, uint32_t length )
+{
+    return ( mode == 0 && length > ROCKETNET_LIVE_UNRELIABLE_LIMIT ) || ( mode == 1 && length > 1405u );
+}
+
+// every sequence arrives exactly once: 2, 3, 6, 7, and 0 and 5 above 1,411
+// where they travel as a reliable block (section 5, the receive checks)
 static int live_matrix_complete( int mode, uint32_t length )
 {
-    if ( mode == 5 )
-        return length > ROCKETNET_LIVE_UNRELIABLE_LIMIT;
+    if ( mode == 5 || mode == 0 )
+        return length > ROCKETNET_LIVE_UNRELIABLE_LIMIT;     // promoted to a reliable block
     return mode == 2 || mode == 3 || mode == 6 || mode == 7;
 }
 
@@ -113,7 +122,7 @@ static int live_matrix_complete( int mode, uint32_t length )
 // paths, mode 4 included, which the pacing ledger counts
 static int live_matrix_reliable_path( int mode, uint32_t length )
 {
-    return live_matrix_complete( mode, length ) || mode == 4;
+    return live_matrix_complete( mode, length ) || mode == 4 || live_matrix_promoted( mode, length );
 }
 
 static int live_matrix_has_receipt( int mode )
@@ -332,7 +341,7 @@ static void live_matrix_ledger_unreliable_arrived( struct live_matrix_direction_
 
 static int live_matrix_unreliable_queue( int mode, uint32_t length )
 {
-    return mode == 0 || mode == 1 || ( mode == 5 && length <= ROCKETNET_LIVE_UNRELIABLE_LIMIT );
+    return ( ( mode == 0 || mode == 1 ) && !live_matrix_promoted( mode, length ) ) || ( mode == 5 && length <= ROCKETNET_LIVE_UNRELIABLE_LIMIT );
 }
 
 static uint16_t live_matrix_numbers( uint32_t length )
@@ -380,7 +389,7 @@ static void live_matrix_ledger_add( struct live_matrix_t * m, struct live_matrix
     e->span = (uint8_t) span;
     e->reliable = (uint8_t) reliable;
     e->released = 0;
-    e->release_time = ( mode == 4 || !reliable ) ? live_matrix_now( m ) + LIVE_MATRIX_TIMED_SECONDS : 0.0;
+    e->release_time = ( mode == 4 || mode == 1 || !reliable ) ? live_matrix_now( m ) + LIVE_MATRIX_TIMED_SECONDS : 0.0;
     if ( e->release_time > 0.0 )
         d->ledger_timed[d->timed_tail++ % LIVE_MATRIX_LEDGER] = index;
     if ( !reliable )
@@ -835,9 +844,29 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
         for ( int c = 0; c < 2; c++ )
         {
             const int channel = channels[c];
-            const uint32_t over = rocketnet_live_mode_max( &m->live, mode ) + 1;
-            const int counter = mode <= 1 ? ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED : ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED;
-            const int other = mode <= 1 ? ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED : ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED;
+            uint32_t over = rocketnet_live_mode_max( &m->live, mode ) + 1;
+            if ( mode <= 1 )
+            {
+                // RakNet ReliabilityLayer promotion: one past the single-record
+                // maximum of codes 0 and 1 starts as its reliable twin, never a
+                // refusal; abort gives the room back, so nothing is sent
+                const uint64_t failed_before = live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+                uint8_t * q = direction == 0 ? rocketnet_message_client_start( m->client, channel, mode, (int) over )
+                                             : rocketnet_message_server_start( m->server, 0, channel, mode, (int) over );
+                const uint64_t failed_delta = live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) - failed_before;
+                printf( "promoted %d %d %u start=%d\n", mode, channel, over, q != NULL );
+                if ( q == NULL || failed_delta != 0 )
+                    live_matrix_fail( m, "over", direction, mode, channel, -1, "promotion-refused", (int) over );
+                if ( q )
+                {
+                    if ( direction == 0 ) rocketnet_message_client_abort( m->client ); else rocketnet_message_server_abort( m->server, 0 );
+                }
+                // the refusal boundary left: max_message_bytes
+                over = m->live.max_message_bytes + 1;
+            }
+            const int unreliable = mode <= 1 || mode == 5;
+            const int counter = unreliable ? ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED : ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED;
+            const int other = unreliable ? ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED : ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED;
             const uint64_t before = live_matrix_counter( live_matrix_sender_counters( m, direction ), counter );
             const uint64_t before_other = live_matrix_counter( live_matrix_sender_counters( m, direction ), other );
             uint8_t * p = direction == 0 ? rocketnet_message_client_start( m->client, channel, mode, (int) over )
