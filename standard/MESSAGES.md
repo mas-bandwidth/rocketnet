@@ -2292,6 +2292,7 @@ configuration: build-specific maximum at least 301; num_channels 301
 10. An endpoint MAY receive message records before the peer's CONFIG, and
     when it does it MUST process them against its own configuration.
 
+<a id="m11.1"></a>
 ### m11.1. Wire layout
 
 The CONFIG record is a code 2 record with the CONTROL flag set, inside a
@@ -2335,15 +2336,16 @@ reliable number. The payload is 35 bytes:
 | window_messages | 14 | 4 | u32 | the reliable window W | the sender's configured window |
 | receive_ring_bytes | 18 | 4 | u32 | the receive ring B | the sender's configured ring size |
 | max_message_bytes | 22 | 4 | u32 | the largest message | the sender's configured maximum |
-| fragment_bytes | 26 | 4 | u32 | the block stride F | the fragment bytes row of [m5.4 Constants and configuration](#m5.4) |
+| fragment_bytes | 26 | 4 | u32 | the block stride F | the fragment bytes row of [m5 Message numbering and the reliable window](#m5) |
 | reserved tail | 30 | 4 | zero[4] | reserved | `0` |
 | form | 34 | 1 | u8 | the payload form | `1` |
 
+<a id="m11.2"></a>
 ### m11.2. Constants and defaults
 
 The library's default configuration is the one below, with the window and
-ring defaults and the fragment stride in the [m5.4 Constants and configuration](#m5.4) rows window
-messages default, receive ring bytes default and fragment bytes. Every field of the
+ring defaults and the fragment stride in the [m5 Message numbering and the reliable window](#m5)
+rows window messages default, receive ring bytes default and fragment bytes. Every field of the
 body except the reserved fields is compared, so two ends whose configurations
 differ in any compared field end the connection with `CONFIG_MISMATCH`.
 
@@ -2362,6 +2364,7 @@ differ in any compared field end the connection with `CONFIG_MISMATCH`.
 default mask sets every one of the eight reliabilities
 ([m1.3 Reliability types](#m1.3)).
 
+<a id="m11.3"></a>
 ### m11.3. States
 
 An endpoint has one CONFIG state per connection.
@@ -2378,6 +2381,7 @@ An endpoint has one CONFIG state per connection.
 
 An event that a state does not list is ignored in that state.
 
+<a id="m11.4"></a>
 ### m11.4. Vectors
 
 Each vector is the full payload, before the connection layer seals it. An
