@@ -25,12 +25,14 @@
 
 struct client_receive_thread_quit_waiter_t
 {
+    std::atomic<int> about_to_wait;
     std::atomic<int> waits_done;
 };
 
 static void client_receive_thread_quit_long_wait( void * data )
 {
     client_receive_thread_quit_waiter_t * waiter = (client_receive_thread_quit_waiter_t*) data;
+    waiter->about_to_wait.store( 1, std::memory_order_release );
     // an hour-long wait: only the wake ends it within the test
     rocketnet_platform_thread_wait( 3600.0 );
     // once woken, every later wait returns at once
@@ -39,15 +41,23 @@ static void client_receive_thread_quit_long_wait( void * data )
 }
 
 // the wake ends a wait whose timeout would not fire for an hour, whether the
-// wake lands before the wait starts or during it, and stays set for later waits
+// wake lands before the wait starts or during it, and stays set for later waits.
+// Odd rounds wake at once (mostly before the wait), even rounds wake after the
+// thread reaches its wait (mostly during it). A broken wake does not fail a
+// check here: the case hangs, and the suite's time limit reports it.
 static void client_receive_thread_quit_wake_ends_a_long_wait()
 {
     for ( int i = 0; i < 100; i++ )
     {
         client_receive_thread_quit_waiter_t waiter;
+        waiter.about_to_wait.store( 0 );
         waiter.waits_done.store( 0 );
         rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, client_receive_thread_quit_long_wait, &waiter );
         check( thread );
+        if ( ( i & 1 ) == 0 )
+        {
+            while ( !waiter.about_to_wait.load( std::memory_order_acquire ) ) {}
+        }
         rocketnet_platform_thread_wake( thread );
         rocketnet_platform_thread_join( thread );
         rocketnet_platform_thread_destroy( thread );

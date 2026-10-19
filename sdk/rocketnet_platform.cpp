@@ -1012,7 +1012,11 @@ static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * t
     pthread_condattr_t attr;
     if ( pthread_condattr_init( &attr ) != 0 )
         return false;
-    pthread_condattr_setclock( &attr, CLOCK_MONOTONIC );
+    if ( pthread_condattr_setclock( &attr, CLOCK_MONOTONIC ) != 0 )
+    {
+        pthread_condattr_destroy( &attr );
+        return false;
+    }
     const int cond_result = pthread_cond_init( &thread->wake_cond, &attr );
     pthread_condattr_destroy( &attr );
     if ( cond_result != 0 )
@@ -1088,11 +1092,18 @@ void rocketnet_platform_thread_wait( double time )
         return;
     }
     // the condition variable runs on CLOCK_MONOTONIC (thread_wake_init)
+    // whole seconds and nanoseconds converted apart, clamped to a day, so no
+    // conversion overflows a 32-bit long
+    if ( !( time > 0.0 ) )
+        time = 0.0;
+    if ( time > 86400.0 )
+        time = 86400.0;
+    const long whole_seconds = (long) time;
+    const long nanoseconds = (long) ( ( time - (double) whole_seconds ) * 1000000000.0 );
     struct timespec deadline;
     clock_gettime( CLOCK_MONOTONIC, &deadline );
-    const long nanoseconds = (long) ( time * 1000000000.0 );
-    deadline.tv_sec += nanoseconds / 1000000000L;
-    deadline.tv_nsec += nanoseconds % 1000000000L;
+    deadline.tv_sec += whole_seconds;
+    deadline.tv_nsec += nanoseconds;
     if ( deadline.tv_nsec >= 1000000000L )
     {
         deadline.tv_sec += 1;
@@ -2754,10 +2765,15 @@ void rocketnet_platform_thread_wait( double time )
     // semaphore wait
     if ( __atomic_load_n( &thread->woken, __ATOMIC_ACQUIRE ) )
         return;
-    const long nanoseconds = (long) ( time * 1000000000.0 );
+    // whole seconds and nanoseconds converted apart, clamped to a day
+    if ( !( time > 0.0 ) )
+        time = 0.0;
+    if ( time > 86400.0 )
+        time = 86400.0;
+    const unsigned int whole_seconds = (unsigned int) time;
     mach_timespec_t relative;
-    relative.tv_sec = (unsigned int) ( nanoseconds / 1000000000L );
-    relative.tv_nsec = (clock_res_t) ( nanoseconds % 1000000000L );
+    relative.tv_sec = whole_seconds;
+    relative.tv_nsec = (clock_res_t) ( ( time - (double) whole_seconds ) * 1000000000.0 );
     semaphore_timedwait( (semaphore_t) thread->wake_semaphore, relative );
 }
 
@@ -3117,20 +3133,6 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_free( thread->context, thread );
 }
 
-void rocketnet_platform_thread_wait( double time )
-{
-    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
-    if ( !thread )
-    {
-        rocketnet_platform_sleep( time );
-        return;
-    }
-    DWORD milliseconds = (DWORD) ( time * 1000.0 );
-    if ( milliseconds == 0 )
-        milliseconds = 1;
-    WaitForSingleObject( thread->wake_event, milliseconds );
-}
-
 void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
@@ -3272,6 +3274,50 @@ void rocketnet_platform_sleep( double time )
 
     timeBeginPeriod( 1 );
     Sleep( (DWORD) plan.fallback_milliseconds );
+    timeEndPeriod( 1 );
+}
+
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
+    if ( !thread )
+    {
+        rocketnet_platform_sleep( time );
+        return;
+    }
+
+    // the sleep's plan and its high-resolution timer, waited on beside the
+    // wake event, so the wait keeps the sleep's resolution and ends on a wake
+    const rocketnet_platform_sleep_plan_t plan = rocketnet_platform_sleep_plan( time );
+    if ( WaitForSingleObject( thread->wake_event, 0 ) == WAIT_OBJECT_0 )
+        return;
+    if ( plan.yield_only )
+    {
+        Sleep( 0 );
+        return;
+    }
+
+    if ( !rocketnet_platform_sleep_timer.tried )
+    {
+        rocketnet_platform_sleep_timer.tried = true;
+        rocketnet_platform_sleep_timer.handle = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
+    }
+
+    if ( rocketnet_platform_sleep_timer.handle )
+    {
+        LARGE_INTEGER due;
+        due.QuadPart = plan.due_time;
+        if ( SetWaitableTimer( rocketnet_platform_sleep_timer.handle, &due, 0, NULL, NULL, FALSE ) )
+        {
+            HANDLE handles[2] = { thread->wake_event, rocketnet_platform_sleep_timer.handle };
+            WaitForMultipleObjects( 2, handles, FALSE, (DWORD) plan.fallback_milliseconds + 1 );
+            CancelWaitableTimer( rocketnet_platform_sleep_timer.handle );
+            return;
+        }
+    }
+
+    timeBeginPeriod( 1 );
+    WaitForSingleObject( thread->wake_event, (DWORD) plan.fallback_milliseconds );
     timeEndPeriod( 1 );
 }
 
