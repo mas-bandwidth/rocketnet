@@ -25,6 +25,7 @@
     the pass bound is 10 s of wall time.
 */
 
+#include "rocketnet_config.h"
 #include "rocketnet.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_connect_token.h"
@@ -1232,7 +1233,7 @@ void live_message_matrix_loopback()
     m->live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config( &server_config );
+    rocketnet_server_transport_dev_config_current( &server_config );
     server_config.max_clients = 1;
 
     m->server = rocketnet_message_server_create( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS );

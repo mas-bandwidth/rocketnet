@@ -15,6 +15,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
+
 // -----------------------------------------
 //                     version and ABI
 // -----------------------------------------
@@ -720,7 +722,15 @@ struct rocketnet_client_config_t
     int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    int simulated_loss_percent;                     // development only: outgoing loss 0..100; 0 is off
+    int simulated_latency_ms;                       // development only: outgoing latency in milliseconds; 0 is off
+    int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
+    int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
 };
+
+#define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_CONFIG_BYTES_1, ROCKETNET_CLIENT_CONFIG_BYTES_2
 
 // The server is configured explicitly: rocketnet_server_default_config gives
 // the shape with no keys, and create refuses it until keys are supplied
@@ -767,7 +777,15 @@ struct rocketnet_server_config_t
     int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    int simulated_loss_percent;                     // development only: outgoing loss 0..100; 0 is off
+    int simulated_latency_ms;                       // development only: outgoing latency in milliseconds; 0 is off
+    int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
+    int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
 };
+
+#define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_CONFIG_BYTES_1, ROCKETNET_SERVER_CONFIG_BYTES_2
 
 // -----------------------------------------
 //                           messages
@@ -885,6 +903,8 @@ ROCKETNET_EXPORT int rocketnet_write_production_connect_token( const uint8_t * b
 // in production, or locally by rocketnet_write_dev_connect_token against the
 // published development keys.
 
+// The unsized form writes the revision-1 prefix. Use the sized form with
+// sizeof(*config) to initialize fields added after revision 1.
 // a NULL config is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_default_config( struct rocketnet_client_config_t * config );
 
@@ -895,10 +915,14 @@ ROCKETNET_EXPORT int rocketnet_client_default_config_sized( struct rocketnet_cli
 // 1 when create would accept the config's own values, else 0 with a log line
 // naming the rule. The environment is not read. NULL means the defaults.
 ROCKETNET_EXPORT int rocketnet_client_validate_config( const struct rocketnet_client_config_t * config );
+// Validates a known-size client config; an unknown non-NULL size logs and returns 0.
+ROCKETNET_EXPORT int rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 // the bytes a caller memory block for this client needs; 0 for a refused
 // config. NULL means the defaults.
 ROCKETNET_EXPORT uint64_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
+// Queries a known-size client config; an unknown non-NULL size logs and returns 0.
+ROCKETNET_EXPORT uint64_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 #if ROCKETNET_DEVELOPMENT
 // Mints a development connect token for a server at this address, signed with
@@ -992,6 +1016,8 @@ ROCKETNET_EXPORT double rocketnet_client_stat( const struct rocketnet_client_t *
 // Clients are identified by index, 0 .. max_clients - 1, the slot each
 // connection takes.
 
+// The unsized form writes the revision-1 prefix. Use the sized form with
+// sizeof(*config) to initialize fields added after revision 1.
 // a NULL config is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_default_config( struct rocketnet_server_config_t * config );
 
@@ -999,17 +1025,25 @@ ROCKETNET_EXPORT void rocketnet_server_default_config( struct rocketnet_server_c
 // refused, nothing written. a NULL config is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_server_default_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
-// the defaults with the published development keys and test filter. a NULL config is a counted no-op.
+// the defaults with the published development keys and test filter. The
+// unsized form writes the revision-1 prefix; use the sized form for current fields.
+// a NULL config is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_dev_config( struct rocketnet_server_config_t * config );
+// Writes development defaults for a known server config size; unknown sizes log and are untouched.
+ROCKETNET_EXPORT int rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
 // 1 when create would accept the config's own values, else 0 with a log line
 // naming the rule. The environment is not read and the keys are not checked.
 // NULL means the defaults.
 ROCKETNET_EXPORT int rocketnet_server_validate_config( const struct rocketnet_server_config_t * config );
+// Validates a known-size server config; an unknown non-NULL size logs and returns 0.
+ROCKETNET_EXPORT int rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 // the bytes a caller memory block for this server needs, at the config's
 // max_clients; 0 for a refused config. NULL means the defaults.
 ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
+// Queries a known-size server config; an unknown non-NULL size logs and returns 0.
+ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 // address is where clients reach the server, "a.b.c.d:port" or "[v6]:port"; a
 // port of 0 takes an ephemeral port (read it back with rocketnet_server_port).
