@@ -999,7 +999,9 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 // log line and returns NULL before any other check.
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes );
 
-// a NULL client is a counted no-op.
+// Sends the redundant disconnect packets for a live connection before the
+// transport closes, and frees the client; sends nothing when there is no live
+// connection. a NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
 // ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. a NULL client is a counted no-op that returns ROCKETNET_MESSAGE_OK.
@@ -1120,7 +1122,9 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 // log line and returns NULL before any other check.
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes );
 
-// Disconnects every client and frees the server. a NULL server is a counted no-op.
+// Sends the redundant disconnect packets to every connected client before the
+// transport closes, and frees the server; sends nothing when there is no
+// connected client. a NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
 // ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. a NULL server is a counted no-op that returns ROCKETNET_MESSAGE_OK.

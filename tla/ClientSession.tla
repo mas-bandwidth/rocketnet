@@ -20,7 +20,7 @@ EXTENDS Naturals, FiniteSets
 
 CONSTANTS MaxSessions, MaxCreates, Defect, UnresetField
 
-ASSUME Defect \in {"none", "unreset", "connectanywhere"}
+ASSUME Defect \in {"none", "unreset", "connectanywhere", "destroysilent"}
 ASSUME MaxSessions \in Nat \ {0} /\ MaxCreates \in Nat \ {0}
 
 \* One field per row of the per-connection reset inventory.
@@ -70,22 +70,22 @@ Reset(c) == [f \in Fields |-> IF Defect = "unreset" /\ f = UnresetField THEN c[f
 StaleIn(c, fs, s) == {f \in fs : c[f] \notin {0, s}}
 
 VARIABLES st, cur, conn, reason, kept, link, nextSess, creates,
-          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn
+          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, silentEnd
 \* st, cur, conn, reason, kept: the client object (cur is the session tag of
 \*   the connection in progress, 0 outside one)
 \* link: the session tags of server packets in flight to this client (lossy)
 \* nextSess, creates: the environment's counters
-\* lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn: ghosts
+\* lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, silentEnd: ghosts
 vars == <<st, cur, conn, reason, kept, link, nextSess, creates,
-          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn>>
-ghosts == <<observed, crossDelivered, connectFrom, queuedIn>>
+          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, silentEnd>>
+ghosts == <<observed, crossDelivered, connectFrom, queuedIn, silentEnd>>
 
 Init ==
     /\ st = "NONE" /\ cur = 0 /\ conn = InitConn /\ reason = "NONE"
     /\ kept = [lifetime |-> 0, config |-> 0]
     /\ link = {} /\ nextSess = 1 /\ creates = 0
     /\ lastEnd = "NONE" /\ connected = 0
-    /\ observed = {} /\ crossDelivered = {} /\ connectFrom = {} /\ queuedIn = {}
+    /\ observed = {} /\ crossDelivered = {} /\ connectFrom = {} /\ queuedIn = {} /\ silentEnd = FALSE
 
 \* rocketnet_client_create: no token, DISCONNECTED, a fresh object.
 Create ==
@@ -101,7 +101,8 @@ Destroy ==
     /\ st' = "NONE" /\ cur' = 0 /\ conn' = InitConn /\ reason' = "NONE"
     /\ kept' = [lifetime |-> 0, config |-> 0]
     /\ lastEnd' = "NONE" /\ connected' = 0
-    /\ UNCHANGED <<link, nextSess, creates, ghosts>>
+    /\ silentEnd' = (silentEnd \/ (st \in {"SENDING_CONNECTION_RESPONSE", "CONNECTED"} /\ Defect = "destroysilent"))
+    /\ UNCHANGED <<link, nextSess, creates, observed, crossDelivered, connectFrom, queuedIn>>
 
 \* Every path out of a connection: Reset, the reason the path names, and
 \* the reason recorded for ReasonKeptUntilNextConnection.
@@ -122,14 +123,14 @@ Connect(tok) ==
             /\ conn' = Write(conn, TokenFields, nextSess)
             /\ connectFrom' = connectFrom \cup {st}
             /\ UNCHANGED <<reason, kept, link, creates, lastEnd, connected,
-                           observed, crossDelivered, queuedIn>>
+                           observed, crossDelivered, queuedIn, silentEnd>>
        ELSE /\ connectFrom' = connectFrom \cup {st}
             /\ LET to == IF tok = "invalid" THEN "INVALID_CONNECT_TOKEN"
                          ELSE "CONNECT_TOKEN_EXPIRED"
                IN /\ st' = to /\ cur' = 0 /\ conn' = Reset(conn)
                   /\ reason' = to /\ lastEnd' = to
             /\ UNCHANGED <<kept, link, nextSess, creates, connected,
-                           observed, crossDelivered, queuedIn>>
+                           observed, crossDelivered, queuedIn, silentEnd>>
 
 \* The handshake abstracted to its stages: the server's reply to the stage
 \* arrives. The challenge derives the session keys; the establishing
@@ -147,7 +148,7 @@ HandshakeStep ==
                        THEN Write(conn, KeyFields, cur) ELSE conn
             /\ UNCHANGED <<reason, kept, connected>>
     /\ UNCHANGED <<cur, link, nextSess, creates, lastEnd,
-                   crossDelivered, connectFrom, queuedIn>>
+                   crossDelivered, connectFrom, queuedIn, silentEnd>>
 
 Deny == st \in HandshakeStates /\ End(conn, "CONNECTION_DENIED", "CONNECTION_DENIED")
 
@@ -179,7 +180,7 @@ Send ==
     /\ conn' = Write(conn, SendFields, cur)
     /\ queuedIn' = queuedIn \cup {st}
     /\ UNCHANGED <<st, cur, reason, kept, link, nextSess, creates, lastEnd,
-                   connected, crossDelivered, connectFrom>>
+                   connected, crossDelivered, connectFrom, silentEnd>>
 
 \* The server side of any session ever started may still have packets in
 \* flight, including sessions that ended and sessions of a destroyed object.
@@ -202,7 +203,7 @@ Deliver(s) ==
             /\ conn' = Write(conn, RecvFields, cur)
        ELSE UNCHANGED <<conn, observed, crossDelivered>>
     /\ UNCHANGED <<st, cur, reason, kept, nextSess, creates, lastEnd,
-                   connected, connectFrom, queuedIn>>
+                   connected, connectFrom, queuedIn, silentEnd>>
 
 Lose(s) ==
     /\ s \in link
@@ -230,7 +231,7 @@ TypeOK ==
     /\ creates \in 0..MaxCreates /\ connected \in 0..MaxSessions
     /\ observed \subseteq Fields
     /\ crossDelivered \subseteq [from : Sessions, to : Tags]
-    /\ connectFrom \subseteq States /\ queuedIn \subseteq States
+    /\ connectFrom \subseteq States /\ queuedIn \subseteq States /\ silentEnd \in BOOLEAN
 
 \* A session is in progress exactly in the live states.
 CurrentOnlyWhileLive == (st \in Live) <=> (cur # 0)
@@ -260,6 +261,8 @@ ReconnectObservesNothing == observed = {} /\ crossDelivered = {}
 
 ReasonKeptUntilNextConnection ==
     reason = IF st = "CONNECTED" THEN "NONE" ELSE lastEnd
+
+DestroyDisconnectsLive == ~silentEnd
 
 \* A connect reaches CONNECTED or an error state, unless the application
 \* disconnects or destroys the client first.
