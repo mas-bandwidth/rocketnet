@@ -3,3 +3,4 @@ build-*/
 bin/
 tending/
 __pycache__/
+tmp/
