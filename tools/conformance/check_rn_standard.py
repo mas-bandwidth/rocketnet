@@ -804,13 +804,12 @@ def main():
         vectors = document_vectors(docs, faults)
         twins = test_twins(faults)
         vector_count = check_vectors(vectors, twins, faults, only)
-        if args.print_index or args.write_index:
-            print_index(docs, vectors)
-            return 0
         check_index(docs, vectors, faults, only)
         check_counter_registry(docs, faults, only)
         check_references(docs, faults, only)
         check_language(docs, faults, only)
+        if args.print_index or args.write_index:
+            print_index(docs, vectors)
     except Fault as fault:
         print("rn standard: %s" % fault)
         return 2
