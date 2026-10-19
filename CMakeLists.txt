@@ -323,6 +323,11 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
         "ROCKETNET_COUNTER_TEST_SOURCES=\"${ROCKETNET_COUNTER_TEST_SOURCES_LIST}\""
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
+    # The message-vs-packet source scan (test_unit_client_server_say_messages.cpp)
+    # reads sdk client/server files through ROCKETNET_SOURCE_DIR, the same way
+    # the counter audit does.
+    set_property( SOURCE test_unit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     # The endpoint's clock intercept (test_unit_endpoint.cpp): on Linux the
