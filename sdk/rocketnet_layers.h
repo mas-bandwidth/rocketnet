@@ -1470,7 +1470,7 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
  * @param[in] message_config_bytes Size of that prefix in bytes; ignored when its config is NULL, otherwise must be a known revision.
  * @param[in] memory Caller-owned region, at least the required size and 64-byte aligned; NULL selects SDK allocation.
  * @param[in] memory_bytes Size of memory in bytes; must cover the required region when memory is supplied.
- * @param[in] send_kbps Per-client wire budget in kilobits per second; zero selects the built-in default.
+ * @param[in] send_kbps Per-client wire budget in kilobits per second: takes message_config client_send_kbps (the built-in default applies only when message_config is NULL; 0 or lower in that field disables the budget; a positive send_kbps argument overrides it for this create; above ROCKETNET_SEND_BUDGET_MAX_KBPS refuses; the environment override applies over both).
  * @return The client on success, or NULL for unknown config sizes, invalid arguments/configuration, an invalid budget, or insufficient memory.
  * @details The library must be initialized first. Unknown non-NULL config sizes are refused before create checks. The object owns its transport; destroy the client to release it. A supplied memory region remains caller-owned and must outlive the client.
  */
@@ -1562,7 +1562,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
  * @param[in] message_config_bytes Size of that prefix in bytes; ignored when its config is NULL, otherwise must be a known revision.
  * @param[in] memory Caller-owned region, at least the required size and 64-byte aligned; NULL selects SDK allocation.
  * @param[in] memory_bytes Size of memory in bytes; must cover the required region when memory is supplied.
- * @param[in] per_client_send_kbps Per-client wire budget in kilobits per second; zero selects the built-in default.
+ * @param[in] per_client_send_kbps Per-client wire budget in kilobits per second: takes message_config server_send_kbps (the built-in default applies only when message_config is NULL; 0 or lower in that field disables the budget; a positive per_client_send_kbps argument overrides it for this create; above ROCKETNET_SEND_BUDGET_MAX_KBPS refuses; the environment override applies over both).
  * @return The server on success, or NULL for unknown config sizes, invalid arguments/configuration, an invalid budget, or insufficient memory.
  * @details The library must be initialized first. Unknown non-NULL config sizes are refused before create checks. Destroy the server to release its owned transport. Supplied memory remains caller-owned and must outlive the server.
  */
