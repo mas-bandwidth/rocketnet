@@ -5,6 +5,7 @@
 
 #include "test_unit_registry.h"
 
+#include "sdk/rocketnet.h"
 #include "sdk/rocketnet_connection_reset.h"
 #include "sdk/rocketnet_client_protocol.h"
 #include "sdk/rocketnet_server_protocol.h"
