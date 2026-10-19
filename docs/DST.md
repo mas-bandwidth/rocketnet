@@ -35,9 +35,9 @@ mocked time, every random draw from the seed given at create. Delivery is "lowes
 not FIFO, so a jitter at or above the step reorders packets. `deliver_packets` scripts an exact
 order; the audit (`rocketnet_network_simulator_audit`) and its negative control
 (`rocketnet_network_simulator_inject_index_fault`) prove the indexed wire equals the reference scan.
-It lacks per-packet extra delay, explicit reorder, per-peer clocks and peers that go away; section
-3 builds all of these outside the simulator, so the simulator file is unchanged and every existing
-user of it is untouched.
+Per-packet extra delay, explicit reorder, per-peer clocks and peer lifetimes live in
+`dst_faults.h` and the DST hooks in `dst_harness.h`, outside the simulator. The simulator file
+and every existing user keep their zero-knob behavior.
 
 **`functional/channel_harness.h` (the message layer, one pair).** One client and one server
 protocol object, each bound to a real SDK message object (`rn_message_object_create`) through the
@@ -259,6 +259,12 @@ once per process and reads `ROCKETNET_LOG_LEVEL`; `bin/dst` then sets the level 
 soak_sim does, and reads no other variable. Floating point is built with `-ffp-contract=off`, as the whole tree is.
 
 ## 3. The faults
+
+The implementation is `dst_faults.h`, applied by the four hooks in
+`dst_harness.h`: `rocketnet_dst_faults_step`, `rocketnet_dst_wire_send`,
+`rocketnet_dst_faults_clock` and each peer's live state. The crash/restart
+hooks cite the matching `RNSimFaults` actions, and the clock and wire hooks
+cite `ClockMonotone`, `SkewBounded` and `Lose`.
 
 Every fault draws from its own substream (section 2) and is written to the trace when it fires.
 Every fault lies wholly inside the fault window: a fault with a duration D starts at a step drawn
