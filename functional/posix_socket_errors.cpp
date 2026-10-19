@@ -325,13 +325,13 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     pair->native = posix_native_kind( server_driver );
     if ( pair->native != POSIX_NATIVE_NONE )
         pair->driver = rocketnet_server_transport_driver_for_testing( pair->server );
+    else
+        pair->server_socket = posix_new_socket( before, num_before );
 #if defined(__linux__)
     if ( pair->native == POSIX_NATIVE_GSO && posix_gso_forced_plain )
         posix_check( ( rocketnet_server_gso_features( (struct rocketnet_server_gso_t*) pair->driver ) &
                        ( ROCKETNET_SERVER_GSO_FEATURE_SEGMENT | ROCKETNET_SERVER_GSO_FEATURE_GRO ) ) == 0 );
 #endif
-    else
-        pair->server_socket = posix_new_socket( before, num_before );
 
     char server_address[64];
     snprintf( server_address, sizeof(server_address), ipv6 ? "[::1]:%d" : "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
