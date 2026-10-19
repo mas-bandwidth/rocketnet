@@ -7399,6 +7399,9 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_sleep",
     "rocketnet_allocator",
     "rocketnet_allocator_ex",
+    "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_server_keypair",
+    "rocketnet_write_production_connect_token",
     "rocketnet_client_default_config",
     "rocketnet_client_default_config_sized",
     "rocketnet_client_validate_config",
@@ -7465,6 +7468,9 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_abi_field_size",
     "rocketnet_allocator",
     "rocketnet_allocator_ex",
+    "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_server_keypair",
+    "rocketnet_write_production_connect_token",
     "rocketnet_client_default_config",
     "rocketnet_client_default_config_sized",
     "rocketnet_client_create",
@@ -7914,6 +7920,7 @@ void rocketnet_test_public_api_null()
     struct rocketnet_client_config_t client_config;
     struct rocketnet_server_config_t server_config;
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES] = { 0 };
+    const char * production_address[] = { "127.0.0.1:40000" };
 
     RN_TEST_ONE_MISUSE( rocketnet_abi_type_size( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_abi_field_count( NULL ) );
@@ -7921,6 +7928,11 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_abi_field_size( NULL, NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_allocator( NULL, NULL ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_allocator_ex( NULL, NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_server_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_write_production_connect_token( token, token, 1, production_address, 1,
+                                                                                  1, 0, 1, 10, NULL, NULL,
+                                                                                  ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
 
     RN_TEST_ONE_MISUSE( rocketnet_client_default_config( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_sized( NULL, sizeof( client_config ) ) == 0 ) );
