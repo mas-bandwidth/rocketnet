@@ -155,13 +155,15 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 // twin's code-0 record; 10 or 11 for a code-1 record) when the message takes
 // this path, RN_ENDPOINT_IN_PLACE_QUEUED when it fits but unreliable messages
 // wait in the queue ahead of it (it queues behind them, so no mode is
-// reordered) or the update's packet allowance is spent, and
+// reordered; for UNRELIABLE_SEQUENCED also its channel's queue or a pending
+// block chunk) or the update's packet allowance is spent, and
 // RN_ENDPOINT_IN_PLACE_NO otherwise (the region path decides and refuses).
 // In-place packets and the write pass's packets share max_packets_per_update;
 // while reliable work is due at now, an in-place packet never takes the last
-// of it, so the write pass sends that work in the same update
-// (RNOutgoingBuild ReliableSentWithinOneUpdate). It changes nothing and counts
-// nothing. The frame the owner asks for holds header + bytes + 1 payload bytes
+// of it, so the write pass's reliable phase has a packet for that work in the
+// same update (RNOutgoingBuild ReliableSentWithinOneUpdate; a full window or a
+// waiting budget can still hold the work, and the packet then goes to the
+// unreliable phase). It changes nothing and counts nothing. The frame the owner asks for holds header + bytes + 1 payload bytes
 // (the declared maximum, the header and the form byte).
 #define RN_ENDPOINT_IN_PLACE_NO             -1
 #define RN_ENDPOINT_IN_PLACE_QUEUED         -2

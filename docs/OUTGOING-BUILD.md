@@ -121,7 +121,13 @@ and stages the packet; `send_packets` flushes it with everything else.
   reversed witness without the reservation violates; the unit case
   `reliable_not_starved_by_in_place`). A reliable message sent after the
   in-place packets that spent the allowance waits for the next update, the
-  same as one sent after a full write pass.
+  same as one sent after a full write pass. The reservation keys on work
+  being due, not on its being writable: when a full window or a waiting
+  budget holds the reliable work, the kept packet goes to the unreliable
+  phase, and nothing is lost. At `max_packets_per_update` 1 with reliable
+  work due every update, every fitting unreliable message takes the queued
+  path; the write pass's reliable-first rule decides it from there, as it
+  always did.
 
 ## Option (b): written into the connection's current outgoing packet
 

@@ -42,6 +42,9 @@ Code: `sdk/rocketnet_message_server.cpp` (`rn_message_object_start`,
   work is sent": its deadline is the flush, so TLC checks it as a safety
   (action) property; an unbounded `~>` would hold in a finite run even
   without the reservation, because the game's in-place sends run out.
+  "Due" in the model is a reliable message waiting for its first send; the
+  code's due test (`rn_endpoint_ordered_due`) also counts a resend or block
+  chunk past its delay, which the model does not represent.
 - Bounds: `MaxFaults` bounds the faults of a run together (a frame refused at
   start, an abort, an over-budget drop), so the control stays inside the
   runner's budget.
