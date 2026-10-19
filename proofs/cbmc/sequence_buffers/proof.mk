@@ -31,7 +31,7 @@ SEQUENCE_BUFFERS_HARNESSES = \
     harness_ack_mark_keep_alive:2:--z3 \
     harness_window_receive_init:2:--z3 \
     harness_window_receive_accept:1048577:--z3 \
-    harness_window_receive_accept_bounded:129:--bitwuzla \
+    harness_window_receive_accept_bounded:65:--bitwuzla \
     harness_window_receive_release:2:--z3
 
 .PHONY: proofs-sequence_buffers

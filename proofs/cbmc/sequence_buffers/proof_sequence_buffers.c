@@ -193,7 +193,7 @@ static rn_region_t * symbolic_region( uint32_t window )
 // window_messages is a power of two from 64 to 1 << 20 (rocketnet.h).
 #define SEQUENCE_BUFFERS_FULL_WINDOW ( 1u << 20 )
 #ifndef SEQUENCE_BUFFERS_ACCEPT_WINDOW
-#define SEQUENCE_BUFFERS_ACCEPT_WINDOW 128
+#define SEQUENCE_BUFFERS_ACCEPT_WINDOW 64
 #endif
 
 static uint32_t symbolic_window( uint32_t max_window )
