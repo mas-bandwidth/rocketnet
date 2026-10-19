@@ -140,10 +140,9 @@ static void dst_fault_reorder_delivers()
 }
 REGISTER_UNIT_TEST( dst_fault_reorder_delivers );
 
-// Filled only from an unchanged current-base Linux run of this exact seed and
-// option tuple. Zero deliberately keeps the regression red until that frozen
-// compatibility oracle has been measured and reviewed.
-static const uint64_t ROCKETNET_DST_CORE_TRACE_D57 = 0;
+// Measured from the unchanged BASE (9efc7cb) Linux Release build of this exact
+// seed and option tuple; the new fault kinds at zero must not move it.
+static const uint64_t ROCKETNET_DST_CORE_TRACE_D57 = 0x76accc2c91c8e010ULL;
 
 static void dst_fault_off_same_trace()
 {
