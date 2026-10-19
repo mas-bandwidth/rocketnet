@@ -7321,11 +7321,43 @@ void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
     }
 }
 
+static void rocketnet_test_receive_thread_quit_wait_after_wake( void * data )
+{
+    rocketnet_test_receive_thread_quit_waiter_t * waiter = (rocketnet_test_receive_thread_quit_waiter_t*) data;
+    // the test wakes this thread before it sets about_to_wait, so both waits start after the wake
+    while ( !waiter->about_to_wait.load( std::memory_order_acquire ) ) {}
+    // an hour-long wait: only the stored wake ends it within the test
+    rocketnet_platform_thread_wait( 3600.0 );
+    // once woken, every later wait returns at once
+    rocketnet_platform_thread_wait( 3600.0 );
+    waiter->waits_done.store( 2, std::memory_order_release );
+}
+
+// a wake stored before the wait starts ends the wait and every later one. A
+// lost wake hangs the case, and the suite's time limit reports it.
+void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
+{
+    for ( int i = 0; i < 4; i++ )
+    {
+        rocketnet_test_receive_thread_quit_waiter_t waiter;
+        waiter.about_to_wait.store( 0 );
+        waiter.waits_done.store( 0 );
+        rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, rocketnet_test_receive_thread_quit_wait_after_wake, &waiter );
+        rocketnet_check( thread );
+        rocketnet_platform_thread_wake( thread );
+        waiter.about_to_wait.store( 1, std::memory_order_release );
+        rocketnet_platform_thread_join( thread );
+        rocketnet_platform_thread_destroy( thread );
+        rocketnet_check( waiter.waits_done.load( std::memory_order_acquire ) == 2 );
+    }
+}
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
     { "client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait },
+    { "client_receive_thread_quit_wake_before_wait_returns", rocketnet_test_client_receive_thread_quit_wake_before_wait_returns },
     { "client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times },
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
     { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn },
