@@ -1271,9 +1271,10 @@ rocketnet_server_abort( server, client_index );
 
 - `rocketnet_server_start` takes a request and returns a pointer into the connection's region. When
   `request_bytes <= 1415` that is a real wire frame, with no copy at all.
-  Larger requests are promoted to the reliable twin at the send call (L2.3),
-  not fragmented.
-- The message is always UNRELIABLE and is always SINGLE form. Endpoint state
+  Larger requests leave this path: they are promoted to the reliable twin at
+  the send call (L2.3), not fragmented, and take the reliable send path with
+  its endpoint state.
+- On this path the message is always UNRELIABLE and is always SINGLE form. Endpoint state
   is not touched; only atomic counters are. So any number of threads may call
   it for any clients during the fill phase, exactly like the transport's start.
 - A zero-copy message gets no receipt and no ordering. UNRELIABLE needs
