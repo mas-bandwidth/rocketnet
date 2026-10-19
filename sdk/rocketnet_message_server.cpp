@@ -309,10 +309,14 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     return object;
 }
 
+static void rn_message_connection_cancel_pending( rn_message_object_t * object, int index );
+
 void rn_message_object_destroy( struct rn_message_object_t * object )
 {
     if ( !object )
         return;
+    if ( object->in_place )
+        rn_message_connection_cancel_pending( object, object->pending_connection );   // the open frame goes back first
     if ( object->link.destroy )
         object->link.destroy( object->link.transport );
     rn_arena_destroy( object->arena );

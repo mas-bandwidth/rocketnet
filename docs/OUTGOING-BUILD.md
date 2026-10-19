@@ -88,8 +88,11 @@ and stages the packet; `send_packets` flushes it with everything else.
 - **The send budget.** start takes the in-place path only when the bucket,
   refilled to the update's time, can pay the declared maximum now, no
   reliable item of the last pass waits, and, while the reliable path has
-  work due, one maximum packet stays in the bucket for it, so the class
-  order (reliable before unreliable) holds. A message the bucket cannot pay
+  work due, one maximum packet stays in the bucket for it. That keeps the
+  class order for reliable work already due at start; a reliable message sent
+  later in the same update, or due work of more than one packet, can find the
+  bucket spent by in-place packets and wait for the next update, where on the
+  queued path those unreliable messages would have been dropped instead. A message the bucket cannot pay
   now takes the queued path (counted as a fallback), and the write pass in
   send_packets sends it or drops it and counts it
   `MESSAGE_UNRELIABLE_OVER_BUDGET`, by the rule it always had: the drop
@@ -99,8 +102,9 @@ and stages the packet; `send_packets` flushes it with everything else.
   returns its serial. The settle refunds the difference between the admitted
   maximum and the sealed size.
 - **The per-update packet cap.** `max_packets_per_update` caps the write
-  pass in send_packets. In-place packets are not written by the pass, so it
-  does not count them; the send budget is what bounds them.
+  pass in send_packets, and separately the in-place packets between two
+  passes: once that many are out, the next fitting message takes the queued
+  path (counted as a fallback). An uncapped connection is so still bounded.
 
 ## Option (b): written into the connection's current outgoing packet
 

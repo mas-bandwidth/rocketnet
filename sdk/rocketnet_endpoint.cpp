@@ -97,6 +97,7 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     endpoint->in_place_serial = 0;
     endpoint->in_place_receipt = 0;
     endpoint->in_place_admitted = 0;
+    endpoint->in_place_written = 0;
     endpoint->unreliable_head = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_tail = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_count = 0;
@@ -368,8 +369,10 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
     }
 
     // RNOutgoingBuild StartInPlace's ~UnreliableQueued: a message never
-    // overtakes an unreliable one queued before it
-    if ( endpoint->unreliable_count > 0 )
+    // overtakes an unreliable one queued before it; and in-place packets
+    // between two write passes are at most max_packets_per_update, the cap
+    // the write pass keeps for its own
+    if ( endpoint->unreliable_count > 0 || endpoint->in_place_written >= endpoint->config->max_packets_per_update )
         return RN_ENDPOINT_IN_PLACE_QUEUED;
     return header;
 }
@@ -496,6 +499,7 @@ void rn_endpoint_in_place_sent( struct rn_endpoint_t * endpoint, uint64_t packet
         rn_window_ack_commit_receipt_packet( &endpoint->ordered.ack, packet_id, &endpoint->in_place_serial, 1, now );
     if ( endpoint->send_budget_enabled && endpoint->in_place_admitted > 0 )
         rocketnet_send_budget_settle( &endpoint->budget, endpoint->in_place_admitted, wire_bytes );
+    endpoint->in_place_written++;
     endpoint->in_place_receipt = 0;
     endpoint->in_place_admitted = 0;
 }
@@ -775,6 +779,7 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
         if ( endpoint->send_budget_enabled )
             rocketnet_send_budget_begin_update( &endpoint->budget, now );
         endpoint->written = 0;
+        endpoint->in_place_written = 0;
         // every resend waits the same delay, with no back-off (tla/RNResendTiming.tla)
         rn_window_ack_gaps_update( &endpoint->ordered.ack, now );   // the resend gap record (development builds only)
         endpoint->write_phase = RN_ENDPOINT_WRITE_RELIABLE;

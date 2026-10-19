@@ -2219,8 +2219,9 @@ ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_c
 // returns a pointer into the connection's region, or, for an unreliable
 // message whose declared bytes fit one packet with every header, into the
 // transport packet buffer itself (docs/OUTGOING-BUILD.md); write the message
-// there once, in place; finish(bytes_written) queues it, or finishes that
-// packet, and returns its receipt
+// there once, in place (16-aligned for UNRELIABLE, the payload root; after the
+// record header for the other two); finish(bytes_written) queues it, or
+// finishes that packet, and returns its receipt
 // serial, nonzero (CHANNELS 7.4); abort gives the room back. One start is
 // pending per object at a time. The enabled types are ROCKETNET_UNRELIABLE,
 // ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE, ROCKETNET_RELIABLE_ORDERED,

@@ -84,6 +84,7 @@ struct rn_endpoint_t
     uint32_t in_place_serial;                   // the finished in-place packet: its serial
     int in_place_receipt;                       // 1 when it carries a receipt (UNRELIABLE_WITH_ACK_RECEIPT)
     int in_place_admitted;                      // the wire bytes admitted to the budget (0: uncapped)
+    int in_place_written;                       // in-place packets since the last write pass, against max_packets_per_update
 
     // the queued UNRELIABLE sends: send descriptors linked through their `next`
     uint32_t unreliable_head, unreliable_tail;
