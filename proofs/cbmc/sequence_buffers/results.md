@@ -65,6 +65,6 @@ No property was refuted on the real sdk, so there is no counterexample to check 
 
 ## Known defect
 
-The brief names the far-advance defect (rocketnet-replay-far-advance-clears-every-window-word). At this base the far branch is a memset of the whole window (sdk/rocketnet_replay.cpp:62), and `harness_replay_advance_far` proves it against the real sdk. The per-commit `replay-far` target in `all` still reports its expected counterexample, because `proof_replay_advance.c` mirrors the old four-word clear instead of including the sdk.
+The brief names the far-advance defect (rocketnet-replay-far-advance-clears-every-window-word). At this base the far branch is a memset of the whole window (sdk/rocketnet_replay.cpp:62), and `harness_replay_advance_far` proves it against the real sdk. The per-commit `proof_replay_advance.c` now includes the sdk too (rocketnet-cbmc-replay-far-verification-green), so the defect is no longer red anywhere.
 
 The window harnesses set `region->counters = NULL`, so the duplicate counter's atomic add (sdk/rocketnet_window_receive.cpp:15) is not reached. Its index is the fixed `ROCKETNET_COUNTER_MESSAGE_DUPLICATE`, not one derived from a sequence.
