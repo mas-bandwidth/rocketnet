@@ -231,6 +231,17 @@ static void posix_lifecycle_leave_cell()
     unsetenv( "ROCKETNET_PUMP" );
 }
 
+// a cell's driver string is the pinned list; when the list names more than one
+// driver the grant falls to the last element (the portable rung) because the
+// msgx rung refuses under the forced-portable pump. The granted driver is
+// checked after create so a cell that silently landed on another transport is
+// a red, not a silent pass.
+static const char * posix_lifecycle_expected_driver( const char * driver )
+{
+    const char * comma = strrchr( driver, ',' );
+    return comma ? comma + 1 : driver;
+}
+
 static struct rocketnet_server_transport_t * posix_lifecycle_create_server( const char * driver,
                                                                             const char * public_address,
                                                                             int max_clients )
@@ -239,7 +250,11 @@ static struct rocketnet_server_transport_t * posix_lifecycle_create_server( cons
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
     snprintf( config.driver, sizeof( config.driver ), "%s", driver );
-    return rocketnet_server_transport_create( NULL, public_address, &config );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, &config );
+    if ( server )
+        POSIX_LIFECYCLE_CHECK( strcmp( rocketnet_server_transport_driver( server ),
+                                       posix_lifecycle_expected_driver( driver ) ) == 0 );
+    return server;
 }
 
 static struct rocketnet_client_transport_t * posix_lifecycle_create_client( const char * driver,
@@ -248,7 +263,11 @@ static struct rocketnet_client_transport_t * posix_lifecycle_create_client( cons
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.driver, sizeof( config.driver ), "%s", driver );
-    return rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
+    if ( client )
+        POSIX_LIFECYCLE_CHECK( strcmp( rocketnet_client_transport_driver( client ),
+                                       posix_lifecycle_expected_driver( driver ) ) == 0 );
+    return client;
 }
 
 static bool posix_lifecycle_write_token( const char * address, uint8_t * connect_token )
