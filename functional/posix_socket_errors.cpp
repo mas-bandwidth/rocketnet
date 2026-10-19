@@ -337,7 +337,7 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     snprintf( server_address, sizeof(server_address), ipv6 ? "[::1]:%d" : "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token ) );
+    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token, sizeof(token) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
