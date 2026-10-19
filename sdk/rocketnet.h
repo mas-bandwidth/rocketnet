@@ -229,11 +229,11 @@
 #define ROCKETNET_MESSAGE_ERROR_NONE                                    0
 /** @brief The peer message configuration does not match. */
 #define ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH                         1
-/** @brief The peer did not complete message configuration before timeout. */
+/** @brief Reserved; the library does not currently return this reason (a configuration that never arrives ends with ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT). */
 #define ROCKETNET_MESSAGE_ERROR_CONFIG_TIMEOUT                          2
 /** @brief The peer sent message data that violates the protocol. */
 #define ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION                      3
-/** @brief A reliable message did not complete before its configured timeout. */
+/** @brief A reliable message, or the peer's message configuration, is not acknowledged or received within reliable_timeout_ms. */
 #define ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT                        4
 /** @brief The message region cannot retain a required operation, so the connection ends. */
 #define ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED                5
@@ -385,7 +385,7 @@ enum rocketnet_client_counter_t
     ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS,          // messages: unreliable messages dropped because the send budget was spent
     /** @brief Hand-offs: sends that left with the next hand-off to the send thread. */
     ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED,         // hand-offs: sends that left with the next hand-off to the send thread
-    /** @brief Messages: received messages still held when an update was refused. */
+    /** @brief Messages: received messages still held at an update, which takes them back and returns ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. */
     ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED, // messages: received messages still held when an update was refused
     /** @brief Number of selectors; do not pass this sentinel to a query. */
     ROCKETNET_CLIENT_COUNTER_COUNT
@@ -448,7 +448,7 @@ enum rocketnet_server_counter_t
     ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST,         // receipts: sends with a receipt that were lost
     /** @brief Messages: unreliable messages dropped because a client's send budget was spent. */
     ROCKETNET_SERVER_COUNTER_BUDGET_DROPS,          // messages: unreliable messages dropped because a client's send budget was spent
-    /** @brief Messages: received messages still held when an update was refused. */
+    /** @brief Messages: received messages still held at an update, which takes them back and returns ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. */
     ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED, // messages: received messages still held when an update was refused
     /** @brief Number of selectors; do not pass this sentinel to a query. */
     ROCKETNET_SERVER_COUNTER_COUNT
@@ -1398,7 +1398,6 @@ ROCKETNET_EXPORT int rocketnet_server_default_config_sized( struct rocketnet_ser
 // the defaults with the published development keys and test filter. The
 // unsized form writes the revision-1 prefix; use the sized form for current fields.
 // a NULL config is a counted no-op.
-// the defaults with the published development keys and test filter. a NULL config is a counted no-op.
 /**
  * @brief Fill a server config with published development keys and test filter.
  * @param config Writable output config; NULL is a counted no-op.
@@ -1544,7 +1543,7 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_ser
 /**
  * @brief Disconnect one server client and free its slot.
  * @param server Server handle returned by create; NULL is a counted no-op.
- * @param client_index Server slot index from 0 through max_clients - 1; invalid slots are refused or return 0.
+ * @param client_index Server slot index from 0 through max_clients - 1; an invalid slot does nothing.
  */
 ROCKETNET_EXPORT void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int client_index );
 
@@ -1596,7 +1595,7 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish( struct rocketnet_server_t * s
 /**
  * @brief Cancel a pending server message reservation.
  * @param server Server handle returned by create; NULL is a counted no-op.
- * @param client_index Server slot index from 0 through max_clients - 1; invalid slots are refused or return 0.
+ * @param client_index Server slot index from 0 through max_clients - 1; an invalid slot does nothing.
  */
 ROCKETNET_EXPORT void rocketnet_server_abort( struct rocketnet_server_t * server, int client_index );
 
@@ -1633,7 +1632,7 @@ ROCKETNET_EXPORT int rocketnet_server_receive( struct rocketnet_server_t * serve
  * @brief Release a borrowed server message view.
  * Release each successful view exactly once before the next update; do not free it.
  * @param server Server handle returned by create; NULL is a counted no-op.
- * @param client_index Server slot index from 0 through max_clients - 1; invalid slots are refused or return 0.
+ * @param client_index Server slot index from 0 through max_clients - 1; an invalid slot does nothing.
  * @param data Borrowed view returned by a successful receive for this slot; NULL is a counted no-op.
  */
 ROCKETNET_EXPORT void rocketnet_server_release( struct rocketnet_server_t * server, int client_index, const uint8_t * data );
