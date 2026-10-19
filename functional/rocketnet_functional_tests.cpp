@@ -8071,6 +8071,9 @@ extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
+extern void macos_client_timing_default_qos();
+extern void macos_client_timing_taskpolicy_background();
+extern void macos_client_timing_background_thread_qos();
 
 // A destroyed client's receive thread always exits: destroy stores quit and
 // wakes the receive thread's wait explicitly before the join. These cases use
@@ -8184,6 +8187,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
+    { "macos_client_timing_default_qos", macos_client_timing_default_qos },
+    { "macos_client_timing_taskpolicy_background", macos_client_timing_taskpolicy_background },
+    { "macos_client_timing_background_thread_qos", macos_client_timing_background_thread_qos },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait },
