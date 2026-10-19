@@ -186,3 +186,30 @@ The client and server creates return a handle or `NULL`; the sized forms take
 the config size and write no separate status code, a size refusal included. A
 game that needs both a handle and a status uses the log line and
 `rocketnet_api_misuse_count`.
+
+## 8. The Public Counter and Stat Enums
+
+A public enum that ends in a `_COUNT` value is an enum whose members are read
+one at a time through a query, not a struct that travels as a block. The
+`_COUNT` member is its end marker: `ROCKETNET_CLIENT_COUNTER_COUNT`,
+`ROCKETNET_SERVER_COUNTER_COUNT`, `ROCKETNET_CLIENT_STAT_COUNT`,
+`ROCKETNET_SERVER_STAT_COUNT`, `ROCKETNET_SERVER_CLIENT_COUNTER_COUNT` and
+`ROCKETNET_SERVER_CLIENT_STAT_COUNT`.
+
+The rule is the enum form of section 1's append-only rule:
+
+1. **A new member goes immediately before `_COUNT`.** Every earlier member
+   keeps its value, and `_COUNT` moves up by one so it still names the number
+   of members.
+2. **A member is never removed, reordered or renamed.** A retired member keeps
+   its value and its query returns its documented zero, the same way a retired
+   counter keeps its index in `sdk/rocketnet_counters.h`.
+3. **`_COUNT` is never a query argument.** A query given `_COUNT`, or any other
+   value outside the enum, returns its documented zero.
+4. **The enums need no sized entry points.** A query names one member and
+   returns one value, so there is no block whose layout a revision changes;
+   an older caller that does not know a new member simply never asks for it.
+
+A counter member is wired to the internal counter of the same meaning in
+`sdk/rocketnet_counters.h`; the query is the public face of that internal
+count, and a member with no internal counter and no code path is not admitted.
