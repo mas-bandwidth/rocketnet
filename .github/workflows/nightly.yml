@@ -100,7 +100,8 @@ jobs:
       - name: Run serialization surface (portable)
         shell: bash
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/Debug/test_serialize.exe
           ./bin/Debug/test_lifecycle.exe

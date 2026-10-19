@@ -492,8 +492,10 @@ name uppercased. On the server `max_clients` is `ROCKETNET_SERVER_MAX_CLIENTS`,
 `driver` is `ROCKETNET_SERVER_TRANSPORT`, `public_address` is
 `ROCKETNET_SERVER_PUBLIC_ADDRESS`; on the client `driver` is
 `ROCKETNET_CLIENT_TRANSPORT`. A field's old process-wide spelling
-(`ROCKETNET_MAX_CLIENTS`, `ROCKETNET_DRIVER`, `ROCKETNET_PUBLIC_ADDRESS`) is
-refused aloud with the per-endpoint name to use instead. Byte fields (keys,
+(`ROCKETNET_MAX_CLIENTS`, `ROCKETNET_TRANSPORT`, `ROCKETNET_PUBLIC_ADDRESS`) is
+refused aloud with the per-endpoint name to use instead, and so are the old
+driver names `ROCKETNET_DRIVER`, `ROCKETNET_SERVER_DRIVER` and
+`ROCKETNET_CLIENT_DRIVER`. Byte fields (keys,
 filter value) are base64. An environment variable set to the empty string is
 treated as unset, with a log line saying so.
 

@@ -231,7 +231,7 @@ jobs:
 
       - name: Run unit tests with the driver pin preserved
         if: contains(matrix.leg, 'b')
-        run: ROCKETNET_DRIVER=portable ./bin/test
+        run: ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test
 
       - name: Ambient config isolation and passing output
         if: contains(matrix.leg, 'b')
@@ -257,7 +257,8 @@ jobs:
       - name: Run lifecycle unit binary
         if: contains(matrix.leg, 'a')
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
       - name: Check production library boundary
@@ -484,7 +485,8 @@ jobs:
         if: matrix.leg == 'a'
         shell: bash
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/Release/test_lifecycle.exe
 
       - name: Memory plans against allocator observations
@@ -560,7 +562,8 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test
 
       - name: Run functional suite under sanitizers
@@ -574,7 +577,8 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/test_lifecycle
           ./bin/test_driver
@@ -1103,7 +1107,8 @@ jobs:
         if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: setarch "$(uname -m)" -R ./bin/test_lifecycle
 
   # THE PINNED-SODIUM LEG.

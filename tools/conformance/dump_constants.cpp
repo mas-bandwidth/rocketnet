@@ -112,7 +112,7 @@ int main()
 {
     const uint8_t test_filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
-    printf( "ROCKETNET_VERSION 0x%08X\n", (unsigned int) ROCKETNET_WIRE_VERSION );
+    printf( "ROCKETNET_WIRE_VERSION 0x%08X\n", (unsigned int) ROCKETNET_WIRE_VERSION );
 
     printf( "ROCKETNET_TEST_FILTER_VALUE" );
     for ( int i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; i++ )

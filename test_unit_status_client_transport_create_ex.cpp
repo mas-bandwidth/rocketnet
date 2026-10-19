@@ -33,6 +33,7 @@
 #include "rocketnet_connect_token.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -47,6 +48,34 @@ static int setenv( const char * name, const char * value, int overwrite )
 
 static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 #endif
+
+// the cases test struct transport lists, so the test sets the caller's env pin aside
+// for its duration and puts it back after: the env pin wins over the struct
+// by design, so a CI leg pinned by ROCKETNET_CLIENT_TRANSPORT would otherwise
+// never reach the struct's list
+
+struct env_pin_saved
+{
+    bool was_set;
+    char value[256];
+};
+
+static void env_pin_set_aside( env_pin_saved * saved )
+{
+    const char * value = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
+    saved->was_set = value != NULL;
+    saved->value[0] = '\0';
+    if ( value )
+        snprintf( saved->value, sizeof(saved->value), "%s", value );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+}
+
+static void env_pin_put_back( const env_pin_saved * saved )
+{
+    if ( saved->was_set )
+        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
+}
+
 
 
 #define check rocketnet_unit_check
@@ -105,6 +134,9 @@ static void client_create_ex_expected_null_assert( const char *, const char *, c
 
 static void client_transport_create_ex_reports_every_status()
 {
+    env_pin_saved pin;
+    env_pin_set_aside( &pin );
+
     allocator_state state = { 0, 0, 0 };
     int status = -1;
 
@@ -227,6 +259,8 @@ static void client_transport_create_ex_reports_every_status()
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+
+    env_pin_put_back( &pin );
 }
 
 REGISTER_UNIT_TEST( client_transport_create_ex_reports_every_status );

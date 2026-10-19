@@ -105,7 +105,7 @@ The message layer of docs/CHANNELS.md: channels, priorities, budgets and one fix
 
 ## Drivers
 
-The server socket drivers below the transport, selected at runtime by the per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT; the process-wide ROCKETNET_DRIVER is refused aloud (sdk/rocketnet_config.cpp). Loopback is pin-only.
+The server socket drivers below the transport, selected at runtime by the per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT; the old names ROCKETNET_DRIVER, ROCKETNET_TRANSPORT, ROCKETNET_SERVER_DRIVER and ROCKETNET_CLIENT_DRIVER are refused aloud and never applied (sdk/rocketnet_config.cpp). Loopback is pin-only.
 
 | feature | portable | gso | msgx | iocp | xdp | io_uring | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|

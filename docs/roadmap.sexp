@@ -91,7 +91,7 @@
     (:feature "Flows: server-side subscription groups (later)" :cells (n) :note "REQUIREMENTS.md step 3")))
 
   (:id "drivers" :title "Drivers"
-   :text "The server socket drivers below the transport, selected at runtime by the per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT; the process-wide ROCKETNET_DRIVER is refused aloud (sdk/rocketnet_config.cpp). Loopback is pin-only."
+   :text "The server socket drivers below the transport, selected at runtime by the per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT; the old names ROCKETNET_DRIVER, ROCKETNET_TRANSPORT, ROCKETNET_SERVER_DRIVER and ROCKETNET_CLIENT_DRIVER are refused aloud and never applied (sdk/rocketnet_config.cpp). Loopback is pin-only."
    :columns ("portable" "gso" "msgx" "iocp" "xdp" "io_uring" "loopback")
    :rows
     ((:feature "Server driver" :cells (y y y y y y y) :evidence "portable: rocketnet_server_socket_linux.cpp; gso 0801c9a; msgx 8d54e30; iocp 45da97d; xdp c0b0928; io_uring f7cfe0f and 7be058d (test_server_uring_probe, test_server_uring_wire_ipv4, test_server_uring_wire_ipv6, test_server_uring_wire_dual_stack, test_server_uring_send_overflow, test_server_uring_receive_rearms_after_no_buffers); loopback bfcb888 (driver_loopback_binds_and_discovers_a_port, driver_loopback_exchanges_both_ways, driver_loopback_full_queue_drops_and_counts, driver_loopback_destroy_frees_the_port)")

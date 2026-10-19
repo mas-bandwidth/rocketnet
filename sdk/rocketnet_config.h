@@ -44,7 +44,7 @@ const struct rocketnet_config_field_t * rocketnet_client_transport_config_fields
 
 const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields( int * num_fields );
 
-// the mechanical env var derivation: "driver" -> "ROCKETNET_DRIVER". this
+// the mechanical env var derivation: "driver" -> "ROCKETNET_TRANSPORT". this
 // is the pre-ruling process-wide spelling; it is kept only to NAME the old
 // variable a create refuses aloud (see rocketnet_config_apply_env). returns
 // false when the buffer cannot hold the derived name.

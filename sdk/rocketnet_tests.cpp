@@ -12117,7 +12117,7 @@ void rocketnet_test_send_arena()
 // ----------------------------------------------------------------
 
 // env guard: the suite may itself run under a driver matrix leg
-// (ROCKETNET_DRIVER=... ./bin/test), so every test that touches the
+// (ROCKETNET_SERVER_TRANSPORT=... ./bin/test), so every test that touches the
 // environment saves what it found and puts it back
 
 struct rocketnet_test_env_guard_t
@@ -12689,6 +12689,79 @@ void rocketnet_test_config_env_names_are_per_endpoint()
     rocketnet_test_env_restore( &client_guard );
 }
 
+// "transport, never driver, no alias": each old spelling of the transport
+// pin is refused aloud and never applied. the four names are the
+// process-wide ROCKETNET_DRIVER and ROCKETNET_TRANSPORT and the per-endpoint
+// ROCKETNET_SERVER_DRIVER and ROCKETNET_CLIENT_DRIVER. apply_env runs on
+// structs; no socket is opened.
+
+static void rocketnet_test_config_refuses_old_transport_name( const char * old_name, bool server_names_it, bool client_names_it )
+{
+    static const char * names[] = { "ROCKETNET_DRIVER", "ROCKETNET_TRANSPORT", "ROCKETNET_SERVER_DRIVER", "ROCKETNET_CLIENT_DRIVER", "ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT" };
+    const int num_names = (int) ( sizeof(names) / sizeof(names[0]) );
+    struct rocketnet_test_env_guard_t guards[6];
+    for ( int i = 0; i < num_names; i++ )
+        rocketnet_test_env_clear( &guards[i], names[i] );
+
+    int num_server_fields = 0;
+    const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
+    int num_client_fields = 0;
+    const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
+
+    struct rocketnet_server_transport_config_t server_config;
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_server_transport_default_config( &server_config );
+    rocketnet_client_transport_default_config( &client_config );
+
+    setenv( old_name, "loopback", 1 );
+
+    const int saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+
+    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
+    const bool server_refused = strstr( rocketnet_test_captured_log, old_name ) != NULL &&
+                                strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_TRANSPORT" ) != NULL;
+
+    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
+    const bool client_refused = strstr( rocketnet_test_captured_log, old_name ) != NULL &&
+                                strstr( rocketnet_test_captured_log, "ROCKETNET_CLIENT_TRANSPORT" ) != NULL;
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
+
+    // refused aloud by the endpoint the name addresses, and applied by neither
+    rocketnet_check( server_refused == server_names_it );
+    rocketnet_check( client_refused == client_names_it );
+    rocketnet_check( strcmp( server_config.driver, "auto" ) == 0 );
+    rocketnet_check( strcmp( client_config.driver, "auto" ) == 0 );
+
+    for ( int i = num_names - 1; i >= 0; i-- )
+        rocketnet_test_env_restore( &guards[i] );
+}
+
+void rocketnet_test_config_refuses_rocketnet_driver()
+{
+    rocketnet_test_config_refuses_old_transport_name( "ROCKETNET_DRIVER", true, true );
+}
+
+void rocketnet_test_config_refuses_rocketnet_transport()
+{
+    rocketnet_test_config_refuses_old_transport_name( "ROCKETNET_TRANSPORT", true, true );
+}
+
+void rocketnet_test_config_refuses_rocketnet_server_driver()
+{
+    rocketnet_test_config_refuses_old_transport_name( "ROCKETNET_SERVER_DRIVER", true, false );
+}
+
+void rocketnet_test_config_refuses_rocketnet_client_driver()
+{
+    rocketnet_test_config_refuses_old_transport_name( "ROCKETNET_CLIENT_DRIVER", false, true );
+}
+
 void rocketnet_test_handshake_deadline_is_configured()
 {
     struct rocketnet_server_transport_config_t config;
@@ -13240,7 +13313,6 @@ class rocketnet_test_environment_t
     std::vector<entry_t> entries;
     void clear(const char * name)
     {
-        if (strcmp(name, "ROCKETNET_DRIVER") == 0) return;
         if (strcmp(name, "ROCKETNET_SERVER_TRANSPORT") == 0) return;
         if (strcmp(name, "ROCKETNET_CLIENT_TRANSPORT") == 0) return;
         for (const auto & entry : entries) if (entry.name == name) return;
@@ -13270,6 +13342,10 @@ public:
         clear("ROCKETNET_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
         clear("ROCKETNET_PUMP");
+        clear("ROCKETNET_DRIVER");
+        clear("ROCKETNET_TRANSPORT");
+        clear("ROCKETNET_SERVER_DRIVER");
+        clear("ROCKETNET_CLIENT_DRIVER");
     }
     ~rocketnet_test_environment_t()
     {
@@ -13281,8 +13357,19 @@ public:
 
 void rocketnet_test_suite_environment()
 {
-    const std::string original_driver = getenv("ROCKETNET_DRIVER") ? getenv("ROCKETNET_DRIVER") : "";
-    const bool driver_present = getenv("ROCKETNET_DRIVER") != NULL;
+    const std::string original_server = getenv("ROCKETNET_SERVER_TRANSPORT") ? getenv("ROCKETNET_SERVER_TRANSPORT") : "";
+    const bool server_present = getenv("ROCKETNET_SERVER_TRANSPORT") != NULL;
+    const std::string original_client = getenv("ROCKETNET_CLIENT_TRANSPORT") ? getenv("ROCKETNET_CLIENT_TRANSPORT") : "";
+    const bool client_present = getenv("ROCKETNET_CLIENT_TRANSPORT") != NULL;
+    const char * old_names[] = { "ROCKETNET_DRIVER", "ROCKETNET_TRANSPORT", "ROCKETNET_SERVER_DRIVER", "ROCKETNET_CLIENT_DRIVER" };
+    std::string old_values[4];
+    bool old_present[4];
+    for (int i = 0; i < 4; ++i)
+    {
+        old_present[i] = getenv(old_names[i]) != NULL;
+        old_values[i] = old_present[i] ? getenv(old_names[i]) : "";
+        rocketnet_check(setenv(old_names[i], "portable", 1) == 0);
+    }
     rocketnet_check(unsetenv("ROCKETNET_SERVER_PUBLIC_ADDRESS") == 0);
     const std::string long_value(4096, 'x');
     rocketnet_check(setenv("ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str(), 1) == 0);
@@ -13292,8 +13379,18 @@ void rocketnet_test_suite_environment()
         rocketnet_check(getenv("ROCKETNET_SERVER_MAX_CLIENTS") == NULL);
         rocketnet_check(getenv("ROCKETNET_PUMP") == NULL);
         rocketnet_check(setenv("ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:1234", 1) == 0);
-        rocketnet_check((getenv("ROCKETNET_DRIVER") != NULL) == driver_present);
-        if (driver_present) rocketnet_check(original_driver == getenv("ROCKETNET_DRIVER"));
+        // the caller's transport pins are kept; every old name is cleared
+        rocketnet_check((getenv("ROCKETNET_SERVER_TRANSPORT") != NULL) == server_present);
+        if (server_present) rocketnet_check(original_server == getenv("ROCKETNET_SERVER_TRANSPORT"));
+        rocketnet_check((getenv("ROCKETNET_CLIENT_TRANSPORT") != NULL) == client_present);
+        if (client_present) rocketnet_check(original_client == getenv("ROCKETNET_CLIENT_TRANSPORT"));
+        for (int i = 0; i < 4; ++i)
+            rocketnet_check(getenv(old_names[i]) == NULL);
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        rocketnet_check(getenv(old_names[i]) != NULL && strcmp(getenv(old_names[i]), "portable") == 0);
+        rocketnet_check((old_present[i] ? setenv(old_names[i], old_values[i].c_str(), 1) : unsetenv(old_names[i])) == 0);
     }
     rocketnet_check(getenv("ROCKETNET_SERVER_PUBLIC_ADDRESS") == NULL);
     rocketnet_check(getenv("ROCKETNET_SERVER_MAX_CLIENTS") != NULL);
@@ -14382,6 +14479,10 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_public_config_env_round_trip", rocketnet_test_public_config_env_round_trip },
     { "test_public_config_resolve", rocketnet_test_public_config_resolve },
     { "test_config_env_names_are_per_endpoint", rocketnet_test_config_env_names_are_per_endpoint },
+    { "test_config_refuses_rocketnet_driver", rocketnet_test_config_refuses_rocketnet_driver },
+    { "test_config_refuses_rocketnet_transport", rocketnet_test_config_refuses_rocketnet_transport },
+    { "test_config_refuses_rocketnet_server_driver", rocketnet_test_config_refuses_rocketnet_server_driver },
+    { "test_config_refuses_rocketnet_client_driver", rocketnet_test_config_refuses_rocketnet_client_driver },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_handshake_deadline_is_configured", rocketnet_test_handshake_deadline_is_configured },
     { "test_config_validation", rocketnet_test_config_validation },

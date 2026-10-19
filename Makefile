@@ -6,9 +6,10 @@ build:
 	@mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && $(MAKE) $(if $(filter -j%,$(MAKEFLAGS)),,-j$(JOBS)) --no-print-directory
 
 # driver selection is runtime now (#106): one build carries every driver its
-# platform has, and ROCKETNET_DRIVER (or the config's driver field) selects
-# at create -- the functional suite against each rung is the matrix proving the
-# abstraction, e.g. ROCKETNET_DRIVER=portable ./bin/functional
+# platform has, and ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT (or
+# the config's transport field) select at create -- the functional suite against
+# each rung is the matrix proving the abstraction, e.g.
+# ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
 
 .PHONY: docs docs-undocumented
 docs:

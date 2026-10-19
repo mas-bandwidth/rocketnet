@@ -475,6 +475,34 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     return true;
 }
 
+// "transport, never driver, no alias" (Glenn, 2026-10-18). the table row
+// "driver" is read only as ROCKETNET_<ENDPOINT>_TRANSPORT. the old driver
+// spellings, process-wide ROCKETNET_DRIVER and per-endpoint
+// ROCKETNET_<ENDPOINT>_DRIVER, are refused aloud, naming the variable to use
+// now, and their values are never applied. (the process-wide
+// ROCKETNET_TRANSPORT is refused by the general legacy rule in
+// rocketnet_config_apply_env.)
+
+static void rocketnet_config_refuse_driver_names( const char * transport_name, const char * env_name )
+{
+    char endpoint_driver[128];
+    const int written = snprintf( endpoint_driver, sizeof(endpoint_driver), "ROCKETNET_%s_DRIVER", transport_name );
+    if ( written <= 0 || written >= (int) sizeof(endpoint_driver) )
+        endpoint_driver[0] = '\0';
+    for ( int i = 0; endpoint_driver[i] != '\0'; i++ )
+        endpoint_driver[i] = (char) toupper( (unsigned char) endpoint_driver[i] );
+
+    const char * old_names[2] = { "ROCKETNET_DRIVER", endpoint_driver };
+    for ( int i = 0; i < 2; i++ )
+    {
+        if ( old_names[i][0] == '\0' )
+            continue;
+        const char * value = rocketnet_platform_getenv( old_names[i] );
+        if ( value && value[0] != '\0' )
+            rocketnet_error( "%s config refuses %s: the transport is chosen by %s (transport, never driver)", transport_name, old_names[i], env_name );
+    }
+}
+
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
 {
     rocketnet_assert( transport_name );
@@ -507,6 +535,9 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         const char * legacy_value = rocketnet_platform_getenv( legacy_name );
         if ( legacy_value && legacy_value[0] != '\0' )
             rocketnet_error( "%s config ignores the process-wide %s: use the per-endpoint %s instead", transport_name, legacy_name, env_name );
+
+        if ( strcmp( field->name, "driver" ) == 0 )
+            rocketnet_config_refuse_driver_names( transport_name, env_name );
 
         const char * value = rocketnet_platform_getenv( env_name );
         if ( !value )
@@ -800,7 +831,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
     // a list whose every name was skipped names no driver for this endpoint
     // at all -- a fleet-wide line read by an endpoint it was not addressing
-    // (ROCKETNET_DRIVER=gso on a box that also runs a client). bricking
+    // (ROCKETNET_SERVER_TRANSPORT=gso and ROCKETNET_CLIENT_TRANSPORT=gso on a box that also runs a client). bricking
     // that endpoint would break the one-line-deploys-everywhere guarantee
     // the ignore rule exists for, so the endpoint falls to its own auto
     // order, loudly. a list with at least one applicable candidate keeps

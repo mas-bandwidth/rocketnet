@@ -37,6 +37,33 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 #endif
 
 
+// the cases test struct transport lists, so the test sets the caller's env pin aside
+// for its duration and puts it back after: the env pin wins over the struct
+// by design, so a CI leg pinned by ROCKETNET_SERVER_TRANSPORT would otherwise
+// never reach the struct's list
+
+struct env_pin_saved
+{
+    bool was_set;
+    char value[256];
+};
+
+static void env_pin_set_aside( env_pin_saved * saved )
+{
+    const char * value = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    saved->was_set = value != NULL;
+    saved->value[0] = '\0';
+    if ( value )
+        snprintf( saved->value, sizeof(saved->value), "%s", value );
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+}
+
+static void env_pin_put_back( const env_pin_saved * saved )
+{
+    if ( saved->was_set )
+        setenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, 1 );
+}
+
 #define check rocketnet_unit_check
 
 struct allocator_state
@@ -95,6 +122,9 @@ static void server_create_ex_expected_null_assert( const char *, const char *, c
 
 static void server_transport_create_ex_reports_every_status()
 {
+    env_pin_saved pin;
+    env_pin_set_aside( &pin );
+
     allocator_state state = { 0, 0, 0 };
     int status = -1;
 
@@ -278,6 +308,8 @@ static void server_transport_create_ex_reports_every_status()
         check( reached_success );
         state.fail_at = 0;
     }
+
+    env_pin_put_back( &pin );
 }
 
 REGISTER_UNIT_TEST( server_transport_create_ex_reports_every_status );

@@ -3247,7 +3247,7 @@ void rocketnet_test_config_precedence()
 
 // the rung-forcing exchange: pin a driver list on the server, expect the
 // named grant, and pass real payloads both ways through it -- the matrix
-// doctrine's runtime form. the pin rides the struct, so ROCKETNET_DRIVER
+// doctrine's runtime form. the pin rides the struct, so ROCKETNET_SERVER_TRANSPORT
 // is cleared for the duration (env would win, by design). port zero per
 // the #107 law: the kernel grants the port and the token is minted for
 // what was granted, so no other process on the box can race this test.
@@ -3269,7 +3269,7 @@ static bool rocketnet_test_skip_for_driver_env_pin( const char * test_name, cons
 static void rocketnet_test_driver_pin_exchange( const char * driver_list, const char * expected_driver )
 {
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -4175,7 +4175,7 @@ void rocketnet_test_server_port_zero_driver()
         return;
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     int num_available = 0;
     const int * available = rocketnet_server_driver_availability( &num_available );
@@ -4320,7 +4320,7 @@ void rocketnet_test_server_driver_pin_gso()
     // loudly, never clamped
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -4365,7 +4365,7 @@ void rocketnet_test_server_driver_pin_io_uring()
     // never clamped
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -4403,7 +4403,7 @@ void rocketnet_test_server_driver_pin_xdp()
     // before create's first committing act.
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40111", 7 );
 
@@ -4447,7 +4447,7 @@ void rocketnet_test_server_driver_ladder_fall()
     // whether to stand down.
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40112", 7 );
 
@@ -4489,7 +4489,7 @@ void rocketnet_test_driver_pump_alias()
     // refusal, so the auto ladder lands on portable
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     struct rocketnet_test_env_guard_t pump_guard;
     rocketnet_test_env_save( &pump_guard, "ROCKETNET_PUMP" );
@@ -4533,7 +4533,7 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     // test and the pump-alias msgx pin prove that side.
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -4581,7 +4581,7 @@ void rocketnet_test_config_env_aliases()
     rocketnet_test_env_save( &successor_guard, "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
     // the alias is honored where the successor is unset...
 
@@ -4643,7 +4643,7 @@ void rocketnet_test_client_driver()
         return;
 
     struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:41040", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
@@ -4676,7 +4676,7 @@ void rocketnet_test_client_driver()
     // the staged linux drivers are not client transports: a list naming
     // only them is an all-skipped list for the client endpoint, which
     // falls to the client's auto order rather than bricking every client
-    // in a process that shares the fleet's ROCKETNET_DRIVER value
+    // in a process that shares the fleet's transport list
 
     snprintf( config.driver, sizeof(config.driver), "gso" );
     client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
