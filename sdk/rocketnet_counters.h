@@ -575,7 +575,16 @@
     /* gate and before any AEAD open (STANDARD.md, Reading packets). */ \
     /* appended: indices are the contract. */ \
     X( CLIENT_CHALLENGE_WRONG_SIZE, REFUSAL, CLIENT_CHALLENGE_RECEIVED ) \
-    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED )
+    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED ) \
+    \
+    /* The two token-time refusals that were merged into */ \
+    /* CONNECTION_REQUEST_TOKEN_EXPIRED, split out so each refusal reason has */ \
+    /* its own counter (STANDARD.md, Counters: refusal reasons are never */ \
+    /* merged; Processing Connection Requests, the request order). They sit */ \
+    /* beside TOKEN_EXPIRED in class and parent, and are appended here because */ \
+    /* the indices are the contract. */ \
+    X( CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
+    X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED )
 
 enum
 {
