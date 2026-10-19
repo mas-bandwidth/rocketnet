@@ -262,7 +262,7 @@ the server:
 2. Receive and release every received message with the receive and release
    calls.
 3. Run the game simulation for the frame.
-4. Queue this frame's outgoing messages with start and finish.
+4. Queue this frame's outgoing messages with start message and finish message.
 5. Call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
    **last**, after all of this frame's messages are queued.
 
@@ -309,13 +309,13 @@ received view from the last update was not released.
 
 ## Sending messages
 
-The send is start, write the message once in place, then finish:
+The send is start message, write the message once in place, then finish message:
 `rocketnet_client_start_message` or `rocketnet_server_start_message` returns a pointer into the
-connection's region, and finish queues the bytes written and returns the
-serial, nonzero, or `0` when the send was refused. Abort gives the room back.
-One start is pending per object at a time. To send one message to every
+connection's region, and finish message queues the bytes written and returns the
+serial, nonzero, or `0` when the send was refused. Abort message gives the room back.
+One start message is pending per object at a time. To send one message to every
 connected client, loop over the slots with `rocketnet_server_client_connected`
-and start and finish for each. A destination id is a client index today
+and start message and finish message for each. A destination id is a client index today
 (`uint64_t`); ids with `ROCKETNET_FLOW_ID_BIT` set are reserved for flows.
 
 The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,

@@ -8138,7 +8138,7 @@ void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
         // token's lifetime across 1000 cycles. 127.0.0.1:40000 is never
         // opened: the loopback driver opens no socket
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time( NULL ), token ) );
+        rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time( NULL ), token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, game_time );
         rocketnet_check( client != NULL );
         rocketnet_client_transport_destroy( client );
