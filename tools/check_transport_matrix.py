@@ -7,12 +7,13 @@ preferences (zero: not available for that endpoint). For every OS CI builds
 (Linux, macOS, Windows) the row builds for, a server-capable driver needs a
 cell in that OS's TRANSPORT_MATRIX_<OS> block with it as the server
 transport, and a client-capable driver needs a cell with it as the client
-transport. xdp is the one exception: it needs root and a VM guest, and its
-cells are owed by rocketnet-xdp-serves-ipv6.
+transport. No driver is exempt.
 
 Each matrix block must also sit in a step that runs the three family cases
 and driver_env_pin_is_honoured, and every expected-fail mark must name a
-case it runs and a card. Exits 0 with one OK line, or 1 naming each gap.
+case it runs and a card. An xdp cell needs root, a namespace and a veth
+pair, so its step must run the xdp family cases inside a virtme-ng guest
+(vng). Exits 0 with one OK line, or 1 naming each gap.
 Standard library only.
 """
 
@@ -32,13 +33,17 @@ PLATFORMS = {
     "ROCKETNET_DRIVER_WINDOWS": {"WINDOWS"},
 }
 
-EXEMPT = {"xdp": "needs root and a VM guest; its cells are owed by rocketnet-xdp-serves-ipv6"}
 
 CASES = (
     "test_transport_udp_loopback",
     "test_transport_ipv6_loopback",
     "test_transport_dual_stack_ipv4_client",
     "driver_env_pin_is_honoured",
+)
+
+XDP_CASES = (
+    "xdp_max_size_both_ways_ipv4",
+    "xdp_max_size_both_ways_ipv6",
 )
 
 ROW = re.compile(r'^ROCKETNET_DRIVER\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)
@@ -99,6 +104,12 @@ def main():
                     problems.append(f"TRANSPORT_MATRIX_{os_name}: its step does not run {case}")
             if "--run" not in step:
                 problems.append(f"TRANSPORT_MATRIX_{os_name}: its step does not run cases by --run")
+            if any(cell and cell[0] == "xdp" for cell in cells):
+                for case in XDP_CASES:
+                    if case not in step:
+                        problems.append(f"TRANSPORT_MATRIX_{os_name}: it has an xdp cell but its step does not run {case}")
+                if "vng --run" not in step:
+                    problems.append(f"TRANSPORT_MATRIX_{os_name}: it has an xdp cell but its step does not run it inside a virtme-ng guest (vng --run)")
             for cell in cells:
                 if len(cell) < 2:
                     problems.append(f"TRANSPORT_MATRIX_{os_name}: cell '{' '.join(cell)}' names no client transport")
@@ -112,8 +123,6 @@ def main():
         if platforms not in PLATFORMS:
             problems.append(f"driver {name}: platform set {platforms} is unknown to this check")
             continue
-        if name in EXEMPT:
-            continue
         for os_name in sorted(PLATFORMS[platforms]):
             cells = [cell for cells, _ in blocks.get(os_name, []) for cell in cells if len(cell) >= 2]
             if serves and not any(cell[0] == name for cell in cells):
@@ -125,8 +134,7 @@ def main():
         print(f"TRANSPORT-MATRIX-MISSING {line}")
     if problems:
         return 1
-    exempt = ", ".join(f"{k} ({v})" for k, v in EXEMPT.items())
-    print(f"TRANSPORT-MATRIX OK drivers={len(rows)} cells={sum(len(c) for b in blocks.values() for c, _ in b)} exempt: {exempt}")
+    print(f"TRANSPORT-MATRIX OK drivers={len(rows)} cells={sum(len(c) for b in blocks.values() for c, _ in b)}")
     return 0
 
 

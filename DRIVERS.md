@@ -199,28 +199,48 @@ The send staging, the two receive banks and destroy are modelled in
 
 ## The XDP receive filter
 
-The AF_XDP transport (`xdp`) serves IPv4. IPv6 runs on the other server
-transports: `gso`, `io_uring` and `portable`.
+`server_xdp/server_xdp.c` accepts both address families. IPv4 is parsed as
+before (a 20-byte header, UDP). IPv6 is parsed as the fixed 40-byte header with
+UDP directly behind it. Both families then run one shared function: the
+destination port and address against the config map, the wire size bounds, the
+filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the redirect
+into the XSKMAP for the receive queue. The counters are the same for both
+families. The IPv6 destination is `public_address_ipv6` in
+`rocketnet_server_xdp_config_t`; all zero accepts any destination, as a zero
+`public_address` does for IPv4.
 
-`server_xdp/server_xdp.c` parses IPv4 (a 20-byte header, UDP) and checks the
-destination port and address against the config map, the wire size bounds,
-the filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the
-redirect into the XSKMAP for the receive queue. Every frame that is not IPv4
-passes to the kernel stack: an IPv6 frame is never redirected and never
-dropped, so the kernel sees IPv6 untouched. An IPv6 frame whose next header is
-an extension header (hop-by-hop 0, routing 43, fragment 44, destination
-options 60, AH 51 or ESP 50) is counted as it passes, in
-`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`; every other IPv6 frame
-passes uncounted. `public_address_ipv6` in `rocketnet_server_xdp_config_t` is
-not read.
+An IPv6 frame whose next header is an extension header (hop-by-hop 0, routing
+43, fragment 44, destination options 60, AH 51 or ESP 50) passes to the kernel
+stack through one named branch and increments
+`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`. The program never walks
+an extension chain and never drops one, so IPv6 fragments pass. Every other
+non-UDP next header, ICMPv6 (neighbor discovery) above all, passes uncounted,
+as non-UDP IPv4 does.
 
-The AF_XDP receive loop reads a frame at the fixed IPv4 offsets only after
-`rocketnet_xdp_frame_receive_ipv4` (`sdk/rocketnet_xdp_frame.h`) finds the
-IPv4 ethertype. A frame with any other ethertype is dropped and counted, never
-parsed. A server create with an IPv6 public address takes `xdp` out of its
-transport list: `auto` falls to the next transport, and a list that names only
-`xdp` is refused with `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST` and one error
-line that names the transports that serve IPv6.
+The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves the
+family of its public address, IPv4 or IPv6, and the ladder offers `xdp` for
+either. The receive loop dispatches each frame on its ethertype through
+`rocketnet_xdp_frame_receive` (`sdk/rocketnet_xdp_frame.h`): IPv4 at its
+offsets, IPv6 at the 40-byte fixed header, and the from-address carries the
+family it read. A frame it does not take is dropped and counted by reason:
+another ethertype (`not_ip`), an IPv6 extension header (`ipv6_extension`,
+never parsed at the UDP offsets), the family the server does not serve
+(`other_family`), or a frame the parse refuses or too short for any server
+packet (`malformed`). The flush builds each reply with the server's own
+address as the source, and an IPv6 reply carries the UDP checksum computed in
+software. Create and the pre-flight find the interface carrying the address
+over `AF_INET` or `AF_INET6` and refuse an IPv6 link-local address (fe80::/10)
+by name. The IPv6 gateway MAC comes from `ip -6 route show default dev <if>`
+and `ip -6 neigh show dev <if>`, the twin of the IPv4 discovery;
+`ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides either.
+
+Dual stack: one server owns one public address, so one family. The config map
+holds the server's address in its family's slot and that family's loopback
+address in the other slot (zero would accept any destination), so the program
+redirects only the server's family and passes the other to the kernel. One
+interface takes one XDP program, so a machine that serves both families on
+one interface runs `xdp` for one family and another transport (`gso`,
+`io_uring` or `portable`) for the other.
 
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
@@ -285,10 +305,10 @@ counter). Each row checks its verdict, its counter, and that every other
 counter stayed at zero. Each frame is copied into a heap allocation of
 exactly its length, so the sanitizer legs catch a read past `data_end`.
 
-The host tier covers the address and port match, the size bounds, the epoch
-and filter value, every type at every size against the STANDARD.md size
-table, the redirect decision per receive queue, and, for every IPv6 frame,
-the pass to the kernel stack with the extension and fragment counts. It also covers the `config == NULL`
+The host tier covers both address families, the address and port match, the
+size bounds, the epoch and filter value, every type at every size against the
+STANDARD.md size table, the IPv6 extension and fragment passes, and the
+redirect decision per receive queue. It also covers the `config == NULL`
 branch, which the kernel's one-entry array never reaches. Only the kernel
 tier (`test_xdp_filter`) shows what the verifier accepts, the real helpers'
 behaviour, and the real per-CPU and XSKMAP maps. The host target is built for
