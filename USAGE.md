@@ -111,6 +111,12 @@ known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
 end reports the transport that won.
 
+Every transport serves IPv4 and IPv6, the AF_XDP server transport (`xdp`)
+included: a server serves the family of its public address, and `"auto"`
+tries `xdp` first for either family. One interface takes one XDP program, so
+on a dual-stack interface `xdp` serves one family and another transport the
+other.
+
 `public_address` on the server displaces the address passed to create, so the
 address the transport binds and the address connect tokens are checked against
 are always the same one. The environment form applies to the first server

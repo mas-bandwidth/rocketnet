@@ -608,7 +608,6 @@ int rocketnet_server_transport_default_config_sized( struct rocketnet_server_tra
 
 // a NULL config is a counted no-op.
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
-void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config );
 
 // Allocation-free constructor memory plan for one built-in driver name.
 // Includes SDK allocator requests (alignment/ownership overhead and transient
