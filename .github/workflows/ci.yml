@@ -277,6 +277,84 @@ jobs:
           grep -qx 'driver_env_pin_is_honoured' functional-pinned.log
           ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-pinned.log
 
+      # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
+      # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
+      # server, so a family regression on any one transport fails here.
+      # driver_env_pin_is_honoured runs under the same pin and proves the
+      # pinned transport is the one granted. A cell line is server transport,
+      # client transport, then case=card for each case expected to fail until
+      # that card lands. The dual-stack case passed rocketnet-dual-stack-
+      # advertises-ipv4 on every socket transport; the in-memory loopback
+      # driver is not a socket transport and still holds its expected-fail
+      # mark. An expected-fail mark left after a pass fails the step; any
+      # other skip fails. xdp has no cell: it needs root and a VM guest, and
+      # its IPv6 cell belongs to rocketnet-xdp-serves-ipv6.
+      - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
+        if: contains(matrix.leg, 'b')
+        timeout-minutes: 3
+        shell: bash
+        env:
+          TRANSPORT_MATRIX_LINUX: |
+            portable portable
+            gso portable
+            io_uring portable
+            loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
+        run: |
+          set +e -uo pipefail
+          case "$RUNNER_OS" in
+            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
+            macOS)   matrix=$TRANSPORT_MATRIX_MACOS;   functional=./bin/functional ;;
+            Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
+            *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
+          esac
+          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          uring_offered=0
+          if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+          mkdir -p build
+          logs=$(mktemp -d "$PWD/build/transport-matrix.XXXXXX")
+          # each cell runs its cases in series; the cells run in parallel
+          while read -r server client expected; do
+            [ -n "$server" ] || continue
+            if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
+              echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              continue
+            fi
+            (
+              for case in $cases; do
+                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
+                echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
+              done
+            ) &
+          done <<< "$matrix"
+          wait
+          failed=0
+          while read -r server client expected; do
+            [ -n "$server" ] && [ -d "$logs" ] || continue
+            [ -f "$logs/$server.$client.driver_env_pin_is_honoured.rc" ] || continue
+            for case in $cases; do
+              log="$logs/$server.$client.$case.log"
+              rc=$(cat "$logs/$server.$client.$case.rc")
+              card=""
+              for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
+              ok=1
+              [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
+              if [ -n "$card" ] && { [ "$ok" = 1 ] || grep -q 'remove the marker' "$log"; }; then
+                echo "XPASS server=$server client=$client $case: $card has landed; remove its expected-fail mark"
+                failed=1
+              elif [ -n "$card" ]; then
+                echo "XFAIL server=$server client=$client $case (expected until $card lands)"
+              elif [ "$ok" = 1 ]; then
+                echo "PASS server=$server client=$client $case"
+              else
+                echo "FAIL server=$server client=$client $case (exit $rc)"
+                tail -n 5 "$log" | sed 's/^/    /'
+                failed=1
+              fi
+            done
+          done <<< "$matrix"
+          rm -rf "$logs"
+          exit "$failed"
+
       - name: Run lifecycle unit binary
         if: contains(matrix.leg, 'a')
         env:
