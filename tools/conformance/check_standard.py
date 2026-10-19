@@ -245,6 +245,16 @@ def main():
     if cell is not None:
         compare("receive ceiling", ints(cell)[0], code["ROCKETNET_RECEIVE_CEILING"])
 
+    # R6: the send bandwidth budget's configured defaults, per direction, from
+    # the message config table (dump_constants prints CFG_MESSAGE_DEFAULT_<field>)
+    cell = row("Send bandwidth budget")
+    if cell is not None:
+        published = ints(cell)
+        compare("message config client_send_kbps default", published[0],
+                code["CFG_MESSAGE_DEFAULT_client_send_kbps"])
+        compare("message config server_send_kbps default", published[1],
+                code["CFG_MESSAGE_DEFAULT_server_send_kbps"])
+
     # the packet size and its derivations: the document's numbers against the
     # compiler's, and each document number against the arithmetic the
     # standard states for it, so neither side can drift from the one MTU
@@ -448,6 +458,12 @@ def main():
         if implemented is not None:
             compare("handshake deadline (timing table)", ints(cell)[0], implemented)
 
+    cell = timing_row("Half-open idle deadline")
+    if cell is not None:
+        implemented = require("HALF_OPEN_IDLE_TIMEOUT_SECONDS")
+        if implemented is not None:
+            compare("half-open idle deadline (timing table)", ints(cell)[0], implemented)
+
     cell = timing_row("Cookie lifetime")
     if cell is not None:
         implemented = require("DEFAULT_COOKIE_LIFETIME_SECONDS")
@@ -490,6 +506,24 @@ def main():
         implemented = require("DEFAULT_HANDSHAKE_DEADLINE_SECONDS")
         if implemented is not None:
             compare("handshake deadline (glance table)", ints(cell)[0], implemented)
+
+    # The two server handshake budgets: each row's number and window are the
+    # implementation's macros, so a doc number and a code number move together.
+    cell = row("Handshake work budget")
+    if cell is not None:
+        implemented = require("ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE")
+        if implemented is not None:
+            compare("handshake work budget (glance table)", ints(cell)[0], implemented)
+
+    cell = row("Failed-signature budget")
+    if cell is not None:
+        published = ints(cell)
+        implemented = require("ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET")
+        if implemented is not None:
+            compare("failed-signature budget (glance table)", published[0], implemented)
+        implemented = require("ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS")
+        if implemented is not None:
+            compare("failed-signature window (glance table)", published[1], implemented)
 
     cell = row("Cookie lifetime / key rotation")
     if cell is not None:

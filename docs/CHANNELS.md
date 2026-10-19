@@ -1348,9 +1348,17 @@ the full plan.
   `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
   the slot, the client disconnects itself. The region is reset at the next
   update, before the transport can hand the slot to another client.
-- **Budgets** (R6) are per connection, in kbps, set at create (0 is the
-  default: 1000 for the client, 10000 per server slot) and at runtime with
-  `set_send_kbps`. A reused slot starts at the server's default.
+- **Budgets** (R6) are per connection, in kbps, and are configuration: the
+  message config's `client_send_kbps` (default 1000) and `server_send_kbps`
+  (default 10000 per server slot). At create, 0 takes that field and a
+  positive value overrides it; a value of 0 or lower disables that
+  direction's budget (not recommended, because without one there is no
+  defined behaviour when a sender outruns its path or its peer), and
+  `set_send_kbps` follows the same rule at runtime. A reused slot starts at
+  the server's configured value. `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` and
+  `ROCKETNET_MESSAGE_SERVER_SEND_KBPS` override the field and the create
+  argument at create (default < struct < environment), each override logged
+  with the value it displaces.
 - **Time.** Create takes no time. The object's clock is the game's time from
   the first update on. The client's transport is seeded at 0.0 at create and
   is handed the time since the first update, so its connect timers and the

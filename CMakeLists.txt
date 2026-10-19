@@ -367,10 +367,12 @@ if(ROCKETNET_BUILD_TESTS)
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
     endif()
-    # test_dev_token_minting_absent_in_release probes the shared release
-    # library, so the test target must build it: CI legs build `test` alone,
-    # and without this the shared library is missing and the probe goes red.
-    add_dependencies(test rocketnet_shared)
+    # Two probes load a shared library at run time, so the test target must
+    # build both: CI legs build `test` alone, and without this the library is
+    # missing and the probe goes red. test_dev_token_minting_absent_in_release
+    # probes the release library; the connect-token vectors load the dev
+    # library's token writer through dev_connect_token_timeout_is_the_named_constant.
+    add_dependencies(test rocketnet_shared rocketnet_shared_dev)
     foreach(test_target test_lifecycle test_driver)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
@@ -467,6 +469,7 @@ if(ROCKETNET_BUILD_TESTS)
 endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
+    add_executable(load load.c)
     add_executable(soak_sim soak_sim.cpp)
     add_executable(keygen keygen.cpp)
     add_executable(transport_memory bench/transport_memory.cpp)
@@ -474,7 +477,7 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(lease_cost bench/lease_cost.cpp)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak soak_sim transport_memory transport_fill client_main_thread_cost lease_cost)
+    foreach(tool soak load soak_sim transport_memory transport_fill client_main_thread_cost lease_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(lease_cost PRIVATE Threads::Threads)

@@ -23,7 +23,8 @@ import sys
 REPO = Path(__file__).resolve().parent.parent
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"(test_[a-z0-9_]+)"\s*,')
+# Registry rows name every functional test, including harness and client_io cases.
+TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,')
 REGISTER_RE = re.compile(r"REGISTER_UNIT_TEST(?:_EXPECTED_FAIL)?\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)")
 EXEC_TEST_NAME_RE = re.compile(r'"(test_[a-z0-9_]+)(?:\\n)?"')
 IF_RE = re.compile(r"^\s*#\s*if(?:def|ndef)?\b")

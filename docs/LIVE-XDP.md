@@ -327,57 +327,62 @@ worst-case drains and refuses a plan over 13 minutes.
 **The timeout, read, never a literal.** The connection timeout is the
 token's `timeout_seconds`. The development token writes it as a literal 10
 (`sdk/rocketnet_connect_token.cpp:285`), and the server caps it at
-`max_timeout_seconds`, 60 (`sdk/rocketnet.h:935`). The runner card adds a
-named constant, `ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS`, beside
-`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS` (`sdk/rocketnet_connect_token.h:171`).
+`max_timeout_seconds`, 60 (`sdk/rocketnet.h:935`). The need
+`rocketnet-dev-token-timeout-is-a-named-constant` adds a named constant,
+`ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS`, beside
+`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS` (`sdk/rocketnet_connect_token.h:171`);
+the runner card does not.
 Both programs read the wait from that constant. The client prints the value
 it waits on, and the merge refuses a run whose two ends printed different
 values.
 
-**Rates: flat out on the LAN, capped on the internet.** The send budget is
-what pushes the protocol (`sdk/rocketnet.h:1733-1736`). The defaults are far
-below flat out: 1,000 kbps for a client and 10,000 kbps per client for the
-server (`sdk/rocketnet.h:1737-1740`). The runner sets:
+**Rates: the cap is a total, set by the site.** The send budget is what
+pushes the protocol. It is configuration, not a compile-time limit: the
+message config fields `client_send_kbps` and `server_send_kbps` carry the
+defaults, 1,000 kbps for a client and 10,000 kbps per client for the server,
+and each runner sets its own caps explicitly in its config. Under RULINGS
+(b) and (d) every client's cap is its total, both directions combined, and
+the site sets it:
 
 | Path | Client send | Server per-client send | `max_packets_per_update` | Update rate |
 |---|---|---|---|---|
-| LAN | 1,000,000 kbps (not binding) | 1,000,000 kbps (not binding) | 64 | 1,000 Hz |
-| Internet | 50,000 kbps | 50,000 kbps | 64 | 1,000 Hz |
+| Studio site (1 Mbit/s total) | 500 kbps | 500 kbps | 64 | 1,000 Hz |
+| Datacenter (100 Mbit/s total) | 50,000 kbps | 50,000 kbps | 64 | 1,000 Hz |
 
-**Flat out on the LAN** means the budget is set above what the loop can
-send, so the protocol's own bounds bind: 64 packets an update at 1,000
-updates a second is about 64,000 packets a second x 1,416 bytes, about
-725 Mbit/s per connection each way, and below that the window, the ring and
-the CPU. With about eight LAN clients the server is asked for up to about
-5.8 Gbit/s each way on a 10 Gbit NIC. Its update time is recorded each
-minute; a server that cannot keep its 1 ms frame is a measured result, not
-a FAIL.
+No client runs the LAN flat-out rate against the test server; anything
+heavier belongs in the LAN phases (`docs/LAN-BENCH.md`). The studio site
+reaches the test server over one shared internet uplink of 20 to 50 Mbit/s,
+so every bench on it, including both sides of the Linux-on-Windows bench and
+the macOS bench, is capped at 1 Mbit/s total; the datacenter benches do not
+cross that uplink and keep 100 Mbit/s total.
 
 **The server's per-client cap.** The server takes one budget at create
-(`sdk/rocketnet.h:1823-1826`), so it cannot know a client's path from its
+(`sdk/rocketnet.h:1823-1826`), so it cannot know a client's site from its
 flags alone. Each client's first message on every connection is a HELLO: one
 RELIABLE_ORDERED message on channel 31, tag nibble `0xD`, carrying the bench
-label and the path's cap in kbps from the inventory. The server creates with
-the internet cap, 50,000 kbps, and on HELLO calls
+label and the path's cap in kbps from the inventory. Under RULINGS (d) the
+server creates with the lowest cap, 500 kbps, and on HELLO calls
 `rocketnet_message_server_set_send_kbps( server, client_index, cap )`
-(`sdk/rocketnet.h:1879`). So no internet client is ever sent more than its
-cap, even before its HELLO arrives, and a LAN client is uncapped within one
-round trip. The server logs the label and cap per slot, which is also how the
+(`sdk/rocketnet.h:1879`), raising the slot only to that slot's inventory cap.
+So no studio client is ever sent more than its cap, even before its HELLO
+arrives. The server logs the label and cap per slot, which is also how the
 results name the bench for each slot.
 
-**The internet budget.** The owner's cap is 100 Mbit/s for each internet
-client. The run takes it as the client's total, 50 Mbit/s each way (section
-15 asks which reading is meant). The send budget bounds wire bytes by
+**The budget.** Under RULINGS (d) the run is limited to 20 GB in total, of
+which at most 1 GB crosses the studio uplink. The cap is a total for each
+client, both directions combined. The send budget bounds wire bytes by
 construction: no end sends more than its kbps x the time
 (`sdk/rocketnet.h:1733-1736`). The plan's upper bound is therefore
-`N_internet x (up + down) x worst-case run seconds / 8`. With two internet
-benches that is 2 x 100 Mbit/s x 621 s / 8, about 15.5 GB, inside the
-200 GB budget even at the other reading (31 GB). The orchestrator computes
-this from the inventory before it starts and refuses a plan over 200 GB.
-The library has no cumulative wire-byte counter: the stats give trailing
-per-second rates only (`sdk/rocketnet.h:830-839`, `:1284-1292`). So the
-reported actual total is the integral of the per-second samples, labelled
-approximate, beside the exact bound (section 15).
+`sum(client total kbps) x worst-case run seconds / 8`. At 621 s, seven
+studio clients at 1 Mbit/s bound at about 0.54 GB and two datacenter clients
+at 100 Mbit/s at about 15.5 GB, about 16.07 GB in all. The orchestrator
+computes the run bound and the studio-uplink bound from the inventory before
+it starts and refuses a plan over 20 GB or over 1 GB; the run records the
+studio-uplink total separately. The library has no cumulative wire-byte
+counter: the stats give trailing per-second rates only
+(`sdk/rocketnet.h:830-839`, `:1284-1292`). So the reported actual total is
+the integral of the per-second samples, labelled approximate, beside the
+exact bound (section 15).
 
 **The mix.** The generator offers 110% of the budget, so the budget always
 binds and the send queues stay near their bounds. The offered bytes split by
@@ -405,9 +410,10 @@ counts as `paced` in the runner's own counter. That is the run's
 backpressure figure, recorded per mode. `MESSAGE_SEND_STORE_FULL`,
 `MESSAGE_SEND_QUEUE_FULL` and `MESSAGE_MEMORY_EXHAUSTED`
 (`sdk/rocketnet_counters.h:420-421`, `:469`) must stay 0. Any of them is the
-kick, which is an unexpected disconnect and a FAIL. On the internet path the
-reliable modes are window-bound and the unreliable ones budget-bound: about
-400 KB per round trip against 6.25 MB/s.
+kick, which is an unexpected disconnect and a FAIL. On the 1 Mbit/s studio
+path the reliable modes are window-bound and the unreliable ones
+budget-bound: about 400 KB per round trip against 62.5 KB/s each way. On a
+100 Mbit/s datacenter path the same ledger faces 6.25 MB/s each way.
 
 **Loss, reorder and resends.** The LAN loses little, and the internet path
 loses and reorders some. Resends (`MESSAGE_RESENT`,
@@ -588,8 +594,13 @@ run, on every bench:
   from an inventory file outside the repository, named by
   `ROCKETNET_LIVE_INVENTORY`. It has one row per machine: `label`,
   `ssh-name`, `role` (server or client), `shape` (linux, windows-interop or
-  macos), `path` (lan or internet), and `nic` (server row only). The
-  repository commits only a sample with placeholder names.
+  macos), `site` (studio or datacenter), `path` (lan or internet),
+  `cap-kbps` (the client's total, both directions combined: 1,000 for a
+  studio-site client and 100,000 for a datacenter client, RULINGS (b) and
+  (d)), `nic`, `address` and `queues` (server row only). Every studio-site
+  bench, both sides of the Linux-on-Windows bench included, crosses the one
+  shared studio uplink; the datacenter benches do not. The repository commits
+  only a sample with placeholder names.
 
 ## 9. The XDP server and its NIC
 
@@ -767,8 +778,11 @@ inline quoted command string.
 The steps, in order:
 
 1. **Plan.** Read the inventory. Compute the stagger, the attached-time
-   bound (refuse if over 13 min) and the internet byte total (refuse if over
-   200 GB). Print the plan.
+   bound (refuse if over 13 min), the run byte bound (refuse if over 20 GB)
+   and the studio-uplink bound (refuse if over 1 GB), both from each row's
+   total cap under RULINGS (d). Refuse any client whose cap is missing or
+   above its site's 1,000 kbps (studio) or 100,000 kbps (datacenter) total.
+   Print the plan, every client's cap and both bounds.
 2. **Build.** On each machine in parallel, run `bench-build.sh <commit>`:
    clone from GitHub into `~/rocketnet-live/<commit>`, check out the one
    named commit, and build with the card's build bound. On Windows the build
@@ -778,10 +792,18 @@ The steps, in order:
 3. **Skew** check (section 11).
 4. **Server pre-flight,** dead-man timer, watchdog, load, ssh check, listen
    (section 9, steps 1 to 6). A heartbeat loop starts and runs until
-   teardown.
+   teardown. Root is used only for the steps of RULINGS (c): load and unload
+   the program, arm and cancel the dead-man timer, and start and stop the
+   server. Those run as non-interactive `sudo -n <script>` on the copied
+   script file, after `sudo -n true` proves the grant; the host's sudo is
+   sudo-rs, so the environment list is passed with
+   `--preserve-env=<list>` and never `-E`. If `sudo -n true` fails or asks
+   for a password, the run stops with not-done and no password is supplied.
 5. **Clients.** Start one per bench with `bench-client.sh`, under
    `systemd-run --user` on Linux, `nohup` on macOS and `start /b` on
-   Windows. Each client has its label, stagger, rates and seed.
+   Windows. Each client has its label, stagger, its row's total cap (500
+   kbps each way on the studio site, 50,000 kbps each way in a datacenter)
+   and the seed.
 6. **Watch.** Every 30 s, read each client's last status line and the
    server's. A client or server exit before plan, or a `fail` line, begins
    teardown at once.
@@ -929,9 +951,10 @@ mode and the orchestration script.
 1. **NIC.** The test server has only its uplink, so the card's section-9
    rule would read `NIC: blocked`. The owner's 2026-10-18 ruling takes the
    uplink under the dead-man timer, the watchdog, the 10-second ssh check and
-   the verify-only pre-flight. The design follows the ruling. The run card
-   should confirm it was meant to supersede the 2026-10-16 rule for this run
-   only.
+   the verify-only pre-flight. The design follows the ruling. RULINGS (a)
+   makes it cover every live XDP test on the test server, not only this run;
+   worst case the owner can force-reboot the test server from its provider's
+   console.
 2. **max_clients.** The constant is 1,000 (`sdk/rocketnet.h:44`). The table
    default was 64 (`sdk/rocketnet.h:923` at `20d8b35`) and is 1,000 at the
    base tip `962e3a4`. But `server.c` sets 256 (`server.c:42`), so the
@@ -944,7 +967,9 @@ mode and the orchestration script.
    paths.
 4. **The dev token's timeout is a literal 10**
    (`sdk/rocketnet_connect_token.cpp:285`) with no name. The run must read
-   2 x timeout from a constant, so card 2 adds one (section 6).
+   2 x timeout from a constant, so the need
+   `rocketnet-dev-token-timeout-is-a-named-constant` adds one (section 6);
+   the runner card does not.
 5. **No soft backpressure at the message API.** A send the region has no
    room for ends the connection (`sdk/rocketnet.h:1719-1724`). So the run's
    backpressure figure is its own pacing ledger, and `MESSAGE_SEND_QUEUE_FULL`
@@ -966,11 +991,18 @@ mode and the orchestration script.
    pre-flight refuses without R4 to R7), the run stops for the owner.
 9. **Root on the test server.** The xdp driver needs root
    (`sdk/rocketnet_server_socket_linux.cpp:697-701`). The workers' standing
-   rule is no sudo. The run card needs the owner's grant for exactly the
-   scripts of section 9, step by step.
-10. **The internet cap.** The run reads "100 Mbit/s each" as the total for
-    each internet client (50 Mbit/s each way). Read per direction, the budget
-    still holds (31 GB of 200).
+   rule is no sudo. RULINGS (c) grants root for exactly three steps and no
+   other: loading and unloading the XDP program, arming and cancelling the
+   systemd-run dead-man timer, and starting and stopping the server. The
+   orchestrator runs them as non-interactive `sudo -n <script>` on the
+   landed script files (sudo-rs: `--preserve-env=<list>`, never `-E`) after
+   `sudo -n true` proves the grant; a password prompt stops the run with
+   not-done.
+10. **The cap is a total.** RULINGS (b) and (d) settle it: every per-client
+    cap is the client's total, both directions combined. A studio-site client
+    is capped at 1 Mbit/s total (500 kbps each way), a datacenter client at
+    100 Mbit/s total (50,000 kbps each way), and the run is bounded at 20 GB
+    in all and 1 GB across the studio uplink.
 11. **The 24-bit reliable number wrap** cannot happen inside the 15-minute
     dead-man timer at these rates. The run does not claim it (section 6).
 12. **Soak's refusal rule cannot hold under full load.** `soak.c:60-68`
@@ -988,5 +1020,29 @@ mode and the orchestration script.
 14. **The server's send budget is one value at create**
     (`sdk/rocketnet.h:1823-1826`). Per-path caps need the per-slot setter
     (`sdk/rocketnet.h:1879`) and a way for the server to learn each client's
-    path. The run uses a HELLO message (section 6), and the server creates
-    with the lower, internet cap, so no internet client is ever over its cap.
+    path. The run uses a HELLO message (section 6). Under RULINGS (d) the
+    server creates with the lowest cap, 500 kbps, and raises a slot only to
+    that slot's inventory cap, so no client is ever over its cap.
+
+## Running it
+
+On the coordinator's machine, from the checkout:
+
+    scripts/live-xdp-fleet --dry-run --inventory scripts/live-xdp-fleet.inventory.example
+    scripts/live-xdp-fleet --inventory "$ROCKETNET_LIVE_INVENTORY" --commit <sha>
+
+The dry run prints the plan, every client's cap, the run bound and the
+studio-uplink bound of RULINGS (d), and every per-host build, start, collect
+and teardown step, including every XDP SAFETY step, with the client and
+server command lines in full. It contacts no host and ends with
+`dry-run: no host contacted`. It refuses an inventory with a studio-site cap
+above 1,000 kbps or a plan over 20 GB in all or 1 GB across the studio
+uplink.
+
+The real run copies `scripts/live-xdp-fleet-remote` to each machine and runs
+its `build`, `start`, `stop`, `collect` and `restore` subcommands there; a
+step is never an inline quoted command string over ssh. Root on the test
+server is used only for the steps of RULINGS (c), as non-interactive
+`sudo -n <script>` on the copied script file after `sudo -n true`. The
+example inventory holds placeholder hosts only; the real one lives outside
+the repository and is named by `ROCKETNET_LIVE_INVENTORY`.
