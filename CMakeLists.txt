@@ -482,11 +482,13 @@ if(ROCKETNET_BUILD_TESTS)
         target_link_libraries(test_msgx PRIVATE rocketnet)
     endif()
     if(WIN32)
-        # Isolate the test-instrumented driver: never link another copy from
-        # the production archive. Only its ordinary runtime dependencies enter.
-        add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp
+        # Isolate the test-instrumented drivers: never link another copy from
+        # the production archive. Only their ordinary runtime dependencies
+        # enter. The IOCP and RIO fault seams (ROCKETNET_IOCP_TESTS,
+        # ROCKETNET_RIO_TESTS) compile only here, never into a library.
+        add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp sdk/rocketnet_server_rio_windows.cpp
             sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
-        target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS
+        target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS ROCKETNET_RIO_TESTS
             $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
         target_include_directories(test_iocp PRIVATE sdk)
         target_compile_features(test_iocp PRIVATE cxx_std_11)
