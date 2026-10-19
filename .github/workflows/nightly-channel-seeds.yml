@@ -19,7 +19,7 @@ on:
 
 jobs:
   channel-seed-sweep:
-    runs-on: ["self-hosted", "Linux", "X64", "fleet"]
+    runs-on: ["self-hosted", "Linux", "X64", "fleet", "long"]
     timeout-minutes: 60
     strategy:
       matrix:

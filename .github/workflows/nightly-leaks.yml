@@ -39,11 +39,16 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'
+      - name: Check pinned toolchain
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          R="${RUNNER_NAME:-unset}"
+          for t in cmake gcc g++ xxd; do
+            command -v "$t" >/dev/null || { echo "TOOL-MISSING $t $t ${R}"; exit 1; }
+          done
+          for l in libbpf libxdp libsodium; do
+            pkg-config --exists "$l" || { echo "TOOL-MISSING $l $l ${R}"; exit 1; }
+          done
 
       - name: Configure
         run: >

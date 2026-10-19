@@ -23,14 +23,16 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15 }
-          - { os: windows-2025 }
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+      - name: Check pinned toolchain
+        run: |
+          set -euo pipefail
+          R="${RUNNER_NAME:-unset}"
+          for t in cmake python3; do
+            command -v "$t" >/dev/null || { echo "TOOL-MISSING $t $t ${R}"; exit 1; }
+          done
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release

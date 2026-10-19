@@ -26,15 +26,10 @@ jobs:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         os:
           # the fleet's org runners (ci.yml build-and-test's note)
+          # the macOS and Windows soak rows are removed pending fleet machines
+          # (owed: a darwin runner and the Windows fleet machine registered for this repository)
           - ubuntu-latest
-          # the macOS soak: HOSTED macos-latest as a stopgap (2026-10-13). No self-hosted macOS ARM64 runner exists yet;
-          # hosted macOS is $0.16/min and this 90-minute job was the largest single line of September's Actions bill
-          # (up to ~$14 a night), so it moves to mini-m5's org runner as soon as Glenn registers it.
-          - macos-latest
-          # the windows soak: hosted windows-2025, MSVC via the cmake configure/build
-          # steps below. The only leg with no self-hosted runner, so the billing leg.
-          - windows-2025
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON('["self-hosted","Linux","X64","fleet"]') || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON('["self-hosted","Linux","X64","fleet","long"]') || matrix.os }}
     timeout-minutes: 90
     steps:
 
@@ -42,15 +37,16 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+      - name: Check pinned toolchain
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+          set -euo pipefail
+          R="${RUNNER_NAME:-unset}"
+          for t in cmake gcc g++ xxd; do
+            command -v "$t" >/dev/null || { echo "TOOL-MISSING $t $t ${R}"; exit 1; }
+          done
+          for l in libbpf libxdp libsodium libcurl; do
+            pkg-config --exists "$l" || { echo "TOOL-MISSING $l $l ${R}"; exit 1; }
+          done
 
       - name: Build
         if: runner.os != 'Windows'
@@ -136,7 +132,7 @@ jobs:
 
   sanitized-soak:
     name: soak_sim (asan + ubsan + lsan, bounded)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
@@ -146,11 +142,16 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check pinned toolchain
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          R="${RUNNER_NAME:-unset}"
+          for t in cmake gcc g++ xxd; do
+            command -v "$t" >/dev/null || { echo "TOOL-MISSING $t $t ${R}"; exit 1; }
+          done
+          for l in libbpf libxdp libsodium; do
+            pkg-config --exists "$l" || { echo "TOOL-MISSING $l $l ${R}"; exit 1; }
+          done
 
       - name: Configure
         run: >

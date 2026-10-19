@@ -32,7 +32,7 @@ permissions:
 jobs:
   fuzz:
     name: nightly fuzz (${{ fromJSON(matrix.leg).target }})
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
       fail-fast: false
       matrix:
@@ -55,10 +55,16 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
-      - name: Install dependencies
+      - name: Check pinned toolchain
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev liburing-dev xxd
+          set -euo pipefail
+          R="${RUNNER_NAME:-unset}"
+          for t in cmake gcc g++ clang clang++ xxd; do
+            command -v "$t" >/dev/null || { echo "TOOL-MISSING $t $t ${R}"; exit 1; }
+          done
+          for l in libbpf libxdp libsodium liburing libcurl; do
+            pkg-config --exists "$l" || { echo "TOOL-MISSING $l $l ${R}"; exit 1; }
+          done
 
       # persist the discovered corpus across runs: restore the newest prior
       # cache for this target, save a fresh entry keyed by run id. cache
