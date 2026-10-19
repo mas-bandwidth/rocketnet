@@ -3,14 +3,20 @@
 The client transport's goal here is less work on the game's main thread, not
 more throughput. At the base of this design (`sprint/rocketnet-proof` at
 `dfd313f`) the main thread calls the driver once per packet in
-`rocketnet_client_transport_send_packets`
-(`sdk/rocketnet_client_transport.cpp`, the send walk at lines 1001-1017), and
-`rocketnet_client_transport_update` takes a mutex that the receive thread
+`rocketnet_client_send_packets`
+(the client transport implementation, the send walk at lines 1001-1017), and
+`rocketnet_client_update` takes a mutex that the receive thread
 holds for its whole drain (`rocketnet_client_update_swap_receive_buffers`,
 line 515; `rocketnet_client_receive_packets`, lines 1234-1273). The receive
 thread polls every 1 ms (line 1283) and stamps each datagram with the wall
 clock (line 1265). This document measures that, designs the replacement,
 models it in TLA+ (`tla/RNClientIo.tla`) and cuts the implementation cards.
+
+The names `rocketnet_client_io_step` and `rocketnet_platform_sleep` in this
+document are internal functions (`sdk/rocketnet_client_io.h`,
+`sdk/rocketnet_platform.h`); a game uses `rocketnet_client_update`,
+`rocketnet_client_send_packets` and the other client entry points in
+`sdk/rocketnet.h`.
 
 ## Measured
 
@@ -82,7 +88,7 @@ What the main thread pays for:
 ## The design
 
 One client I/O thread replaces the receive thread (created at line 407 of
-`sdk/rocketnet_client_transport.cpp`). It owns every socket call of the
+the client transport implementation). It owns every socket call of the
 transport once the transport is connected and running.
 
 **The hand-off and the two rings.** The payload ring becomes two rings, A
@@ -94,7 +100,7 @@ the ring's committed count, publishes the ring to the I/O thread with one
 release store of a ring state word (Filling to HandedOff), and wakes the I/O
 thread once. Then it switches the fill pointer to the other ring and returns.
 No driver call is made on the main thread. The same hand-off runs from
-`rocketnet_client_transport_send_packet`, which calls `send_packets` after
+the single-packet send path, which calls `send_packets` after
 every packet it writes (line 758 at `7ffb924`), and at the end of `update`
 (below), so a frame commonly makes two or more hand-offs.
 
@@ -133,7 +139,7 @@ an `update` ran in between.
 
 **The protocol packet and disconnect.** The packet `update` builds
 (`rocketnet_client_protocol_update`) and the disconnect burst of
-`rocketnet_client_transport_disconnect` are sealed into a slot of the Filling
+`rocketnet_client_disconnect` are sealed into a slot of the Filling
 ring, like a payload, and handed off by the same step: `update` ends with a
 hand-off attempt every frame (it retries any deferred slots, and hands off
 its own packet when it committed one), and `disconnect` ends with one. Both
@@ -226,7 +232,7 @@ and the lock is the 71-86 us p99 wait measured at BASE. The cheap size
 prefilter stays on the I/O thread; the full checks, the counters and the
 decrypt stay in `update`.
 
-**The clock.** `rocketnet_client_transport_config_t` gains
+**The clock.** `rocketnet_client_config_t` gains
 `double (*time_callback)( void * context )`, read once at create; NULL means
 `rocketnet_platform_time`. The I/O thread stamps each datagram's
 `receive_time` with it (today's line 1265). Unit tests set it to a test
@@ -346,7 +352,7 @@ Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
 ## Per-platform cards
 
 **rocketnet-client-io-transport (lands first, platform-generic).** PATHS:
-`sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_driver.h`,
+the client transport implementation, `sdk/rocketnet_driver.h`,
 `sdk/rocketnet_driver.cpp` (the open-time check), `sdk/rocketnet.h` and
 `sdk/rocketnet_config.cpp` (the `time_callback` field),
 `sdk/rocketnet_counters.h` (`CLIENT_SEND_DEFERRED`), a new
