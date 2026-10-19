@@ -1,0 +1,46 @@
+# clang-format configuration derived from the owner's C style in
+# mas-bandwidth/netcode at 537c2c3e32f6823b8254657194838ffac89359f8 (netcode.c,
+# netcode.h) and networknext/next at b4efefcad40c05d72f43ffa9f5b91b4472033f32
+# (sdk/include, sdk/source). Language Cpp covers .c and .h as well.
+#
+# Measured changed-line counts against the reference (whole files, config copied
+# beside the pinned clones):
+#   netcode.c: 1078 / 10598, netcode.h: 233 / 406, combined 1311 / 11004
+#     (1% bound: 110 lines; exceeded)
+#   next sdk/include + sdk/source (65 files): 3926 / 28394 changed lines
+#     (3% bound: 851 lines; exceeded)
+#
+# Residual differences clang-format 18 cannot express:
+#   - trailing whitespace on a line (license header and split-call
+#     continuations) is always stripped, no option preserves it, netcode.c:10
+#   - function-pointer declarators are written `int (*f)( ... )`; with spaces
+#     in parens clang-format rewrites them `int ( *f )( ... )`, no per-context
+#     option distinguishes declarator parens from call parens, netcode.c:110
+#   - binary operators inside square-bracket indices are tight, `buf[4*1024]`,
+#     `s[i-1]`; clang-format always spaces binary operators with no index-only
+#     option, netcode.c:129
+#   - preprocessor directives indented inside a function body (`    #if`) are
+#     forced to column 0; IndentPPDirectives has no mode that preserves an
+#     existing in-body indent, netcode.c:93
+#   - `#pragma warning(disable:4996)` (no spaces in the pragma parens) gains
+#     spaces; SpacesInParens applies to pragma parens, netcode.c:36
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+UseTab: Never
+BreakBeforeBraces: Allman
+SpacesInParens: Custom
+SpacesInParensOptions:
+  InConditionalStatements: true
+  InCStyleCasts: false
+  InEmptyParentheses: false
+  Other: true
+SpacesInSquareBrackets: false
+PointerAlignment: Middle
+ReferenceAlignment: Middle
+SpaceAfterCStyleCast: true
+ColumnLimit: 0
+SortIncludes: Never
+AllowShortIfStatementsOnASingleLine: Never
+AlignTrailingComments: true
+IndentPPDirectives: None
