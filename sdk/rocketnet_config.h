@@ -204,14 +204,6 @@ struct rocketnet_driver_ladder_t
 
 bool rocketnet_driver_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_driver_ladder_t * ladder );
 
-// the AF_XDP transport serves IPv4: for an IPv6 public address (address_type
-// ROCKETNET_ADDRESS_IPV6) every xdp candidate leaves the list, the rest keep
-// their order, so "auto" falls to the next transport and a pin of xdp alone
-// leaves the list empty. any other address type leaves the list untouched.
-// returns how many candidates left.
-
-int rocketnet_driver_ladder_drop_ipv4_only( struct rocketnet_driver_ladder_t * ladder, int address_type );
-
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from:
 //
