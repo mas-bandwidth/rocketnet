@@ -65,7 +65,7 @@ proofs-client_packets:
 	        $(CLIENT_PACKETS_SOURCE) > "$$output" 2>&1 || status=$$?; \
 	    failures=$$(grep -c ": FAILURE$$" "$$output"); \
 	    witnesses=$$(grep ": FAILURE$$" "$$output" | grep -c "witness: "); \
-	    unreached=$$(grep "witness: " "$$output" | grep -c ": SUCCESS$$"); \
+	    unreached=$$(grep "^\[$$harness\." "$$output" | grep "witness: " | grep -c ": SUCCESS$$"); \
 	    if [ $$status -ne 10 ] || [ $$failures -lt 1 ] || [ $$failures -ne $$witnesses ] || [ $$unreached -ne 0 ]; then \
 	        cat "$$output"; failed=1; \
 	        if [ "$$verdict" = "VERIFICATION SUCCESSFUL" ]; then \
