@@ -701,13 +701,15 @@ static inline int rocketnet_dst_faults_step( rocketnet_dst_world_t * w )
 {
     if ( w->step == 0 )
     {
-        rocketnet_dst_trace_record( &w->trace, 0, 7, (uint64_t) w->loss_percent,
-                                    (uint64_t) w->dup_percent,
-                                    (uint64_t) ( w->base_jitter * 1000000.0 + 0.5 ) );
-        for ( int peer = 0; peer <= w->num_clients; peer++ )
-            rocketnet_dst_trace_record( &w->trace, 0, 5, (uint64_t) peer,
-                (uint64_t) ( ( w->fault_state.clock_offset[peer] + 1.0 ) * 1000000.0 + 0.5 ),
-                (uint64_t) ( w->fault_state.clock_rate[peer] * 1000000.0 + 0.5 ) );
+        if ( w->faults & ( ROCKETNET_DST_FAULT_LOSS | ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_JITTER ) )
+            rocketnet_dst_trace_record( &w->trace, 0, 7, (uint64_t) w->loss_percent,
+                                        (uint64_t) w->dup_percent,
+                                        (uint64_t) ( w->base_jitter * 1000000.0 + 0.5 ) );
+        if ( w->faults & ROCKETNET_DST_FAULT_SKEW )
+            for ( int peer = 0; peer <= w->num_clients; peer++ )
+                rocketnet_dst_trace_record( &w->trace, 0, 5, (uint64_t) peer,
+                    (uint64_t) ( ( w->fault_state.clock_offset[peer] + 1.0 ) * 1000000.0 + 0.5 ),
+                    (uint64_t) ( w->fault_state.clock_rate[peer] * 1000000.0 + 0.5 ) );
     }
 
     if ( w->step < w->fault_state.fault_steps )
