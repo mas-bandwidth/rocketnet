@@ -508,26 +508,38 @@ that command as its RED AT BASE.
 ## 7. The state machines
 
 **The fault injector (crash, restart and skew).** Each peer is up, crashed or restarting; each
-client carries a session generation; each peer carries a clock offset and rate. That is a state
-machine, so it has a model before its code: `tla/RNSimFaults.tla` (card
-`rocketnet-dst-fault-model`). Variables: each peer's phase (up, crashed, restarting), each client's
-session generation and the set of generations ever used, each peer's clock offset, rate and last
-time, the true time, the fault window flag, and the in-flight packets tagged with their generation.
-Actions: `Crash(p)`, `Restart(p)`, `Tick` (time advances, each clock moves by its rate), `EndFaults`,
-and the outside events `Connect(c)`, `Disconnect(c)` and `Deliver`. Invariants:
-`CrashedPeerSilent` (a crashed peer sends and receives nothing), `RestartIsFresh` (a restarted
-client's generation is fresh, never an earlier one), `DeliverOnlyToLiveGeneration` (no delivery
-reaches a generation other than the live one), `SkewBounded` and `ClockMonotone` (every clock stays
-inside the bound of section 3 and never runs backwards). Liveness under weak fairness once
-`EndFaults` has run: `EveryLiveClientConnects`. Cases: `MCRNSimFaults.cfg` passes; the reversed
+client carries a session generation; the server carries an incarnation; each peer carries a clock
+offset and rate. That is a state machine, so it has a model before its code: `tla/RNSimFaults.tla`,
+with its instance `tla/MCRNSimFaults.tla`, group `rnsimfaults` (card `rocketnet-dst-fault-model`).
+Variables: each peer's phase (up, crashed, restarting); each client's session state, session
+generation (one global counter) and the incarnation its session was admitted under; the first
+session to take each generation; the server incarnation (a separate counter) and the sessions the
+server holds; each peer's clock (offset and rate, kept across a crash); the true time; the fault
+window flag; the in-flight packets stamped with generation and incarnation; and the checker's
+ghost tag per session. A receiver takes a packet only when its generation equals the receiving
+session's and, compared separately, its incarnation equals the receiving session's. Actions:
+`Crash(p)`, `Restart(p)` (the down time ends), `Rejoin(p)` (the objects are built fresh; the server
+takes a new incarnation), `Tick` (time advances, each clock moves by its rate), `EndFaults`,
+`Lose(m)`, and the outside events `Connect(c)`, `Establish(c)`, `Disconnect(c)`,
+`ClientTimeout(c)`, `ServerTimeout(r)`, `ClientSend(c)`, `ServerSend(r)`, `Deliver(m)` and
+`Refuse(m)`. Invariants: `CrashedPeerSilent` (a peer that is not up sends and receives nothing),
+`RestartIsFresh` (a restarted client's generation is fresh, never an earlier one),
+`DeliverOnlyToLiveGeneration` (no delivery reaches a session other than the one that sent it, and
+none carries another incarnation than the receiving session's), `LiveSessionOnCurrentIncarnation`
+(every session the server holds was admitted under its current incarnation) and `SkewBounded`
+(every clock stays inside the bound of section 3); action property `ClockMonotone` (no clock runs
+backwards). Liveness under weak fairness on restarts, the handshake, the timeouts and the end of
+the fault window: `EveryLiveClientConnects`. Cases: `MCRNSimFaults.cfg` passes; the reversed
 witnesses `MCRNSimFaultsBrokenRestartKeepsSession.cfg` (restart keeps the old generation; violates
-`RestartIsFresh` and `DeliverOnlyToLiveGeneration`) and `MCRNSimFaultsBrokenCrashedSends.cfg` (a
-crashed peer still delivers; violates `CrashedPeerSilent`) and
-`MCRNSimFaultsBrokenSkewBackwards.cfg` (a rate that can go negative; violates `ClockMonotone`) each
-fail on the property named. The model card adds the `tla/COVERAGE.tsv` row (machine
-`dst-fault-injector`, module RNSimFaults, status owed, owed_by `rocketnet-dst-fault-injectors`); the
-injector's code (`dst_faults.h`) cites each action and invariant it implements, and that card moves
-the row from owed to covered.
+`RestartIsFresh`, and with that invariant alone listed, `DeliverOnlyToLiveGeneration`: the server
+still sends on the dead session until its timeout, and that packet reaches the restarted session
+under the same generation) and `MCRNSimFaultsBrokenCrashedSends.cfg` (a crash leaves the peer
+running, so a crashed peer still sends; violates `CrashedPeerSilent`) each fail on the property
+named. `ClockMonotone` and `SkewBounded` have no committed witness: a rate of -1 in a copy of the
+wrapper fails `ClockMonotone`, and a rate of 202 units per step fails `SkewBounded`.
+`tla/COVERAGE.tsv` carries the row (machine `dst-fault-injector`, module RNSimFaults, status owed,
+owed_by `rocketnet-dst-fault-injectors`); the injector's code (`dst_faults.h`) cites each action
+and invariant it implements, and that card moves the row from owed to covered.
 
 **The seed run.** Fault window, quiet window, final checks: a fixed sequence of three phases with no
 branching and no outside event; it is not a state machine in the sense the models cover, and gets no
