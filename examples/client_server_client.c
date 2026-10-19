@@ -93,7 +93,12 @@ int main( int argc, char ** argv )
     rocketnet_client_default_config( &config );
     config.transport = "portable";
     config.state_change_callback = state_changed;
-    client = rocketnet_client_create( NULL, connect_token, &config, NULL, 0 );
+    client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
     const double start = rocketnet_time();
 
@@ -107,10 +112,10 @@ int main( int argc, char ** argv )
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
         {
             printf( "client received: %.*s\n", bytes, (const char*) data );
-            rocketnet_client_release( client, data );
+            rocketnet_client_release_message( client, data );
             received = 1;
         }
 
@@ -122,15 +127,15 @@ int main( int argc, char ** argv )
         {
             const char message[] = "hello from the client";
             const int message_bytes = (int) sizeof( message ) - 1;
-            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
             if ( out )
             {
                 memcpy( out, message, (size_t) message_bytes );
-                sent = rocketnet_client_finish( client, message_bytes ) != 0;
+                sent = rocketnet_client_finish_message( client, message_bytes ) != 0;
             }
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so they leave this frame
 
         rocketnet_client_send_packets( client );
@@ -148,11 +153,14 @@ int main( int argc, char ** argv )
     CHECK( wrong_protocol ? refused : received );
     rocketnet_client_disconnect( client );
     printf( "client disconnect reason: %s\n", reason_name( rocketnet_client_disconnect_reason( client ) ) );
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

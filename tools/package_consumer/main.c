@@ -82,6 +82,11 @@ int main(void)
     config.transport = "portable";
     CHECK(rocketnet_server_validate_config(&config));
     struct rocketnet_server_t * server = rocketnet_server_create(NULL, "127.0.0.1:0", &config, NULL, 0);
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK(server != NULL);
     CHECK(strcmp(rocketnet_server_transport_name(server), "portable") == 0);
     CHECK(rocketnet_server_port(server) != 0);

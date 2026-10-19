@@ -217,6 +217,31 @@ an extension chain and never drops one, so IPv6 fragments pass. Every other
 non-UDP next header, ICMPv6 (neighbor discovery) above all, passes uncounted,
 as non-UDP IPv4 does.
 
+The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves the
+family of its public address, IPv4 or IPv6, and the ladder offers `xdp` for
+either. The receive loop dispatches each frame on its ethertype through
+`rocketnet_xdp_frame_receive` (`sdk/rocketnet_xdp_frame.h`): IPv4 at its
+offsets, IPv6 at the 40-byte fixed header, and the from-address carries the
+family it read. A frame it does not take is dropped and counted by reason:
+another ethertype (`not_ip`), an IPv6 extension header (`ipv6_extension`,
+never parsed at the UDP offsets), the family the server does not serve
+(`other_family`), or a frame the parse refuses or too short for any server
+packet (`malformed`). The flush builds each reply with the server's own
+address as the source, and an IPv6 reply carries the UDP checksum computed in
+software. Create and the pre-flight find the interface carrying the address
+over `AF_INET` or `AF_INET6` and refuse an IPv6 link-local address (fe80::/10)
+by name. The IPv6 gateway MAC comes from `ip -6 route show default dev <if>`
+and `ip -6 neigh show dev <if>`, the twin of the IPv4 discovery;
+`ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides either.
+
+Dual stack: one server owns one public address, so one family. The config map
+holds the server's address in its family's slot and that family's loopback
+address in the other slot (zero would accept any destination), so the program
+redirects only the server's family and passes the other to the kernel. One
+interface takes one XDP program, so a machine that serves both families on
+one interface runs `xdp` for one family and another transport (`gso`,
+`io_uring` or `portable`) for the other.
+
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
 per-CPU totals each time the transport counter surface is read. Only a

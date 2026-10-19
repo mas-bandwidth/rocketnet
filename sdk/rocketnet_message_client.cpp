@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_send_budget.h"
 
@@ -118,6 +119,18 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t send_kbps )
 {
+    return rocketnet_message_client_create_ex( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, NULL );
+}
+
+struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
+                                                                        const struct rocketnet_client_transport_config_t * transport_config,
+                                                                        const struct rocketnet_message_config_t * message_config,
+                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status )
+{
+    int ignored = ROCKETNET_STATUS_OK;
+    if ( !status )
+        status = &ignored;
+    *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !rocketnet_api_null_guard( connect_token ) )
         return NULL;
 
@@ -128,6 +141,7 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
     if ( send_kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
     {
         rocketnet_error( "message client create refused: send budget above maximum" );
+        *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return NULL;
     }
     int32_t kbps = (int32_t) send_kbps;
@@ -147,6 +161,7 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
     if ( rn_message_object_required_bytes( message_config, 1, 0 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) || !rn_message_object_send_kbps_env_valid( 0 ) )
     {
         rocketnet_error( "message client create refused: message config or send budget" );
+        *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return NULL;
     }
 
@@ -156,13 +171,19 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
     // first update, whatever the game's clock reads then. time comes in only
     // through update.
 
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_sized( context, connect_token, transport_config, sizeof(*transport_config), 0.0 );
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( context, connect_token, transport_config, 0.0, status );
     if ( !transport )
+    {
+        if ( *status == ROCKETNET_STATUS_OK )
+            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
         return NULL;
+    }
 
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
-    return (rocketnet_message_client_t *) rn_message_object_create( context, &link, 0, 1, message_config, memory, memory_bytes, kbps, 0.0 );
+    rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( context, &link, 0, 1, message_config, memory, memory_bytes, kbps, 0.0 );
+    *status = client ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY;
+    return client;
 }
 
 void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client )

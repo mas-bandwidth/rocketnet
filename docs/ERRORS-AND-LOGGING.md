@@ -27,17 +27,19 @@ line at `ERROR` when it refuses, and counts the refusal in
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
-| `rocketnet_init( context )` / `rocketnet_init_ex( context, &status )` | `false` / `false` with the status code |
-| `rocketnet_term( void )` / `rocketnet_term_ex( void )` | refuses in place / the status code |
-| `rocketnet_allocator( malloc_fn, free_fn )` / `rocketnet_allocator_ex(...)` | `false` / the status code |
+| `rocketnet_init( context )` | `false` |
+| `rocketnet_term( void )` | refuses in place |
+| `rocketnet_allocator( malloc_fn, free_fn )` | `false` |
 | `rocketnet_client_default_config( config )` | a NULL config is a counted no-op |
 | `rocketnet_client_validate_config( config )` | `0`, with a log line naming the rule |
-| `rocketnet_client_create( context, token, config, memory, memory_bytes )` | `NULL`, with one error line |
+| `rocketnet_client_create( context, config, memory, memory_bytes )` | `NULL`, with one error line |
+| `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
 | `rocketnet_client_create_sized(...)` | `NULL` for an unknown config size |
 | `rocketnet_server_default_config( config )` / `rocketnet_server_dev_config( config )` | a NULL config is a counted no-op |
 | `rocketnet_server_validate_config( config )` | `0`, with a log line naming the rule |
 | `rocketnet_server_create( context, address, config, memory, memory_bytes )` | `NULL`, with one error line |
 | `rocketnet_server_create_sized(...)` | `NULL` for an unknown config size |
+| `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | `ROCKETNET_MESSAGE_OK` or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` |
 
 The client and server create paths validate the config, apply the environment
