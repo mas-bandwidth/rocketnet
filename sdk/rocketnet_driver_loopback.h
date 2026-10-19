@@ -1,17 +1,27 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
 
-// The loopback driver backend carries datagrams between endpoints of the same
+// The loopback transport carries datagrams between endpoints of the same
 // process through memory; it uses no socket and no system network call. The
-// backend variable is defined in rocketnet_driver_loopback.cpp. The two
+// transport variable is defined in rocketnet_driver_loopback.cpp. The two
 // declarations below are for the unit suite only; none of this file is a
 // public C export.
+//
+// The process-wide table is ROCKETNET_LOOPBACK_MAX_ENDPOINTS records of 72
+// bytes each (72,072 bytes) under one mutex. Each live endpoint allocates its
+// queue at create, ROCKETNET_LOOPBACK_QUEUE_PACKETS x
+// sizeof( rocketnet_loopback_packet_t ) = 1,531,904 bytes, so a full table of
+// live endpoints is about 1,533,435,904 bytes. The cost is paid only by a
+// process that instantiates the loopback transport, which is tests and
+// examples, never a game on auto. Lookups scan the table linearly under the
+// mutex.
+
+#include "rocketnet.h"
 
 #include <stdint.h>
 
 enum
 {
-    ROCKETNET_LOOPBACK_MAX_ENDPOINTS = 64,
     ROCKETNET_LOOPBACK_QUEUE_PACKETS = 1024
 };
 

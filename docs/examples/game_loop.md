@@ -17,12 +17,12 @@ budget, the server's tick, and message latency in frames.
    1); the server sends each client a snapshot every frame. Each message
    carries the frame it was queued in, and the receiver counts frames since.
 
-Up to 63 clients run over the in-memory `loopback` transport. More run over UDP
-on 127.0.0.1: the server on the platform's recommended transport (`auto`) and
-each client on `portable`. Clients join 50 a frame; timing starts once all are
-connected. The header at this base still names the message calls start,
-finish, receive, release and send_packets; the lifecycle rename makes them
-`*_start_message`, `*_finish_message`, `*_receive_message`,
+Every run is in memory over the `loopback` transport: the in-memory transport
+holds `ROCKETNET_LOOPBACK_MAX_ENDPOINTS` endpoints, one server and up to
+`ROCKETNET_MAX_CLIENTS` clients. Clients join 50 a frame; timing starts once
+all are connected. The header at this base still names the message calls
+start, finish, receive, release and send_packets; the lifecycle rename makes
+them `*_start_message`, `*_finish_message`, `*_receive_message`,
 `*_release_message` and `*_send_messages`.
 
 ## Run it
@@ -32,14 +32,13 @@ From the repository root, after the normal build:
 ```sh
 ./bin/example_game_loop                      # 32 clients, 5 seconds
 ./bin/example_game_loop --wrong-order        # send_packets before queuing
-ulimit -n 4096; ./bin/example_game_loop --clients 1000 --seconds 30
+./bin/example_game_loop --clients 1000 --seconds 30
 ```
 
-The full-scale run holds 1000 clients in one process, and on Linux each
-`portable` client holds two file descriptors: raise the limit first.
-`--clients` outside 1..1000 prints a usage line and exits 1. On Windows the
-binary is `bin\Release\example_game_loop.exe`. The default run prints `PASS`
-last; a failure prints one `FAIL: ...` line and exits 1.
+The full-scale run holds 1000 clients in one process, all in memory over the
+loopback transport. `--clients` outside 1..1000 prints a usage line and exits
+1. On Windows the binary is `bin\Release\example_game_loop.exe`. The default
+run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
 ## What the output means
 
