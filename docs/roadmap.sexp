@@ -216,6 +216,20 @@
     (:feature "The normative standard in standard/, a conformance vector per section" :cells (y) :evidence "61c0e67 skeleton and tools/conformance/check_rn_standard.py; one card per section, each with its vectors (standard_wire_primitives_vectors 062e2cb through standard_channels_receipts_security_vectors 263a088); standard/RATIONALE.md 3ba4ff2")
     (:feature "Independent review of the transport repair diff, received" :cells (n) :note "the repair of findings #143 to #159; a review request sent is not a review received or an approval")
     (:feature "The old to-do and readiness files retired into this roadmap" :cells (y) :evidence "rocketnet-retire-todo-and-readiness" :note "TODO.md and TRANSPORT_READINESS.md deleted; every open item is a row here")))
+  (:id "second-deliverable" :title "Second deliverable: keys and backends (later)"
+   :text "What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. After v1.0.0, by the owner's call (Glenn, 2026-10-19: Go because the owner's backends are Go, C# because RocketWerkz uses C#)."
+   :columns ("done")
+   :rows
+   ((:feature "Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production" :cells (n) :note "the server takes the public key; the private key stays on the backend; it replaces the published development keys. References: netcode's keygen and yojimbo's (keygen.cpp at the repository root is the starting point)")
+    (:feature "Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token" :cells (n) :note "covers where each key lives (backend, server, and never shipped in the client), rotation, and development keys versus production keys. References: netcode's and yojimbo's key documentation")
+    (:feature "Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect" :cells (n) :note "each comes with a connect token format test vector shared with the C SDK, so tokens minted in Go and C# are accepted by the server. References: the netcode connect token, the yojimbo matcher backend (Go) and the space game backend")))
+
+  (:id "correctness-post-v1" :title "Correctness after v1.0.0 (later)"
+   :text "Correctness work that follows the v1.0.0 milestone, by the owner's call."
+   :columns ("done")
+   :rows
+   ((:id "server-running-invariants" :feature "TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client" :cells (n) :note "The query itself shipped as rocketnet_server_running in v1.0.0. From card rocketnet-public-server-stopped-query, never started.")))
+
   (:id "landed-2026-10-19" :title "Landed in the sprint since the 2026-10-18 roadmap record"
    :text "Cards landed on sprint/rocketnet-proof after the 2026-10-18 roadmap record (782b0ba), one row per card, its id the card id, with the landing merge commit as evidence. They reach main when v1.0.0 promotes the sprint branch."
    :columns ("done")

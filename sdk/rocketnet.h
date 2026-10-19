@@ -54,11 +54,6 @@
 // rocketnet_version returns the value the library was built with.
 #define ROCKETNET_VERSION   ( ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH )
 
-// the earlier names of the three parts
-#define ROCKETNET_VERSION_MAJOR_INT                 ROCKETNET_VERSION_MAJOR
-#define ROCKETNET_VERSION_MINOR_INT                 ROCKETNET_VERSION_MINOR
-#define ROCKETNET_VERSION_PATCH_INT                 ROCKETNET_VERSION_PATCH
-
 /**
  * @brief Identifies the public C struct and calling-convention revision.
  *
@@ -698,6 +693,10 @@ ROCKETNET_EXPORT bool rocketnet_allocator( void * (*malloc_function)( void * con
 // platform or this endpoint does not have (xdp for a client) is skipped with
 // one log line, so one config line deploys to mixed machines; a name that is
 // no transport anywhere is a typo and fails loudly, listing the valid names.
+// The AF_XDP server transport (xdp) serves IPv4; IPv6 runs on gso, io_uring
+// and portable. A server with an IPv6 address takes xdp out of its list, so
+// "auto" falls to the next transport, and a list naming only xdp is refused
+// with ROCKETNET_STATUS_INVALID_TRANSPORT_LIST.
 // rocketnet_client_transport_name and rocketnet_server_transport_name return
 // the transport that won.
 //
@@ -778,7 +777,7 @@ struct rocketnet_server_config_t
     int num_reassembly_slots;                       // ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS: per client; 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     int max_timeout_seconds;                        // ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS: 1 .. 3600; default 60
     int handshake_deadline_seconds;                 // ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS: 1 .. 60; default 5
-    const char * transport;                         // ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"
+    const char * transport;                         // ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"; xdp serves IPv4 only, IPv6 runs on gso, io_uring or portable
     const char * public_address;                    // ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address
     int per_client_send_kbps;                       // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less disables the budget in this direction (server to each client), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               // ROCKETNET_SERVER_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
