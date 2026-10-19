@@ -37,6 +37,10 @@
 #define ROCKETNET_IOCP_DISABLE_USO 1
 #define ROCKETNET_IOCP_DISABLE_URO 2
 
+// immediate reposts of a receive whose post failed with a reset status
+// before it waits on the retry list
+#define ROCKETNET_IOCP_RESET_REPOSTS 16
+
 // rocketnet_server_iocp_features bits
 #define ROCKETNET_IOCP_FEATURE_USO 1
 #define ROCKETNET_IOCP_FEATURE_URO 2
@@ -83,6 +87,11 @@ int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
 // The ROCKETNET_IOCP_FEATURE_* bits in use now. USO clears itself when a live
 // segmented send is refused.
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
+
+// A test control: flags every later create ORs into its own (the
+// ROCKETNET_IOCP_DISABLE_* bits), so a functional case can run the whole server
+// transport on the per-datagram path. Zero, the default, changes nothing.
+void rocketnet_server_iocp_test_force_flags( int flags );
 
 #if defined(ROCKETNET_IOCP_TESTS)
 // Hold/release must be paired on the same thread. Do not call stop there while

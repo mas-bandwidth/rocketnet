@@ -83,6 +83,11 @@ struct rocketnet_server_rio_t
     // the two banks. The fill bank is banks[fill_bank]; the other is exposed.
     int posted_receives = 0;
     rocketnet_rio_bank_t * banks = NULL;        // [2]
+    // slices whose re-post failed: each counted RECEIVE_REPOST_FAILED and
+    // posted again at the next receive_packets, so a failed post never
+    // shrinks the receive ring for good
+    int num_retry_slices = 0;
+    int retry_slices[ROCKETNET_RIO_RECEIVES];
     int fill_bank = 0;
 
     std::atomic<uint64_t> counters[ROCKETNET_RIO_NUM_COUNTERS]{};
@@ -245,9 +250,19 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     }
     else
 #endif
-    if ( !rio->rio.RIOReceiveEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
-                                 (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
-        return false;
+    {
+        // an ICMP report of an earlier send can fail a post at once with a
+        // reset status: skipped and posted again (windows-udp-connreset
+        // audit, rio receive post)
+        int attempt = 0;
+        while ( !rio->rio.RIOReceiveEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
+                                        (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
+        {
+            if ( ++attempt >= ROCKETNET_RIO_RESET_REPOSTS || !rocketnet_platform_receive_status_is_reset( WSAGetLastError() ) )
+                return false;
+            rocketnet_platform_count_receive_reset();
+        }
+    }
     rio->posted_receives++;
     return true;
 }
@@ -429,10 +444,8 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     SOCKADDR_INET address;
     int address_bytes = 0;
     int buffer_bytes = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
-    DWORD returned_bytes = 0;
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
-    BOOL connection_reset = FALSE;
 
     rio->slot_bytes = (int*) rocketnet_malloc( context, sizeof(int) * ROCKETNET_RIO_SEND_FRAMES );
     if ( !rio->slot_bytes ) goto failed;
@@ -453,7 +466,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
-    if ( WSAIoctl( rio->socket, SIO_UDP_CONNRESET, &connection_reset, sizeof(connection_reset), NULL, 0, &returned_bytes, NULL, NULL ) == SOCKET_ERROR ) goto failed;
+    // windows-udp-connreset audit, rio socket: both ICMP reset reports off;
+    // a refusal is logged once and the receive path skips the statuses
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
     if ( bind( rio->socket, (sockaddr*) &address, address_bytes ) == SOCKET_ERROR ) goto failed;
     address_bytes = sizeof(address);
     if ( getsockname( rio->socket, (sockaddr*) &address, &address_bytes ) == SOCKET_ERROR ) goto failed;
@@ -645,6 +660,11 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         return;
     }
     rio->posted_receives--;
+    // an ICMP report of an earlier send (port, host or network unreachable)
+    // is counted with the failed receives and the slice is re-posted below,
+    // never the end of the drain (windows-udp-connreset audit, rio completion)
+    if ( rocketnet_platform_receive_status_is_reset( (int) result->Status ) )
+        rocketnet_platform_count_receive_reset();
     if ( result->Status == WSAEMSGSIZE )
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE );     // past the slice: oversize
     else if ( result->Status != 0 )
@@ -671,13 +691,33 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
     }
     // after stop nothing is re-posted and nothing is counted
     if ( !rio->stopping.load( std::memory_order_acquire ) && !rocketnet_rio_post_receive( rio, slice ) )
+    {
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED );
+        if ( rio->num_retry_slices < ROCKETNET_RIO_RECEIVES )
+            rio->retry_slices[rio->num_retry_slices++] = slice;
+    }
+}
+
+// posts again each slice whose re-post failed; one that fails again stays
+// on the list for the next receive_packets
+static void rocketnet_rio_retry_receives( rocketnet_server_rio_t * rio )
+{
+    int kept = 0;
+    for ( int i = 0; i < rio->num_retry_slices; ++i )
+    {
+        const int slice = rio->retry_slices[i];
+        if ( rio->stopping.load( std::memory_order_acquire ) || !rocketnet_rio_post_receive( rio, slice ) )
+            rio->retry_slices[kept++] = slice;
+    }
+    rio->num_retry_slices = kept;
 }
 
 // receive_packets: DequeueReceive until the receive completion queue is
 // empty, then Swap (RNRioDriver).
 void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
 {
+    if ( rio->num_retry_slices )
+        rocketnet_rio_retry_receives( rio );
     for ( ;; )
     {
         RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];

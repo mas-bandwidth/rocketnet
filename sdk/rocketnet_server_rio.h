@@ -32,6 +32,9 @@
 
 #define ROCKETNET_RIO_SEND_QUEUE_SIZE 16384
 #define ROCKETNET_RIO_RECEIVES 4096
+// immediate re-posts of a receive whose post failed with a reset status
+// before the slice waits on the retry list
+#define ROCKETNET_RIO_RESET_REPOSTS 16
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
 
 struct rocketnet_server_rio_t;
