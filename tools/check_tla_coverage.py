@@ -41,6 +41,7 @@ def tla_modules():
 def check_row(row):
     failures = []
     module = row["module"]
+    machine = row.get("machine", "")
     status = row.get("status", "")
     code = row.get("code", "")
     note = row.get("note", "")
@@ -48,6 +49,10 @@ def check_row(row):
     module_file = TLA_DIR / f"{module}.tla"
     if not module_file.exists():
         failures.append(f"{module}: tla/{module}.tla does not exist")
+
+    if "," in code:
+        failures.append(f"{module}: {machine} code column must hold one path, one per row")
+        return failures
 
     if status != "owed":
         code_file = ROOT / code
