@@ -424,6 +424,20 @@ static int matrix_build_progress( const struct server_client_t * c, uint8_t * bu
     return off;
 }
 
+// section 5: the report's one sending call, behind a pointer so the self-test
+// can observe emission without a socket (the card's test rule). The running
+// program keeps the library call.
+typedef int (*server_progress_send_fn)( struct rocketnet_message_server_t * server, int client_index, int channel,
+                                        int reliability, const uint8_t * data, int bytes );
+
+static int server_progress_send( struct rocketnet_message_server_t * server, int client_index, int channel,
+                                 int reliability, const uint8_t * data, int bytes )
+{
+    return (int) rocketnet_message_server_send( server, client_index, channel, reliability, data, bytes );
+}
+
+static server_progress_send_fn g_progress_send = server_progress_send;
+
 // section 5: every 50 ms the server sends its own report, on the same cadence
 // as the client, driven by the update time. It is UNRELIABLE_SEQUENCED on
 // channel 31, which carries no matrix stream, so it neither supersedes nor is
@@ -437,8 +451,8 @@ static void matrix_send_progress( struct rocketnet_message_server_t * server, in
     const int n = matrix_build_progress( c, report, (int) sizeof report );
     if ( n <= 1 )
         return;
-    if ( rocketnet_message_server_send( server, client_index, ROCKETNET_SERVER_PROGRESS_CHANNEL,
-                                       ROCKETNET_UNRELIABLE_SEQUENCED, report, n ) )
+    if ( g_progress_send( server, client_index, ROCKETNET_SERVER_PROGRESS_CHANNEL,
+                          ROCKETNET_UNRELIABLE_SEQUENCED, report, n ) )
         c->progress_sent++;
 }
 
@@ -696,10 +710,39 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
     matrix_write_cells( c );
 }
 
+struct progress_record_t
+{
+    int calls;
+    int client_index;
+    int channel;
+    int reliability;
+    int bytes;
+    uint8_t data[1 + ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * 10];
+};
+
+static struct progress_record_t g_progress_record;
+
+// section 5: records one report instead of sending it, so the self-test sees
+// the channel, the reliability and the payload the server emits.
+static int progress_record( struct rocketnet_message_server_t * server, int client_index, int channel,
+                            int reliability, const uint8_t * data, int bytes )
+{
+    (void) server;
+    g_progress_record.calls++;
+    g_progress_record.client_index = client_index;
+    g_progress_record.channel = channel;
+    g_progress_record.reliability = reliability;
+    g_progress_record.bytes = bytes;
+    if ( bytes > 0 && bytes <= (int) sizeof g_progress_record.data )
+        memcpy( g_progress_record.data, data, (size_t) bytes );
+    return 1;
+}
+
 // The server-side checks the card asks for without a socket: a nonzero seed
-// moves the length schedule (sections 2 and 4), and the 0xC report of section
-// 5 encodes a stream's highest contiguous sequence and bytes received. Writes
-// a sample result file and returns 0 when both hold.
+// moves the length schedule (sections 2 and 4), the 0xC report of section 5
+// encodes a stream's highest contiguous sequence and bytes received, and the
+// same report is emitted on channel 31 at the 50 ms cadence (section 5).
+// Writes a sample result file and returns 0 when all hold.
 static int run_self_test( const char * path, const char * label, uint32_t seed )
 {
     int failures = 0;
@@ -744,6 +787,36 @@ static int run_self_test( const char * path, const char * label, uint32_t seed )
         if ( report[1] != 0 || report[2] != 3 || hi0 != 1u || bytes0 != 40u )
             failures++;
     }
+
+    // section 5: the server emits the report itself, on channel 31, as
+    // UNRELIABLE_SEQUENCED, and no more often than every 50 ms. A clock that
+    // starts at 1000.0 keeps the cadence an argument, not the wall clock.
+    struct server_client_t silent;
+    memset( &silent, 0, sizeof silent );
+    struct server_client_t emitted;
+    memset( &emitted, 0, sizeof emitted );
+    emitted.streams[0][3].contiguous = 2;
+    emitted.streams[0][3].bytes_received = 40;
+    memset( &g_progress_record, 0, sizeof g_progress_record );
+    g_progress_send = progress_record;
+    matrix_send_progress( NULL, 5, &silent, 1000.0 );
+    const int silent_calls = g_progress_record.calls;
+    matrix_send_progress( NULL, 4, &emitted, 1000.0 );
+    matrix_send_progress( NULL, 4, &emitted, 1000.02 );
+    matrix_send_progress( NULL, 4, &emitted, 1000.06 );
+    g_progress_send = server_progress_send;
+    const int calls = g_progress_record.calls;
+    printf( "server self-test emission calls %d channel %d reliability %d bytes %d sent %llu\n",
+            calls, g_progress_record.channel, g_progress_record.reliability, g_progress_record.bytes,
+            (unsigned long long) emitted.progress_sent );
+    if ( silent_calls != 0 || calls != 2 ||
+         g_progress_record.client_index != 4 ||
+         g_progress_record.channel != ROCKETNET_SERVER_PROGRESS_CHANNEL ||
+         g_progress_record.reliability != ROCKETNET_UNRELIABLE_SEQUENCED ||
+         g_progress_record.bytes != 11 ||
+         g_progress_record.data[0] != ROCKETNET_SERVER_PROGRESS_NIBBLE ||
+         emitted.progress_sent != 2 )
+        failures++;
 
     if ( path )
     {
