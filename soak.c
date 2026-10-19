@@ -438,13 +438,6 @@ int main( int argc, char ** argv )
             printf( "soak summary: server_%s %llu\n", rocketnet_counter_name( i ), (unsigned long long) value );
     }
 
-    for ( int i = 0; i < num_counters && i < ROCKETNET_SOAK_MAX_COUNTERS; i++ )
-    {
-        const uint64_t total = client_counters[i] + rocketnet_counter_value( server_counters, i );
-        if ( total != 0 )
-            printf( "soak summary: %s %llu\n", rocketnet_counter_name( i ), (unsigned long long) total );
-    }
-
     fflush( stdout );
 
     if ( client )

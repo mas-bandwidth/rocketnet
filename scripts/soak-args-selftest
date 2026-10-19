@@ -130,9 +130,8 @@ else
     disc_clean=$( summary_value "$WORK/sec3.txt" "ROCKETNET_CLIENT_STATE_DISCONNECTED" )
     cli_pkt=$( summary_value "$WORK/sec3.txt" "client_PACKETS_RECEIVED" )
     srv_pkt=$( summary_value "$WORK/sec3.txt" "server_PACKETS_RECEIVED" )
-    tot_pkt=$( summary_value "$WORK/sec3.txt" "PACKETS_RECEIVED" )
 
-    if [ -z "$sent" ] || [ -z "$received" ] || [ -z "$verified" ] ||        [ -z "$client_verified" ] || [ -z "$server_verified" ] ||        [ -z "$reconnects" ] || [ -z "$disc_clean" ] ||        [ -z "$cli_pkt" ] || [ -z "$srv_pkt" ] || [ -z "$tot_pkt" ]; then
+    if [ -z "$sent" ] || [ -z "$received" ] || [ -z "$verified" ] ||        [ -z "$client_verified" ] || [ -z "$server_verified" ] ||        [ -z "$reconnects" ] || [ -z "$disc_clean" ] ||        [ -z "$cli_pkt" ] || [ -z "$srv_pkt" ]; then
         fail "--seconds 3 missing required soak summary lines"
         cat "$WORK/sec3.txt" >&2
     elif [ "$client_verified" -le 0 ] || [ "$server_verified" -le 0 ] || [ "$verified" -le 0 ]; then
