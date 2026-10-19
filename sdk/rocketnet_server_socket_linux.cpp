@@ -678,13 +678,19 @@ static bool rocketnet_server_socket_read_sysfs( const char * path, char * value,
 // -- the test suite installs this once, structurally, for every present
 // and future test -- forbids the committing create outright. the
 // pre-flight stays reachable (it is non-mutating by contract); create
-// refuses at the top, before its first act.
+// refuses at the top, before its first act. allow_commit opts a caller
+// back in, for a functional case that commits a real XDP data plane.
 
 static std::atomic<bool> rocketnet_server_socket_commit_forbidden_flag( false );
 
 void rocketnet_server_socket_forbid_commit()
 {
     rocketnet_server_socket_commit_forbidden_flag.store( true );
+}
+
+void rocketnet_server_socket_allow_commit()
+{
+    rocketnet_server_socket_commit_forbidden_flag.store( false );
 }
 
 // cpu list helpers for the boot-tier checks: "1-7,9" style lists as

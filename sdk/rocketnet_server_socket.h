@@ -36,9 +36,13 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 // forbids the committing create outright -- the test suite installs this
 // once at its start, structurally, so every present and future test is
 // safe by default; the pre-flight stays reachable (non-mutating by
-// contract) and create refuses before its first act.
+// contract) and create refuses before its first act. allow_commit is the
+// deliberate opt-out, for a functional case that commits a real XDP data
+// plane.
 
 void rocketnet_server_socket_forbid_commit();
+
+void rocketnet_server_socket_allow_commit();
 
 // the R4 interrupt-line matcher, pure string logic exported for the
 // fixture test: does this /proc/interrupts line belong to this interface?
