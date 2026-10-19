@@ -25,9 +25,24 @@ jobs:
       - name: Model coverage rows are true
         shell: bash
         run: python3 tools/check_tla_coverage.py --all
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.6'
+      - name: Coverage checker tests pass
+        shell: bash
+        run: python3 tools/test_check_tla_coverage.py
+      - name: Check the fleet's Go is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go 1.26.6 (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          got="$(go version)"
+          echo "$got"
+          case "$got" in
+            *go1.26.6*)
+              ;;
+            *) echo "TOOL-MISSING go 1.26.6 $got on $RUNNER_NAME"; exit 1 ;;
+          esac
       - name: Build the pinned public runner and check records
         shell: bash
         env:

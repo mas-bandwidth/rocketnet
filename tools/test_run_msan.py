@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Tests for the MemorySanitizer gate's verdicts in tools/run_msan.sh."""
+
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+RUN_MSAN = REPO_ROOT / "tools" / "run_msan.sh"
+
+MSAN_EXITCODE = 86
+KNOWN_TOP = "load64_be sodium/sodium.h:1464:5"
+UNKNOWN_TOP = "unlisted_frame tools/fixture.cpp:1:1"
+
+FAKE_TEMPLATE = '''#!/usr/bin/env python3
+import os
+import sys
+
+options = os.environ.get("MSAN_OPTIONS", "")
+log_path = ""
+for field in options.split(":"):
+    if field.startswith("log_path="):
+        log_path = field[len("log_path="):]
+if log_path:
+    with open(log_path + "." + str(os.getpid()), "w") as handle:
+        handle.write(%(warning)r)
+sys.stdout.write(%(stdout)r)
+sys.exit(%(status)d)
+'''
+
+
+def warning_text(top):
+    if top is None:
+        return ""
+    return (
+        "==1==WARNING: MemorySanitizer: use-of-uninitialized-value\n"
+        "    #0 0x1000 in %s\n"
+        "    #1 0x2000 in main tools/fixture.cpp:1:1\n"
+        "SUMMARY: MemorySanitizer: use-of-uninitialized-value\n" % top
+    )
+
+
+class RunMsanGateTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=REPO_ROOT)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_gate(self, stdout, status, top):
+        binary = Path(self.tmp.name) / "fake-test"
+        binary.write_text(
+            FAKE_TEMPLATE
+            % {"warning": warning_text(top), "stdout": stdout, "status": status}
+        )
+        binary.chmod(0o755)
+        env = dict(os.environ)
+        env["RUN_MSAN_TEST_BIN"] = str(binary)
+        result = subprocess.run(
+            ["bash", str(RUN_MSAN)],
+            cwd=str(REPO_ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return result.returncode, result.stdout
+
+    def test_signal_fail_line_fails_even_with_known_finding(self):
+        stdout = (
+            "test_timing_fail_01 [SKIPPED "
+            "wire_totals_staged_finish_counts_exactly signal 5]\n"
+        )
+        code, output = self.run_gate(stdout, 1, KNOWN_TOP)
+        self.assertEqual(code, 1, output)
+        self.assertIn(
+            "MSan: test failed: wire_totals_staged_finish_counts_exactly signal 5",
+            output,
+        )
+
+    def test_illegal_instruction_fail_line_fails_with_known_finding(self):
+        stdout = (
+            "test_timing_fail_01 [SKIPPED "
+            "wire_totals_staged_finish_counts_exactly signal 4]\n"
+        )
+        code, output = self.run_gate(stdout, 1, KNOWN_TOP)
+        self.assertEqual(code, 1, output)
+        self.assertIn(
+            "MSan: test failed: wire_totals_staged_finish_counts_exactly signal 4",
+            output,
+        )
+
+    def test_binary_status_without_fail_line_fails(self):
+        code, output = self.run_gate("", 133, KNOWN_TOP)
+        self.assertEqual(code, 1, output)
+        self.assertIn("MSan: test run failed with status 133", output)
+
+    def test_msan_exit_code_with_known_findings_passes(self):
+        stdout = "test_timing_fail_01 [SKIPPED random_bytes_test exit %d]\n" % MSAN_EXITCODE
+        code, output = self.run_gate(stdout, 1, KNOWN_TOP)
+        self.assertEqual(code, 0, output)
+        self.assertIn("(all known)", output)
+
+    def test_ordinary_exit_code_with_known_finding_fails(self):
+        stdout = "test_timing_fail_01 [SKIPPED random_bytes_test exit 1]\n"
+        code, output = self.run_gate(stdout, 1, KNOWN_TOP)
+        self.assertEqual(code, 1, output)
+        self.assertIn("MSan: test failed: random_bytes_test exit 1", output)
+
+    def test_unlisted_finding_fails_naming_it(self):
+        code, output = self.run_gate("", 0, UNKNOWN_TOP)
+        self.assertEqual(code, 1, output)
+        self.assertIn(UNKNOWN_TOP, output)
+
+    def test_clean_run_passes(self):
+        code, output = self.run_gate("", 0, None)
+        self.assertEqual(code, 0, output)
+        self.assertIn("MSan: clean", output)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,7 +8,7 @@
 #include "rocketnet_read_write.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>
@@ -163,7 +163,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     uint8_t flags = client->signed_fields.address_flags;
     if ( flags == 0 || ( flags & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) != 0 ||
          client->signed_fields.create_timestamp > client->signed_fields.expire_timestamp ||
-         client->signed_fields.version != ROCKETNET_VERSION )
+         client->signed_fields.version != ROCKETNET_WIRE_VERSION )
     {
         rocketnet_debug( "client connect failed. invalid connect token" );
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );

@@ -295,9 +295,11 @@ section, and this table exists so an implementer never hunts for a number.
 | CONFIG control body | 28 bytes | _Messages_ |
 | Packet size | 1500-byte link MTU; 1472 bytes of UDP payload over the smaller IP header, 1452 over the larger | _Packet sizes_ |
 | Send budget | 1452 default, 1472 maximum | _Packet sizes_ |
+| Send bandwidth budget | 1000 kbps client, 10000 kbps server per client | _Send bandwidth budget_ |
 | Receive ceiling | 1472, fixed | _Packet sizes_ |
 | Payload capacity | 1416 sent, 1439 received | _Packet sizes_ |
 | SINGLE message | 1415 bytes | _Messages_ |
+| Unreliable one-record threshold | 1411 bytes (UNRELIABLE and its receipt); 1405 narrow, 1404 WIDE (UNRELIABLE_SEQUENCED); larger sends promote | _Messages_ |
 | Fragment stride | 1413 sent, 1433 received | _Fragmentation_ |
 | Connect token | 768 bytes; signed data 576; sealed block 432; private block 384 | _Connect Token_ |
 | Sequence | 4 bytes wire, 64-bit value, starts at 1, zero invalid | _Sequence numbers_ |
@@ -1900,7 +1902,9 @@ inbound outruns outbound, which is what removes the coupling between ack
 capacity and return-traffic cadence. **There is no structural
 packets-per-second cap anywhere in this design**: the block widens with loss,
 not with rate, and the standalone ack supplies return capacity whenever the
-traffic itself does not.
+traffic itself does not. The only bound on how fast a connection sends is the
+configured send bandwidth budget (_Send bandwidth budget_), which is
+configuration and may be disabled.
 
 ### Processing
 
@@ -2096,7 +2100,8 @@ The payload's **last** byte, the _form byte_, says how the bytes before it are
 laid out. Putting it last is what makes the zero-copy form possible: a SINGLE
 message starts at payload offset 0, which is the transport's 16-aligned
 payload root, so an application writes it in place in the frame and a
-receiver reads it in place in the delivered batch.
+receiver reads it in place in the delivered batch. The public send is
+zero-copy only: start, finish and abort, with no copying send form.
 
 ```
 payload := body form            L = len(payload) >= 2
@@ -2107,9 +2112,8 @@ form    := u8                   the LAST byte
 ```
 
 SINGLE costs one byte. Its message is always UNRELIABLE and carries no channel,
-number or receipt. A SINGLE payload larger than one packet is legal: the
-transport fragments it, and losing a fragment loses the message, which is what
-unreliable means.
+number or receipt. It fills one packet: an unreliable message too large for one
+packet's record is promoted to its reliable twin (below), never fragmented.
 
 RECORDS is the aggregation form: small unreliable messages, reliable records,
 resends and the CONFIG record share one payload, back to back.
@@ -2157,15 +2161,29 @@ receiver accepts packs back to the same bytes from the records it parsed, and
 no byte of an accepted payload is ignored.
 
 The receipt variants of the API never reach the wire: reliability 5 is sent as
-code 0, 6 as 2, and 7 as 3. The block stride is the wire constant
+code 0, 6 as 2, and 7 as 3. **An unreliable send too big for one packet's
+record is promoted to its reliable twin, as RakNet's ReliabilityLayer does.**
+UNRELIABLE (code 0) is one record in one packet up to 1411 bytes; above that it
+is sent as RELIABLE (code 2), as a record or a block as its size needs.
+UNRELIABLE_SEQUENCED (code 1) is one record while its payload fits 1416 bytes,
+at most 1405 data bytes, or 1404 when the channel is WIDE; above that it is
+sent as RELIABLE_SEQUENCED (code 4). UNRELIABLE_WITH_ACK_RECEIPT (code 5) uses
+the code-0 wire form up to 1411 bytes; above that it takes the reliable code-2
+block path and keeps its ACKED-only receipt. **The receiver sees the twin's
+code on the wire, and an implementation MUST count every promotion, once per
+send, in a counter for the source mode.** A send above `max_message_bytes` is refused in every unreliable mode; there is
+no second record-length refusal. There is no
+UNRELIABLE_SEQUENCED_WITH_ACK_RECEIPT mode. The block
+stride is the wire constant
 **F = 1152** bytes, a multiple of 16: fragments 0 to k−2 of a block carry
 exactly F bytes and fragment k−1 carries 1 to F (_CHANNELS 8_).
 
 A payload that carries a reliable record (code 2, 3 or 4) or a CONTROL record
 is at most `ROCKETNET_MAX_PAYLOAD_BYTES` (1416) long, so the transport sends it
 unfragmented. A reliable message longer than one record can hold is sent as a
-block. An unreliable record (code 0 or 1) may travel alone in a larger payload
-that the transport fragments; its u16 length caps it at 65,535 bytes.
+block. An unreliable record (code 0 or 1) also stays within one packet: a
+larger unreliable message is promoted to its reliable twin (above), so an
+unreliable record never rides a fragmented payload.
 
 ### The receiver's checks, in order
 
@@ -2342,6 +2360,29 @@ client's next scheduled request, the server reissues one and the client uses it
 on the request after that. A cookie lifetime shorter than two send intervals
 makes that race likely and wastes a round trip; a few seconds against a 10 Hz
 send rate leaves ample margin.
+
+### Send bandwidth budget
+
+Every connection has a send bandwidth budget, in kbps (1 kbps = 1000 bit/s)
+of the transport's wire bytes: **1000 kbps for the client's one connection,
+10000 kbps for each server client slot**, per direction. It is configuration,
+not a wire constant: the message config fields `client_send_kbps` and
+`server_send_kbps` carry those defaults, a positive value is at most
+10000000 kbps (10 Gbit/s) and a larger one is refused, and an application changes one
+connection with `rocketnet_message_client_set_send_kbps` or
+`rocketnet_message_server_set_send_kbps`. An operator overrides either field
+with the environment variable `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` or
+`ROCKETNET_MESSAGE_SERVER_SEND_KBPS`, read at create over the config field and
+the create argument (default < struct < environment) and logged with the value
+it displaces; a value that does not parse, or one above the maximum, refuses
+the create.
+
+An unreliable send over the budget is dropped and counted as
+`MESSAGE_UNRELIABLE_OVER_BUDGET`; a reliable send over the budget waits and is
+never dropped. **A value of 0 or lower in either config field, or passed to
+either setter, disables that direction's budget.** Disabling it is NOT
+RECOMMENDED (RFC 2119): without a budget there is no defined behaviour when a
+sender outruns its path or its peer.
 
 ## Client State Machine
 
@@ -2706,13 +2747,23 @@ In this exact order, on a _connection request packet_:
   exactly the key-recurrence hazard the nonce exists to prevent. A mapping is
   created once, answered identically for as long as it lives, and replaced
   never — a different token from the same address waits until the mapping
-  expires. The resend costs no crypto and is smaller than the request that
+  expires. **The request's connection salt is not consulted:** a request from
+  that address with a new salt is answered with the same stored challenge,
+  under the mapping's original salt and nonce. A client that retried with a new
+  salt therefore receives a challenge it cannot open; it gives up at its
+  deadline, and only a request from that address after the mapping expires can
+  create a new one. The resend costs no crypto and is smaller than the request
+  that
   provoked it, so it is safe this early; it is placed after the
   already-connected check so an established client's address cannot be made to
   emit anything.
 * If the version is not 0x4E7C1A93, ignore it.
 * If the protocol id does not match the server's, ignore it.
 * If the expire timestamp is <= the current time, ignore it.
+* If `max_token_lifetime_seconds` is above 0 and the create timestamp is more
+  than five seconds ahead of the current time, ignore it.
+* If `max_token_lifetime_seconds` is above 0 and the token's lifetime
+  (`expire - create`) exceeds that maximum, ignore it.
 * If the timeout seconds field is zero, ignore it; if it is negative and the
   server is not explicitly configured to accept negative timeouts, ignore it.
   A positive value above the server's configured maximum is clamped, not
@@ -3393,6 +3444,8 @@ order:
 | `..._WRONG_VERSION` | version mismatch |
 | `..._WRONG_PROTOCOL_ID` | protocol id mismatch |
 | `..._TOKEN_EXPIRED` | expire timestamp has passed |
+| `..._TOKEN_CREATED_IN_FUTURE` | create timestamp more than five seconds ahead, while `max_token_lifetime_seconds` is above 0 |
+| `..._TOKEN_LIFETIME_TOO_LONG` | `expire - create` exceeds `max_token_lifetime_seconds`, while that maximum is above 0 |
 | `..._TIMEOUT_INVALID` | timeout seconds zero, or negative and not accepted |
 | `..._BAD_ADDRESS_FLAGS` | reserved bits set, or no family named |
 | `..._ADDRESS_NOT_ADVERTISED` | names no address this server answers at |

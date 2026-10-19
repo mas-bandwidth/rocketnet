@@ -9,7 +9,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_client_send_rings.h"
 
 static void client_io_handoff_sends_ring_once()

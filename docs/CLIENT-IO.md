@@ -2,22 +2,28 @@
 
 The client transport's goal here is less work on the game's main thread, not
 more throughput. At the base of this design (`sprint/rocketnet-proof` at
-`dfd313f`) the main thread calls the driver once per packet in
-`rocketnet_client_transport_send_packets`
-(`sdk/rocketnet_client_transport.cpp`, the send walk at lines 1001-1017), and
-`rocketnet_client_transport_update` takes a mutex that the receive thread
+`dfd313f`) the main thread calls the transport once per packet in
+`rocketnet_client_send_packets`
+(the client transport implementation, the send walk at lines 1001-1017), and
+`rocketnet_client_update` takes a mutex that the receive thread
 holds for its whole drain (`rocketnet_client_update_swap_receive_buffers`,
 line 515; `rocketnet_client_receive_packets`, lines 1234-1273). The receive
 thread polls every 1 ms (line 1283) and stamps each datagram with the wall
 clock (line 1265). This document measures that, designs the replacement,
 models it in TLA+ (`tla/RNClientIo.tla`) and cuts the implementation cards.
 
+The names `rocketnet_client_io_step` and `rocketnet_platform_sleep` in this
+document are internal functions (`sdk/rocketnet_client_io.h`,
+`sdk/rocketnet_platform.h`); a game uses `rocketnet_client_update`,
+`rocketnet_client_send_packets` and the other client entry points in
+`sdk/rocketnet.h`.
+
 ## Measured
 
 The meter is `bench/client_main_thread_cost.cpp` (see
 `bench/client_main_thread_cost.md`): a real encrypted loopback connection,
 P payloads of 200 bytes per frame, and two timed windows on the main thread,
-`send_packets` and `update`. Release build with `make`, portable driver, on a
+`send_packets` and `update`. Release build with `make`, portable transport, on a
 64-core Linux x86-64 bench (kernel 7.0.0-34-generic, g++ 15.2.0), three runs of
 2000 measured frames per P, at the base above. Each cell is the median of the
 three runs; all values are microseconds.
@@ -82,7 +88,7 @@ What the main thread pays for:
 ## The design
 
 One client I/O thread replaces the receive thread (created at line 407 of
-`sdk/rocketnet_client_transport.cpp`). It owns every socket call of the
+the client transport implementation). It owns every socket call of the
 transport once the transport is connected and running.
 
 **The hand-off and the two rings.** The payload ring becomes two rings, A
@@ -93,8 +99,8 @@ joined (the phase contract it already has) and does three things: it records
 the ring's committed count, publishes the ring to the I/O thread with one
 release store of a ring state word (Filling to HandedOff), and wakes the I/O
 thread once. Then it switches the fill pointer to the other ring and returns.
-No driver call is made on the main thread. The same hand-off runs from
-`rocketnet_client_transport_send_packet`, which calls `send_packets` after
+No transport call is made on the main thread. The same hand-off runs from
+the single-packet send path, which calls `send_packets` after
 every packet it writes (line 758 at `7ffb924`), and at the end of `update`
 (below), so a frame commonly makes two or more hand-offs.
 
@@ -133,7 +139,7 @@ an `update` ran in between.
 
 **The protocol packet and disconnect.** The packet `update` builds
 (`rocketnet_client_protocol_update`) and the disconnect burst of
-`rocketnet_client_transport_disconnect` are sealed into a slot of the Filling
+`rocketnet_client_disconnect` are sealed into a slot of the Filling
 ring, like a payload, and handed off by the same step: `update` ends with a
 hand-off attempt every frame (it retries any deferred slots, and hands off
 its own packet when it committed one), and `disconnect` ends with one. Both
@@ -142,7 +148,7 @@ run on the main thread with fills joined.
 **The wake.** The I/O thread waits on "socket readable or woken", with no
 timeout while running (a bounded timeout only as a guard, never a cadence).
 While its receive buffer is full (`ROCKETNET_NUM_CLIENT_PACKETS`
-datagrams) it waits on the wake alone: the driver's `wait` takes a
+datagrams) it waits on the wake alone: the transport's `wait` takes a
 `readable` argument, and the I/O thread passes false when its buffer has no
 room. A full buffer leaves datagrams in the socket, so a wait that also
 returned on readable would return at once, every time, and the I/O thread
@@ -186,7 +192,7 @@ buffer:
 
 It never blocks in `wait` while step 2 is possible, and it blocks with
 unpublished datagrams only after step 3 has stored the owed flag. It calls
-`wait( driver, readable, timeout )` with `readable` true while its buffer has
+`wait( transport, readable, timeout )` with `readable` true while its buffer has
 room and false while it is full; a full buffer is the only case in which it
 blocks with datagrams still in the socket.
 
@@ -198,7 +204,7 @@ blocks with datagrams still in the socket.
 2. At its end, whether or not step 1 exposed anything this frame, return the
    buffer it holds: `num_packets = 0`, then Exposed to Free (seq_cst store),
    then load `receive_publish_owed` (seq_cst); if it is true, call the
-   driver's `wake`.
+   transport's `wake`.
 
 The pair of seq_cst store-then-load on each side (the I/O thread's owed store
 then state load; update's state store then owed load) is what keeps the wake:
@@ -226,7 +232,7 @@ and the lock is the 71-86 us p99 wait measured at BASE. The cheap size
 prefilter stays on the I/O thread; the full checks, the counters and the
 decrypt stay in `update`.
 
-**The clock.** `rocketnet_client_transport_config_t` gains
+**The clock.** `rocketnet_client_config_t` gains
 `double (*time_callback)( void * context )`, read once at create; NULL means
 `rocketnet_platform_time`. The I/O thread stamps each datagram's
 `receive_time` with it (today's line 1265). Unit tests set it to a test
@@ -237,7 +243,7 @@ or reads the wall clock.
 `rocketnet_client_io_step( transport, block )`: take a handed-off ring and
 send it, drain and publish, then wait if `block` and nothing is left. The
 thread calls it in a loop; unit tests call it directly with `block = false`
-and a fake driver, on the test's thread, so the hand-off, reopen, publish,
+and a fake transport, on the test's thread, so the hand-off, reopen, publish,
 owed flag and stop order are tested deterministically with no thread and no
 socket.
 
@@ -247,7 +253,7 @@ other ring loads Sent (acquire; `rocketnet_platform_sleep( 0.0001 )` between
 loads; destroy is off the frame path), reopens it and hands the Filling ring
 off. Then it stores quit and wakes the I/O thread. The I/O thread finishes
 every handed-off ring (so the disconnect burst is sent), sends nothing new,
-and exits. The main thread joins it, then closes the driver, then frees the
+and exits. The main thread joins it, then closes the transport, then frees the
 transport. Nothing is freed while the I/O thread can touch it
 (`FreedOnlyAfterJoin`), and no committed slot is dropped by destroy
 (`CommittedEventuallyHandedOff`). In the step-driven unit mode there is no
@@ -300,7 +306,7 @@ internal and the config field is a struct member, not an export.
 
 ## The gate
 
-The gate is total main-thread time per frame: **total_us_p99 at most 100 us at P = 32**, send plus update, on the platform's own member; the owner's number is that with the right transport the main thread's socket work is about 0.1 ms per frame or less. Each implementation card that switches a platform's client driver to the I/O thread design runs the meter there, three runs per P, BASE and head interleaved in the same session on the same idle machine (`uptime` recorded before each pair; a load average above a quarter of the core count voids the pair), and reports medians for P = 1, 8 and 32 beside this table. A card on a platform whose BASE differs states its own BASE row beside these.
+The gate is total main-thread time per frame: **total_us_p99 at most 100 us at P = 32**, send plus update, on the platform's own member; the owner's number is that with the right transport the main thread's socket work is about 0.1 ms per frame or less. Each implementation card that switches a platform's client transport to the I/O thread design runs the meter there, three runs per P, BASE and head interleaved in the same session on the same idle machine (`uptime` recorded before each pair; a load average above a quarter of the core count voids the pair), and reports medians for P = 1, 8 and 32 beside this table. A card on a platform whose BASE differs states its own BASE row beside these.
 
 | measure | BASE (Linux, above) | gate |
 |---|---:|---:|
@@ -346,7 +352,7 @@ Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
 ## Per-platform cards
 
 **rocketnet-client-io-transport (lands first, platform-generic).** PATHS:
-`sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_driver.h`,
+the client transport implementation, `sdk/rocketnet_driver.h`,
 `sdk/rocketnet_driver.cpp` (the open-time check), `sdk/rocketnet.h` and
 `sdk/rocketnet_config.cpp` (the `time_callback` field),
 `sdk/rocketnet_counters.h` (`CLIENT_SEND_DEFERRED`), a new
@@ -358,16 +364,16 @@ receive handoff exactly as The receive path states it (the state word per buffer
 owed flag and its seq_cst pairing, the return at the end of every update,
 `wait` with `readable` false while the buffer is full), the
 clock callback, `rocketnet_client_io_step`
-and the stop order, and the open-time check; no built-in driver gains `wait`
+and the stop order, and the open-time check; no built-in transport gains `wait`
 yet, so every platform stays on the BASE path in production. Tests, all unit
-tier with a fake client driver and the step called directly, clock from 1000.0:
+tier with a fake client transport and the step called directly, clock from 1000.0:
 `client_io_handoff_sends_ring_once`, `client_io_ring_not_reused_before_sent`
 (the ring is not rewritten while the I/O thread holds it),
 `client_io_handoff_never_waits` (`send_packet` then `update` with the I/O
 step not run in between: both return, `CLIENT_SEND_DEFERRED` is 1, and after
 one I/O step the next `update` hands the deferred packet off and the step
 after that sends it; the stall of `MCRNClientIoBrokenHandOffWaits.cfg`),
-`client_io_full_buffer_waits_on_wake_only` (the fake driver holds more than
+`client_io_full_buffer_waits_on_wake_only` (the fake transport holds more than
 `ROCKETNET_NUM_CLIENT_PACKETS` datagrams, update holds the other buffer: the
 step calls `wait` with `readable` false, and the return at the end of
 update wakes it; the spin of `MCRNClientIoBrokenFullWaitReadable.cfg`),
@@ -376,7 +382,7 @@ update wakes it; the spin of `MCRNClientIoBrokenFullWaitReadable.cfg`),
 while update holds the other is exposed by the next update, the stall of
 `MCRNClientIoBrokenReceiveStall.cfg`),
 `client_io_owed_publish_wakes_io_thread` (the I/O step stores owed and
-blocks; the return at the end of update calls the fake driver's `wake`
+blocks; the return at the end of update calls the fake transport's `wake`
 exactly once),
 `client_io_receive_time_from_callback`,
 `client_io_destroy_sends_in_flight_disconnect` (also with the burst
@@ -394,7 +400,7 @@ socket with `POLLIN` when `readable` is true),
 `wake` (eventfd write), `send_batch` (`sendmmsg`) and `receive_batch`
 (`recvmmsg`). Tests: a functional loopback case
 `client_io_linux_handoff_round_trip` (real socket, real thread) and the
-driver-contract check in `./bin/test_driver`; the gate rows above from the
+transport-contract check in `./bin/test_driver`; the gate rows above from the
 meter. io_uring is not used: at the measured cost the I/O thread is idle most
 of the frame, `sendmmsg` already makes one syscall per frame, and io_uring is
 often disabled in containers and sandboxes; a card may revisit it with a
@@ -425,7 +431,7 @@ gains `wait` (`WSAEventSelect` with `FD_READ` on the socket and
 `WaitForMultipleObjects` over that event and a manual-reset wake event, or
 `WaitForSingleObject` on the wake event alone when `readable` is false) and
 `wake` (`SetEvent`); `send_batch` loops `WSASendMsg` on the I/O thread.
-Tests: functional `client_io_windows_handoff_round_trip`, the native driver
+Tests: functional `client_io_windows_handoff_round_trip`, the native transport
 contract run, the meter gate on the Windows member. Red at BASE: the same
 `--run` line prints `unknown functional test client_io_windows_handoff_round_trip`,
 exit 2. Needs: rocketnet-client-io-transport.
@@ -450,6 +456,27 @@ exit 2. Needs: rocketnet-client-io-transport.
   modelled. Each action is atomic, which is the seq_cst pairing of the
   handoff; a release and acquire implementation of the owed flag is outside
   what the model checks.
+
+## The step-driven mode
+
+`rocketnet_client_config_t.step_driven` (the client transport config's
+`step_driven` field, environment `ROCKETNET_CLIENT_STEP_DRIVEN`) selects a
+client with no I/O thread. Zero, the default, keeps the I/O thread above. One
+runs `rocketnet_client_io_step` inside `rocketnet_client_update` and
+`rocketnet_client_send_packets` on the caller's thread, so a game or a test
+owns both the clock and the thread that reads the transport. The field is
+accepted with a driver whose receive returns at once when drained, the
+loopback driver included. A driver without a non-blocking I/O step is refused
+at create with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` and one log line naming
+`step_driven`.
+
+The model's `StepDriven` mode is this one: create starts no I/O thread, and
+the I/O core actions run only inside `update`, `send_packets` and `destroy`
+(`StepBegin`, `CallerStep`, `StepEnd`), one pass at a time, never
+overlapping the main thread's own actions and never blocking. `NoIoThreadActionInStepMode` holds there with
+every other invariant, `MCRNClientIoStepDriven.cfg` checks it and the
+liveness properties, and `MCRNClientIoBrokenStepStartsThread.cfg` is its
+reversed witness.
 
 ## The model
 

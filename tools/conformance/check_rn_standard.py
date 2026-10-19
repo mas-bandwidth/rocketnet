@@ -33,7 +33,7 @@ Pending sections ('Status: pending') are listed, never failed.
 
     python3 tools/conformance/check_rn_standard.py
     python3 tools/conformance/check_rn_standard.py --section t3
-    python3 tools/conformance/check_rn_standard.py --write-index
+    python3 tools/conformance/check_rn_standard.py --print-index
 
 Exit 0 green, 1 a fault, 2 a usage or build error.
 """
@@ -597,6 +597,70 @@ def check_vectors(vectors, twins, faults, only):
     return count
 
 
+def check_counter_registry(docs, faults, only):
+    """The t18 counter table must be the SDK's registry, in index order.
+
+    The t18 table (Name, Class, Family columns) is the observable contract of
+    sdk/rocketnet_counters.h: a reason in one and not the other fails, a
+    reason renamed or reordered fails, and a class or family that differs
+    fails. DONE-WHEN (4) of the timing-and-counters card needs the table
+    checked against the SDK registry, not just against its own vector.
+    """
+    doc = docs["RN-1"]
+    section = doc.anchors.get("t18")
+    if section is None or section.pending:
+        return
+    if only and only != "t18":
+        return
+
+    registry = []
+    path = os.path.join(ROOT, "sdk", "rocketnet_counters.h")
+    text = read(path).replace("\\\n", "")
+    match = re.search(r'define ROCKETNET_COUNTER_ROWS\( X \)\s*(.*?)\n#undef', text, re.S)
+    if not match:
+        faults.append(("t18", "rocketnet_counters.h: no ROCKETNET_COUNTER_ROWS macro"))
+        return
+    klass_lower = {"REFUSAL": "refusal", "EXPECTED": "expected",
+                   "PATH_LOSS": "path_loss", "ARRIVAL": "arrival"}
+    for name, klass, family in re.findall(r'X\(\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', match.group(1)):
+        registry.append((name, klass_lower.get(klass, klass.lower()), "none" if family == "NONE" else family))
+
+    table = []
+    in_fence = False
+    in_table = False
+    for number, line in section.lines:
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            in_table = False
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        header = [c.lower().strip("`") for c in cells]
+        if not in_table and header[:1] == ["name"] and "class" in header and "family" in header:
+            in_table = True
+            continue
+        if not in_table or len(cells) < 3:
+            continue
+        if set("".join(cells)) <= set("-: "):
+            continue
+        name = cells[0].strip("`")
+        klass = cells[1].strip("`")
+        family = cells[2].strip("`")
+        table.append((name, klass, family))
+
+    if table != registry:
+        faults.append(("t18", "the counter table differs from sdk/rocketnet_counters.h (%d table rows, %d registry rows)"
+                       % (len(table), len(registry))))
+        for index, (a, b) in enumerate(zip(table, registry)):
+            if a != b:
+                faults.append(("t18", "counter %d: table has %r, the registry has %r" % (index, a, b)))
+                break
+
+
 def expected_index(doc, vectors):
     entries = [(v["section"], i) for i, v in vectors.items() if v["doc"] == doc.tag]
     order = {s.id: n for n, s in enumerate(doc.sections)}
@@ -610,24 +674,20 @@ def expected_index(doc, vectors):
     return "\n".join(lines)
 
 
-def check_index(docs, vectors, faults, write, only):
+def print_index(docs, vectors):
+    for tag, appendix in (("RN-1", "ta"), ("RN-2", "ma")):
+        doc = docs[tag]
+        print("%s Appendix A vector index (%s)" % (appendix, doc.name))
+        print(expected_index(doc, vectors))
+
+
+def check_index(docs, vectors, faults, only):
     for tag, appendix in (("RN-1", "ta"), ("RN-2", "ma")):
         if only and only != appendix:
             continue
         doc = docs[tag]
-        if INDEX_BEGIN not in doc.text or INDEX_END not in doc.text:
-            faults.append((appendix, "%s has no vector index markers" % doc.name))
-            continue
-        head, rest = doc.text.split(INDEX_BEGIN, 1)
-        current, tail = rest.split(INDEX_END, 1)
-        wanted = expected_index(doc, vectors)
-        if current.strip() != wanted:
-            if write:
-                with open(doc.path, "w", encoding="utf-8") as handle:
-                    handle.write(head + INDEX_BEGIN + "\n" + wanted + "\n" + INDEX_END + tail)
-                print("rewrote the vector index of %s" % doc.name)
-            else:
-                faults.append((appendix, "%s Appendix A vector index is stale; run with --write-index" % doc.name))
+        if INDEX_BEGIN in doc.text or INDEX_END in doc.text:
+            faults.append((appendix, "%s still holds vector index markers; the index is printed by --print-index" % doc.name))
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +780,8 @@ def check_language(docs, faults, only):
 def main():
     parser = argparse.ArgumentParser(description="Check the RocketNet standard against the implementation.")
     parser.add_argument("--section", help="check one section id only, and print whether it is pending or written")
-    parser.add_argument("--write-index", action="store_true", help="rewrite each Appendix A vector index")
+    parser.add_argument("--print-index", action="store_true", help="print each Appendix A vector index")
+    parser.add_argument("--write-index", action="store_true", help="alias for --print-index; writes no file")
     args = parser.parse_args()
 
     faults = []
@@ -743,9 +804,12 @@ def main():
         vectors = document_vectors(docs, faults)
         twins = test_twins(faults)
         vector_count = check_vectors(vectors, twins, faults, only)
-        check_index(docs, vectors, faults, args.write_index, only)
+        check_index(docs, vectors, faults, only)
+        check_counter_registry(docs, faults, only)
         check_references(docs, faults, only)
         check_language(docs, faults, only)
+        if args.print_index or args.write_index:
+            print_index(docs, vectors)
     except Fault as fault:
         print("rn standard: %s" % fault)
         return 2

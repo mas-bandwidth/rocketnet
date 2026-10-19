@@ -1,0 +1,158 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+
+    Client/server client: the matchmaker stub and the client in one program.
+    The stub holds the backend signing key and the server's public key from
+    the key file the server writes, and mints a production connect token. The
+    client connects over real UDP on loopback, sends one reliable-ordered
+    message, receives the echo, prints its state changes and disconnect
+    reason, and disconnects.
+
+    --wrong-protocol mints the token for another protocol id; the server
+    refuses it, which shows the token is bound to the title. That refusal is
+    the expected result. Run the server first, then this program. See
+    docs/examples/client_server.md.
+*/
+
+#include "rocketnet.h"
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+#define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
+
+#define PROTOCOL_ID 0x636c69656e747331ull
+#define SERVER_ADDRESS "127.0.0.1:40000"
+#define KEY_FILE "client_server.keys"
+static int hex_value( char c )
+{
+    if ( c >= '0' && c <= '9' ) return c - '0';
+    if ( c >= 'a' && c <= 'f' ) return c - 'a' + 10;
+    return -1;
+}
+
+static int read_hex( FILE * file, const char * label, uint8_t * bytes, int count )
+{
+    char read_label[32];
+    char text[129];
+    if ( fscanf( file, "%31s %128s", read_label, text ) != 2 || strcmp( read_label, label ) != 0 )
+        return 0;
+    if ( strlen( text ) != (size_t) count * 2 )
+        return 0;
+    for ( int i = 0; i < count; i++ )
+    {
+        const int high = hex_value( text[i * 2] );
+        const int low = hex_value( text[i * 2 + 1] );
+        if ( high < 0 || low < 0 ) return 0;
+        bytes[i] = (uint8_t) ( high * 16 + low );
+    }
+    return 1;
+}
+static const char * reason_name( int reason )
+{
+    static const char * names[] = { "none", "config mismatch", "config timeout", "protocol violation",
+                                    "reliable timeout", "message memory exhausted" };
+    return reason >= 0 && reason < 6 ? names[reason] : "unknown";
+}
+static void state_changed( void * context, int previous, int current )
+{
+    (void) context;
+    printf( "client state: %s -> %s\n", rocketnet_client_state_name( previous ), rocketnet_client_state_name( current ) );
+}
+
+int main( int argc, char ** argv )
+{
+    const int wrong_protocol = argc > 1 && strcmp( argv[1], "--wrong-protocol" ) == 0;
+    struct rocketnet_client_config_t config;
+    struct rocketnet_client_t * client = NULL;
+    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const char * server_addresses[1] = { SERVER_ADDRESS };
+    int result = 1;
+    int sent = 0;
+    int received = 0;
+    int refused = 0;
+
+    FILE * keys = fopen( KEY_FILE, "r" );
+    CHECK( keys != NULL );
+    CHECK( read_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) );
+    CHECK( read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES ) );
+    fclose( keys );
+    CHECK( rocketnet_init( NULL ) );
+
+    // the matchmaker stub: a real backend runs this on its own server, keeps
+    // the secret key, and returns the token to the game client. The fixed
+    // timestamps keep the example off the wall clock; a backend stamps now.
+
+    const uint64_t protocol_id = PROTOCOL_ID + ( wrong_protocol ? 1 : 0 );
+    CHECK( rocketnet_write_production_connect_token( backend_secret_key, server_public_key, protocol_id,
+                                                     server_addresses, 1, 0x0123456789abcdefull, 0, 4102444800ull, 5, NULL,
+                                                     connect_token, sizeof( connect_token ) ) == ROCKETNET_STATUS_OK );
+    rocketnet_client_default_config( &config );
+    config.transport = "portable";
+    config.state_change_callback = state_changed;
+    client = rocketnet_client_create( NULL, connect_token, &config, NULL, 0 );
+    CHECK( client != NULL );
+    const double start = rocketnet_time();
+
+    while ( rocketnet_time() - start < 10.0 )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - start );
+
+        // (1) update pumps the transport and takes in what arrived
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK ) break;
+
+        // (2) receive and release every received message
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
+        {
+            printf( "client received: %.*s\n", bytes, (const char*) data );
+            rocketnet_client_release( client, data );
+            received = 1;
+        }
+
+        // (3) run the game simulation for the frame: nothing to simulate here
+
+        // (4) queue this frame's outgoing message, once the client is connected
+        const int state = rocketnet_client_state( client );
+        if ( !wrong_protocol && !sent && state == ROCKETNET_CLIENT_STATE_CONNECTED )
+        {
+            const char message[] = "hello from the client";
+            const int message_bytes = (int) sizeof( message ) - 1;
+            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            if ( out )
+            {
+                memcpy( out, message, (size_t) message_bytes );
+                sent = rocketnet_client_finish( client, message_bytes ) != 0;
+            }
+        }
+
+        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // after this frame's messages are queued, so they leave this frame
+
+        rocketnet_client_send_packets( client );
+
+        if ( received ) break;
+        if ( wrong_protocol && state < 0 )
+        {
+            printf( "expected refusal: the server ignored a token for protocol id 0x%llx (state %s)\n", (unsigned long long) protocol_id, rocketnet_client_state_name( state ) );
+            refused = 1;
+            break;
+        }
+        rocketnet_sleep( 0.001 );
+    }
+
+    CHECK( wrong_protocol ? refused : received );
+    rocketnet_client_disconnect( client );
+    printf( "client disconnect reason: %s\n", reason_name( rocketnet_client_disconnect_reason( client ) ) );
+    printf( "PASS\n" );
+    result = 0;
+
+cleanup:
+    rocketnet_client_destroy( client );
+    rocketnet_term();
+    return result;
+}

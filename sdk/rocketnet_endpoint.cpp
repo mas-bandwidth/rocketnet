@@ -15,7 +15,7 @@
 
 #include <string.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
@@ -34,6 +34,16 @@ static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t a
         rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], amount );
 }
 
+static bool rn_endpoint_unreliable_over_record_capacity( int reliability, int channel, int bytes, int capacity )
+{
+    // Every unreliable mode uses the same record-size rule, including its wire header and form byte.
+    const int header = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
+        3 + 3 + 3 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+    const int one_packet_capacity = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ? capacity :
+        ( capacity < ROCKETNET_MESSAGE_SINGLE_BYTES ? capacity : ROCKETNET_MESSAGE_SINGLE_BYTES );
+    return (uint64_t) (uint32_t) bytes + (uint64_t) header + 1u > (uint64_t) one_packet_capacity;
+}
+
 // ---------------------------------------------------------------
 //                     init and reset
 // ---------------------------------------------------------------
@@ -44,6 +54,7 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
     endpoint->region = region;
     endpoint->config = config->config;
     endpoint->default_kbps = config->send_kbps;
+    endpoint->send_budget_enabled = config->send_kbps > 0 ? 1 : 0;
     endpoint->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     endpoint->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
     endpoint->send_error = ROCKETNET_MESSAGE_ERROR_NONE;
@@ -61,12 +72,26 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     // the region carved again and every layer bound to it fresh
     rn_region_reset( endpoint->region );
 
-    rocketnet_send_budget_init( &endpoint->budget, endpoint->default_kbps, now );
+    // R6 (docs/CHANNELS.md 11.5): a config value of 0 or lower disables this
+    // connection's budget. The endpoint then holds no bucket and passes no
+    // budget to its builders, whose NULL budget path never drops or waits.
+    rocketnet_send_budget_t * budget = NULL;
+    if ( endpoint->default_kbps > 0 )
+    {
+        rocketnet_send_budget_init( &endpoint->budget, (uint32_t) endpoint->default_kbps, now );
+        endpoint->send_budget_enabled = 1;
+        budget = &endpoint->budget;
+    }
+    else
+    {
+        memset( &endpoint->budget, 0, sizeof( endpoint->budget ) );
+        endpoint->send_budget_enabled = 0;
+    }
 
     const rocketnet_message_config_t * config = endpoint->config;
     const int max_packets = config->max_packets_per_update < ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? config->max_packets_per_update : ROCKETNET_PACKET_BUILDER_MAX_PACKETS;
-    rn_ordered_init( &endpoint->ordered, endpoint->region, config, &endpoint->budget, max_packets, ROCKETNET_MESSAGE_SINGLE_BYTES );
-    rn_packet_builder_init( &endpoint->unreliable_builder, endpoint->region, NULL, &endpoint->budget, 1, ROCKETNET_MESSAGE_SINGLE_BYTES );
+    rn_ordered_init( &endpoint->ordered, endpoint->region, config, budget, max_packets, ROCKETNET_MESSAGE_SINGLE_BYTES );
+    rn_packet_builder_init( &endpoint->unreliable_builder, endpoint->region, NULL, budget, 1, ROCKETNET_MESSAGE_SINGLE_BYTES );
 
     endpoint->send_error = ROCKETNET_MESSAGE_ERROR_NONE;
     endpoint->config_wait_start = -1.0;
@@ -147,26 +172,30 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     {
         if ( rn_channels_send_check( &endpoint->ordered.channels, reliability, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
             return NULL;
-        // Code 1 may occupy one large RECORDS payload. Its u16 length and
-        // the transport's configured payload cap are permanent refusal
-        // boundaries; checking here keeps an impossible send off the FIFO.
-        const int header = 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 );
         const int transport_max = transport_max_payload_bytes > 0 ? transport_max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
-        const bool too_large = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
-            bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES || bytes > endpoint->config->max_message_bytes ||
-            bytes + header + 1 > transport_max : (uint32_t) bytes > endpoint->unreliable_limit;
-        if ( too_large )
+        // One packet's record lives in a payload no larger than both the
+        // transport's cap and the message tier's one-packet payload.
+        const int record_capacity = transport_max < ROCKETNET_MAX_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PAYLOAD_BYTES;
+        // Keep the reservation's transport cap so finish applies the rule to
+        // the actual byte count, even when the caller finishes short.
+        endpoint->max_payload_bytes = transport_max;
+        // One size rule refuses only the configured maximum; larger records promote to the reliable twin.
+        const bool over_max = (uint32_t) bytes > endpoint->config->max_message_bytes;
+        if ( over_max )
         {
-            if ( reliability != ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
-            {
-                // Non-receipt unreliable sends cannot exceed their wire limit.
-                rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-                return NULL;
-            }
-            // RNReceipts EffectiveKind: a large public type 5 reserves through
-            // the internal reliable code-2 block path, preserving code 5's
-            // receipt serial and reliable-only completion.
-            pointer = rn_channels_start( &endpoint->ordered.channels, (uint32_t) channel, ROCKETNET_RELIABLE, (uint32_t) bytes );
+            rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+            return NULL;
+        }
+        // Reject max+1 before the shared record-size comparison, which uses widened arithmetic.
+        const bool promote = rn_endpoint_unreliable_over_record_capacity( reliability, channel, bytes, record_capacity );
+        if ( promote )
+        {
+            // RakNet ReliabilityLayer promotion: code 0 to 2, code 1 to 4, and
+            // code 5 to its reliable receipt twin (wire code 2, receipt kept).
+            const int twin = reliability == ROCKETNET_UNRELIABLE ? ROCKETNET_RELIABLE :
+                             reliability == ROCKETNET_UNRELIABLE_SEQUENCED ? ROCKETNET_RELIABLE_SEQUENCED :
+                             ROCKETNET_RELIABLE;
+            pointer = rn_channels_start( &endpoint->ordered.channels, (uint32_t) channel, twin, (uint32_t) bytes );
             if ( !pointer )
             {
                 if ( rn_region_exhausted( region ) )
@@ -234,9 +263,20 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
             serial = 1;
     }
 
-    if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) ||
-         ( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE &&
-           (uint32_t) bytes > endpoint->unreliable_limit ) )
+    // Start reserves for its requested capacity; finish decides promotion
+    // from the actual byte count and can downgrade a short reservation.
+    const bool reserved_reliable = endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE;
+    const uint32_t channel = reserved_reliable ? endpoint->ordered.channels.pending_channel :
+        endpoint->region->send_descriptors[endpoint->pending_descriptor].channel;
+    const int transport_max = endpoint->max_payload_bytes > 0 ? endpoint->max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
+    const int record_capacity = transport_max < ROCKETNET_MAX_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PAYLOAD_BYTES;
+    // Finish applies the same record-size rule to the bytes actually committed.
+    const bool actual_over_record = rn_endpoint_unreliable_over_record_capacity( endpoint->pending_type, (int) channel, bytes, record_capacity );
+    const bool unreliable_source = endpoint->pending_type == ROCKETNET_UNRELIABLE ||
+        endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
+        endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+    const bool promoted = reserved_reliable && unreliable_source && actual_over_record;
+    if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) || promoted )
     {
         const uint32_t d = endpoint->ordered.channels.pending;
         if ( !rn_channels_finish( &endpoint->ordered.channels, (uint32_t) bytes ) )
@@ -245,6 +285,14 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         descriptor->serial = serial;
         if ( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
             descriptor->flags |= RN_SEND_FLAG_RECEIPT_PROMOTED; // RNReceipts EffectiveKind: reliable completion, no LOSS
+        if ( promoted )
+        {
+            // RakNet ReliabilityLayer: every promotion is counted, once per send.
+            const int counter = endpoint->pending_type == ROCKETNET_UNRELIABLE ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE :
+                                endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED :
+                                ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT;
+            rn_endpoint_count( endpoint, counter );
+        }
     }
     else
     {
@@ -255,9 +303,13 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         {
             // A caller may reserve a block and finish fewer bytes. Move the
             // same region descriptor to the single-packet route without a copy.
-            rocketnet_assert( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT );
+            rocketnet_assert( endpoint->pending_type == ROCKETNET_UNRELIABLE ||
+                              endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
+                              endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT );
+            const uint32_t channel = endpoint->ordered.channels.pending_channel;
             endpoint->ordered.channels.pending = RN_DESCRIPTOR_NONE;
-            descriptor->reliability = ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+            descriptor->channel = (uint16_t) channel;
+            descriptor->reliability = (uint8_t) endpoint->pending_type;
             descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
             descriptor->fragments = 1;
         }
@@ -291,7 +343,7 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
     // Enqueue's first half returned): a start that will not be finished, its
     // room returned to the region
     if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) ||
-         ( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE ) )
+         endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE )
         rn_channels_cancel( &endpoint->ordered.channels );
     else if ( ( endpoint->pending_type == ROCKETNET_UNRELIABLE || endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
                 endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT ) &&
@@ -517,27 +569,32 @@ static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
         return 0;
     }
 
+    // R6: an uncapped connection skips the bucket here entirely; its large
+    // unreliable state is never dropped or delayed by the budget.
     int admitted_wire_bytes = 0;
-    for ( int i = 0; i < fragment_count; i++ )
+    if ( endpoint->send_budget_enabled )
     {
-        const int fragment_bytes = i + 1 < fragment_count ? stride : payload_bytes - stride * ( fragment_count - 1 );
-        const int wire_payload_bytes = fragment_bytes + ( exact_packet ? 0 : ROCKETNET_FRAGMENT_HEADER_BYTES );
-        const int maximum = rocketnet_send_budget_max_wire_bytes( wire_payload_bytes );
-        if ( maximum == 0 )
-            return -1;
-        admitted_wire_bytes += maximum;
-    }
+        for ( int i = 0; i < fragment_count; i++ )
+        {
+            const int fragment_bytes = i + 1 < fragment_count ? stride : payload_bytes - stride * ( fragment_count - 1 );
+            const int wire_payload_bytes = fragment_bytes + ( exact_packet ? 0 : ROCKETNET_FRAGMENT_HEADER_BYTES );
+            const int maximum = rocketnet_send_budget_max_wire_bytes( wire_payload_bytes );
+            if ( maximum == 0 )
+                return -1;
+            admitted_wire_bytes += maximum;
+        }
 
-    rocketnet_send_budget_t * budget = &endpoint->budget;
-    if ( budget->rank_reached < rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE ) )
-        budget->rank_reached = rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE );
-    if ( budget->reliable_waiting || (double) admitted_wire_bytes > budget->tokens )
-    {
-        budget->unreliable_dropped++;
-        budget->unreliable_dropped_bytes += (uint64_t) admitted_wire_bytes;
-        rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
-        rn_endpoint_unreliable_unlink( endpoint, d, RN_DESCRIPTOR_NONE );
-        return 0;
+        rocketnet_send_budget_t * budget = &endpoint->budget;
+        if ( budget->rank_reached < rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE ) )
+            budget->rank_reached = rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE );
+        if ( budget->reliable_waiting || (double) admitted_wire_bytes > budget->tokens )
+        {
+            budget->unreliable_dropped++;
+            budget->unreliable_dropped_bytes += (uint64_t) admitted_wire_bytes;
+            rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
+            rn_endpoint_unreliable_unlink( endpoint, d, RN_DESCRIPTOR_NONE );
+            return 0;
+        }
     }
 
     endpoint->large_descriptor = d;
@@ -558,7 +615,8 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 
     if ( endpoint->write_phase == RN_ENDPOINT_WRITE_IDLE )
     {
-        rocketnet_send_budget_begin_update( &endpoint->budget, now );
+        if ( endpoint->send_budget_enabled )
+            rocketnet_send_budget_begin_update( &endpoint->budget, now );
         endpoint->written = 0;
         // every resend waits the same delay, with no back-off (tla/RNResendTiming.tla)
         rn_window_ack_gaps_update( &endpoint->ordered.ack, now );   // the resend gap record (development builds only)
@@ -744,8 +802,12 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
             // The plan's maximum wire charge is conservative; packet_sent
             // settles with the sum the transport returns after it stages
             // every sealed fragment.
-            endpoint->budget.tokens -= (double) endpoint->large_admitted;
-            endpoint->budget.bytes_spent += (uint64_t) endpoint->large_admitted;
+            // R6: an uncapped connection holds no bucket to charge
+            if ( endpoint->send_budget_enabled )
+            {
+                endpoint->budget.tokens -= (double) endpoint->large_admitted;
+                endpoint->budget.bytes_spent += (uint64_t) endpoint->large_admitted;
+            }
             endpoint->packet_written = 1;
             return payload_bytes;
         }
@@ -753,6 +815,44 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
         default:
             return 0;
     }
+}
+
+// tla/RNSendBudget.tla SetKbps (R6, docs/CHANNELS.md 11.5): the runtime
+// override. A value of 0 or lower uncaps this connection and detaches the
+// bucket from both builders; a positive value up to the maximum caps it,
+// initialising a fresh bucket at now when the connection was uncapped; above
+// the maximum changes nothing.
+bool rn_endpoint_set_send_kbps( struct rn_endpoint_t * endpoint, int32_t kbps, double now )
+{
+    if ( !endpoint )
+        return false;
+    if ( kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
+        return false;
+
+    if ( kbps <= 0 )
+    {
+        if ( !endpoint->send_budget_enabled )
+            return true;
+        memset( &endpoint->budget, 0, sizeof( endpoint->budget ) );
+        endpoint->send_budget_enabled = 0;
+        endpoint->ordered.budget = NULL;
+        endpoint->ordered.builder.budget = NULL;
+        endpoint->unreliable_builder.budget = NULL;
+        return true;
+    }
+
+    if ( !endpoint->send_budget_enabled )
+    {
+        if ( !rocketnet_send_budget_init( &endpoint->budget, (uint32_t) kbps, now ) )
+            return false;
+        endpoint->send_budget_enabled = 1;
+        endpoint->ordered.budget = &endpoint->budget;
+        endpoint->ordered.builder.budget = &endpoint->budget;
+        endpoint->unreliable_builder.budget = &endpoint->budget;
+        return true;
+    }
+
+    return rocketnet_send_budget_set_kbps( &endpoint->budget, (uint32_t) kbps, now );
 }
 
 void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_id, int wire_bytes, double now )
@@ -777,7 +877,8 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
             break;
 
         case RN_ENDPOINT_PACKET_SEQUENCED_LARGE:
-            rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, wire_bytes );
+            if ( endpoint->send_budget_enabled )                       // R6: uncapped, no bucket to settle
+                rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, wire_bytes );
             rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor, RN_DESCRIPTOR_NONE );
             break;
 

@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_CONSTANTS_H
 #define ROCKETNET_CONSTANTS_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_history.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
@@ -62,6 +62,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_B
 
 #define ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS        ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
+// One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. This equals the payload-batch capacity; batches share one bound and one storage cap.
+#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+
 // the send frame layout. every slot a transport hands out is a 16-aligned
 // root; the wire packet begins at the wire offset inside it and the payload
 // begins at the payload offset -- the wire offset plus the 10-byte sealed
@@ -90,6 +93,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 // iterates payloads by index and never sees a capacity.
 
 #define ROCKETNET_MAX_PAYLOADS_PER_UPDATE                  ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCKETNET_MAX_PAYLOADS_PER_UPDATE,
+                         "all receive batches in one update share the payload batch capacity" );
 
 // NOTE the relationship between these two. The process_packets arrays are
 // sized by MAX_PROCESS_PACKETS (16 * 1000 = 16000), but the XDP path fills

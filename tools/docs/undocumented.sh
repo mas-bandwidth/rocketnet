@@ -112,7 +112,13 @@ def qualify(rel_file, lineno, sym, kind, pending_records):
     if rel_file not in scope_cache:
         scope_cache[rel_file] = parse_scopes(rel_file)
     file_scopes = scope_cache[rel_file]
-    if file_scopes is not None:
+    source_matches = False
+    source_path = os.path.join(root, rel_file)
+    if os.path.exists(source_path):
+        with open(source_path, encoding="utf-8", errors="replace") as f:
+            source_lines = f.readlines()
+        source_matches = lineno <= len(source_lines) and sym.rsplit("::", 1)[-1] in source_lines[lineno - 1]
+    if file_scopes is not None and source_matches:
         enclosing = []
         for sline, eline, skind, name in file_scopes:
             if sline < lineno <= eline:

@@ -146,22 +146,30 @@ jobs:
           - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","fleet"]' }
-          # macos apple silicon
-          - { os: macos-15,     build_type: Debug,   leg: ab }   # hosted stopgap; mini-m5 once registered
-          - { os: macos-15,     build_type: Release, leg: ab }   # hosted stopgap; mini-m5 once registered
+          # macos apple silicon DISABLED: no darwin runner registered for this repository; owed: a darwin runner registered for this repository
+          #   (rows: { os: macos-15, build_type: Debug, leg: ab }, { os: macos-15, build_type: Release, leg: ab })
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # System sodium is installed only as an independent parity reference;
       # the production targets compile the committed, namespaced vendor.
@@ -231,7 +239,7 @@ jobs:
 
       - name: Run unit tests with the driver pin preserved
         if: contains(matrix.leg, 'b')
-        run: ROCKETNET_DRIVER=portable ./bin/test
+        run: ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test
 
       - name: Ambient config isolation and passing output
         if: contains(matrix.leg, 'b')
@@ -245,12 +253,20 @@ jobs:
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
         timeout-minutes: 20
-        run: ROCKETNET_DRIVER=portable ./bin/functional
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          ./bin/functional | tee functional-pinned.log
+          grep -qx 'driver_env_pin_is_honoured' functional-pinned.log
+          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-pinned.log
 
       - name: Run lifecycle unit binary
         if: contains(matrix.leg, 'a')
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
       - name: Check production library boundary
@@ -266,6 +282,29 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
 
+      - name: Test the MSan gate's verdicts
+        if: runner.os == 'Linux'
+        run: python3 tools/test_run_msan.py
+
+      # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
+      # extern "C" block, and a C and a C++ client and server built from only
+      # the header and the prebuilt static library (seconds)
+      - name: Check the public header is clean and self-contained
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_public_header.py --build build
+
+      # The library is callable from a C and a C++ program through rocketnet.h
+      # alone, against the development shared and static libraries, and the
+      # production shared library exports only the reviewed list (so the
+      # development token minting symbol stays out of it).
+      - name: Check the library is callable from C and C++ through rocketnet.h
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_dll_consumer.py --build build
+
+      - name: Check the examples against the house rules
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_examples.py
+
       - name: Check larger history budget and reject undersized history
         if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: |
@@ -280,6 +319,12 @@ jobs:
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
+
+      - name: Memory plans echo the allocator observation on macOS
+        if: runner.os == 'macOS' && contains(matrix.leg, 'a')
+        run: |
+          ./bin/transport_memory 1 1416 1 portable 1 || true
+          ./bin/transport_memory 1 1416 1 msgx 1 || true
 
       - name: Memory plans against allocator observations
         if: contains(matrix.leg, 'a')
@@ -408,6 +453,8 @@ jobs:
 
   build-and-test-windows:
     name: windows-2025 / Release (${{ matrix.leg }})
+    # DISABLED: no Windows runner is registered for this repository; owed: the Windows fleet machine
+    if: false
     runs-on: windows-2025
     strategy:
       fail-fast: false
@@ -459,14 +506,19 @@ jobs:
         timeout-minutes: 20
         shell: bash
         env:
-          ROCKETNET_DRIVER: iocp
-        run: ./bin/Release/functional.exe
+          ROCKETNET_SERVER_TRANSPORT: iocp
+        run: |
+          set -o pipefail
+          ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
+          grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
+          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
       - name: Run lifecycle unit binary
         if: matrix.leg == 'a'
         shell: bash
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/Release/test_lifecycle.exe
 
       - name: Memory plans against allocator observations
@@ -478,6 +530,10 @@ jobs:
       - name: Check production library boundary
         if: matrix.leg == 'b'
         run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
+
+      - name: Check the library is callable from C and C++ through rocketnet.h
+        if: matrix.leg == 'b'
+        run: python tools/check_dll_consumer.py --build build
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: matrix.leg == 'b'
@@ -492,6 +548,84 @@ jobs:
         run: |
           ./bin/Release/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # THE HAPPY PATH: the real server and client binaries as separate processes
+  # over loopback, watched stage by stage. It is deliberately small -- connect,
+  # one message of every reliability type, receipts, clean disconnect, clean
+  # stop -- and it is its own job with NO needs, so it starts at once beside
+  # build-and-test and adds nothing to the wall time of the per-commit gate.
+  # The tools/happy_path Go tool is standard library only; nothing here needs
+  # root and nothing selects XDP (the tool pins the portable transport).
+
+  happy-path:
+    name: happy path / ${{ matrix.os }}
+    # macOS and Windows rows are DISABLED: no darwin runner registered for
+    # this repository (owed: a darwin runner), and no Windows fleet machine.
+    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check the fleet's Go is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go 1.23 (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          got="$(go version)"
+          echo "$got"
+          case "$got" in
+            *go1.23*)
+              ;;
+            *) echo "TOOL-MISSING go 1.23 $got on $RUNNER_NAME"; exit 1 ;;
+          esac
+
+      - name: Build (Linux and macOS, through the Makefile)
+        if: runner.os != 'Windows'
+        run: make
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -A x64
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel
+
+      # the two C programs share this directory with the Go tool, so name the
+      # tool's .go file rather than the directory
+      - name: Run happy_path
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          cd tools/happy_path
+          go run happy_path.go
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
@@ -516,11 +650,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Configure
         run: >
@@ -542,7 +689,8 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test
 
       - name: Run functional suite under sanitizers
@@ -556,7 +704,8 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/test_lifecycle
           ./bin/test_driver
@@ -590,11 +739,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # the library is built once with coverage instrumentation and the
       # sanitizers, then the harness links against it -- one parallel build
@@ -699,11 +861,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Configure the instrumented library
         run: >
@@ -824,7 +999,7 @@ jobs:
 
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
       fail-fast: false
       matrix:
@@ -833,45 +1008,28 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Add the s390x architecture and the ports archive
+      - name: Check the s390x cross toolchain, libraries, and qemu are present
+        shell: bash
         run: |
           set -euo pipefail
-          sudo dpkg --add-architecture s390x
-
-          # The amd64 mirrors carry only amd64, so every EXISTING entry is
-          # pinned to it -- otherwise apt goes looking for s390x indexes that
-          # are not there and the update fails on the third-party lists the
-          # runner image ships. deb822 entries take an Architectures: field,
-          # one-line entries take [arch=amd64].
-
-          for f in /etc/apt/sources.list.d/*.sources; do
-            [ -e "$f" ] || continue
-            grep -q '^Architectures:' "$f" || sudo sed -i '/^Types: deb/a Architectures: amd64' "$f"
+          missing=0
+          for tool in cmake xxd pkg-config readelf s390x-linux-gnu-gcc s390x-linux-gnu-g++ qemu-s390x-static; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
           done
-          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
-            [ -e "$f" ] || continue
-            sudo sed -i -E 's|^deb +\[|deb [arch=amd64 |; s|^deb +([^[])|deb [arch=amd64] \1|' "$f"
+          for lib in libsodium libbpf libxdp; do
+            if ! PKG_CONFIG_LIBDIR=/usr/lib/s390x-linux-gnu/pkgconfig:/usr/share/pkgconfig pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (s390x) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
           done
-
-          sudo tee /etc/apt/sources.list.d/s390x-ports.sources > /dev/null <<'EOF'
-          Types: deb
-          URIs: http://ports.ubuntu.com/ubuntu-ports/
-          Suites: noble noble-updates
-          Components: main universe
-          Architectures: s390x
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-
-          sudo apt-get update -y
-
-      - name: Install the cross toolchain, the s390x libraries, and qemu
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            cmake xxd pkg-config qemu-user-static \
-            g++-s390x-linux-gnu \
-            libstdc++6:s390x \
-            libsodium-dev:s390x libbpf-dev:s390x libxdp-dev:s390x
+          if [ ! -e /usr/lib/s390x-linux-gnu/libstdc++.so.6 ]; then
+            echo "TOOL-MISSING libstdc++ (s390x) (no /usr/lib/s390x-linux-gnu/libstdc++.so.6) on $RUNNER_NAME"
+            missing=1
+          fi
+          exit "$missing"
 
       # CMAKE_SYSTEM_NAME=Linux keeps the linux branch of CMakeLists.txt --
       # this leg builds the same library the ubuntu leg does, xdp dataplane
@@ -1034,11 +1192,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # setarch -R runs each tsan binary with address-space randomisation off FOR THAT PROCESS ONLY (no sysctl,
       # no root). gcc 13's tsan runtime (Ubuntu 24.04: the hetzner org runners) cannot map its shadow under the
@@ -1085,7 +1256,8 @@ jobs:
         if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: setarch "$(uname -m)" -R ./bin/test_lifecycle
 
   # THE PINNED-SODIUM LEG.
@@ -1105,11 +1277,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies (no libsodium-dev)
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential pkg-config libbpf-dev libxdp-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Restore the pinned sodium prefix
         id: sodium-cache
@@ -1210,23 +1395,32 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # the Linux platform selftest stays on the hosted image: it is the bench-host capability check
-          # (bench/selftest.sh), and hulk fails its UDP_SEGMENT legs with EIO on loopback (measured 2026-09-21)
-          - { os: ubuntu-24.04 }
-          - { os: macos-15 }   # hosted stopgap; mini-m5 once registered
+          # the Linux platform selftest runs on the fleet bench; a host that
+          # cannot build a harness reports it as SKIPPED and fails a built one
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
+          # macos DISABLED: no darwin runner registered for this repository; owed: a darwin runner
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # only soak_sim, not the whole tree: build-and-test already compiles
       # everything on both these OSes in both configurations, so a second full
