@@ -9,6 +9,11 @@
     argument starting at 1000.0; nothing here reads a clock, opens a socket or
     starts a thread. A failing check records its line and the core prints:
     `FAIL seed=<n> step=<k> check=<name> what=<detail>`.
+
+    Modules mirrored here: tla/RNChannel.tla, tla/RNChannelTypes.tla,
+    tla/RNEndpoint.tla, tla/RNWindow.tla, tla/RNReceipts.tla,
+    tla/ReplayWindow.tla, tla/FragmentsAndAcks.tla, tla/ServerSession.tla,
+    tla/ClientSession.tla, tla/RNSlots.tla and tla/RNSimFaults.tla.
 */
 
 #ifndef ROCKETNET_DST_CHECKS_H
