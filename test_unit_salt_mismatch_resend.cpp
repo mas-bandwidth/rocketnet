@@ -80,7 +80,7 @@ static void salt_mismatch_build_request( uint8_t * request, const uint8_t * salt
     struct rocketnet_connect_token_private_t private_fields;
 
     memset( &signed_fields, 0, sizeof(signed_fields) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
