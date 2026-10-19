@@ -348,7 +348,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )
+    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
+    UINT64_FIELD( game_clock_epoch,      0,                                                                                    0 )
 
 #define ROCKETNET_CONFIG_STRUCT_INT( name, def, min, max, flags )       int name;
 #define ROCKETNET_CONFIG_STRUCT_UINT64( name, def, flags )              uint64_t name;
@@ -377,11 +378,14 @@ int rocketnet_config_write_sized( const char * type, void * config, size_t confi
 int rocketnet_config_read_sized( const char * type, void * config, const void * defaults, size_t defaults_bytes, const void * source, size_t source_bytes, const size_t * known, int num_known );
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
-/** @brief Size in bytes of client transport config revision 1. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ), sizeof( uint64_t ) )
+/** @brief Size in bytes of the client transport config before game_clock_epoch. */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
+/** @brief Current known client transport config size, in bytes, with game_clock_epoch and step_driven (the abi static_assert names the latest revision). */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ), sizeof( uint64_t ) )
 /** @brief Current known client transport config size, in bytes. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
+/** @brief Current known client transport config size, in bytes. */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
 
 // The server transport config table -- the single declaration everything
 // derives from, per the config system comment above. num_xdp_queues' range
@@ -403,12 +407,17 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
     STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
     INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )                          \
-    INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )
+    INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )                          \
+    UINT64_FIELD( game_clock_epoch,           0,                                                                              0 )
 
-/** @brief Size in bytes of server transport config revision 1. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Size in bytes of the server transport config before game_clock_epoch. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_LEGACY ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Current known server transport config size, in bytes (the abi static_assert names the latest revision). */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, game_clock_epoch ) + sizeof( uint64_t ), sizeof( uint64_t ) )
 /** @brief Current known server transport config size, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1
+/** @brief Current known server transport config size, in bytes. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_LEGACY, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
 #error ROCKETNET_MAX_CHANNELS must be between 1 and 65536

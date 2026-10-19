@@ -514,8 +514,9 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     rocketnet_jitter_tracker_reset( &client_transport->jitter_tracker );
 
     // connect with the caller's token: the token names the server and is
-    // the credential. the game owns the clock; unix time is read here once
-    // for the token expiry check, which is wall-clock by definition.
+    // the credential. the game owns the clock; with a configured epoch the
+    // token check reads epoch plus the caller's time, and with the epoch zero
+    // it reads unix time once, as before.
 
     rocketnet_client_protocol_init( &client_transport->protocol, &client_transport->counters );
 
@@ -534,7 +535,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->time = time;
     client_transport->last_state = client_transport->protocol.state;
 
-    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, (uint64_t) ::time( NULL ) ) )
+    const uint64_t token_timestamp = config->game_clock_epoch != 0 ?
+        config->game_clock_epoch + (uint64_t) time : (uint64_t) ::time( NULL );
+
+    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, token_timestamp ) )
     {
         const int connect_failure = client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED ?
             ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED : ROCKETNET_STATUS_INVALID_CONNECT_TOKEN;
