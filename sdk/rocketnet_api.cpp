@@ -332,7 +332,12 @@ void rocketnet_client_disconnect( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
-    rocketnet_client_transport_disconnect( rocketnet_message_client_transport( rn_client( client ) ) );
+
+    // End the message connection first. Its link performs the transport
+    // disconnect synchronously, preserving that transition's callback order;
+    // the next update releases every channel/region allocation through the
+    // centralized client message reset.
+    rn_message_object_kick( &rn_client( client )->object, 0, ROCKETNET_MESSAGE_ERROR_NONE );
 }
 
 enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_client_t * client )

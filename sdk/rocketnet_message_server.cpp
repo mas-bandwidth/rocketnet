@@ -431,6 +431,19 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
     object->link.update( object->link.transport, time - object->clock_origin );
 
+    // The client message connection is bound before the handshake so sends
+    // can queue while its transport connects. Once that transport reaches a
+    // terminal state, the binding has ended: release its channel/region state
+    // before any ack or payload from the ended connection can be admitted.
+    // Explicit message kicks were reset at the start of this update.
+    if ( !object->is_server && object->link.state &&
+         object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED &&
+         object->link.state( object->link.transport ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+    {
+        rocketnet_client_connection_reset( object );
+        rn_slots_observe( &object->slots, 0, 0 );
+    }
+
     // RNSlots Observe: the server reads every slot's connection after the
     // transport's update; a changed connection resets the slot (Connect,
     // Disconnect)

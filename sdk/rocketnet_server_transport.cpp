@@ -263,6 +263,13 @@ void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_tr
     memset( &server->client_wire_totals[client_index], 0xA5, sizeof(server->client_wire_totals[client_index]) );
 }
 
+bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketnet_server_transport_t * server )
+{
+    return server && server->protocol.encryption_map && server->protocol.client_slots &&
+        rocketnet_encryption_map_num_mappings( server->protocol.encryption_map ) == 0 &&
+        rocketnet_client_slots_num_connected( server->protocol.client_slots ) == 0;
+}
+
 static struct rocketnet_server_pending_wire_totals_t * rocketnet_server_pending_wire_find(
     struct rocketnet_server_transport_t * server_transport, const rocketnet_address_t * address, bool create )
 {

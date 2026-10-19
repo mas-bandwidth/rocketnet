@@ -117,5 +117,6 @@ void rocketnet_server_connection_reset( struct rn_message_object_t * server, int
 // Unit-test witness for the private transport layout and RESET fields.
 bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_transport_t * client );
 void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index );
+bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketnet_server_transport_t * server );
 
 #endif // #ifndef ROCKETNET_CONNECTION_RESET_H
