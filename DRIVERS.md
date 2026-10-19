@@ -22,6 +22,12 @@ pin-only row. It is in-process, carries datagrams through memory with no socket
 and no system network call, and serves tests and tools; it is never chosen by
 auto.
 
+The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
+and `rocketnet_server_uring_leaked_drivers` are internal driver helpers
+(`sdk/rocketnet_server_uring.h`); a game uses `rocketnet_server_create`,
+`rocketnet_server_required_memory` and the other server entry points in
+`sdk/rocketnet.h`.
+
 ## Server capabilities and ownership
 
 Two I/O shapes preserve the existing implementations:
@@ -207,7 +213,7 @@ as non-UDP IPv4 does.
 
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
-per-CPU totals each time `rocketnet_server_transport_counters` is read. Only a
+per-CPU totals each time the transport counter surface is read. Only a
 driver with a kernel prefilter fills them; a driver with none leaves them
 zero.
 

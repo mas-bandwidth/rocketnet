@@ -94,6 +94,7 @@ add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
 set(ROCKETNET_SOURCE
     sdk/rocketnet.cpp
     sdk/rocketnet_abi.cpp
+    sdk/rocketnet_api.cpp
     sdk/rocketnet_ack.cpp
     sdk/rocketnet_allocator.cpp
     sdk/rocketnet_window_send.cpp
@@ -214,8 +215,8 @@ foreach(static_target IN LISTS rocketnet_static_targets)
     endforeach()
 endforeach()
 
-target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_EXPORT)
-target_compile_definitions(rocketnet_shared_dev PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_EXPORT)
+target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
+target_compile_definitions(rocketnet_shared_dev PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
 foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev)
     add_dependencies(${target} rocketnet_xdp_header)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -279,6 +280,11 @@ if(ROCKETNET_BUILD_EXAMPLES)
     target_link_libraries(client PRIVATE rocketnet_dev)
     add_executable(server server.c)
     target_link_libraries(server PRIVATE rocketnet_dev)
+    add_executable(happy_server tools/happy_path/happy_server.c)
+    target_link_libraries(happy_server PRIVATE rocketnet_dev)
+    add_executable(happy_client tools/happy_path/happy_client.c)
+    target_link_libraries(happy_client PRIVATE rocketnet_dev)
+    add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
     add_executable(test_sodium test_sodium.c)
@@ -464,15 +470,16 @@ if(ROCKETNET_BUILD_TESTS)
         add_dependencies(functional test_serialize test_transport_control)
     endif()
     add_library(rocketnet_abi_mismatch SHARED EXCLUDE_FROM_ALL tools/abi_mismatch.cpp)
-    target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT ROCKETNET_ABI_QUERIES_ONLY)
+    target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_BUILDING_DLL ROCKETNET_ABI_QUERIES_ONLY)
     target_compile_features(rocketnet_abi_mismatch PRIVATE cxx_std_11)
     set_target_properties(rocketnet_abi_mismatch PROPERTIES
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
     add_library(rocketnet_abi_legacy SHARED EXCLUDE_FROM_ALL tools/abi_legacy.cpp)
-    target_compile_definitions(rocketnet_abi_legacy PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
+    target_compile_definitions(rocketnet_abi_legacy PRIVATE ROCKETNET_SHARED ROCKETNET_BUILDING_DLL)
 endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
+    add_executable(load load.c)
     add_executable(soak_sim soak_sim.cpp)
     add_executable(keygen keygen.cpp)
     add_executable(transport_memory bench/transport_memory.cpp)
@@ -480,7 +487,7 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(lease_cost bench/lease_cost.cpp)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak soak_sim transport_memory transport_fill client_main_thread_cost lease_cost)
+    foreach(tool soak load soak_sim transport_memory transport_fill client_main_thread_cost lease_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(lease_cost PRIVATE Threads::Threads)
@@ -509,8 +516,8 @@ install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES sdk/rocketnet.h sdk/rocketnet.hpp sdk/rocketnet_address.h sdk/rocketnet_connect_token.h
-    sdk/rocketnet_platform.h sdk/rocketnet_counters.h sdk/rocketnet_route.h
+# rocketnet.h is the whole public C API; rocketnet.hpp is internal now (it wraps the transport layer).
+install(FILES sdk/rocketnet.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
 install(FILES sodium/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/sodium)

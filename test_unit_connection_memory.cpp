@@ -16,7 +16,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_fragment.h"
 
 #include <stdint.h>
@@ -52,14 +52,14 @@ static void cm_install()
 {
     rocketnet_term();
     check( rocketnet_allocator( cm_malloc, cm_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 }
 
 static void cm_restore()
 {
     rocketnet_term();
     check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 }
 
 static uint64_t cm_calls()

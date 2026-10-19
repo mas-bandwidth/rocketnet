@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Check that sdk/rocketnet.h is a clean, self-contained, plain-C public header.
+
+(a) the header alone compiles as C99, C11 and C++11, pedantic, warnings as
+    errors, plain and with ROCKETNET_SHARED and ROCKETNET_DEVELOPMENT defined;
+(b) every #include names only stdint.h, stddef.h or stdbool.h;
+(c) every function and data declaration carries ROCKETNET_EXPORT and sits
+    inside the one extern "C" block, and no inline, static, default argument,
+    overload, namespace, class, template, operator or reference appears;
+(d) a fresh empty directory holding only rocketnet.h and the prebuilt
+    development static library builds, links and runs tools/header_alone as C
+    and as C++: a message server and client on 127.0.0.1 exchange one message
+    each way.
+
+Prints one line per check and exits 0 only when every check passes.
+"""
+
+import argparse
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+HEADER = ROOT / "sdk" / "rocketnet.h"
+ALLOWED_INCLUDES = {"stdint.h", "stddef.h", "stdbool.h"}
+BANNED_WORDS = ("inline", "__inline", "__forceinline", "static", "namespace", "class",
+                "template", "operator", "typename", "using", "virtual")
+
+failures = []
+
+
+def report(ok, line):
+    print(("ok    " if ok else "FAIL  ") + line)
+    if not ok:
+        failures.append(line)
+
+
+def strip_comments(text):
+    # comments become spaces, newlines kept so line numbers survive
+    def blank(match):
+        return re.sub(r"[^\n]", " ", match.group(0))
+    return re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"',
+                  lambda m: m.group(0) if m.group(0).startswith('"') else blank(m), text, flags=re.S)
+
+
+def line_of(text, offset):
+    return text.count("\n", 0, offset) + 1
+
+
+# (a) -----------------------------------------------------------------------
+
+def compile_alone(compiler_c, compiler_cxx):
+    if sys.platform == "win32" and not shutil.which(compiler_c):
+        report(False, "(a) no C compiler named " + compiler_c + " on PATH")
+        return
+    languages = [
+        ("C99", compiler_c, ["-std=c99", "-pedantic", "-Wall", "-Wextra", "-Wstrict-prototypes", "-Werror", "-fsyntax-only", "-x", "c"]),
+        ("C11", compiler_c, ["-std=c11", "-pedantic", "-Wall", "-Wextra", "-Wstrict-prototypes", "-Werror", "-fsyntax-only", "-x", "c"]),
+        ("C++11", compiler_cxx, ["-std=c++11", "-pedantic", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", "-x", "c++"]),
+    ]
+    variants = [("", []), (" with ROCKETNET_SHARED", ["-DROCKETNET_SHARED"]),
+                (" with ROCKETNET_DEVELOPMENT=1", ["-DROCKETNET_DEVELOPMENT=1"])]
+    for name, compiler, flags in languages:
+        for suffix, defines in variants:
+            command = [compiler] + flags + defines + [str(HEADER)]
+            result = subprocess.run(command, capture_output=True, text=True)
+            detail = "" if result.returncode == 0 else ": " + (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]
+            report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
+
+
+# (b) -----------------------------------------------------------------------
+
+def check_includes(text):
+    found = False
+    for number, line in enumerate(text.splitlines(), 1):
+        match = re.match(r"\s*#\s*include\s*([<\"])([^>\"]+)[>\"]", line)
+        if not match:
+            if re.match(r"\s*#\s*include", line):
+                report(False, "(b) line %d: an #include this check cannot read: %s" % (number, line.strip()))
+            continue
+        found = True
+        name = match.group(2)
+        if match.group(1) != "<" or name not in ALLOWED_INCLUDES:
+            report(False, "(b) line %d: #include %s%s%s is not a standard header this API allows" % (number, match.group(1), name, ">" if match.group(1) == "<" else '"'))
+    if not any(line.startswith("(b) line") for line in failures):
+        report(found, "(b) every #include is one of %s" % ", ".join(sorted(ALLOWED_INCLUDES)))
+
+
+# (c) -----------------------------------------------------------------------
+
+def check_declarations(raw):
+    text = strip_comments(raw)
+
+    # preprocessor lines (with continuations) are not declarations
+    code_chars = list(text)
+    for match in re.finditer(r"^[ \t]*#(?:[^\n]*\\\n)*[^\n]*", text, flags=re.M):
+        for i in range(match.start(), match.end()):
+            if code_chars[i] != "\n":
+                code_chars[i] = " "
+    code = "".join(code_chars)
+
+    # exactly one extern "C" block, opened and closed under #ifdef __cplusplus
+    opens = [m for m in re.finditer(r'extern\s*"C"', text)]
+    open_block = re.search(r'#ifdef\s+__cplusplus\s*\n\s*extern\s*"C"\s*\{\s*\n\s*#endif', text)
+    close_block = None
+    for m in re.finditer(r'#ifdef\s+__cplusplus\s*\n\s*\}\s*\n\s*#endif', text):
+        close_block = m
+    one_block = len(opens) == 1 and open_block is not None and close_block is not None and close_block.start() > open_block.end()
+    report(one_block, '(c) one #ifdef __cplusplus extern "C" { #endif ... } block, and no other extern "C"')
+    if not one_block:
+        return
+    block_start = open_block.end()
+    block_end = close_block.start()
+
+    # the block's own brace and the extern "C" are not part of any declaration
+    code = code[:open_block.start()] + re.sub(r"[^\n]", " ", code[open_block.start():open_block.end()]) + code[open_block.end():]
+    code = code[:close_block.start()] + re.sub(r"[^\n]", " ", code[close_block.start():close_block.end()]) + code[close_block.end():]
+
+    for word in BANNED_WORDS:
+        for m in re.finditer(r"\b%s\b" % word, code):
+            report(False, "(c) line %d: '%s' has no place in a plain C public header" % (line_of(code, m.start()), word))
+    for m in re.finditer(r"&", code):
+        report(False, "(c) line %d: '&' (a C++ reference) in a declaration" % line_of(code, m.start()))
+
+    # top-level statements: split at ';' outside braces
+    statements, depth, start = [], 0, 0
+    for i, ch in enumerate(code):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            segment = code[start:i]
+            words = segment.split()
+            if depth == 0 and words and words[0] not in ("struct", "enum", "union", "typedef") and "(" in segment[:segment.index("{")]:
+                report(False, "(c) line %d: a function body: a public header declares, never defines" % line_of(code, start + len(code[start:i]) - len(code[start:i].lstrip())))
+                statements.append((start, code[start:i]))   # a function body ends its statement
+                start = i + 1
+        elif ch == ";" and depth == 0:
+            statements.append((start, code[start:i]))
+            start = i + 1
+    if code[start:].strip():
+        report(False, "(c) line %d: text after the last declaration: %s" % (line_of(code, start), code[start:].strip()[:60]))
+
+    names = {}
+    num_functions = num_data = 0
+    for offset, statement in statements:
+        body = " ".join(statement.split())
+        if not body:
+            continue
+        first = offset + len(statement) - len(statement.lstrip())
+        number = line_of(code, first)
+        if body.startswith("typedef ") or re.match(r"(struct|enum|union)\s+\w+$", body):
+            continue                                    # a typedef or an opaque handle
+        if re.match(r"(struct|enum|union)\b[^(]*\{", body):
+            if body[body.rindex("}") + 1:].strip():
+                report(False, "(c) line %d: data declared after a type body: %s" % (number, body[body.rindex("}") + 1:].strip()))
+            continue                                    # a struct or an enum
+        if "(" not in body:
+            report(False, "(c) line %d: a declaration that is neither a type nor a function: %s" % (number, body[:60]))
+            continue
+        data = re.match(r"[^(]*\(\s*\*\s*(\w+)\s*\)\s*\(", body)
+        if data and body.split("(")[0].split()[0] == "extern":
+            name = data.group(1)
+            num_data += 1
+        else:
+            match = re.match(r"([^(]*?)(\w+)\s*\(", body)
+            if not match:
+                report(False, "(c) line %d: cannot read the declaration: %s" % (number, body[:60]))
+                continue
+            name = match.group(2)
+            num_functions += 1
+            params = body[body.index("(") + 1:body.rindex(")")]
+            if re.fullmatch(r"\s*", params):
+                report(False, "(c) line %d: %s() is an old-style prototype; write ( void )" % (number, name))
+            if "=" in body:
+                report(False, "(c) line %d: %s has a default argument" % (number, name))
+        if not re.search(r"\bROCKETNET_EXPORT\b", body):
+            report(False, "(c) line %d: %s does not carry ROCKETNET_EXPORT" % (number, name))
+        if not ( block_start <= first <= block_end ):
+            report(False, '(c) line %d: %s sits outside the extern "C" block' % (number, name))
+        if name in names:
+            report(False, "(c) line %d: %s is declared again (first at line %d): an overload" % (number, name, names[name]))
+        names.setdefault(name, number)
+
+    if not any(line.startswith("(c) line") for line in failures):
+        report(num_functions > 0, '(c) %d functions and %d data declarations, each ROCKETNET_EXPORT, each once, all inside the extern "C" block; no inline, static, default argument, overload, namespace, class, template or reference' % (num_functions, num_data))
+    return num_functions, num_data
+
+
+# (d) -----------------------------------------------------------------------
+
+def cmake_cache(build):
+    values = {}
+    cache = build / "CMakeCache.txt"
+    if cache.exists():
+        for line in cache.read_text(errors="replace").splitlines():
+            match = re.match(r"([A-Za-z0-9_]+):[A-Z]+=(.*)$", line)
+            if match:
+                values[match.group(1)] = match.group(2)
+    return values
+
+
+def system_libraries(build):
+    # the platform's system libraries the prebuilt static library links
+    # against, plus the C++ runtime: nothing of RocketNet's own
+    if sys.platform == "darwin":
+        return ["-lc++", "-framework", "CoreFoundation", "-framework", "SystemConfiguration"]
+    libraries = []
+    cache = cmake_cache(build)
+    for dependency in ("Bpf", "Xdp", "Uring"):
+        value = cache.get("ROCKETNET_%s_LIBRARY" % dependency, "")
+        if value and not value.endswith("-NOTFOUND"):
+            libraries.append(value)
+    return libraries + ["-lstdc++", "-lm", "-lpthread"]
+
+
+HEADER_ALONE_INCLUDES = {"main.c": {"rocketnet.h", "stdio.h", "string.h", "time.h"}, "main.cpp": {"main.c"}}
+
+
+def self_contained(build, config, compiler_c, compiler_cxx):
+    sources = ROOT / "tools" / "header_alone"
+    # the programs include rocketnet.h and standard C headers only
+    for name, allowed in sorted(HEADER_ALONE_INCLUDES.items()):
+        included = re.findall(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', (sources / name).read_text(), flags=re.M)
+        extra = [header for header in included if header not in allowed]
+        report(not extra, "(d) tools/header_alone/%s includes %s" % (name, ", ".join(included)) +
+               ("" if not extra else ": not allowed: " + ", ".join(extra)))
+    if sys.platform == "win32":
+        library = build / config / "rocketnet_dev.lib"
+    else:
+        library = build / "librocketnet_dev.a"
+    if not library.exists():
+        report(False, "(d) no prebuilt development static library at %s" % library)
+        return
+    directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_"))
+    source_directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_source_"))
+    # no include path but the directory: the compiler's environment paths are cleared
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH")}
+    try:
+        # the sources compile from their own directory, which holds only them,
+        # so a quoted include finds nothing beside the source
+        for name in HEADER_ALONE_INCLUDES:
+            shutil.copy(sources / name, source_directory / name)
+        shutil.copy(HEADER, directory / "rocketnet.h")
+        shutil.copy(library, directory / library.name)
+        contents = sorted(os.listdir(directory))
+        report(contents == sorted(["rocketnet.h", library.name]),
+               "(d) the directory holds only %s" % ", ".join(contents))
+        builds = [
+            ("C99", compiler_c, ["-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror"], source_directory / "main.c", "header_alone_c"),
+            ("C++11", compiler_cxx, ["-std=c++11", "-pedantic", "-Wall", "-Wextra", "-Werror"], source_directory / "main.cpp", "header_alone_cpp"),
+        ]
+        for name, compiler, flags, source, program in builds:
+            if sys.platform == "win32":
+                command = ["cl", "/nologo", "/W4", "/WX", "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory), "/TC" if name == "C99" else "/TP",
+                           str(source), str(directory / library.name), "ws2_32.lib", "iphlpapi.lib", "advapi32.lib",
+                           "/Fe:" + str(directory / (program + ".exe")), "/Fo:" + str(directory) + "\\"]
+                executable = directory / (program + ".exe")
+            else:
+                executable = directory / program
+                command = [compiler] + flags + ["-I", str(directory), str(source), str(directory / library.name)] + \
+                          system_libraries(build) + ["-o", str(executable)]
+            result = subprocess.run(command, capture_output=True, text=True, cwd=directory, env=environment)
+            if result.returncode != 0:
+                report(False, "(d) %s client and server build against rocketnet.h and %s alone: %s" %
+                       (name, library.name, (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]))
+                continue
+            report(True, "(d) %s client and server build against rocketnet.h and %s alone" % (name, library.name))
+            try:
+                run = subprocess.run([str(executable)], capture_output=True, text=True, cwd=directory, timeout=60)
+                output = (run.stdout.strip().splitlines() or [""])[-1]
+                errors = (run.stderr.strip().splitlines() or [""])[-1]
+                report(run.returncode == 0, "(d) %s run exits %d: %s" % (name, run.returncode, output if run.returncode == 0 else errors))
+            except subprocess.TimeoutExpired:
+                report(False, "(d) %s run did not finish in 60 seconds" % name)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+        shutil.rmtree(source_directory, ignore_errors=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--build", type=Path, default=ROOT / "build", help="the build directory holding the prebuilt static library")
+    parser.add_argument("--config", default="Release", help="the Windows build configuration")
+    parser.add_argument("--cc", default=os.environ.get("CC", "cc"))
+    parser.add_argument("--cxx", default=os.environ.get("CXX", "c++"))
+    parser.add_argument("--no-run", action="store_true", help="checks (a) to (c) only, no build of tools/header_alone")
+    parser.add_argument("--header", type=Path, help="check this header instead of sdk/rocketnet.h")
+    args = parser.parse_args()
+    global HEADER
+    if args.header:
+        HEADER = args.header.resolve()
+    build = args.build if args.build.is_absolute() else Path.cwd() / args.build
+
+    raw = HEADER.read_text()
+    print("%s: %d lines" % (HEADER.relative_to(ROOT) if ROOT in HEADER.parents else HEADER, len(raw.splitlines())))
+    if sys.platform != "win32":
+        compile_alone(args.cc, args.cxx)
+    else:
+        print("skip  (a) the gcc/clang compile of the header alone runs on Linux and macOS")
+    check_includes(raw)
+    check_declarations(raw)
+    if not args.no_run:
+        self_contained(build, args.config, args.cc, args.cxx)
+    if failures:
+        print("public header: %d check(s) failed" % len(failures))
+        return 1
+    print("public header: clean, plain C and self-contained")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

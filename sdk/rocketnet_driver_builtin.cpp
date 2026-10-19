@@ -153,7 +153,7 @@ static void * gso_create( void * context, const rocketnet_server_driver_config_t
 {
     if ( config->transport->num_xdp_queues > ROCKETNET_GSO_MAX_QUEUES )
     {
-        rocketnet_warn( "gso driver refused: num_xdp_queues %d is past the gso driver's %d queue geometry",
+        rocketnet_warn( "gso transport refused: num_xdp_queues %d is past the gso transport's %d queue geometry",
             config->transport->num_xdp_queues, ROCKETNET_GSO_MAX_QUEUES );
         return NULL;
     }
@@ -174,7 +174,7 @@ static void * io_uring_create( void * context, const rocketnet_server_driver_con
 {
     if ( config->transport->num_xdp_queues > ROCKETNET_URING_MAX_QUEUES )
     {
-        rocketnet_warn( "io_uring driver refused: num_xdp_queues %d is past the io_uring driver's %d queue geometry",
+        rocketnet_warn( "io_uring transport refused: num_xdp_queues %d is past the io_uring transport's %d queue geometry",
             config->transport->num_xdp_queues, ROCKETNET_URING_MAX_QUEUES );
         return NULL;
     }

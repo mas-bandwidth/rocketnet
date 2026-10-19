@@ -1,7 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_packet_batch.h"
 
 // Native implementation interface. None of these symbols is a public C export.

@@ -9,7 +9,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_send_budget.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_protocol.h"
@@ -401,6 +401,9 @@ static void class_order_retransmit_first()
 
 static void runtime_change_takes_effect_next_window()
 {
+    // The capped token bucket keeps its rule: 0 is not a rate it holds.
+    // Uncapping is the message layer's rule and holds no bucket at all
+    // (sdk/rocketnet_send_budget.h's header comment).
     rocketnet_send_budget_t budget;
     check( !rocketnet_send_budget_init( &budget, 0, 0.0 ) );
     check( budget.kbps == 0 );
@@ -581,7 +584,7 @@ static void no_allocation_after_create()
 {
     rocketnet_term();
     check( rocketnet_allocator( counting_malloc, counting_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 
     rocketnet_send_budget_t budgets[4];
     check( rocketnet_send_budget_init( &budgets[0], ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 ) );
@@ -619,7 +622,7 @@ static void no_allocation_after_create()
     check( g_alloc_calls == after_create );
 
     rocketnet_term();
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 }
 
 // ---------------------------------------------------------------------------

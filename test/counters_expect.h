@@ -38,7 +38,7 @@
 #error "name the suite's check before including counters_expect.h: #define ROCKETNET_COUNTERS_CHECK <check>"
 #endif
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
 
 #include <stdint.h>

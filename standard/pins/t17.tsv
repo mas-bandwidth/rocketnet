@@ -1,0 +1,10 @@
+# The rows of RN-1 t17 (TRANSPORT.md): document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+#include "rocketnet_encryption_map.h"
+#include "rocketnet_constants.h"
+#include "rocketnet_counters.h"
+#include "rocketnet_server.h"
+half-open idle deadline	ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS	10
+handshake work budget	ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE	1024
+failed-signature budget	ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET	90
+failed-signature window	ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS	10

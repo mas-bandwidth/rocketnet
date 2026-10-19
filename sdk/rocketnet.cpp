@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_packet_lease.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -201,11 +201,11 @@ static const char * const rocketnet_status_names[] =
     "INVALID_PROTOCOL_ID",
     "DEV_KEYS_IN_RELEASE",
     "INVALID_ADDRESS",
-    "INVALID_DRIVER_LIST",
+    "INVALID_TRANSPORT_LIST",
     "INVALID_CONNECT_TOKEN",
     "CONNECT_TOKEN_EXPIRED",
-    "DRIVER_PORT_ZERO_UNSUPPORTED",
-    "DRIVER_LADDER_EXHAUSTED",
+    "TRANSPORT_PORT_ZERO_UNSUPPORTED",
+    "TRANSPORT_LADDER_EXHAUSTED",
     "OUT_OF_MEMORY",
     "MUTEX_CREATE_FAILED",
     "THREAD_CREATE_FAILED",

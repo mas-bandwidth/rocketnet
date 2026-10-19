@@ -284,7 +284,7 @@ static void reliable_no_allocation_after_create()
 {
     rocketnet_term();
     check( rocketnet_allocator( reliable_counted_malloc, reliable_counted_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -307,7 +307,7 @@ static void reliable_no_allocation_after_create()
     rn_arena_destroy( receiver.arena );
     rocketnet_term();
     check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 }
 
 REGISTER_UNIT_TEST( reliable_no_allocation_after_create );

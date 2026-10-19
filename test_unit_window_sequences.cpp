@@ -16,7 +16,7 @@
 
 #include "rocketnet_allocator.h"
 #include "rocketnet_message.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <stdint.h>
 #include <stdio.h>
