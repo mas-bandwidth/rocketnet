@@ -58,8 +58,14 @@ and the dylib:
 
 The deployment target defaults to 11.0, the first macOS release on Apple
 silicon: the arm64 slice cannot load below it, and one floor serves both
-slices. `otool -l` shows it on each slice. Run the x86_64 slice under Rosetta 2
-with `arch -x86_64`:
+slices. Ask each slice for its minimum and expect `minos 11.0`:
+
+    otool -arch arm64 -l build-universal/librocketnet.a | grep -m1 minos
+    otool -arch x86_64 -l build-universal/librocketnet.a | grep -m1 minos
+    otool -arch arm64 -l bin/librocketnet.dylib | grep -m1 minos
+    otool -arch x86_64 -l bin/librocketnet.dylib | grep -m1 minos
+
+Run the x86_64 slice under Rosetta 2 with `arch -x86_64`:
 
     arch -x86_64 ./bin/test
     arch -x86_64 ./bin/test_lifecycle

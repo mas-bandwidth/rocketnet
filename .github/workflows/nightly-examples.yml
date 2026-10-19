@@ -106,6 +106,10 @@ jobs:
             lipo -info "$library" | tee "$library.lipo"
             grep -q arm64 "$library.lipo"
             grep -q x86_64 "$library.lipo"
+            for arch in arm64 x86_64; do
+              otool -arch "$arch" -l "$library" | grep 'minos 11.0' >/dev/null
+              echo "$library $arch records minos 11.0"
+            done
           done
 
       - name: Run the x86_64 slice under Rosetta 2
