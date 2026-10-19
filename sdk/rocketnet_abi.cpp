@@ -218,7 +218,7 @@ size_t rocketnet_abi_field_size(const char * type_name, const char * field_name)
 // this target.
 
 static_assert( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 == sizeof( struct rocketnet_client_transport_config_t ), "client transport config revision 1 size" );
-static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 1 size" );
+static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 2 size" );
 static_assert( ROCKETNET_MESSAGE_CONFIG_BYTES_2 == sizeof( struct rocketnet_message_config_t ), "message config revision 2 size" );
 
 static const size_t rocketnet_client_transport_config_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };

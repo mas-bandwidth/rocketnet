@@ -816,6 +816,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
         return NULL;
     }
 
+    if ( !rocketnet_config_validate_public_link_simulator( "server", &effective_config, config_fields, num_config_fields, rocketnet_public_link_simulator_development() ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return NULL;
+    }
+
     config = &effective_config;
 
     // Refuse large cross-field allocations before sockets, drivers or arenas
