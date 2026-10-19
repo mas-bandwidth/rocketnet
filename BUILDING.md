@@ -507,3 +507,48 @@ acquire it without requiring an extra update or flush. The ordinary fill path
 adds an acquire load of the producer-buffer index; only recovery after both
 buffers were queued takes the publication mutex. Hardware throughput and
 pressure measurements are required for this changed XDP path.
+
+## Fuzzing on macOS
+
+Apple clang ships no libFuzzer runtime, so `-fsanitize=fuzzer` fails there with
+`libclang_rt.fuzzer_osx.a not found`. Fuzz on a Mac with an LLVM toolchain that
+carries it; Homebrew's `llvm` formula is one. Name that compiler once in
+`ROCKETNET_FUZZ_CC` and `ROCKETNET_FUZZ_CXX` and both the library build and
+`fuzz/Makefile` pick it up. Apple silicon (arm64) is the supported macOS host.
+
+```
+brew install llvm
+export ROCKETNET_FUZZ_CC="$(brew --prefix llvm)/bin/clang"
+export ROCKETNET_FUZZ_CXX="$(brew --prefix llvm)/bin/clang++"
+export CC="$ROCKETNET_FUZZ_CC" CXX="$ROCKETNET_FUZZ_CXX"
+
+cmake -B build -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_COMPILER="$ROCKETNET_FUZZ_CC" \
+  -DCMAKE_CXX_COMPILER="$ROCKETNET_FUZZ_CXX" \
+  -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+cmake --build build --target rocketnet_dev --parallel 4
+
+make -C fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
+```
+
+That builds `rocketnet_fuzz`, `rocketnet_fuzz_message`,
+`rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` in
+`fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
+`-ffp-contract=off` floor as the library. Run one for fifteen minutes from its
+seed corpus and the persisted corpus, with the wire dictionary:
+
+```
+mkdir -p corpus/rocketnet_fuzz
+./fuzz/rocketnet_fuzz corpus/rocketnet_fuzz fuzz/corpus \
+  -dict=fuzz/rocketnet.dict -max_total_time=900 -print_final_stats=1
+```
+
+The other three take `corpus/rocketnet_fuzz_message` with
+`fuzz/corpus_message`, `corpus/rocketnet_fuzz_connect_token` with
+`fuzz/corpus_connect_token`, and `corpus/rocketnet_fuzz_receive_structured`
+with `fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
+(`crash-*`, `oom-*`, `timeout-*`, `leak-*`) names the bug; a minimized input
+belongs in the target's seed corpus as `regress_<name>` together with its
+pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
+workflow's `fuzz-macos` job runs this same build for each target.
