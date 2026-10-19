@@ -174,7 +174,7 @@ def main():
         published = re.search(r"0x[0-9A-Fa-f]+", cell)
         compare("version constant",
                 published.group(0).upper().replace("0X", "0x") if published else cell,
-                code["ROCKETNET_VERSION"])
+                code["ROCKETNET_WIRE_VERSION"])
 
     cell = row("Prefilter header")
     if cell is not None:

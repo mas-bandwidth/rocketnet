@@ -36,7 +36,7 @@
 // or fails on the MAC -- so a crashing input replays. The client connect draws
 // a random salt per attempt, same argument.
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_counters.h"
@@ -66,7 +66,7 @@ static void rocketnet_fuzz_build_base_token()
     memset( &signed_fields, 0, sizeof(signed_fields) );
     memset( &private_fields, 0, sizeof(private_fields) );
 
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
     signed_fields.expire_timestamp = ROCKETNET_TEST_CREATE_TS + 300;

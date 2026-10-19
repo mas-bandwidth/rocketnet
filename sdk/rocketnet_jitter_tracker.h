@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_JITTER_TRACKER_H
 #define ROCKETNET_JITTER_TRACKER_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <math.h>
 

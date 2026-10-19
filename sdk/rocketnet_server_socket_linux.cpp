@@ -4,7 +4,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #if ROCKETNET_XDP
 
@@ -902,7 +902,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 // verified BY NAME here, and saying so is different from
                 // claiming there is nothing to pin
 
-                rocketnet_info( "xdp pre-flight: no /proc/interrupts line names %s (R4): either this NIC has no per-queue vectors, or its driver's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be verified by name here; pin and verify via the NIC driver's own tooling", interface_name );
+                rocketnet_info( "xdp pre-flight: no /proc/interrupts line names %s (R4): either this NIC has no per-queue vectors, or its transport's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be verified by name here; pin and verify via the NIC transport's own tooling", interface_name );
             }
             else if ( have_isolated && matched_irqs > rocketnet_server_socket_count_cpu_list( isolated ) )
             {
@@ -974,7 +974,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 // surface means the count cannot be wrong, and saying so
                 // is different from silence
 
-                rocketnet_info( "xdp pre-flight: %s has no channel surface (R7 passes: the driver does not support channel queries)", interface_name );
+                rocketnet_info( "xdp pre-flight: %s has no channel surface (R7 passes: the transport does not support channel queries)", interface_name );
             }
             else if ( ethtool_result != 0 )
             {

@@ -69,7 +69,8 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
           LSAN_OPTIONS: suppressions=tools/lsan.supp:print_suppressions=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           set -o pipefail
           ./bin/test 2>&1 | tee test_portable.log

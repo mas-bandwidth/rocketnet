@@ -320,14 +320,18 @@ Driver selection is runtime (#106): one build carries every driver its platform
 has — on Linux the AF_XDP driver (privileged), the GSO driver (SO_REUSEPORT +
 sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and the portable UDP driver; on macOS
 the Darwin batch pump and portable — and the transport walks an ordered candidate
-list at create. The list rides the config's `driver` field or the
-`ROCKETNET_DRIVER` environment variable (precedence: default < struct < env):
+list at create. The list rides the config's transport field or the
+per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
+environment variables (precedence: default < struct < env). The old names
+`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
+`ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied:
 
     ./bin/functional                                # auto: the platform's recommended ladder
                                                 #   (linux: xdp,gso,portable — falls on refusal)
-    ROCKETNET_DRIVER=portable ./bin/functional  # a one-element list is a pin: that driver
+    ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
+                                                # a one-element list is a pin: that driver
                                                 #   or loud failure, never a silent fall
-    ROCKETNET_DRIVER=gso,portable ./bin/functional  # exactly these, exactly this order
+    ROCKETNET_SERVER_TRANSPORT=gso,portable ./bin/functional  # exactly these, exactly this order
 
 Names known but absent on a platform — or not applicable to an endpoint, like
 `gso` for a client — are skipped with a log line, so one fleet-wide value deploys
@@ -342,7 +346,8 @@ create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks the
 that degradation is internal to the driver, below the ladder; likewise the Darwin
 batch pump's live-refusal pause. The pre-#106 `ROCKETNET_PUMP=portable` override is
 absorbed into this system with its exact old meaning — the msgx pump off —
-honored and named in the logs, with `ROCKETNET_DRIVER=portable` as its successor;
+honored and named in the logs, with `ROCKETNET_SERVER_TRANSPORT=portable` and
+`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors;
 `ROCKETNET_SERVER_NUM_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS` likewise keep
 working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
 `ROCKETNET_NUM_OS_CPUS`. Run `./bin/functional` against each rung. The unit
@@ -351,7 +356,8 @@ what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
 config tables and their legacy aliases, then restores them on return.
-`ROCKETNET_DRIVER` remains an intentional test pin; `ROCKETNET_TEST_VERBOSE`
+`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
+test pins, and the old driver names are cleared; `ROCKETNET_TEST_VERBOSE`
 keeps its diagnostic meaning. Passing ordinary runs print test names and
 explicitly named platform skips. Failures retain the captured diagnostic log.
 
@@ -361,7 +367,7 @@ Native driver authors: [DRIVERS.md](DRIVERS.md) describes registration,
 capabilities, ownership and the independently built extension example.
 
 Select `driver = "iocp"` in the existing server config, or set
-`ROCKETNET_DRIVER=iocp`. The driver uses overlapped UDP with completion batches;
+`ROCKETNET_SERVER_TRANSPORT=iocp`. The driver uses overlapped UDP with completion batches;
 send buffers are recycled only after completion, and stop cancels and drains
 outstanding operations. IPv6 binds accept both address families. The client
 continues to use the portable path.

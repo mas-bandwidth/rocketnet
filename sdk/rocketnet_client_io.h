@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_platform.h"
