@@ -44,7 +44,7 @@ jobs:
 
   version-consistency:
     name: version consistency
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
     steps:
 
       - uses: actions/checkout@v4
@@ -123,7 +123,7 @@ jobs:
   unreleased-wire-changes:
     name: unreleased wire changes
     if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/')
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
     steps:
 
       - uses: actions/checkout@v4

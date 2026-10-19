@@ -1,0 +1,420 @@
+#!/usr/bin/env python3
+"""Fleet-runner lint for rocketnet CI.
+
+Reads every workflow under .github/workflows and:
+  * refuses any `runs-on:` value, matrix os/runner value, or expression branch
+    that resolves to a GitHub-hosted label (ubuntu-*, macos-*, windows-*);
+  * refuses any `run:` line that installs software onto the runner
+    (sudo apt-get install, brew install, npm -g/--global, go install,
+    cargo install, pip install, dotnet tool install -g, luarocks install
+    without --tree).
+
+A workflow+job pair is exempt when the job is listed in
+scripts/fleet-runners-exceptions.txt with one of:
+  TEMPORARY  naming the card that removes the entry (nightly workflows today)
+  DISABLED   the job carries `if: false` and a `# DISABLED:` comment
+  GUEST      an install inside a VM the job boots
+
+A `run:` step guarded by `if: runner.environment == 'github-hosted'` is
+allowed: it never runs on the fleet. This mirrors the rule that guarded
+actions/setup-* steps may stay.
+
+Exits non-zero (naming file:line, workflow and job) on any refusal.
+"""
+
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+WF_DIR = os.environ.get("ROCKETNET_WF_DIR") or os.path.normpath(os.path.join(HERE, "..", ".github", "workflows"))
+EXC_FILE = os.environ.get("ROCKETNET_EXC_FILE") or os.path.join(HERE, "fleet-runners-exceptions.txt")
+
+HOSTED = re.compile(r"^(ubuntu|macos|windows)-")
+
+INSTALL_CHECKS = [
+    (re.compile(r"\bsudo\s+apt-get\s+install\b"), "apt-get install"),
+    (re.compile(r"\bbrew\s+install\b"), "brew install"),
+    (re.compile(r"\bnpm\s+(?:i|install)\s+(?:-\S+\s+)*-g\b"), "npm -g"),
+    (re.compile(r"\bnpm\s+(?:i|install)\s+(?:-\S+\s+)*--global\b"), "npm --global"),
+    (re.compile(r"\bgo\s+install\b"), "go install"),
+    (re.compile(r"\bcargo\s+install\b"), "cargo install"),
+    (re.compile(r"\bpip\s+install\b"), "pip install"),
+    (re.compile(r"\bdotnet\s+tool\s+install\s+-g\b"), "dotnet tool install -g"),
+    (re.compile(r"\bluarocks\s+install\b"), "luarocks install"),
+]
+
+GUARDED_OK = re.compile(r"runner\.environment.*github-hosted|github-hosted.*runner\.environment")
+
+
+class JobInfo(object):
+    def __init__(self, name):
+        self.name = name
+        self.runs_on_line = None
+        self.runs_on_raw = None
+        self.if_false = False
+        self.disabled_comment = False
+        self.include_rows = []
+        self.scalar_os = []
+        self.scalar_runner = []
+        self.steps = []  # (run_line, guard, run_text)
+
+
+def split_top_level(text):
+    out = []
+    depth = 0
+    inq = None
+    cur = ""
+    for ch in text:
+        if inq:
+            cur += ch
+            if ch == inq:
+                inq = None
+            continue
+        if ch in ("'", '"'):
+            inq = ch
+            cur += ch
+            continue
+        if ch == "[":
+            depth += 1
+        if ch == "]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    out.append(cur)
+    return out
+
+
+def parse_label_list(text):
+    text = text.strip()
+    if text.startswith("["):
+        inner = text[1:-1]
+        parts = re.split(r",", inner)
+        return [p.strip().strip('"').strip("'") for p in parts if p.strip()]
+    return [text.strip('"').strip("'")]
+
+
+def extract_matrix_paths(text):
+    """Return the YAML path of a matrix include row, for line reporting."""
+    m = re.search(r"\bos\s*:\s*([^\s,]+)", text)
+    if m:
+        return m.group(1).strip('"').strip("'")
+    return ""
+
+
+def resolve_runs_on(raw, row):
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    if raw.startswith("${{") and raw.endswith("}}"):
+        expr = raw[3:-2].strip()
+        m = re.match(r"^matrix\.runner\s*&&\s*fromJSON\(matrix\.runner\)\s*\|\|\s*matrix\.os$", expr)
+        if m:
+            runner = (row.get("runner") or "").strip()
+            if runner and runner not in ('""', "''"):
+                return parse_label_list(runner)
+            return [row.get("os") or ""]
+        m = re.match(r"^matrix\.os\s*==\s*'([^']+)'\s*&&\s*fromJSON\('(\[[^\]]*\])'\)\s*\|\|\s*matrix\.os$", expr)
+        if m:
+            target = m.group(1)
+            osv = row.get("os") or ""
+            if osv == target:
+                return parse_label_list(m.group(2))
+            return [osv]
+        m = re.match(r"^matrix\.os$", expr)
+        if m:
+            return [row.get("os") or ""]
+        if row.get("os") or row.get("runner"):
+            osv = row.get("os") or ""
+            runner = (row.get("runner") or "").strip()
+            if runner and runner not in ('""', "''"):
+                return parse_label_list(runner)
+            return [osv] if osv else []
+        return []
+    return parse_label_list(raw)
+
+
+def matrix_rows(job):
+    rows = []
+    if job.include_rows:
+        rows = list(job.include_rows)
+    else:
+        os_list = job.scalar_os or [""]
+        runner_list = job.scalar_runner or [""]
+        for o in os_list:
+            for r in runner_list:
+                rows.append({"os": o, "runner": r})
+    if not rows:
+        rows = [{"os": "", "runner": ""}]
+    return rows
+
+
+def parse_workflow(lines):
+    jobs = []
+    job = None
+    top = None
+    in_strategy = False
+    in_matrix = False
+    in_include = False
+    cur_row = None
+    cur_step = None
+    run_collect = None
+    run_indent = None
+
+    for lineno, raw in enumerate(lines, 1):
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            if job is not None and "DISABLED:" in stripped:
+                job.disabled_comment = True
+            continue
+
+        if indent == 0:
+            m = re.match(r"^([A-Za-z_][\w-]*):", stripped)
+            if m:
+                top = m.group(1)
+            if top != "jobs":
+                job = None
+            continue
+
+        if top == "jobs" and indent == 2:
+            m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", stripped)
+            if m and not stripped.startswith("-"):
+                job = JobInfo(m.group(1))
+                jobs.append(job)
+                in_strategy = in_matrix = in_include = False
+                cur_row = None
+                cur_step = None
+                continue
+            if job is None:
+                continue
+
+        if job is None:
+            continue
+
+        if indent == 2:
+            continue
+
+        if indent >= 4 and stripped.startswith("runs-on:"):
+            job.runs_on_line = lineno
+            job.runs_on_raw = stripped[len("runs-on:"):].strip()
+            cur_step = None
+            continue
+
+        if indent == 4 and stripped == "if: false":
+            job.if_false = True
+            continue
+
+        if "DISABLED:" in stripped:
+            job.disabled_comment = True
+
+        if indent == 4 and stripped == "strategy:":
+            in_strategy = True
+            in_matrix = False
+            cur_step = None
+            continue
+        if in_strategy and indent == 6 and stripped == "matrix:":
+            in_matrix = True
+            in_include = False
+            cur_row = None
+            cur_step = None
+            continue
+        if in_matrix and indent == 8 and stripped.startswith("include:"):
+            in_include = True
+            cur_row = None
+            continue
+        if in_matrix and in_include and indent >= 10:
+            if stripped.startswith("- "):
+                if cur_row is not None:
+                    job.include_rows.append(cur_row)
+                cur_row = {}
+                body = stripped[2:].strip()
+                body = re.split(r"\s+#", body, 1)[0].strip()
+                if body.startswith("{") and body.endswith("}"):
+                    inner = body[1:-1]
+                    for kv in split_top_level(inner):
+                        km = re.match(r"^([\w]+)\s*:\s*(.*)$", kv.strip())
+                        if km:
+                            key, val = km.group(1), km.group(2).strip()
+                            val = val.strip('"').strip("'")
+                            cur_row[key] = val
+                else:
+                    km = re.match(r"^([\w]+)\s*:\s*(.*)$", body)
+                    if km:
+                        cur_row[km.group(1)] = km.group(2).strip('"').strip("'")
+                continue
+            else:
+                km = re.match(r"^([\w]+)\s*:\s*(.*)$", stripped)
+                if km and cur_row is not None:
+                    cur_row[km.group(1)] = km.group(2).strip('"').strip("'")
+                continue
+        if in_matrix and not in_include and indent == 8:
+            km = re.match(r"^([\w]+)\s*:\s*(\[.*\])$", stripped)
+            if km:
+                key = km.group(1)
+                if key in ("os", "runner"):
+                    for item in parse_label_list(km.group(2)):
+                        getattr(job, "scalar_" + key).append(item)
+                continue
+            if stripped in ("os:", "runner:"):
+                pass
+            continue
+        if in_matrix and not in_include and indent == 10:
+            km = re.match(r"^-\s*([\w]+)\s*:\s*(.*)$", stripped)
+            if km:
+                key = km.group(1)
+                if key in ("os", "runner"):
+                    getattr(job, "scalar_" + key).append(km.group(2).strip('"').strip("'"))
+                continue
+            km2 = re.match(r"^([\w]+):\s*(.*)$", stripped)
+            if km2 and km2.group(1) in ("os", "runner"):
+                getattr(job, "scalar_" + km2.group(1)).append(km2.group(2).strip('"').strip("'"))
+            continue
+
+        if indent == 4 and stripped == "steps:":
+            in_strategy = False
+            in_matrix = False
+            cur_step = None
+            continue
+
+        if indent == 6 and (stripped.startswith("- ") or stripped.startswith('-')):
+            if cur_step is not None and cur_step[2].strip():
+                job.steps.append(cur_step)
+            cur_step = None
+            run_collect = None
+            if "run:" in stripped or stripped.startswith("- run:") or ": run:" in stripped:
+                rm = re.search(r"\brun:\s*(.*)$", stripped)
+                if rm is not None:
+                    body = rm.group(1).strip()
+                    guard = ""
+                    cur_step = [lineno, guard, ""]
+                    if body and body not in ("|", ">"):
+                        cur_step[2] = body
+                    else:
+                        run_collect = "|" if body == "|" else ">"
+                        run_indent = indent
+                else:
+                    cur_step = [lineno, "", ""]
+                    run_collect = None
+            else:
+                cur_step = [lineno, "", ""]
+            continue
+
+        if cur_step is not None and indent > 6:
+            if stripped.startswith("run:"):
+                rm = re.search(r"\brun:\s*(.*)$", stripped)
+                body = rm.group(1).strip()
+                if body and body not in ("|", ">"):
+                    cur_step[2] = body
+                else:
+                    run_collect = "|" if body == "|" else ">"
+                    run_indent = indent
+                continue
+            if stripped.startswith("if:"):
+                cur_step[1] = stripped[len("if:"):].strip().strip('"').strip("'")
+                continue
+            if stripped.startswith("uses:"):
+                continue
+            if run_collect is not None and indent > run_indent:
+                if run_collect == "|":
+                    cur_step[2] += "\n" + line[indent:]
+                else:
+                    cur_step[2] += " " + line[indent:]
+                continue
+            continue
+
+    if cur_step is not None and cur_step[2].strip():
+        if job is not None:
+            job.steps.append(cur_step)
+    if job is not None and cur_row is not None:
+        job.include_rows.append(cur_row)
+
+    return jobs
+
+
+def load_exceptions():
+    exc = {}
+    if not os.path.exists(EXC_FILE):
+        return exc
+    with open(EXC_FILE) as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 3)
+            if len(parts) < 3:
+                continue
+            wf, job, typ = parts[0], parts[1], parts[2].upper()
+            exc.setdefault(wf, {})[job] = typ
+    return exc
+
+
+def install_violations(run_text, guard):
+    if guard and GUARDED_OK.search(guard):
+        return []
+    out = []
+    for pat, label in INSTALL_CHECKS:
+        if pat.search(run_text):
+            out.append(label)
+    return out
+
+
+def main():
+    exit_code = 0
+    exc = load_exceptions()
+
+    if not os.path.isdir(WF_DIR):
+        print("no workflow directory: %s" % WF_DIR, file=sys.stderr)
+        return 1
+
+    for name in sorted(os.listdir(WF_DIR)):
+        if not (name.endswith(".yml") or name.endswith(".yaml")):
+            continue
+        path = os.path.join(WF_DIR, name)
+        with open(path) as fh:
+            lines = fh.readlines()
+        jobs = parse_workflow(lines)
+        for job in jobs:
+            wf_job = (name, job.name)
+            exc_type = exc.get(name, {}).get(job.name) or exc.get(name, {}).get("*")
+
+            hosted_found = []
+            for row in matrix_rows(job):
+                for label in resolve_runs_on(job.runs_on_raw, row):
+                    if HOSTED.match(label):
+                        hosted_found.append(label)
+            if hosted_found:
+                if exc_type in ("TEMPORARY", "GUEST"):
+                    pass
+                elif exc_type == "DISABLED":
+                    if not (job.if_false and job.disabled_comment):
+                        sys.stdout.write("%s:%d: %s / %s runs on hosted %s but its DISABLED row lacks `if: false` + `# DISABLED:` comment\n"
+                                         % (name, job.runs_on_line or 1, name, job.name, ", ".join(sorted(set(hosted_found)))))
+                        exit_code = 1
+                else:
+                    sys.stdout.write("%s:%d: %s / %s runs on hosted label %s; this job must run on the fleet or be DISABLED\n"
+                                     % (name, job.runs_on_line or 1, name, job.name, ", ".join(sorted(set(hosted_found)))))
+                    exit_code = 1
+
+            for run_line, guard, run_text in job.steps:
+                for vio in install_violations(run_text, guard):
+                    if exc_type in ("TEMPORARY", "GUEST"):
+                        continue
+                    if exc_type == "DISABLED":
+                        continue
+                    sys.stdout.write("%s:%d: %s / %s %s on the runner; replace with a presence check or exempt the job\n"
+                                     % (name, run_line, name, job.name, vio))
+                    exit_code = 1
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
