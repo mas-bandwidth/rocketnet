@@ -84,10 +84,37 @@ struct rocketnet_server_rio_t
     int posted_receives = 0;
     rocketnet_rio_bank_t * banks = NULL;        // [2]
     int fill_bank = 0;
+    // slices whose re-post was refused (a full request queue, a transient
+    // Winsock refusal): neither posted nor lost, re-posted by the next
+    // receive_packets. A slice is posted, completed, or here.
+    int retry_slices[ROCKETNET_RIO_RECEIVES];
+    int num_retry = 0;
 
     std::atomic<uint64_t> counters[ROCKETNET_RIO_NUM_COUNTERS]{};
     rocketnet_server_socket_process_packets_t process;
+#if defined(ROCKETNET_RIO_TESTS)
+    int test_faults[ROCKETNET_RIO_TEST_NUM_FAULTS] = {};
+    int test_fault_status[ROCKETNET_RIO_TEST_NUM_FAULTS] = {};
+#endif
 };
+
+// The fault seam (rocketnet_server_rio_test_fail_next) exists only in the
+// test executable. Elsewhere the check is the constant false, so the
+// production paths carry no test branch.
+#if defined(ROCKETNET_RIO_TESTS)
+static bool rocketnet_rio_test_fault( rocketnet_server_rio_t * rio, int fault, int * status )
+{
+    if ( rio->test_faults[fault] <= 0 )
+        return false;
+    rio->test_faults[fault]--;
+    *status = rio->test_fault_status[fault];
+    WSASetLastError( *status );
+    return true;
+}
+#define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) rocketnet_rio_test_fault( rio, fault, status )
+#else
+#define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) false
+#endif
 
 #if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
 
@@ -190,7 +217,9 @@ static void rocketnet_rio_commit( rocketnet_server_rio_t * rio )
 {
     if ( !rio->uncommitted )
         return;
-    if ( !rio->rio.RIOSendEx( rio->request_queue, NULL, 0, NULL, NULL, NULL, NULL, RIO_MSG_COMMIT_ONLY, NULL ) )
+    int injected = 0;
+    if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, &injected ) ||
+         !rio->rio.RIOSendEx( rio->request_queue, NULL, 0, NULL, NULL, NULL, NULL, RIO_MSG_COMMIT_ONLY, NULL ) )
     {
         rocketnet_warn( "rio transport: send commit refused (Winsock %d); retried", WSAGetLastError() );
         return;
@@ -236,6 +265,9 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     address.BufferId = rio->buffer_id;
     address.Offset = (ULONG) rocketnet_rio_receive_address_offset( &rio->layout, slice );
     address.Length = sizeof(SOCKADDR_INET);
+    int injected = 0;
+    if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_RECEIVE_POST, &injected ) )
+        return false;
 #if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
     if ( rocketnet_rio_test_functions )
     {
@@ -266,7 +298,11 @@ static void rocketnet_rio_retire_send( rocketnet_server_rio_t * rio, const RIORE
         return;
     }
     const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
-    const bool sent = result->Status == 0 && result->BytesTransferred == (ULONG) rio->slot_bytes[index];
+    LONG status = result->Status;
+    int injected = 0;
+    if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_SEND_COMPLETION, &injected ) )
+        status = (LONG) injected;
+    const bool sent = status == 0 && result->BytesTransferred == (ULONG) rio->slot_bytes[index];
     rocketnet_rio_count( rio, sent ? ROCKETNET_RIO_COUNTER_PACKETS_SENT : ROCKETNET_RIO_COUNTER_SEND_FAILED );
     rio->slot_bytes[index] = 0;
     rio->outstanding[phase]--;
@@ -589,7 +625,9 @@ void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
             address.BufferId = rio->buffer_id;
             address.Offset = (ULONG) rocketnet_rio_send_address_offset( &rio->layout, index );
             address.Length = sizeof(SOCKADDR_INET);
-            if ( rio->rio.RIOSendEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, RIO_MSG_DEFER,
+            int injected = 0;
+            if ( !ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_SEND_POST, &injected ) &&
+                 rio->rio.RIOSendEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, RIO_MSG_DEFER,
                                      (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, phase, (uint32_t) slot ) ) )
                 posted++;
             else
@@ -645,9 +683,13 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         return;
     }
     rio->posted_receives--;
-    if ( result->Status == WSAEMSGSIZE )
+    LONG status = result->Status;
+    int injected = 0;
+    if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_RECEIVE_COMPLETION, &injected ) )
+        status = (LONG) injected;
+    if ( status == WSAEMSGSIZE )
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE );     // past the slice: oversize
-    else if ( result->Status != 0 )
+    else if ( status != 0 )
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
     else
     {
@@ -669,15 +711,42 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED );
         }
     }
-    // after stop nothing is re-posted and nothing is counted
+    // after stop nothing is re-posted and nothing is counted. A refused
+    // re-post waits in the retry list for the next receive_packets, so a
+    // transient refusal never shrinks the receive depth.
     if ( !rio->stopping.load( std::memory_order_acquire ) && !rocketnet_rio_post_receive( rio, slice ) )
+    {
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED );
+        rocketnet_assert( rio->num_retry < ROCKETNET_RIO_RECEIVES );
+        rio->retry_slices[rio->num_retry++] = slice;
+    }
+}
+
+// RNRioDriver RetryRepost: one more post of each slice a refused re-post
+// left in the retry list; a slice refused again stays for the next call and
+// counts RECEIVE_REPOST_FAILED again.
+static void rocketnet_rio_retry_receives( rocketnet_server_rio_t * rio )
+{
+    if ( rio->num_retry == 0 || rio->stopping.load( std::memory_order_acquire ) )
+        return;
+    int kept = 0;
+    for ( int i = 0; i < rio->num_retry; ++i )
+    {
+        const int slice = rio->retry_slices[i];
+        if ( !rocketnet_rio_post_receive( rio, slice ) )
+        {
+            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED );
+            rio->retry_slices[kept++] = slice;
+        }
+    }
+    rio->num_retry = kept;
 }
 
 // receive_packets: DequeueReceive until the receive completion queue is
 // empty, then Swap (RNRioDriver).
 void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
 {
+    rocketnet_rio_retry_receives( rio );
     for ( ;; )
     {
         RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
@@ -840,6 +909,25 @@ int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio )
 {
     return rio->outstanding[0] + rio->outstanding[1] + rio->posted_receives;
 }
+
+#if defined(ROCKETNET_RIO_TESTS)
+void rocketnet_server_rio_test_fail_next( rocketnet_server_rio_t * rio, int fault, int count, int status )
+{
+    rocketnet_assert( fault >= 0 && fault < ROCKETNET_RIO_TEST_NUM_FAULTS && count >= 0 );
+    rio->test_faults[fault] = count;
+    rio->test_fault_status[fault] = status;
+}
+
+int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fault )
+{
+    return rio->test_faults[fault];
+}
+
+int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio )
+{
+    return rio->num_retry;
+}
+#endif
 
 #endif // ROCKETNET_PLATFORM_WINDOWS
 

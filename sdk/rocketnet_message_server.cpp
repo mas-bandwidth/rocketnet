@@ -627,17 +627,49 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
     }
 
-    // RNEndpoint Send's first half
+    // RNEndpoint Send's first half. The send room watch runs around it: before,
+    // so acks that freed room rearm it, and after, so this start message's room
+    // is seen (a debug-build warning, nothing in a release build)
+    rn_region_send_room_note( connection->region, object->is_server, index );
     uint8_t * pointer = rn_endpoint_start( connection, channel, reliability, bytes, transport_max );
     if ( !pointer )
     {
         if ( connection->send_error != ROCKETNET_DISCONNECT_REASON_NONE )
+        {
+            if ( connection->send_error == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED )
+                rn_region_send_room_exhausted( connection->region, object->is_server, index );
             rn_message_object_kick( object, index, connection->send_error );   // R5
+        }
         return NULL;
     }
+    rn_region_send_room_note( connection->region, object->is_server, index );
 
     object->pending_connection = index;
     return pointer;
+}
+
+// The functional tier's pacing reads the send room through these: 1 when a
+// start message of `bytes` bytes would be given room now (rn_region_send_fits).
+// Internal: declared by the test that reads them, never in rocketnet.h, never
+// exported.
+int rn_message_client_send_fits( struct rocketnet_message_client_t * client, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
+int rn_message_server_send_fits( struct rocketnet_message_server_t * server, int client_index, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
+
+static int rn_message_object_send_fits( struct rn_message_object_t * object, int index, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages )
+{
+    if ( !object || index < 0 || index >= object->num_connections )
+        return 0;
+    return rn_region_send_fits( object->connections[index].region, bytes, free_bytes, pool_bytes, free_messages );
+}
+
+int rn_message_client_send_fits( struct rocketnet_message_client_t * client, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages )
+{
+    return client ? rn_message_object_send_fits( &client->object, 0, bytes, free_bytes, pool_bytes, free_messages ) : 0;
+}
+
+int rn_message_server_send_fits( struct rocketnet_message_server_t * server, int client_index, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages )
+{
+    return server ? rn_message_object_send_fits( &server->object, client_index, bytes, free_bytes, pool_bytes, free_messages ) : 0;
 }
 
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes )

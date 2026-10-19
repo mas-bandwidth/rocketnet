@@ -2156,6 +2156,196 @@ static void unreliable_over_a_lossy_link_arrives_intact_at_most_once()
     }
 }
 
+// ---------------------------------------------------------------------------
+// the send room watch: a debug build warns once when the fullest send pool
+// crosses 75%, again only after it fell below 50%, and when the region is
+// exhausted, just before the kick; a release build says nothing
+// ---------------------------------------------------------------------------
+
+// the decision itself, on one region: 16 descriptors are the fullest pool
+// for 100-byte sends (the small class holds 31), so the 12th send crosses
+static void send_room_watch_crosses_once_and_rearms_below_half()
+{
+    rocketnet_message_config_t config;
+    mo_small_config( &config );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    check( region->queue == 16 );
+
+    uint32_t taken[16];
+    int crossings = 0;
+    int crossed_at = -1;
+    check( rn_region_send_room_watch( region ) == RN_SEND_ROOM_NONE );
+    for ( int i = 0; i < 15; i++ )
+    {
+        uint32_t free_messages = 0;
+        check( rn_region_send_fits( region, 100, NULL, NULL, &free_messages ) == 1 );
+        check( free_messages == (uint32_t) ( 16 - i ) );
+        taken[i] = rn_region_send_alloc( region, 100 );
+        check( taken[i] != RN_DESCRIPTOR_NONE );
+        if ( rn_region_send_room_watch( region ) == RN_SEND_ROOM_CROSSED )
+        {
+            crossings++;
+            crossed_at = i + 1;
+        }
+    }
+    check( crossings == 1 );                                    // a connection sitting above 75% crosses once
+    check( crossed_at == 12 );                                  // 12 of 16 is 75%
+
+    rn_send_room_t room;
+    rn_region_send_room( region, &room );
+    check( room.used_messages == 15 && room.messages == 16 );
+    check( room.permille == 937 );
+    check( room.store_used_bytes == 15 * RN_STORE_SMALL_BYTES );
+
+    // down to 9 of 16 (56%): not below half, so no rearm, and back up is quiet
+    for ( int i = 14; i >= 9; i-- )
+    {
+        rn_region_send_free( region, taken[i] );
+        check( rn_region_send_room_watch( region ) == RN_SEND_ROOM_NONE );
+    }
+    for ( int i = 9; i < 13; i++ )
+    {
+        taken[i] = rn_region_send_alloc( region, 100 );
+        check( rn_region_send_room_watch( region ) == RN_SEND_ROOM_NONE );
+    }
+
+    // down to 7 of 16 (43%) rearms; back up to 12 crosses once more
+    for ( int i = 12; i >= 7; i-- )
+        rn_region_send_free( region, taken[i] );
+    check( rn_region_send_room_watch( region ) == RN_SEND_ROOM_NONE );
+    crossings = 0;
+    for ( int i = 7; i < 13; i++ )
+    {
+        taken[i] = rn_region_send_alloc( region, 100 );
+        crossings += rn_region_send_room_watch( region ) == RN_SEND_ROOM_CROSSED;
+    }
+    check( crossings == 1 );
+
+    // the last descriptor: fits; then none, and the send that finds none exhausts
+    for ( int i = 13; i < 16; i++ )
+        taken[i] = rn_region_send_alloc( region, 100 );
+    check( rn_region_send_fits( region, 100, NULL, NULL, NULL ) == 0 );
+    check( rn_region_send_alloc( region, 100 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+
+    // a reset carve rearms
+    rn_region_reset( region );
+    check( region->send_room_armed == 1 );
+    check( rn_region_send_fits( region, 100, NULL, NULL, NULL ) == 1 );
+
+    rn_arena_destroy( arena );
+}
+
+static int mo_room_lines = 0;
+static int mo_room_crossings = 0;
+static int mo_room_exhausted = 0;
+static int mo_room_named = 0;
+static const char * mo_room_name = "client";
+
+static void mo_room_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    char line[1024];
+    const size_t n = length < sizeof( line ) - 1 ? length : sizeof( line ) - 1;
+    memcpy( line, message, n );
+    line[n] = '\0';
+    if ( strstr( line, "send room" ) == NULL )
+        return;
+    check( level == ROCKETNET_LOG_LEVEL_WARN );
+    mo_room_lines++;
+    if ( strstr( line, "over 75% full" ) )
+        mo_room_crossings++;
+    if ( strstr( line, "exhausted" ) )
+        mo_room_exhausted++;
+    if ( strstr( line, mo_room_name ) && strstr( line, "send_buffer_bytes" ) && strstr( line, "send_queue_messages" ) && strstr( line, " of " ) )
+        mo_room_named++;
+}
+
+static uint32_t mo_room_permille( rn_message_connection_t * connection )
+{
+    rn_send_room_t room;
+    rn_region_send_room( connection->region, &room );
+    return room.permille;
+}
+
+// through the client and server objects, with the log captured: one line at
+// the crossing, none while the connection sits above it, one more after acks
+// took it below half and it crossed again, one at exhaustion; none at all in
+// a release build
+static void send_room_warns_in_debug_builds_only()
+{
+    rocketnet_message_config_t config;
+    mo_small_config( &config );
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, &config );
+    mo_step( &pair );
+    mo_step( &pair );
+
+    check( rn_send_room_warnings == ( ROCKETNET_ASSERTS ? 1 : 0 ) );     // compiled in exactly when the debug macro is on
+    mo_room_lines = mo_room_crossings = mo_room_exhausted = mo_room_named = 0;
+    mo_room_name = "client";
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_set_log_callback( mo_room_capture, NULL );
+
+    rocketnet_message_client_t * client = pair.clients[0];
+    rn_message_connection_t * connection = mo_client_connection( client );
+    uint8_t message[100];
+    mo_fill( message, 1, sizeof( message ) );
+
+    // up past 75%, and on to 87%: one crossing
+    int sends = 0;
+    while ( mo_room_permille( connection ) < 870 )
+    {
+        check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( ++sends < 100 );
+    }
+    check( mo_room_crossings == ( rn_send_room_warnings ? 1 : 0 ) );
+
+    // the acks take it below half; the next sends rearm and cross again
+    for ( int step = 0; step < 50 && mo_room_permille( connection ) >= 500; step++ )
+        mo_step( &pair );
+    check( mo_room_permille( connection ) < 500 );
+    while ( mo_room_permille( connection ) < 750 )
+    {
+        check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+        check( ++sends < 200 );
+    }
+    check( mo_room_crossings == ( rn_send_room_warnings ? 2 : 0 ) );
+    check( mo_room_exhausted == 0 );
+
+    // on to exhaustion: one line just before the kick, naming the client
+    while ( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) )
+        check( ++sends < 300 );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+    check( mo_room_crossings == ( rn_send_room_warnings ? 2 : 0 ) );
+    check( mo_room_exhausted == ( rn_send_room_warnings ? 1 : 0 ) );
+    check( mo_room_lines == ( rn_send_room_warnings ? 3 : 0 ) );
+    check( mo_room_named == mo_room_lines );
+
+    // a server names the slot
+    mo_pair_teardown( &pair );
+    mo_pair_setup( &pair, 1, &config );
+    mo_step( &pair );
+    mo_step( &pair );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+    mo_room_lines = mo_room_crossings = mo_room_exhausted = mo_room_named = 0;
+    mo_room_name = "server slot 0";
+    while ( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) )
+        check( ++sends < 400 );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+    check( mo_room_crossings == ( rn_send_room_warnings ? 1 : 0 ) );
+    check( mo_room_exhausted == ( rn_send_room_warnings ? 1 : 0 ) );
+    check( mo_room_named == mo_room_lines );
+
+    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    mo_pair_teardown( &pair );
+}
+
 REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
@@ -2265,3 +2455,5 @@ REGISTER_UNIT_TEST( unreliable_past_limit_promotes_counted_and_not_wedged );
 REGISTER_UNIT_TEST( unreliable_failed_packet_drops_and_counts_each_record );
 REGISTER_UNIT_TEST( unreliable_chunks_freed_when_written );
 REGISTER_UNIT_TEST( unreliable_over_a_lossy_link_arrives_intact_at_most_once );
+REGISTER_UNIT_TEST( send_room_watch_crosses_once_and_rearms_below_half );
+REGISTER_UNIT_TEST( send_room_warns_in_debug_builds_only );

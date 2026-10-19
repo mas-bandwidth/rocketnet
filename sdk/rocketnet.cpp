@@ -591,7 +591,7 @@ int rocketnet_signed_packets[256];
 
 int rocketnet_encrypted_packets[256];
 
-const char * rocketnet_platform_string( int platform_id )
+const char * rocketnet_platform_name( int platform_id )
 {
     switch ( platform_id )
     {
@@ -606,7 +606,7 @@ const char * rocketnet_platform_string( int platform_id )
     return "unknown";
 }
 
-const char * rocketnet_connection_string( int connection_type )
+const char * rocketnet_connection_name( int connection_type )
 {
     switch ( connection_type )
     {
@@ -670,8 +670,8 @@ bool rocketnet_init_ex( void * context, int * status )
     }
 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
-    rocketnet_info( "platform is %s (%s)", rocketnet_platform_string( rocketnet_platform_id() ),
-                    rocketnet_connection_string( rocketnet_platform_connection_type() ) );
+    rocketnet_info( "platform is %s (%s)", rocketnet_platform_name( rocketnet_platform_id() ),
+                    rocketnet_connection_name( rocketnet_platform_connection_type() ) );
 
     const char * log_level_override = rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL" );
     if ( log_level_override )
