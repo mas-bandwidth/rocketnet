@@ -13,7 +13,7 @@
 #ifndef ROCKETNET_HPP
 #define ROCKETNET_HPP
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 namespace rocketnet
 {
@@ -624,5 +624,86 @@ private:
 };
 
 } // namespace rocketnet
+
+// -----------------------------------------
+//            the serialize read (C++)
+// -----------------------------------------
+
+// Include serialize.h before this header and the stream forms of the
+// acquire/commit surface appear: the same calls, with a WriteStream bound
+// at the frame's aligned payload root on start and measured on finish, and
+// a ReadStream bound over each received payload. Plain C callers see none
+// of this; it compiles to nothing but the calls above.
+
+#if defined(__cplusplus) && defined(SERIALIZE_H)
+
+namespace rocketnet
+{
+    inline bool server_start_packet( struct rocketnet_server_transport_t * server, int client_index, int request_bytes, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    {
+        uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, request_bytes, &context );
+        if ( !frame )
+            return false;
+        stream.Initialize( frame + context.payload_index, context.payload_capacity );
+        return true;
+    }
+
+    // serialize's write side checks bounds with asserts only, by design: a
+    // Release overflow past the payload capacity is not caught here or
+    // there. Size packets to the capacity the context reports.
+
+    inline bool server_finish_packet( struct rocketnet_server_transport_t * server, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    {
+        stream.Flush();
+        return rocketnet_server_transport_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) != 0;
+    }
+
+    inline void server_abort_packet( struct rocketnet_server_transport_t * server, struct rocketnet_packet_context_t & context )
+    {
+        rocketnet_server_transport_abort_packet( server, &context );
+    }
+
+    inline bool server_payload( struct rocketnet_server_transport_t * server, int payload_index, serialize::ReadStream & stream, int & client_index )
+    {
+        int payload_bytes;
+        uint8_t * payload = rocketnet_server_transport_payload( server, payload_index, &client_index, &payload_bytes );
+        if ( !payload )
+            return false;
+        stream.Initialize( payload, payload_bytes );
+        return true;
+    }
+
+    inline bool client_start_packet( struct rocketnet_client_transport_t * client, int request_bytes, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    {
+        uint8_t * frame = rocketnet_client_transport_start_packet( client, request_bytes, &context );
+        if ( !frame )
+            return false;
+        stream.Initialize( frame + context.payload_index, context.payload_capacity );
+        return true;
+    }
+
+    inline bool client_finish_packet( struct rocketnet_client_transport_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    {
+        stream.Flush();
+        return rocketnet_client_transport_finish_packet( client, &context, (int) stream.GetBytesProcessed() ) != 0;
+    }
+
+    inline void client_abort_packet( struct rocketnet_client_transport_t * client, struct rocketnet_packet_context_t & context )
+    {
+        rocketnet_client_transport_abort_packet( client, &context );
+    }
+
+    inline bool client_payload( struct rocketnet_client_transport_t * client, int payload_index, serialize::ReadStream & stream )
+    {
+        int payload_bytes;
+        uint8_t * payload = rocketnet_client_transport_payload( client, payload_index, &payload_bytes );
+        if ( !payload )
+            return false;
+        stream.Initialize( payload, payload_bytes );
+        return true;
+    }
+}
+
+#endif // #if defined(__cplusplus) && defined(SERIALIZE_H)
 
 #endif // ROCKETNET_HPP

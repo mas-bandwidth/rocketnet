@@ -27,29 +27,7 @@
 */
 
 #if defined(ROCKETNET_ESBMC) || defined(__ESBMC__)
-#if __has_include("../esbmc_shim.h")
 #include "../esbmc_shim.h"
-#else
-#include <stddef.h>
-#include <stdint.h>
-#define __CPROVER__ 1
-#ifdef __cplusplus
-extern "C" {
-#endif
-void __ESBMC_assume( bool );
-void __ESBMC_assert( bool, const char * );
-bool __ESBMC_r_ok( void *, unsigned long );
-int rocketnet_esbmc_nondet_int( void );
-unsigned int rocketnet_esbmc_nondet_uint( void );
-#ifdef __cplusplus
-}
-#endif
-#define __CPROVER_assume( c ) __ESBMC_assume( (bool) ( c ) )
-#define __CPROVER_assert( c, m ) __ESBMC_assert( (bool) ( c ), ( m ) )
-#define __CPROVER_r_ok( p, n ) __ESBMC_r_ok( (void *) ( p ), (unsigned long) ( n ) )
-#define nondet_int rocketnet_esbmc_nondet_int
-#define nondet_uint rocketnet_esbmc_nondet_uint
-#endif
 #endif
 
 #include <stdlib.h>
@@ -137,6 +115,8 @@ void harness_message_reader( void )
         __CPROVER_assert( record.data >= payload, "record data starts inside the payload" );
         __CPROVER_assert( record.bytes >= 1, "record length is at least one" );
         __CPROVER_assert( record.data + record.bytes <= end, "record does not read past the given length" );
+        __CPROVER_assert( __CPROVER_r_ok( record.data, (size_t) record.bytes ),
+            "record slice is readable within the payload object" );
 
         if ( record.block )
         {
@@ -192,6 +172,8 @@ void harness_message_reader_single_max( void )
         "single-message payload code is unreliable" );
     __CPROVER_assert( record.data == payload && record.bytes == bytes - 1,
         "single-message record spans payload body" );
+    __CPROVER_assert( __CPROVER_r_ok( record.data, (size_t) record.bytes ),
+        "single-message record slice is readable within the payload object" );
     __CPROVER_assert( rocketnet_message_reader_next( &reader, &record ) == 0,
         "single-message payload yields at most one record" );
 }

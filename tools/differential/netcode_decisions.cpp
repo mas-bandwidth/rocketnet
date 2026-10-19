@@ -39,7 +39,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_token_tables.h"
@@ -277,7 +277,7 @@ static struct decision_t rocketnet_decide( int case_id, uint64_t now )
     memset( &sf, 0, sizeof(sf) );
     memset( &pf, 0, sizeof(pf) );
 
-    sf.version = ROCKETNET_VERSION;
+    sf.version = ROCKETNET_WIRE_VERSION;
     sf.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     sf.create_timestamp = now - 10;
     sf.expire_timestamp = now + 300;

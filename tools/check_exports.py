@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 
+import check_header_exports
+
 
 def run(*command):
     return subprocess.check_output(command, text=True, errors="replace")
@@ -38,7 +40,7 @@ def header_declared_names(header_path):
                 in_dev = False
             continue
         if buffer is None:
-            if line.startswith("ROCKETNET_EXPORT_FUNC"):
+            if line.startswith(("ROCKETNET_EXPORT ", "ROCKETNET_EXPORT_FUNC")):
                 buffer, depth = line, line.count("(") - line.count(")")
         else:
             buffer += " " + line
@@ -81,6 +83,8 @@ def main():
     parser.add_argument("shared", nargs="?", type=Path)
     parser.add_argument("archive", nargs="?", type=Path)
     args = parser.parse_args()
+    if check_header_exports.check(args.header, Path(__file__).with_name("exports.txt")) != 0:
+        return 1
     if source_check(args.header, args.tests) != 0:
         return 1
     if args.sources_only:

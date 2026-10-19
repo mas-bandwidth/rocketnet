@@ -10,7 +10,7 @@
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
 
 struct client_io_step_test_clock_t

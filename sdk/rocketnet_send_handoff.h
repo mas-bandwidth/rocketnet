@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 // Driver-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining

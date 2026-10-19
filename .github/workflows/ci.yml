@@ -231,7 +231,7 @@ jobs:
 
       - name: Run unit tests with the driver pin preserved
         if: contains(matrix.leg, 'b')
-        run: ROCKETNET_DRIVER=portable ./bin/test
+        run: ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test
 
       - name: Ambient config isolation and passing output
         if: contains(matrix.leg, 'b')
@@ -246,8 +246,8 @@ jobs:
         if: contains(matrix.leg, 'b')
         timeout-minutes: 20
         env:
-          ROCKETNET_SERVER_DRIVER: portable
-          ROCKETNET_CLIENT_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           set -o pipefail
           ./bin/functional | tee functional-pinned.log
@@ -257,7 +257,8 @@ jobs:
       - name: Run lifecycle unit binary
         if: contains(matrix.leg, 'a')
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
       - name: Check production library boundary
@@ -272,6 +273,25 @@ jobs:
       - name: Check export source gate
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
+
+      # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
+      # extern "C" block, and a C and a C++ client and server built from only
+      # the header and the prebuilt static library (seconds)
+      - name: Check the public header is clean and self-contained
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_public_header.py --build build
+
+      # The library is callable from a C and a C++ program through rocketnet.h
+      # alone, against the development shared and static libraries, and the
+      # production shared library exports only the reviewed list (so the
+      # development token minting symbol stays out of it).
+      - name: Check the library is callable from C and C++ through rocketnet.h
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_dll_consumer.py --build build
+
+      - name: Check the examples against the house rules
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_examples.py
 
       - name: Check larger history budget and reject undersized history
         if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
@@ -472,7 +492,7 @@ jobs:
         timeout-minutes: 20
         shell: bash
         env:
-          ROCKETNET_SERVER_DRIVER: iocp
+          ROCKETNET_SERVER_TRANSPORT: iocp
         run: |
           set -o pipefail
           ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
@@ -483,7 +503,8 @@ jobs:
         if: matrix.leg == 'a'
         shell: bash
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/Release/test_lifecycle.exe
 
       - name: Memory plans against allocator observations
@@ -495,6 +516,10 @@ jobs:
       - name: Check production library boundary
         if: matrix.leg == 'b'
         run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
+
+      - name: Check the library is callable from C and C++ through rocketnet.h
+        if: matrix.leg == 'b'
+        run: python tools/check_dll_consumer.py --build build
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: matrix.leg == 'b'
@@ -509,6 +534,61 @@ jobs:
         run: |
           ./bin/Release/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # THE HAPPY PATH: the real server and client binaries as separate processes
+  # over loopback, watched stage by stage. It is deliberately small -- connect,
+  # one message of every reliability type, receipts, clean disconnect, clean
+  # stop -- and it is its own job with NO needs, so it starts at once beside
+  # build-and-test and adds nothing to the wall time of the per-commit gate.
+  # The tools/happy_path Go tool is standard library only; nothing here needs
+  # root and nothing selects XDP (the tool pins the portable transport).
+
+  happy-path:
+    name: happy path / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build (Linux and macOS, through the Makefile)
+        if: runner.os != 'Windows'
+        run: make
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -A x64
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel
+
+      # the two C programs share this directory with the Go tool, so name the
+      # tool's .go file rather than the directory
+      - name: Run happy_path
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          cd tools/happy_path
+          go run happy_path.go
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
@@ -559,7 +639,8 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test
 
       - name: Run functional suite under sanitizers
@@ -573,7 +654,8 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/test_lifecycle
           ./bin/test_driver
@@ -1102,7 +1184,8 @@ jobs:
         if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: setarch "$(uname -m)" -R ./bin/test_lifecycle
 
   # THE PINNED-SODIUM LEG.

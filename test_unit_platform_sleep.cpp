@@ -12,7 +12,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <math.h>
 #include <stdint.h>

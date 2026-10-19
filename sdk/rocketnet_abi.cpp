@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include <string.h>
 
 struct abi_field_t { const char * name; size_t offset; size_t size; };
@@ -11,6 +11,40 @@ struct abi_type_t { const char * name; size_t size; const abi_field_t * fields; 
 #define UINT64_FIELD(name, def, flags) FIELD(name)
 #define BYTES_FIELD(name, size, def, flags) FIELD(name)
 #define STRING_FIELD(name, capacity, def, flags) FIELD(name)
+
+#define ABI_TYPE rocketnet_client_config_t
+static const abi_field_t client_config_fields[] =
+{
+    FIELD(filter_value) FIELD(max_payload_bytes) FIELD(num_reassembly_slots) FIELD(transport)
+    FIELD(state_change_callback) FIELD(time_callback) FIELD(send_kbps)
+    FIELD(num_channels) FIELD(window_messages) FIELD(receive_ring_bytes) FIELD(max_message_bytes)
+    FIELD(send_buffer_bytes) FIELD(send_queue_messages) FIELD(packets_in_flight) FIELD(max_packets_per_update)
+    FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(rto_initial_ms)
+    FIELD(rto_min_ms) FIELD(rto_max_ms) FIELD(reliable_timeout_ms)
+};
+#undef ABI_TYPE
+
+#define ABI_TYPE rocketnet_server_config_t
+static const abi_field_t server_config_fields[] =
+{
+    FIELD(protocol_id) FIELD(max_clients) FIELD(filter_value) FIELD(backend_public_key) FIELD(server_public_key)
+    FIELD(server_secret_key) FIELD(num_xdp_queues) FIELD(num_os_cpus) FIELD(max_payload_bytes)
+    FIELD(num_reassembly_slots) FIELD(max_timeout_seconds) FIELD(handshake_deadline_seconds)
+    FIELD(transport) FIELD(public_address) FIELD(per_client_send_kbps)
+    FIELD(num_channels) FIELD(window_messages) FIELD(receive_ring_bytes) FIELD(max_message_bytes)
+    FIELD(send_buffer_bytes) FIELD(send_queue_messages) FIELD(packets_in_flight) FIELD(max_packets_per_update)
+    FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(rto_initial_ms)
+    FIELD(rto_min_ms) FIELD(rto_max_ms) FIELD(reliable_timeout_ms)
+};
+#undef ABI_TYPE
+
+#define ABI_TYPE rocketnet_receipt_t
+static const abi_field_t receipt_fields[] =
+{
+    FIELD(serial)
+    FIELD(status)
+};
+#undef ABI_TYPE
 
 #define ABI_TYPE rocketnet_client_transport_config_t
 static const abi_field_t client_transport_config_fields[] =
@@ -97,6 +131,9 @@ static const abi_field_t frame_sync_stats_fields[] =
 #define TYPE(name) { "rocketnet_" #name "_t", sizeof(rocketnet_##name##_t), name##_fields, int(sizeof(name##_fields)/sizeof(abi_field_t)) },
 static const abi_type_t types[] =
 {
+    TYPE(client_config)
+    TYPE(server_config)
+    TYPE(receipt)
     TYPE(client_transport_config)
     TYPE(server_transport_config)
     TYPE(client_transport_stats)
@@ -127,6 +164,12 @@ static const abi_field_t * find_field(const char * type_name, const char * field
 }
 
 uint32_t rocketnet_abi_version(void) { return ROCKETNET_ABI_VERSION; }
+
+const char * rocketnet_abi_field_name(const char * type_name, int index)
+{
+    const auto * type = find_type(type_name);
+    return type && index >= 0 && index < type->count ? type->fields[index].name : NULL;
+}
 size_t rocketnet_abi_type_size(const char * name)
 {
     if ( !rocketnet_api_null_guard( name ) )

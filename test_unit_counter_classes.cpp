@@ -18,7 +18,7 @@
 #include "test_unit_registry.h"
 #include "test/resource_file.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
@@ -300,6 +300,8 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_REPLAYED",
     "CLIENT_CHALLENGE_WRONG_SIZE",
     "CLIENT_DENIED_WRONG_SIZE",
+    "CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE",
+    "CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG",
     "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
 };
 

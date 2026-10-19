@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_UTIL_H
 #define ROCKETNET_UTIL_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 namespace rocketnet
 {

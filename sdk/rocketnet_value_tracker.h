@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_VALUE_TRACKER_H
 #define ROCKETNET_VALUE_TRACKER_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_memory_checks.h"
 #include <memory.h>
 #include <float.h>

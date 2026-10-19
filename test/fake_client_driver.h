@@ -16,7 +16,7 @@
 #ifndef ROCKETNET_FAKE_CLIENT_DRIVER_H
 #define ROCKETNET_FAKE_CLIENT_DRIVER_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_address.h"
 #include "rocketnet_platform.h"

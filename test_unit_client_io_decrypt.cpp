@@ -15,7 +15,7 @@
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_counters.h"
