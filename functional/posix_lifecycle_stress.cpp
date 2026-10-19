@@ -15,6 +15,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_counters.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -408,13 +409,25 @@ static void posix_lifecycle_server_restart_same_port_cell( const struct posix_li
     for ( int i = 0; i < 100; i++ )
     {
         struct rocketnet_server_transport_t * server = posix_lifecycle_create_server( server_cell->driver, address, 8 );
-        POSIX_LIFECYCLE_CHECK( server != NULL );
+        if ( !server )
+        {
+            printf( "posix_lifecycle posix_server_restart_same_port_100 cell=%s FAILED: restart %d could not create the server on %s\n",
+                    label, i, address );
+            fflush( stdout );
+            exit( 1 );
+        }
 
         uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
         POSIX_LIFECYCLE_CHECK( posix_lifecycle_write_token( address, connect_token ) );
         struct rocketnet_client_transport_t * client = posix_lifecycle_create_client( client_cell->driver, connect_token );
         POSIX_LIFECYCLE_CHECK( client != NULL );
-        POSIX_LIFECYCLE_CHECK( posix_lifecycle_connect( server, client, 5.0 ) );
+        if ( !posix_lifecycle_connect( server, client, 5.0 ) )
+        {
+            printf( "posix_lifecycle posix_server_restart_same_port_100 cell=%s FAILED: restart %d did not connect, client state %d\n",
+                    label, i, rocketnet_client_transport_state( client ) );
+            fflush( stdout );
+            exit( 1 );
+        }
 
         rocketnet_client_transport_destroy( client );
         rocketnet_server_transport_destroy( server );
@@ -471,6 +484,19 @@ static void posix_lifecycle_connect_disconnect_cell( const struct posix_lifecycl
     posix_lifecycle_leave_cell();
 }
 
+static void posix_lifecycle_print_counters( const char * who, const struct rocketnet_counters_t * counters )
+{
+    if ( !counters )
+        return;
+    printf( "posix_lifecycle %s counters:", who );
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        if ( counters->values[i] )
+            printf( " %s=%llu", rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
+    }
+    printf( "\n" );
+}
+
 static void posix_lifecycle_destroy_under_traffic_cell( const struct posix_lifecycle_cell_t * server_cell,
                                                         const struct posix_lifecycle_cell_t * client_cell )
 {
@@ -499,7 +525,22 @@ static void posix_lifecycle_destroy_under_traffic_cell( const struct posix_lifec
         }
         // the eight handshakes run together, so a cycle costs one handshake
         // cadence rather than eight
-        POSIX_LIFECYCLE_CHECK( posix_lifecycle_connect_all( server, clients, 8, 5.0 ) );
+        if ( !posix_lifecycle_connect_all( server, clients, 8, 5.0 ) )
+        {
+            printf( "posix_lifecycle posix_destroy_under_traffic_100 cell=%s FAILED: cycle %d did not connect all 8, server connected %d, client states",
+                    label, cycle, rocketnet_server_transport_num_connected_clients( server ) );
+            for ( int i = 0; i < 8; i++ )
+                printf( " %d", rocketnet_client_transport_state( clients[i] ) );
+            printf( "\n" );
+            posix_lifecycle_print_counters( "server", rocketnet_server_transport_counters( server ) );
+            for ( int i = 0; i < 8; i++ )
+            {
+                posix_lifecycle_print_counters( rocketnet_client_transport_state( clients[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ? "connected client" : "unconnected client",
+                                                rocketnet_client_transport_counters( clients[i] ) );
+            }
+            fflush( stdout );
+            exit( 1 );
+        }
 
         // the clients keep sending until the server goes away mid-traffic
         const double traffic_start = rocketnet_platform_time();
