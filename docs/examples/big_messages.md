@@ -31,12 +31,6 @@ packet is refused at this base.
 Each frame runs update, receive and release, simulate, queue, then send last.
 Sending last is what makes this frame's messages leave this frame.
 
-The header also still uses the pre-rename names: `rocketnet_client_start`,
-`rocketnet_client_finish`, `rocketnet_client_receive`,
-`rocketnet_client_release` and `rocketnet_client_send_packets` (and their
-server counterparts); the lifecycle card renames them to `*_start_message`
-and so on, and this example uses the names the header at this base declares.
-
 ## Run it
 
 From the repository root, after the normal build:

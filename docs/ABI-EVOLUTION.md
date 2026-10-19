@@ -46,10 +46,8 @@ revision 1 prefix (so a binary built before the sized forms existed keeps
 working against a newer library), and a caller that wants a later field uses
 the sized forms.
 
-This document names public client and server types and entry points from
-`sdk/rocketnet.h`. Where it refers to internal transport or message-layer
-details, those names live in `sdk/rocketnet_layers.h`; a game does not call
-them.
+This document names the public client and server types and entry points in
+[sdk/rocketnet.h](../sdk/rocketnet.h).
 
 ## 2. The Choice: A Size Argument, Not a Leading Size Field
 
@@ -107,7 +105,7 @@ revision keeps its value when the struct grows past it.
 ## 4. Every Public Struct, Its Sizes per Revision
 
 Sizes are bytes on every supported target (64-bit Linux x86_64 and s390x,
-macOS arm64, Windows x86_64; `docs/PLATFORMS.md`). On any target,
+macOS arm64, Windows x86_64; [docs/PLATFORMS.md](PLATFORMS.md)). On any target,
 `rocketnet_abi_type_size` is the authority.
 
 | Struct | Direction | Sized |

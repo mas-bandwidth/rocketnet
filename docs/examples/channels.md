@@ -19,9 +19,7 @@ Games put different traffic on different channels so a lost reliable message
 
 Each frame follows the standard loop order: `update`, `receive` and `release`,
 simulation, `start` and `finish`, and `send_packets` last so queued messages
-leave in the same frame. The header at this base still declares `start`,
-`finish`, `receive`, `release` and `send_packets` (renamed to `*_message` /
-`*_messages` by the lifecycle card), so the example uses the header names.
+leave in the same frame.
 
 ## Run it
 

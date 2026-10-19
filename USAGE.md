@@ -11,7 +11,8 @@ ordered, how messages are sent and received, what the counters mean, and how
 the configuration system decides what happens at create.
 
 Build and platform instructions live in [BUILDING.md](BUILDING.md); the wire
-format lives in [STANDARD.md](STANDARD.md).
+and message formats live in [standard/TRANSPORT.md](standard/TRANSPORT.md) and
+[standard/MESSAGES.md](standard/MESSAGES.md).
 
 ## Start and stop
 
@@ -54,11 +55,10 @@ kernel for an ephemeral port; read the granted port with
 monotonic clock in seconds; use the same clock for every call that takes a
 time, and keep it finite and non-decreasing.
 
-The connect-token create and expire checks read the wall clock unless the
-config sets `game_clock_epoch`, the unix time at the game clock's zero. With an
-epoch, the check reads epoch plus the caller's time, floored to whole seconds,
-so a test can hold time still and a fixed token still connects. Zero, the
-default, keeps the wall clock.
+On the client, `step_driven` (`ROCKETNET_CLIENT_STEP_DRIVEN`) controls whether
+client socket I/O runs on a background thread (`0`, the default) or directly on
+the caller's thread inside `rocketnet_client_update` and
+`rocketnet_client_send_packets` (`1`).
 
 ## Configuration
 
@@ -84,6 +84,13 @@ error line; nothing is ever clamped**. A secret key logs redacted, on both the
 old and the new value. The `_sized` create and default calls accept a struct
 size so a program built against an older header keeps working; an unknown size
 is refused before anything is read or written.
+
+Both `rocketnet_client_config_t` and `rocketnet_server_config_t` also carry four
+development-only link-simulator fields (`simulated_loss_percent`,
+`simulated_latency_ms`, `simulated_jitter_ms`, `simulated_duplicate_percent`),
+with matching `ROCKETNET_CLIENT_SIMULATED_*` and `ROCKETNET_SERVER_SIMULATED_*`
+environment variables. These apply only in `ROCKETNET_DEVELOPMENT` builds; any
+nonzero value in a production build refuses the create.
 
 ```c
 #include "rocketnet.h"
@@ -130,7 +137,7 @@ row per field of both public structs.
 | transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | state_change_callback | none | `void (*)( void *, int, int )` | `NULL` | no environment form |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | no environment form |
-| game_clock_epoch | ROCKETNET_CLIENT_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
+| step_driven | ROCKETNET_CLIENT_STEP_DRIVEN | uint64_t | `0` (I/O thread) | refuses the create unless `0` or `1` and a transport with a non-blocking step |
 | send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer, or above `10000000`: refuses the create; `0` or less disables the budget in this direction (not recommended) |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_CLIENT_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
@@ -147,6 +154,10 @@ row per field of both public structs.
 | rto_min_ms | ROCKETNET_CLIENT_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
 | rto_max_ms | ROCKETNET_CLIENT_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
+| simulated_loss_percent | ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refuses the create unless `0..100` (`0` in production) |
+| simulated_latency_ms | ROCKETNET_CLIENT_SIMULATED_LATENCY_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refuses the create unless `0..60000` (`0` in production) |
+| simulated_jitter_ms | ROCKETNET_CLIENT_SIMULATED_JITTER_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refuses the create unless `0..60000` (`0` in production) |
+| simulated_duplicate_percent | ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refuses the create unless `0..100` (`0` in production) |
 | protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refuses the create |
 | max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refuses the create unless `1..1000` |
 | filter_value | ROCKETNET_SERVER_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
@@ -159,7 +170,6 @@ row per field of both public structs.
 | num_reassembly_slots | ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
-| game_clock_epoch | ROCKETNET_SERVER_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` or less disables the budget in this direction (not recommended) |
@@ -178,10 +188,13 @@ row per field of both public structs.
 | rto_min_ms | ROCKETNET_SERVER_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
 | rto_max_ms | ROCKETNET_SERVER_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
 | reliable_timeout_ms | ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
+| simulated_loss_percent | ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refuses the create unless `0..100` (`0` in production) |
+| simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refuses the create unless `0..60000` (`0` in production) |
+| simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refuses the create unless `0..60000` (`0` in production) |
+| simulated_duplicate_percent | ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refuses the create unless `0..100` (`0` in production) |
 
 The message fields marked WIRE must be identical on both ends; the connection
-verifies them. The cross rules are in [docs/CHANNELS.md](docs/CHANNELS.md)
-section 14.
+verifies them. The cross rules are in [standard/MESSAGES.md](standard/MESSAGES.md).
 
 ## Create and destroy
 
@@ -236,13 +249,11 @@ the server:
 5. Call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
    **last**, after all of this frame's messages are queued.
 
-The common mistake is calling `send_messages` early in the frame, or before
-queuing (here that is `rocketnet_client_send_packets` or
-`rocketnet_server_send_packets`): this frame's messages then wait for the next
-frame, adding a frame of latency. Receiving before update does the same:
-nothing has been pumped yet, so the messages that arrived wait a frame. The
-send step is named `send_packets` in this header; the lifecycle vocabulary
-calls it `send_messages`.
+The common mistake is calling `rocketnet_client_send_packets` or
+`rocketnet_server_send_packets` early in the frame, or before queuing: this
+frame's messages then wait for the next frame, adding a frame of latency.
+Receiving before update does the same: nothing has been pumped yet, so the
+messages that arrived wait a frame.
 
 ```c
 #include "rocketnet.h"
@@ -280,22 +291,30 @@ received view from the last update was not released.
 
 ## Sending messages
 
-`rocketnet_client_send` and `rocketnet_server_send` copy the message in and
-return its receipt serial, nonzero, or `0` when the send was refused. The
-zero-copy form is start, write the message once in place, then finish:
-`rocketnet_client_start` or `rocketnet_server_start` returns a pointer into the
-connection's region, and finish queues the bytes written and returns the
-serial. Abort gives the room back. One start is pending per object at a time.
-`rocketnet_server_broadcast` sends one message to every connected client.
+Per-connection sending is zero-copy: call `rocketnet_client_start` or
+`rocketnet_server_start` to reserve up to `max_bytes` in the connection's
+region, write the message once in place, and call `rocketnet_client_finish` or
+`rocketnet_server_finish` with the actual byte count to queue the send and
+return its nonzero receipt serial (`0` when refused). `rocketnet_client_abort`
+or `rocketnet_server_abort` gives the staged room back without queuing. One
+start may be pending per object at a time. `rocketnet_server_broadcast` sends
+one message buffer to every connected client.
 
 The reliability is one of `ROCKETNET_UNRELIABLE`,
 `ROCKETNET_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABLE`,
 `ROCKETNET_RELIABLE_ORDERED`, `ROCKETNET_RELIABLE_SEQUENCED`,
 `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABLE_WITH_ACK_RECEIPT`
-or `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one
-message in one packet, up to `ROCKETNET_MESSAGE_SINGLE_BYTES`; the other types
-are bounded by the config's `max_message_bytes`. A larger payload fragments
-transparently, and a lost fragment loses the whole payload.
+or `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Unreliable messages fit in a
+single packet up to single-packet record capacity (`ROCKETNET_MESSAGE_SINGLE_BYTES`
+is 1415 bytes at the wire record boundary: 1411 payload bytes for
+`ROCKETNET_UNRELIABLE` and `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`, or 1405
+bytes on channels `0..31` for `ROCKETNET_UNRELIABLE_SEQUENCED`). An unreliable
+send (`ROCKETNET_UNRELIABLE`, `ROCKETNET_UNRELIABLE_SEQUENCED`, or
+`ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`) whose record exceeds single-packet
+capacity up to `max_message_bytes` is automatically promoted to its reliable
+twin (`ROCKETNET_RELIABLE`, `ROCKETNET_RELIABLE_SEQUENCED`, or the reliable
+receipt block path with `ROCKETNET_RECEIPT_ACKED` only) and fragmented across
+blocks; only a send above `max_message_bytes` is refused.
 
 A send the connection's region has no room for ends the connection with
 `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
@@ -358,10 +377,13 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
 
     /* 4. queue this frame's outgoing messages */
     const uint8_t payload[] = { 1, 2, 3, 4 };
-    uint32_t serial = rocketnet_server_send( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, payload, (int) sizeof( payload ) );
-    if ( serial == 0 )
+    uint8_t * out = rocketnet_server_start( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
+    if ( out )
     {
-        /* the send was refused: check the connection */
+        for ( int i = 0; i < (int) sizeof( payload ); i++ )
+            out[i] = payload[i];
+        uint32_t serial = rocketnet_server_finish( server, client_index, (int) sizeof( payload ) );
+        (void) serial;
     }
 
     /* 5. last: send now, so this frame's messages leave this frame */
@@ -425,6 +447,23 @@ void report_quality( const struct rocketnet_client_t * client, const struct rock
     (void) client_rtt_ms;
 }
 ```
+
+## Logging
+
+RocketNet logs process-wide across six levels: `ROCKETNET_LOG_LEVEL_NONE`,
+`ROCKETNET_LOG_LEVEL_ERROR`, `ROCKETNET_LOG_LEVEL_WARN`,
+`ROCKETNET_LOG_LEVEL_INFO`, `ROCKETNET_LOG_LEVEL_DEBUG`, and
+`ROCKETNET_LOG_LEVEL_SPAM`. `rocketnet_log_level` sets the active threshold,
+`rocketnet_get_log_level` reads it, and `rocketnet_log_level_string` returns the
+display name for a level. `rocketnet_quiet` suppresses (`true`) or resumes
+(`false`) all log output without changing the configured level.
+
+To route logs into an application or FFI sink, register a preformatted callback
+(`rocketnet_log_callback_t`) with `rocketnet_set_log_callback`, or a C
+`printf`-style function with `rocketnet_log_function`; the most recent
+registration across the two wins, and passing `NULL` restores default standard
+output logging. See [docs/ERRORS-AND-LOGGING.md](docs/ERRORS-AND-LOGGING.md) for
+the callback threading and re-entrancy contract.
 
 ## Connection lifecycle
 

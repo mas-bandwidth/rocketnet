@@ -1,7 +1,7 @@
 # RNRing: the receive ring's placement rule
 
 `tla/RNRing.tla` is the sender's placement rule for the receive ring and the
-receiver's live spans: docs/CHANNELS.md section 6.2 (the byte bound), 6.3 step 3
+receiver's live spans: standard/MESSAGES.md section 6.2 (the byte bound), 6.3 step 3
 (why the receiver never runs out of room), section 8 (a block's span) and section
 15's `RNRing` row. It was written before any of the rule's code exists: the only
 ring code on main is the receiver's local check, `rn_region_ring_span_valid` in
@@ -130,16 +130,16 @@ temporal check):
 
 ## Runs
 
-TLC 2.19 (rev 5a47802), bench `hetzner2`, `-workers 4` for the committed run and 1
-for each witness, 2026-10-13. The rows for `tla/RUNS.tsv`, in its layout:
+TLC 2.19 (rev 5a47802), Linux bench, `-workers 4` for the committed run and 1
+for each witness. The rows for `tla/RUNS.tsv`, in its layout:
 
 ```
-MCRNRing	MCRNRing.cfg (every rule on; TypeOK, LiveSpansDisjoint, SpanInsideRing, Aligned, IdleAdmitsAnyMessage; EveryAdmissibleMessagePlaced, NoRecordWaitsForever)	222691	79377	pass	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenFloorAtU.cfg (FloorAtUPrime FALSE; reversed witness)	3544	1544	fail as expected: Invariant LiveSpansDisjoint is violated at depth 10, a held fragment overwritten, see README-RNRing.md	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenNoPadding.cfg (PadAtBoundary FALSE; reversed witness)	809	456	fail as expected: Invariant SpanInsideRing is violated at depth 8, a span wraps	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenIdleFloor.cfg (IdleFloorAtP FALSE; reversed witness)	149	115	fail as expected: Invariant IdleAdmitsAnyMessage is violated at depth 6, an idle ring refuses a record that fits	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenIdleFloor.cfg without IdleAdmitsAnyMessage, -deadlock (reversed witness)	64946	20769	fail as expected: Temporal properties were violated, EveryAdmissibleMessagePlaced, stuttering lasso at depth 8, the block waits forever	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenNoRounding.cfg (Round16 FALSE; reversed witness)	30	30	fail as expected: Invariant Aligned is violated at depth 5	hetzner2	2026-10-13
+MCRNRing	MCRNRing.cfg (every rule on; TypeOK, LiveSpansDisjoint, SpanInsideRing, Aligned, IdleAdmitsAnyMessage; EveryAdmissibleMessagePlaced, NoRecordWaitsForever)	222691	79377	pass
+MCRNRing	MCRNRingBrokenFloorAtU.cfg (FloorAtUPrime FALSE; reversed witness)	3544	1544	fail as expected: Invariant LiveSpansDisjoint is violated at depth 10, a held fragment overwritten, see README-RNRing.md
+MCRNRing	MCRNRingBrokenNoPadding.cfg (PadAtBoundary FALSE; reversed witness)	809	456	fail as expected: Invariant SpanInsideRing is violated at depth 8, a span wraps
+MCRNRing	MCRNRingBrokenIdleFloor.cfg (IdleFloorAtP FALSE; reversed witness)	149	115	fail as expected: Invariant IdleAdmitsAnyMessage is violated at depth 6, an idle ring refuses a record that fits
+MCRNRing	MCRNRingBrokenIdleFloor.cfg without IdleAdmitsAnyMessage, -deadlock (reversed witness)	64946	20769	fail as expected: Temporal properties were violated, EveryAdmissibleMessagePlaced, stuttering lasso at depth 8, the block waits forever
+MCRNRing	MCRNRingBrokenNoRounding.cfg (Round16 FALSE; reversed witness)	30	30	fail as expected: Invariant Aligned is violated at depth 5
 ```
 
 The committed run finished in 6 s at depth 31. Each witness finished in under a

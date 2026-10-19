@@ -23,12 +23,6 @@ Each frame runs the calls in the order a game does: update, receive and
 release, simulate, queue, then send last. Sending last is what makes this
 frame's messages leave this frame instead of waiting a frame.
 
-The lifecycle card that lands after this one renames start, finish, receive,
-release and send_packets to `*_start_message`, `*_finish_message`,
-`*_receive_message`, `*_release_message` and `*_send_messages`. The header at
-this base still declares the old names, so the example uses them and says so
-in the source comment.
-
 ## Run it
 
 From the repository root, after the normal build:

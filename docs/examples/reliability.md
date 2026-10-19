@@ -26,8 +26,7 @@ needs.
 
 Each frame runs in standard order: `update`, `receive` and `release` (plus
 `receipts`), simulation, `start` and `finish`, and `send_packets` last so
-queued messages leave in the same frame. The header at this base still declares
-`start`, `finish`, `receive`, `release`, and `send_packets`.
+queued messages leave in the same frame.
 
 ## Run it
 

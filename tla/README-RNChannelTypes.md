@@ -2,7 +2,7 @@
 
 `RNChannelTypes` is a standalone finite message-stream model for codes 1, 2
 and 4, with the ordered code-3 path needed to delimit sequencing epochs.
-It follows `docs/CHANNELS.md` sections 7.1–7.3 and records the relevant
+It follows `standard/MESSAGES.md` sections 7.1–7.3 and records the relevant
 `docs/RAKNET-RELIABILITY.md` differences below. It is not a composition proof
 for `RNChannel`, `RNWindow`, a scheduler or the C++ implementation.
 

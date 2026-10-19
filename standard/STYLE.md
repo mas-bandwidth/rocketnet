@@ -49,6 +49,9 @@ The heading is written
     <a id="t6"></a>
     ## t6. Connect token
 
+<a id="t5.1"></a>
+<a id="t6.1"></a>
+<a id="t6.2"></a>
 The anchor line is the link target; the heading text after `t6. ` is exactly
 the outline's heading. Subsections are `### t6.1. Private connect token data`
 and so on, with an anchor `t6.1`; a subsection id is never reused or
@@ -270,7 +273,7 @@ subsection, and its text is the target's id and heading, prefixed by the
 document tag when it crosses documents:
 
     [t6 Connect token](#t6)
-    [t2.3 Configuration surface](#t2.3)
+    [t6.1 Private connect token data](#t6.1)
     [RN-1 t14 Replay protection](TRANSPORT.md#t14)
     [RN-R t6 Connect token](RATIONALE.md#t6)
 

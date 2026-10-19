@@ -1,7 +1,5 @@
 # ClientConnection: the client's connection state machine
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 `tla/ClientConnection.tla` is the client of `sdk/rocketnet_client_protocol.cpp` (driven
 by `sdk/rocketnet_client_transport.cpp`'s update cycle), checked over two instances of
 the shared lossy link `tla/Link.tla`: `C2S` carries what the client sends, `S2C` what
@@ -12,7 +10,7 @@ as far as it drives the client. `tla/MCClientConnection.tla` and
 
 ## What the model covers
 
-**States** are the standard's numbers (STANDARD.md, _Client State Machine_;
+**States** are the standard's numbers (standard/TRANSPORT.md, _Client State Machine_;
 `sdk/rocketnet.h:398-409`): -7 token expired, -5 connection timed out, -4 response
 timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disconnected,
 1 requesting cookie, 2 sending connection request, 3 sending connection response,
@@ -110,7 +108,7 @@ Two constants reproduce the class, as reversed witnesses:
   response, and no more until the client acknowledges one. This is the protocol
   without netcode's rule.
 - `KeepAliveClock = "anysend"`: the keep-alive is paced off the last send of anything,
-  so a payload stream suppresses it. This is the #90 regression the server's comment
+  so a payload stream suppresses it. This is the keep-alive suppression regression the server's comment
   at `rocketnet_server_protocol_write_keep_alive_if_due` records.
 
 The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`.
@@ -144,7 +142,7 @@ The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`
   clients are a count. Token tables, cookie keys, the client-id check and the confirmed
   flag are the server and security cards'.
 - **Payload rate.** The server application sends at most one payload per send interval
-  (a model-size bound; the code places no rate on payloads). The #90 witness still
+  (a model-size bound; the code places no rate on payloads). The keep-alive suppression witness still
   shows the suppression, because one payload per interval is enough to restamp the
   last-send clock before the keep-alive is due.
 - **Fairness** is restated at this model's size; see the next section.
@@ -291,7 +289,7 @@ the way, or the reversed witnesses doing their job.
 2. **`RepeatKeepAlive = FALSE` under `"alternate"`** (`W-once-alternate`): the same
    hang, with the loss coming from the link: the keep-alive is the server's fifth send
    on an odd index and is lost at `Send`; 28 states, lasso from state 25.
-3. **`KeepAliveClock = "anysend"` under `"firstkind"`** (`W-anysend`): the #90
+3. **`KeepAliveClock = "anysend"` under `"firstkind"`** (`W-anysend`): the keep-alive suppression
    regression. The first keep-alive is lost; the server application streams payloads
    (`streaming = TRUE` in every `Tick`), so `sinceSend` is 0 at every keep-alive check
    and the repair keep-alive is never due; `sinceKA` sits at 1, due, unread. 28 states,

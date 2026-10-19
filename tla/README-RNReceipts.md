@@ -4,7 +4,7 @@
 standalone module over transport packet events, with no dependency on
 `RNChannel`. The channel draft is not on origin at staging; the interface
 names are aligned with the local draft for later composition. This is a
-model of the design in `docs/CHANNELS.md` 7.4, not a claim that the message
+model of the design in `standard/MESSAGES.md` 7.4, not a claim that the message
 layer implementation exists.
 
 ## Interface and state

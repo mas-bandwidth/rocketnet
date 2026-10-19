@@ -1,8 +1,6 @@
 # ServerConnection: the server's slot lifecycle and encryption mapping
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
-> **Current model note (2026-10-18).** The following historical narrative and RUNS examples describe the earlier admitted-token abstraction. The current model removes `admitted`, `admits`, and `AdmittedCap`: admission is not a separate global token set. `bound[t]` represents used-token history by source address; a mapping is created at request time, while history is bound only when an opened response is accepted. Request-side connected-ID checks are followed by the authoritative response-side connected-ID check. The current properties are `OneTokenOneLiveConnection`, `ChurnNeverDenied`, and `ExpiredTokenNeverMapped`; `OneConnectionPerToken` remains a compatibility alias for the first property for the small `MCServerConnection.tla` wrapper.
+> **Current model note .** The following historical narrative and RUNS examples describe the earlier admitted-token abstraction. The current model removes `admitted`, `admits`, and `AdmittedCap`: admission is not a separate global token set. `bound[t]` represents used-token history by source address; a mapping is created at request time, while history is bound only when an opened response is accepted. Request-side connected-ID checks are followed by the authoritative response-side connected-ID check. The current properties are `OneTokenOneLiveConnection`, `ChurnNeverDenied`, and `ExpiredTokenNeverMapped`; `OneConnectionPerToken` remains a compatibility alias for the first property for the small `MCServerConnection.tla` wrapper.
 
 > Two reversed witnesses exercise the checks at the point they matter. In `MCServerConnectionClientIdNoCheck.cfg`, two same-token requests from distinct clients create pending mappings before either response arrives. The first response binds the token and occupies a slot; with the response-side client-ID check disabled, the second response occupies another slot too, violating `OneTokenOneLiveConnection` (24,910 generated / 10,671 distinct states; expected invariant violation, exit 12). The production check at `sdk/rocketnet_server_protocol.cpp:734` looks up the client ID when processing the response, after the request race, and prevents that second seat.
 
@@ -138,7 +136,7 @@ the establishing keep-alive once at the response and never again. The code's beh
 - **The client id** is a function of the token: `IdOf(t) = t`, or `1` for every token with
   `SameId = TRUE` (one player holding two tokens).
 - **Payloads and the standalone ack** are not here: a payload confirms a slot and refreshes
-  it as a keep-alive does, and neither moves a slot or a mapping. The #90 clock (a payload
+  it as a keep-alive does, and neither moves a slot or a mapping. The keep-alive suppression clock (a payload
   stream suppressing the keep-alive) is ClientConnection's witness.
 - **Time** is a tick of one send interval on every clock, with saturating counters. A
   `Timeout` or `HandshakeDeadline` of 0 is off. `Timeout` bounds an established mapping's
@@ -225,7 +223,7 @@ java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -conf
 ```
 
 "The L lines" are `L-firstkind`'s first seven changes with `KindLoss` left at `"none"`.
-Every finished run above took under six minutes on hetzner2 with `-workers 4`; `S-reuse` took
+Every finished run above took under six minutes on Linux with `-workers 4`; `S-reuse` took
 187 s, `S-first` 160 s and `S-firstkind` 341 s. Two earlier instances were stopped unfinished and are not in
 the table: the committed instance with three addresses, one move per client, any token and
 duplication and reordering on (31,072,359 distinct states at 50 minutes, no violation),
@@ -368,12 +366,12 @@ and fixed on the way.
    `rocketnet_admitted_token_set_contains` check at the response, before the slot check at
    `:678`, with its own counter (not a change to `add()`: `sdk/rocketnet_tests.cpp:2007-2008`
    asserts that `add` is idempotent, and a refusal from `add` would be counted under
-   `ADMITTED_SET_FULL` at `:688`, which it is not); and the rung added to STANDARD.md's
+   `ADMITTED_SET_FULL` at `:688`, which it is not); and the rung added to standard/TRANSPORT.md's
    response ladder, between the client-id bullet (S:2817) and the slot bullet (S:2818): "If
    this token's identifier is in the admitted-token set, ignore it."
 
-   **Superseded 2026-10-18.** The admitted-token set is removed from the code
-   (`docs/SESSION.md` 1.6): the rule is now one token, one live connection, and a
+   **Superseded .** The admitted-token set is removed from the code
+   (the session design 1.6): the rule is now one token, one live connection, and a
    token whose connection has closed may connect again inside its short expiry, by the
    owner's ruling. This module still models the set; the code now matches
    `AdmittedHeld = FALSE` with the set never full, under which `OneConnectionPerToken`
@@ -389,7 +387,7 @@ and fixed on the way.
    present the same token with attempt number 1 each: the first got a mapping and its
    challenge, which the link duplicated; the first client moved away and the second moved
    onto the vacated address; the duplicate challenge, addressed to that address and
-   carrying attempt 1, was accepted by the second client, which committed the first
+   carrying attempt number 1, was accepted by the second client, which committed the first
    client's keys and then completed the first client's handshake from the first client's
    address. Two clients held one slot's keys. Replayed against the code: the challenge is
    sealed under handshake keys derived from the token keys, the 64-bit random
@@ -405,30 +403,30 @@ Six models land in parallel, so this card does not edit `tla/RUNS.tsv`; the rows
 are these (module, config, states, distinct, result, bench, date):
 
 ```
-MCServerConnection	MCServerConnection.cfg; checks PacketsReachOwnSlotOnly, SessionNeverAnswered	14097280	2779489	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1 (the address change)	10351237	2358368	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any" (one token shared, history kept)	3465812	677845	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none" (one token shared, history flushed)	504378	148959	fail: Invariant OneConnectionPerToken is violated (F9 made concrete, README-ServerConnection.md item 8), 22-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with SameId TRUE, MaxSlots 2	10412272	2088713	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with C2SPattern "first", S2CPattern "first"	14078123	2774906	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with C2SPattern "alternate", S2CPattern "alternate"	24564007	4644754	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with C2SPattern "burst", S2CPattern "burst"	14076977	2774632	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with KindLoss "firstkind"	32588361	6790752	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with C2SPattern "arbitrary", S2CPattern "arbitrary"	86207063	12837009	not finished (stopped at the card's time bound): no violation in the states explored	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, Duplication TRUE, Reordering TRUE	63888899	15380262	not finished (stopped at the bench bound, TLC owed): no violation in the states explored	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with SweepRemovesMapping FALSE; checks SlotMappingBijection (reversed witness)	16948	5861	fail as expected: Invariant SlotMappingBijection is violated, 14-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none", RefuseAdmittedAtResponse TRUE (the fix)	8160820	1637413	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, AdmittedHeld FALSE; checks OneConnectionPerToken (reversed witness)	2509746	674687	fail as expected: Invariant OneConnectionPerToken is violated, 26-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with ClientIdCheck FALSE, SameId TRUE, MaxSlots 2; checks OneSlotPerClientId (reversed witness)	374129	112643	fail as expected: Invariant OneSlotPerClientId is violated, 21-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, AddressIsIdentity FALSE; checks OneClientPerSlot, PacketsReachOwnSlotOnly (reversed witness)	55678	21679	fail as expected: Action property PacketsReachOwnSlotOnly is violated, 16-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind"; checks Connects, ServerNotStranded	3478	1173	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE; checks Connects, ServerNotStranded	2299	773	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "first", S2CPattern "first"; checks Connects, ServerNotStranded	2241	751	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "alternate", S2CPattern "alternate"; checks Connects, ServerNotStranded	6084	1989	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "burst", S2CPattern "burst"; checks Connects, ServerNotStranded	2235	749	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "arbitrary", S2CPattern "arbitrary", SpecTyped; checks Connects, ServerNotStranded	19164	3771	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind", RepeatKeepAlive FALSE; checks Connects, ServerNotStranded (reversed witness)	1170	465	fail as expected: Temporal properties were violated, 28-state lasso	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "alternate", S2CPattern "alternate", RepeatKeepAlive FALSE; checks Connects, ServerNotStranded (reversed witness)	3210	1199	fail as expected: Temporal properties were violated, 38-state lasso	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1; checks TimedOutSlotFreed, AbandonedMappingDies	18960	4767	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, C2SPattern "first", S2CPattern "first"; checks TimedOutSlotFreed, AbandonedMappingDies	18480	4592	pass	hetzner2	2026-10-13
+MCServerConnection	MCServerConnection.cfg; checks PacketsReachOwnSlotOnly, SessionNeverAnswered	14097280	2779489	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1 (the address change)	10351237	2358368	pass
+MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any" (one token shared, history kept)	3465812	677845	pass
+MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none" (one token shared, history flushed)	504378	148959	fail: Invariant OneConnectionPerToken is violated (F9 made concrete, README-ServerConnection.md item 8), 22-state trace
+MCServerConnection	MCServerConnection.cfg with SameId TRUE, MaxSlots 2	10412272	2088713	pass
+MCServerConnection	MCServerConnection.cfg with C2SPattern "first", S2CPattern "first"	14078123	2774906	pass
+MCServerConnection	MCServerConnection.cfg with C2SPattern "alternate", S2CPattern "alternate"	24564007	4644754	pass
+MCServerConnection	MCServerConnection.cfg with C2SPattern "burst", S2CPattern "burst"	14076977	2774632	pass
+MCServerConnection	MCServerConnection.cfg with KindLoss "firstkind"	32588361	6790752	pass
+MCServerConnection	MCServerConnection.cfg with C2SPattern "arbitrary", S2CPattern "arbitrary"	86207063	12837009	not finished (stopped at the card's time bound): no violation in the states explored
+MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, Duplication TRUE, Reordering TRUE	63888899	15380262	not finished (stopped at the bench bound, TLC owed): no violation in the states explored
+MCServerConnection	MCServerConnection.cfg with SweepRemovesMapping FALSE; checks SlotMappingBijection (reversed witness)	16948	5861	fail as expected: Invariant SlotMappingBijection is violated, 14-state trace
+MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none", RefuseAdmittedAtResponse TRUE (the fix)	8160820	1637413	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, AdmittedHeld FALSE; checks OneConnectionPerToken (reversed witness)	2509746	674687	fail as expected: Invariant OneConnectionPerToken is violated, 26-state trace
+MCServerConnection	MCServerConnection.cfg with ClientIdCheck FALSE, SameId TRUE, MaxSlots 2; checks OneSlotPerClientId (reversed witness)	374129	112643	fail as expected: Invariant OneSlotPerClientId is violated, 21-state trace
+MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, AddressIsIdentity FALSE; checks OneClientPerSlot, PacketsReachOwnSlotOnly (reversed witness)	55678	21679	fail as expected: Action property PacketsReachOwnSlotOnly is violated, 16-state trace
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind"; checks Connects, ServerNotStranded	3478	1173	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE; checks Connects, ServerNotStranded	2299	773	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "first", S2CPattern "first"; checks Connects, ServerNotStranded	2241	751	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "alternate", S2CPattern "alternate"; checks Connects, ServerNotStranded	6084	1989	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "burst", S2CPattern "burst"; checks Connects, ServerNotStranded	2235	749	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "arbitrary", S2CPattern "arbitrary", SpecTyped; checks Connects, ServerNotStranded	19164	3771	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind", RepeatKeepAlive FALSE; checks Connects, ServerNotStranded (reversed witness)	1170	465	fail as expected: Temporal properties were violated, 28-state lasso
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "alternate", S2CPattern "alternate", RepeatKeepAlive FALSE; checks Connects, ServerNotStranded (reversed witness)	3210	1199	fail as expected: Temporal properties were violated, 38-state lasso
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1; checks TimedOutSlotFreed, AbandonedMappingDies	18960	4767	pass
+MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, C2SPattern "first", S2CPattern "first"; checks TimedOutSlotFreed, AbandonedMappingDies	18480	4592	pass
 ```

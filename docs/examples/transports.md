@@ -73,9 +73,3 @@ variable and the value it displaced.
 - Client: `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_update`, `rocketnet_client_state`, `rocketnet_client_start`, `rocketnet_client_finish`, `rocketnet_client_receive`, `rocketnet_client_release`, `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
 - Development token: `rocketnet_write_dev_connect_token`
 - Time: `rocketnet_time`, `rocketnet_sleep`
-
-The lifecycle card that lands after this one renames start, finish, receive,
-release and send_packets to `*_start_message`, `*_finish_message`,
-`*_receive_message`, `*_release_message` and `*_send_messages`. The header at
-this base still declares the old names, so the example uses them; it does not
-use a copying send.

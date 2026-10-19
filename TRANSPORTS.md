@@ -1,4 +1,4 @@
-# Native transport drivers
+# Native transports
 
 The public transport API in `rocketnet.h` is independent of the backend.
 Native drivers implement `rocketnet_driver.h`; they do not add binding or
@@ -150,10 +150,7 @@ address isolation, lifecycle and buffered I/O. Existing GSO/IOCP and complete
 transport tests cover the real staged paths; hosted tests do not replace XDP
 hardware failure tests or per-platform line-rate measurements.
 
-Dispatch measurements and their limits are recorded in
-[bench/transport_fill.md](bench/transport_fill.md).
-
-## The RIO server driver
+## The RIO server transport
 
 `rio` (`sdk/rocketnet_server_rio_windows.cpp`, `sdk/rocketnet_server_rio.h`)
 is a Windows staged server driver with one registered memory region, polled
@@ -167,7 +164,7 @@ dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
 send phases, receive banks and destruction are modelled in
 `tla/RNRioDriver.tla`.
 
-## The io_uring server driver
+## The io_uring server transport
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
 is a staged Linux server driver with one io_uring per driver, used only on the
@@ -282,7 +279,7 @@ exactly its length, so the sanitizer legs catch a read past `data_end`.
 
 The host tier covers both address families, the address and port match, the
 size bounds, the epoch and filter value, every type at every size against the
-STANDARD.md size table, the IPv6 extension and fragment passes, and the
+[standard/TRANSPORT.md](standard/TRANSPORT.md) size table, the IPv6 extension and fragment passes, and the
 redirect decision per receive queue. It also covers the `config == NULL`
 branch, which the kernel's one-entry array never reaches. Only the kernel
 tier (`test_xdp_filter`) shows what the verifier accepts, the real helpers'

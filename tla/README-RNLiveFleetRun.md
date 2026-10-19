@@ -1,10 +1,10 @@
 # RNLiveFleetRun: the lifecycle of the live fleet run
 
-`tla/RNLiveFleetRun.tla` models the live XDP fleet run of `docs/LIVE-XDP.md`.
+`tla/RNLiveFleetRun.tla` models the live XDP fleet run of the live XDP runner.
 One orchestrator drives the run over ssh: one server on the test server with
 the xdp driver, and one client per bench. The model is written before the
-code. The runner card (`rocketnet-live-xdp-fleet-runner`) builds
-`scripts/rocketnet-live-xdp` and the remote steps under `scripts/live-xdp/`.
+code. The runner card (the implementation) builds
+`scripts/live-xdp` and the remote steps under `scripts/live-xdp/`.
 It names their steps after the actions below and cites this module. Until
 then, the `live-fleet-run` row of `tla/COVERAGE.tsv` is `owed`.
 
@@ -19,7 +19,7 @@ measured records in `tla/RUNS.tsv`.
 
 ## What is modelled
 
-- **The orchestrator** (`docs/LIVE-XDP.md` 9 and 12):
+- **The orchestrator** (the live XDP runner 9 and 12):
   - `ArmDeadman`
   - `LoadServer(h)`, only for `h = TestServer`
   - `SshCheckPasses` / `SshCheckFails`: a fresh ssh connection right after
@@ -44,7 +44,7 @@ measured records in `tla/RUNS.tsv`.
     orchestrator dead), or the server died with XDP attached. It kills the
     server and detaches.
   - `DeadmanFires`
-- **Each client's cycle** (`docs/LIVE-XDP.md` 6):
+- **Each client's cycle** (the live XDP runner 6):
   - `StartClient`
   - `Connected`: a free slot, or a denial.
   - `EndWindow`: clean on even cycles, silent on odd ones.
@@ -103,7 +103,7 @@ the control and one for each witness:
   never reaches it. The native attach
   (`sdk/rocketnet_server_socket_linux.cpp:1337`) stays on the NIC after the
   process dies. A teardown that only stops the server leaves the uplink
-  filtered by a program no process serves. That is why `docs/LIVE-XDP.md`
+  filtered by a program no process serves. That is why the live XDP runner
   section 9 step 7 runs `ip link set dev <nic> xdp off` on every path. With
   the witness switch, the timers still stand down only once no program is
   attached, so `XdpOnlyUnderDeadman` holds and the run fails on the declared

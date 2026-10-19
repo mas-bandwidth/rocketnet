@@ -1,7 +1,7 @@
 # RNClientIo
 
 The client transport with its socket I/O on one I/O thread, as
-`docs/CLIENT-IO.md` designs it. The design replaces code in
+the client I/O design designs it. The design replaces code in
 `sdk/rocketnet_client_transport.cpp` at the base of the design: the payload
 ring filled by `rocketnet_client_transport_start_packet` (line 697), the
 per-packet send walk of `rocketnet_client_transport_send_packets` (line 987,
@@ -31,7 +31,7 @@ implements the design yet; `tla/COVERAGE.tsv` marks the machine owed.
   exposes the Ready buffer when there is one (`Expose`), and at its end,
   every update, it returns the buffer it holds as Free and wakes the I/O
   thread when the owed flag is set (`Return`). Each action is one atomic
-  step, which is the seq_cst store-then-load pairing of `docs/CLIENT-IO.md`.
+  step, which is the seq_cst store-then-load pairing of the client I/O design.
 - **The wake.** `IoWait` blocks only when nothing is visible to do: never
   while a publish is possible, with an unpublished batch only once it is
   owed, and with datagrams in the socket only when the buffer is full. It
@@ -161,7 +161,7 @@ depth 10 (3,697 states generated, 1,388 distinct).
   4. The main thread reopens A while it is Sending, hands B off and switches
      to A; a game thread writes slot 1 of A while the I/O thread still owns A.
 - **Against the design, by hand:** this is the reuse the design forbids. In
-  `docs/CLIENT-IO.md` the main thread reopens a ring only after an acquire
+  the client I/O design the main thread reopens a ring only after an acquire
   load sees Sent, which the I/O thread stores after its last send of that
   ring; in the trace the reopen reads Sending. With the rule, step 4's
   `Reopen` is disabled until `IoFinishRing`, the hand-off of B defers, and no
@@ -190,7 +190,7 @@ distinct).
   its target before the swap and write it after, into the buffer `update`
   now reads. The code at the base avoids it with the mutex held across the
   whole drain (lines 1238 and 1272), which is the lock wait
-  `docs/CLIENT-IO.md` measures; the handshake removes the lock without
+  the client I/O design measures; the handshake removes the lock without
   reopening the race.
 
 ### `MCRNClientIoBrokenReceiveStall.cfg`

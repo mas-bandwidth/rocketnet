@@ -1,7 +1,7 @@
 # RNWindow: the reliable window
 
 `tla/RNWindow.tla` is the message layer's reliable window, CHANNELS layer 3
-(`docs/CHANNELS.md` sections 6, 13.5 and 15): a sender numbering records late under the count
+(`standard/MESSAGES.md` sections 6, 13.5 and 15): a sender numbering records late under the count
 bound `n < U' + W`, its sent-packet map and acks, and a receiver with `R`, the received
 bitset, the descriptors and their live flags, holds, the delivered list, the update
 boundary, and the reconstruction of the 24-bit wire number. Both directions run through
@@ -199,7 +199,7 @@ include. Without it a copy that is not yet due never becomes due.
 
 ### Every run
 
-TLC 2.19 on hetzner2, 2026-10-13, `-workers 4 -Xmx6g`. The `tla/RUNS.tsv` records are not
+TLC 2.19 on Linux, `-workers 4 -Xmx6g`. The `tla/RUNS.tsv` records are not
 written by hand. They are owed to `tlacheck run --group rnwindow`.
 
 Committed cases:
@@ -232,7 +232,7 @@ Bench runs (each is `MCRNWindow.cfg` with the changes named):
 ## What TLC found
 
 Every counterexample was replayed by hand through the module's actions and through the
-argument of CHANNELS.md 6.3 and 13.5. The window code does not exist yet, so none of
+argument of standard/MESSAGES.md 6.3 and 13.5. The window code does not exist yet, so none of
 them is a defect in code. The traces are written `id{numbers}` for a packet. The
 committed instance is `W = 2`, Link capacity 2, `"alternate"` loss both ways (the 1st,
 3rd, 5th ... send on each link is lost), `NumMod = 4`, numbers `0..4`, the block

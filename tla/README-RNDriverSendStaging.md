@@ -119,6 +119,6 @@ or flushing the send buffer. TLC must reject it, and does:
 ## Runs
 
 Both rows are in `tla/RUNS.tsv` from the runs on a Linux bench (TLC 2.19,
-`-workers 2`, 2026-10-14): the committed run passes at depth 7, and the
+`-workers 2`): the committed run passes at depth 7, and the
 reversed witness fails as expected at depth 3, with 21 states generated and
 19 distinct states found when TLC stopped.

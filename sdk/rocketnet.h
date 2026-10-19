@@ -100,7 +100,7 @@
 #define ROCKETNET_LOOPBACK_MAX_ENDPOINTS          ( ROCKETNET_MAX_CLIENTS + 1 )
 
 // The packet size: the UDP payload of one datagram on a 1500-byte MTU link,
-// the number every other size limit derives from (STANDARD.md _Packet
+// the number every other size limit derives from (standard/TRANSPORT.md _Packet
 // sizes_). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
 // over IPv6 it is 1500 - 40 - 8 = 1452 bytes, the send budget, so a maximum
 // packet crosses a 1500-MTU path unfragmented on either family.
@@ -162,7 +162,7 @@
 /** @brief Most verbose log level. */
 #define ROCKETNET_LOG_LEVEL_SPAM                                       5
 
-// messages (docs/CHANNELS.md): the channel bound, per-send reliability --
+// messages (standard/MESSAGES.md): the channel bound, per-send reliability --
 // RakNet's values and numbering -- and receipt outcomes
 
 #ifndef ROCKETNET_MAX_CHANNELS
@@ -219,8 +219,8 @@
 
 // Why a connection ended: what rocketnet_client_disconnect_reason and
 // rocketnet_server_disconnect_reason return
-// (docs/CHANNELS.md 12). MESSAGE_MEMORY_EXHAUSTED: the connection's region had
-// no room for an operation it must not drop (docs/CHANNELS.md 4). A server
+// (standard/MESSAGES.md). MESSAGE_MEMORY_EXHAUSTED: the connection's region had
+// no room for an operation it must not drop (standard/MESSAGES.md). A server
 // disconnects that client's slot with this reason and resets the slot's
 // region; a client disconnects itself.
 
@@ -724,7 +724,7 @@ ROCKETNET_EXPORT int rocketnet_allocator_ex( void * (*malloc_function)( void * c
 //
 // The message fields marked WIRE must be identical on both ends; the
 // connection verifies them. Validation applies the ranges below and the cross
-// rules of docs/CHANNELS.md section 14.
+// rules of standard/MESSAGES.md.
 //
 // create copies every string it is given, so the strings need to live only
 // for the call.
@@ -762,10 +762,10 @@ struct rocketnet_client_config_t
     int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
-    int simulated_loss_percent;                     // development only: outgoing loss 0..100; 0 is off
-    int simulated_latency_ms;                       // development only: outgoing latency in milliseconds; 0 is off
-    int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
-    int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
+    int simulated_loss_percent;                     // ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: development only, outgoing loss 0..100; 0 is off
+    int simulated_latency_ms;                       // ROCKETNET_CLIENT_SIMULATED_LATENCY_MS: development only, outgoing latency in milliseconds; 0 is off
+    int simulated_jitter_ms;                        // ROCKETNET_CLIENT_SIMULATED_JITTER_MS: development only, outgoing jitter in milliseconds; 0 is off
+    int simulated_duplicate_percent;                // ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT: development only, outgoing duplication 0..100; 0 is off
 };
 
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
@@ -820,10 +820,10 @@ struct rocketnet_server_config_t
     int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
-    int simulated_loss_percent;                     // development only: outgoing loss 0..100; 0 is off
-    int simulated_latency_ms;                       // development only: outgoing latency in milliseconds; 0 is off
-    int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
-    int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
+    int simulated_loss_percent;                     // ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: development only, outgoing loss 0..100; 0 is off
+    int simulated_latency_ms;                       // ROCKETNET_SERVER_SIMULATED_LATENCY_MS: development only, outgoing latency in milliseconds; 0 is off
+    int simulated_jitter_ms;                        // ROCKETNET_SERVER_SIMULATED_JITTER_MS: development only, outgoing jitter in milliseconds; 0 is off
+    int simulated_duplicate_percent;                // ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT: development only, outgoing duplication 0..100; 0 is off
 };
 
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
@@ -834,7 +834,7 @@ struct rocketnet_server_config_t
 //                           messages
 // -----------------------------------------
 
-// A message is bytes, a pointer and a length (docs/CHANNELS.md). Each client
+// A message is bytes, a pointer and a length (standard/MESSAGES.md). Each client
 // and each server is one block made at create -- the object, its connections
 // and one message region per connection -- and allocates nothing after
 // create. memory is optional: NULL makes the one allocation, and a caller

@@ -27,9 +27,6 @@ a demo and a profiling instrument, not a load claim.
    and write `--out <file>` (default `soak-results.tsv`, one TSV row per metric
    with `clients`, `seconds`, `seed`, `transport`, `build`, `metric`, `value`).
 
-The header at this base declares the pre-rename message calls (`*_start`,
-`*_finish`, `*_receive`, `*_release`, `*_send_packets`) and `int` client indices.
-
 ## Run it and scale sweep
 
 ```sh

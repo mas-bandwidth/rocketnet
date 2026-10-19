@@ -74,6 +74,3 @@ can be deleted after a run.
   `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_disconnect_reason`,
   `rocketnet_client_destroy`
 - `rocketnet_time`, `rocketnet_sleep`
-The header at this base names start, finish, receive, release and `send_packets`
-without the `*_message` suffix a later lifecycle card introduces, so the
-examples use the header's names.
