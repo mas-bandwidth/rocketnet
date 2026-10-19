@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
 #define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
@@ -17,58 +17,70 @@ typedef void (*rocketnet_platform_thread_func_t)(void*);
 
 // ----------------------------------------------------------------
 
-ROCKETNET_EXPORT_FUNC bool rocketnet_platform_init();
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_term();
+bool rocketnet_platform_init();
+
+void rocketnet_platform_term();
 
 // ----------------------------------------------------------------
 
-ROCKETNET_EXPORT_FUNC int rocketnet_platform_id();
+int rocketnet_platform_id();
 
-ROCKETNET_EXPORT_FUNC int rocketnet_platform_connection_type();
+int rocketnet_platform_connection_type();
 
-ROCKETNET_EXPORT_FUNC double rocketnet_platform_time();
+double rocketnet_platform_time();
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_sleep( double time );
+void rocketnet_platform_sleep( double time );
 
-ROCKETNET_EXPORT_FUNC const char * rocketnet_platform_getenv( const char * var );
+const char * rocketnet_platform_getenv( const char * var );
 
-ROCKETNET_EXPORT_FUNC uint16_t rocketnet_platform_ntohs( uint16_t in );
+uint16_t rocketnet_platform_ntohs( uint16_t in );
 
-ROCKETNET_EXPORT_FUNC uint16_t rocketnet_platform_htons( uint16_t in );
+uint16_t rocketnet_platform_htons( uint16_t in );
 
 void rocketnet_platform_address_to_sockaddr_in( const struct rocketnet_address_t * address, struct sockaddr_in * out );
 
 void rocketnet_platform_sockaddr_in_to_address( const struct sockaddr_in * in, struct rocketnet_address_t * address );
 
-ROCKETNET_EXPORT_FUNC bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out );
+bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out );
 
-ROCKETNET_EXPORT_FUNC bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * address_out );
+bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * address_out );
 
-ROCKETNET_EXPORT_FUNC bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_string, size_t address_string_size );
+bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_string, size_t address_string_size );
 
-ROCKETNET_EXPORT_FUNC bool rocketnet_platform_hostname_resolve( const char * hostname, const char * port, struct rocketnet_address_t * address );
+bool rocketnet_platform_hostname_resolve( const char * hostname, const char * port, struct rocketnet_address_t * address );
 
-ROCKETNET_EXPORT_FUNC uint16_t rocketnet_platform_preferred_client_port();
+uint16_t rocketnet_platform_preferred_client_port();
 
-ROCKETNET_EXPORT_FUNC bool rocketnet_platform_client_dual_stack();
+bool rocketnet_platform_client_dual_stack();
+
+#ifdef __cplusplus
+}
+#endif
 
 // ----------------------------------------------------------------
 
-ROCKETNET_EXPORT_FUNC struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size );
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size );
 
 // pump-request create (#106): the driver ladder's entry into pump
 // selection. pump NULL/"auto" behaves exactly like the plain create above
 // (probe, honoring ROCKETNET_PUMP); "portable" forces the portable pump;
 // "msgx" requires the darwin batch pump or returns NULL loudly.
 
-ROCKETNET_EXPORT_FUNC struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump );
+struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * socket );
+void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * socket );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_socket_send_packet( struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to, const void * packet_data, int packet_bytes );
+void rocketnet_platform_socket_send_packet( struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to, const void * packet_data, int packet_bytes );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, void * packet_data, int max_packet_size );
+int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, void * packet_data, int max_packet_size );
 
 // ----------------------------------------------------------------
 
@@ -96,14 +108,18 @@ struct rocketnet_platform_send_t
     int packet_bytes;
 };
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
+void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
+int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
 // the name of the pump path live behind the seam ("portable", "msgx"), for
 // logging and for tests that pin the degradation contract
 
-ROCKETNET_EXPORT_FUNC const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
+const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
+
+#ifdef __cplusplus
+}
+#endif
 
 // ----------------------------------------------------------------
 
@@ -140,27 +156,35 @@ void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
 
 // ----------------------------------------------------------------
 
-ROCKETNET_EXPORT_FUNC struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg );
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread );
+struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thread );
+void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_client_thread_priority( struct rocketnet_platform_thread_t * thread );
+void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thread );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_server_thread_priority( struct rocketnet_platform_thread_t * thread );
+void rocketnet_platform_client_thread_priority( struct rocketnet_platform_thread_t * thread );
+
+void rocketnet_platform_server_thread_priority( struct rocketnet_platform_thread_t * thread );
 
 // ----------------------------------------------------------------
 
 struct rocketnet_platform_mutex_t;
 
-ROCKETNET_EXPORT_FUNC bool rocketnet_platform_mutex_create( struct rocketnet_platform_mutex_t * mutex );
+bool rocketnet_platform_mutex_create( struct rocketnet_platform_mutex_t * mutex );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_mutex_destroy( struct rocketnet_platform_mutex_t * mutex );
+void rocketnet_platform_mutex_destroy( struct rocketnet_platform_mutex_t * mutex );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_mutex_acquire( struct rocketnet_platform_mutex_t * mutex );
+void rocketnet_platform_mutex_acquire( struct rocketnet_platform_mutex_t * mutex );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex );
+void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex );
+
+#ifdef __cplusplus
+}
+#endif
 
 #ifdef __cplusplus
 
@@ -352,6 +376,20 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         return (uint64_t) _InterlockedExchangeAdd64( (volatile long long *) value, (long long) add );
     }
 
+    inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
+    {
+    #if defined(_M_IX86)
+        // 32-bit x86 has no single-instruction 64-bit load; CAS with the
+        // observed value (a self-write) retries until it reads consistent.
+        long long observed = *(volatile long long *) value;
+        while ( _InterlockedCompareExchange64( (volatile long long *) value, observed, observed ) != observed )
+            observed = *(volatile long long *) value;
+        return (uint64_t) observed;
+    #else
+        return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, 0, 0 );
+    #endif
+    }
+
     inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
     {
     #if defined(_M_IX86)
@@ -391,6 +429,11 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
     {
         return __atomic_fetch_add( value, add, __ATOMIC_RELAXED );
+    }
+
+    inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
+    {
+        return __atomic_load_n( value, __ATOMIC_RELAXED );
     }
 
     inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )

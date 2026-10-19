@@ -153,7 +153,7 @@ static void * gso_create( void * context, const rocketnet_server_driver_config_t
 {
     if ( config->transport->num_xdp_queues > ROCKETNET_GSO_MAX_QUEUES )
     {
-        rocketnet_warn( "gso driver refused: num_xdp_queues %d is past the gso driver's %d queue geometry",
+        rocketnet_warn( "gso transport refused: num_xdp_queues %d is past the gso transport's %d queue geometry",
             config->transport->num_xdp_queues, ROCKETNET_GSO_MAX_QUEUES );
         return NULL;
     }
@@ -174,7 +174,7 @@ static void * io_uring_create( void * context, const rocketnet_server_driver_con
 {
     if ( config->transport->num_xdp_queues > ROCKETNET_URING_MAX_QUEUES )
     {
-        rocketnet_warn( "io_uring driver refused: num_xdp_queues %d is past the io_uring driver's %d queue geometry",
+        rocketnet_warn( "io_uring transport refused: num_xdp_queues %d is past the io_uring transport's %d queue geometry",
             config->transport->num_xdp_queues, ROCKETNET_URING_MAX_QUEUES );
         return NULL;
     }
@@ -230,12 +230,16 @@ static void xdp_replay_commit( void * driver )
 {
     rocketnet_server_socket_replay_commit( (rocketnet_server_socket_t*) driver );
 }
+static void xdp_peer_accepted( void * driver, int view_index )
+{
+    rocketnet_server_socket_peer_accepted( (rocketnet_server_socket_t*) driver, view_index );
+}
 static const rocketnet_server_driver_operations_t xdp_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FINISH_FINAL | ROCKETNET_DRIVER_BINDS_PUBLIC_ADDRESS,
     xdp_create, xdp_destroy, xdp_stop,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_peer_accepted
 };
 extern const rocketnet_driver_backend_t rocketnet_xdp_driver = { &xdp_operations, NULL };
 #endif

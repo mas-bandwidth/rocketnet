@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API packet-fill microbenchmark. See transport_fill.md for its limits.
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include <chrono>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,7 +19,7 @@ int main(int argc, char ** argv)
     CHECK(payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES && batches > 0);
     CHECK(strlen(driver) < sizeof(rocketnet_server_transport_config_t().driver));
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init());
+    CHECK(rocketnet_init( NULL ));
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);

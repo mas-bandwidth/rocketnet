@@ -17,10 +17,22 @@ transport branches on generic capabilities, never a specific backend identity.
 
 A driver with a preference rank at or above `ROCKETNET_DRIVER_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
-always selects it, but `auto` never chooses it. The loopback driver is the one
-pin-only row. It is in-process, carries datagrams through memory with no socket
-and no system network call, and serves tests and tools; it is never chosen by
-auto.
+always selects it, but `auto` never chooses it. The loopback transport is the
+one pin-only row. It is in-process, carries datagrams through memory with no
+socket and no system network call, and serves tests and examples; it is never
+chosen by auto. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
+records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
+allocates its queue at create, `ROCKETNET_LOOPBACK_QUEUE_PACKETS` x
+`sizeof(rocketnet_loopback_packet_t)` = 1,531,904 bytes, so a full table of
+live endpoints is about 1,533,435,904 bytes. The cost is paid only by a process
+that instantiates the loopback transport, which is tests and examples, never a
+game on auto. Lookups scan the table linearly under the mutex.
+
+The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
+and `rocketnet_server_uring_leaked_drivers` are internal driver helpers
+(`sdk/rocketnet_server_uring.h`); a game uses `rocketnet_server_create`,
+`rocketnet_server_required_memory` and the other server entry points in
+`sdk/rocketnet.h`.
 
 ## Server capabilities and ownership
 
@@ -207,7 +219,7 @@ as non-UDP IPv4 does.
 
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
-per-CPU totals each time `rocketnet_server_transport_counters` is read. Only a
+per-CPU totals each time the transport counter surface is read. Only a
 driver with a kernel prefilter fills them; a driver with none leaves them
 zero.
 
@@ -221,11 +233,24 @@ through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
 returns the program's verdict and transmits nothing. It swaps the XSKMAP for a
 DEVMAP before load so a redirect can succeed without an AF_XDP socket, and it
 reads the stats map back after each frame. It needs root, or CAP_BPF and
-CAP_NET_ADMIN; `-v` prints the verifier's last log line:
+CAP_NET_ADMIN; `-v` prints the verifier's last log line. One case,
+`xdp_on_link_reply_reaches_the_peer`, attaches the program to a veth pair and
+runs the example server and client across it, so it skips outside a
+virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
+verifies, and with room for the server's UMEM and queues (the default guest
+memory runs out and the server is killed):
 
 ```sh
-sudo ./bin/test_xdp_filter -v
+vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
+
+A reply frame's destination MAC is the source MAC of the newest packet from
+that peer address that the transport accepted for a connection on this
+interface, and the gateway's MAC for an address with none learned. With no
+default route the server still starts, a direct response to an unlearned
+address goes to the source MAC of the frame it answers, and any other reply
+that resolves to no MAC is refused at start and counted as
+`SEND_NO_LINK_ADDRESS`, never sent and never counted as sent.
 
 ## Embedded XDP source maintenance
 

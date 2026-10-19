@@ -32,7 +32,7 @@ One TCG run at 4 vCPUs and 4G RAM:
 - the `test` and `functional` build takes 450 seconds
 - `./bin/test` takes 89 seconds
 - `./bin/functional` on the auto ladder takes 149 seconds
-- `./bin/functional` with `ROCKETNET_DRIVER=portable` takes 126 seconds
+- `./bin/functional` with the portable transport pin takes 126 seconds
 
 The functional suite kills a single test at 120 seconds. A socket test that never receives its reply ends there and the suite continues. It does not hold the job open.
 
@@ -44,7 +44,7 @@ On a Linux host with `qemu-system-s390x`, `cloud-localds`, and `qemu-img`, repea
 uname -sn
 ./bin/test
 ./bin/functional
-ROCKETNET_DRIVER=portable ./bin/functional
+ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
 ```
 
 The two rungs the guest runs are the auto ladder and the portable pin. The auto ladder refuses xdp in this guest (no attached data plane) and falls through. The xdp pin test asserts that refusal. It does not attach xdp.

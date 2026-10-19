@@ -22,6 +22,12 @@ if sys.platform == 'darwin':
     libs += ['-framework', 'CoreFoundation', '-framework', 'SystemConfiguration']
 else:
     libs += ['-lbpf', '-lxdp']
+    # Link what CMake linked: cmake/RocketNetDependencies.cmake records the
+    # optional io_uring driver's library it resolved in the build cache.
+    uring = next((line.split('=', 1)[1] for line in cache.splitlines()
+                  if line.startswith('ROCKETNET_Uring_LIBRARY:')), '')
+    if uring and not uring.endswith('-NOTFOUND'):
+        libs.append(uring)
 env = dict(os.environ, ASAN_OPTIONS='detect_leaks=0')
 
 with tempfile.TemporaryDirectory(prefix='fuzz-oracle-', dir=BUILD) as directory:

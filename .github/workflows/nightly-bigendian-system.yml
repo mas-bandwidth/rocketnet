@@ -40,7 +40,7 @@ permissions:
 jobs:
   bigendian-system:
     name: s390x full system
-    runs-on: [self-hosted, Linux, X64, fleet]
+    runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 180
     strategy:
       matrix:
@@ -53,13 +53,18 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
-      - name: Install qemu-system-s390x when the runner does not have it
+      - name: Check the fleet's qemu packages are present
+        shell: bash
         run: |
           set -euo pipefail
-          if ! command -v qemu-system-s390x >/dev/null 2>&1 || ! command -v cloud-localds >/dev/null 2>&1 || ! command -v qemu-img >/dev/null 2>&1; then
-            sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-system-s390x cloud-image-utils qemu-utils
-          fi
+          missing=0
+          for tool in qemu-system-s390x cloud-localds qemu-img; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Verify the s390x cloud image, boot the guest, and run the suite
         run: |
@@ -189,7 +194,7 @@ jobs:
           a=$?
           echo FUNC_AUTO_EXIT:$a
           [ "$a" -eq 0 ] || rc=$a
-          ROCKETNET_DRIVER=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional
+          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional
           p=$?
           echo FUNC_PORT_EXIT:$p
           [ "$p" -eq 0 ] || rc=$p

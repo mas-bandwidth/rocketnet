@@ -9,7 +9,7 @@
 #define ROCKETNET_CLIENT_PROTOCOL_H
 
 #include <stdint.h>
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_keys.h"

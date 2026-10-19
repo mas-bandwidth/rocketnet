@@ -1,7 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_packet_batch.h"
 
 // Native implementation interface. None of these symbols is a public C export.
@@ -56,6 +56,9 @@ struct rocketnet_server_driver_operations_t
     // Join them before receive, flush, stop or destroy. Each frame has one
     // producer. start returns a FRAME_STRIDE root, wire bytes at WIRE_OFFSET.
     // finish only seals the frame; flush does not promise reusable storage.
+    // start returns NULL with the id ROCKETNET_DRIVER_PACKET_UNREACHABLE when
+    // the driver has no link-layer destination for the address (the
+    // transport counts SEND_NO_LINK_ADDRESS); any other NULL is a full ring.
     uint8_t * (*start_packet)( void *, const rocketnet_address_t *, uint64_t * );
     void (*finish_packet)( void *, uint64_t, uint8_t *, int );
     void (*abort_packet)( void *, uint64_t, uint8_t * );
@@ -78,7 +81,15 @@ struct rocketnet_server_driver_operations_t
     void (*replay_forget)( void * driver, const rocketnet_address_t * address );
     void (*replay_mark)( void * driver, const rocketnet_address_t * address, uint32_t high_water );
     void (*replay_commit)( void * driver );
+    // optional; main thread only, while the receive view is current. The
+    // transport accepted the view's packet view_index for a connection (it
+    // opened under the connection's keys); a driver that addresses frames
+    // itself learns the packet's link-layer source for its address.
+    void (*peer_accepted)( void * driver, int view_index );
 };
+
+// the start_packet id of a refusal for want of a link-layer destination
+#define ROCKETNET_DRIVER_PACKET_UNREACHABLE    0xFFFFFFFFFFFFFFFFULL
 
 struct rocketnet_client_driver_config_t
 {

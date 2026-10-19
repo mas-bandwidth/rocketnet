@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 // Layer 2 of the message layer (docs/CHANNELS.md section 5): message records
 // inside one transport payload, and the zero-copy single-message form. The

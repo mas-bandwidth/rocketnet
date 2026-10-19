@@ -8,7 +8,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_platform.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <string.h>
 

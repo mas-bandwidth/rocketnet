@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# scripts/live-xdp-fleet-merge
+# Merge live-stress result files (docs/LIVE-XDP.md section 7) into the per
+# bench x direction x mode x channel x size-bucket table, the per-bench
+# connect, cycle and failure rows, and a pass/fail verdict line. Exits 0
+# only on PASS. Result lines are tab-separated:
+#   cell <bench> <window> <dir> <mode> <channel> <bucket> <sent> <received>
+#        <verified> <failed> <lost> <superseded> <missing> <out-of-order>
+#        <duplicate> <over> <paced>
+#   connect <bench> <cycle> <ok> <ms>
+#   cycle  <bench> <cycle> <kind>
+#   stat   <bench> <cycle> <seconds> <rtt-ms> <jitter-ms> <loss-pct>
+#   bench  <bench> <key> <value> ...
+#   event  <bench> <cycle> <kind> <detail>
+#   fail   <bench> <cycle> <dir> <mode> <channel> <sequence> <reason> <bytes>
+#          <denial> <side> <counters> <excerpt>
+#   counters <bench> <name> <value> <seconds>
+#   rss    <bench> <seconds> <kb>
+#   verdict <PASS|FAIL>
+import sys
+
+BUCKET_NAMES = ["tiny", "small", "edge", "fragment", "medium", "large", "max", "over"]
+BUCKET_INDEX = {name: index for index, name in enumerate(BUCKET_NAMES)}
+RELIABLE = {2, 3, 4, 6, 7}
+
+
+def num(value, default=0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def quantile(values, q):
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = int(round(q * (len(ordered) - 1)))
+    return ordered[index]
+
+
+def main(paths):
+    cells = {}
+    labels = set()
+    connects = {}
+    connect_total = {}
+    connect_ok = {}
+    connect_ms = {}
+    reconnect_ms = {}
+    cycles = {}
+    cycle_kind = {}
+    stats_rtt = {}
+    stats_loss = {}
+    bench_summary = {}
+    events = []
+    denials = {}
+    fulls = {}
+    failures = []
+    verdicts = []
+    counters = {}
+    cons = {}
+
+    for path in paths:
+        try:
+            handle = open(path, "r")
+        except OSError as error:
+            print("merge: %s" % error)
+            return 1
+        for raw in handle:
+            line = raw.rstrip("\n")
+            if not line:
+                continue
+            f = line.split("\t")
+            kind = f[0]
+            if kind == "cell" and len(f) >= 18:
+                label = f[1]
+                labels.add(label)
+                key = (label, int(f[3]), int(f[4]), int(f[5]), f[6])
+                sums = cells.setdefault(key, [0] * 11)
+                for i in range(11):
+                    sums[i] += int(num(f[7 + i]))
+            elif kind == "connect" and len(f) >= 5:
+                label = f[1]
+                labels.add(label)
+                connects[label] = connects.get(label, 0) + 1
+                connect_total[label] = connect_total.get(label, 0) + 1
+                ok = int(num(f[3])) == 1
+                if ok:
+                    connect_ok[label] = connect_ok.get(label, 0) + 1
+                    connect_ms.setdefault(label, []).append(num(f[4]))
+                    if int(num(f[2])) > 0:
+                        reconnect_ms.setdefault(label, []).append(num(f[4]))
+                else:
+                    connect_ok[label] = connect_ok.get(label, 0)
+            elif kind == "cycle" and len(f) >= 4:
+                label = f[1]
+                labels.add(label)
+                cycles[label] = cycles.get(label, 0) + 1
+                cycle_kind[(label, f[3])] = cycle_kind.get((label, f[3]), 0) + 1
+            elif kind == "stat" and len(f) >= 7:
+                label = f[1]
+                stats_rtt.setdefault(label, []).append(num(f[4]))
+                stats_loss.setdefault(label, []).append(num(f[6]))
+            elif kind == "bench" and len(f) >= 3:
+                label = f[1]
+                labels.add(label)
+                entry = bench_summary.setdefault(label, {})
+                for i in range(2, len(f) - 1, 2):
+                    entry[f[i]] = f[i + 1]
+            elif kind == "event" and len(f) >= 5:
+                label = f[1]
+                labels.add(label)
+                events.append((label, f[2], f[3], f[4]))
+                if f[3] == "denial":
+                    denials[label] = denials.get(label, 0) + 1
+                if f[3] == "full":
+                    fulls[label] = fulls.get(label, 0) + 1
+            elif kind == "fail" and len(f) >= 9:
+                label = f[1]
+                labels.add(label)
+                failures.append((label, line))
+            elif kind == "counters" and len(f) >= 4:
+                label = f[1]
+                counters[(label, f[2])] = int(num(f[3]))
+            elif kind == "conserved" and len(f) >= 5:
+                label = f[1]
+                cons[label] = min(int(num(f[3])), int(num(f[4])))
+            elif kind == "verdict" and len(f) >= 2:
+                verdicts.append(f[1])
+
+    print("bench\tdir\tmode\tchannel\tbucket\tsent\treceived\tverified\tfailed\tlost\tsuperseded\tmissing\tout-of-order\tduplicate\tover\tpaced")
+    for key in sorted(cells, key=lambda k: (k[0], k[1], k[2], k[3], k[4])):
+        label, direction, mode, channel, bucket = key
+        print("%s\t%d\t%d\t%d\t%s\t%s" % (
+            label, direction, mode, channel, bucket,
+            "\t".join(str(v) for v in cells[key])))
+    print("")
+
+    failure_benches = set(label for label, _ in failures)
+    total_connects = sum(connect_total.values())
+    total_ok = sum(connect_ok.values())
+    for label in sorted(labels):
+        inputs = connect_ms.get(label, [])
+        rtts = stats_rtt.get(label, [])
+        losses = stats_loss.get(label, [])
+        summary = bench_summary.get(label, {})
+        rtt50 = num(summary.get("rtt-p50"), quantile(rtts, 0.50))
+        rtt99 = num(summary.get("rtt-p99"), quantile(rtts, 0.99))
+        loss = num(summary.get("loss"), quantile(losses, 0.50))
+        recon = reconnect_ms.get(label, [])
+        rp50 = num(summary.get("reconnect-p50"), quantile(recon, 0.50))
+        rp99 = num(summary.get("reconnect-p99"), quantile(recon, 0.99))
+        rmax = num(summary.get("reconnect-max"), max(recon) if recon else 0.0)
+        avg = (sum(inputs) / len(inputs)) if inputs else 0.0
+        print("bench %s: connects %d ok %d avg-ms %.1f reconnect-p50 %.1f reconnect-p99 %.1f reconnect-max %.1f "
+              "rtt-p50 %.3f rtt-p99 %.3f loss %.3f cycles %d clean %d silent %d denials %d fulls %d failures %d" % (
+                  label, connect_total.get(label, 0), connect_ok.get(label, 0), avg, rp50, rp99, rmax,
+                  rtt50, rtt99, loss, cycles.get(label, 0), cycle_kind.get((label, "clean"), 0),
+                  cycle_kind.get((label, "silent"), 0), denials.get(label, 0), fulls.get(label, 0),
+                  1 if label in failure_benches else 0))
+    print("")
+
+    if events:
+        print("events:")
+        for label, cycle, kind, detail in sorted(events):
+            print("%s\tcycle %s\t%s\t%s" % (label, cycle, kind, detail))
+        print("")
+
+    if failures:
+        print("failures:")
+        for label, line in failures:
+            print(line)
+        print("")
+
+    reasons = []
+    if not cells:
+        reasons.append("no cell rows")
+    if total_connects == 0:
+        reasons.append("no connect rows")
+    if total_connects != total_ok:
+        reasons.append("failed connect")
+    if any(v != "PASS" for v in verdicts):
+        reasons.append("verdict FAIL")
+    if failures:
+        reasons.append("failures")
+    if denials or fulls:
+        reasons.append("denial or full result")
+
+    for key, sums in cells.items():
+        label, direction, mode, channel, bucket = key
+        sent, received, verified, failed, lost, superseded, missing, ooo, dup, over, paced = sums
+        if failed > 0:
+            reasons.append("P1 failed cell %s/%d/%d/%d/%s" % (label, direction, mode, channel, bucket))
+        if mode in RELIABLE and (missing > 0 or ooo > 0 or dup > 0):
+            reasons.append("P2 cell %s/%d/%d/%d/%s missing=%d out-of-order=%d duplicate=%d" % (
+                label, direction, mode, channel, bucket, missing, ooo, dup))
+        if bucket == "over" and over != sent:
+            reasons.append("P4 over cell %s/%d/%d/%d over=%d sent=%d" % (label, direction, mode, channel, over, sent))
+
+    # P9 coverage: every mode and size bucket present for each direction that
+    # the run drove, and the over-maximum bucket attempted in the uplink.
+    seen = set()
+    for label, direction, mode, channel, bucket in cells:
+        seen.add((label, direction, mode, bucket))
+    directions = {}
+    for label, direction, mode, channel, bucket in cells:
+        directions.setdefault(label, set()).add(direction)
+    for label in sorted(directions):
+        for direction in sorted(directions[label]):
+            for mode in range(8):
+                for bucket in BUCKET_NAMES:
+                    if direction == 1 and bucket == "over":
+                        continue
+                    # a bucket the mode's maximum cannot reach is not sent
+                    if mode == 0 and bucket in ("medium", "large"):
+                        continue
+                    if mode == 1 and bucket == "large":
+                        continue
+                    if (label, direction, mode, bucket) not in seen:
+                        reasons.append("P9 coverage %s/dir%d/mode%d/%s" % (label, direction, mode, bucket))
+
+    if reasons:
+        unique = []
+        for reason in reasons:
+            if reason not in unique:
+                unique.append(reason)
+        for reason in unique[:20]:
+            print("fail: %s" % reason)
+        if len(unique) > 20:
+            print("fail: ... %d more" % (len(unique) - 20))
+        print("verdict: FAIL")
+        return 1
+
+    print("verdict: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("usage: live-xdp-fleet-merge RESULT [RESULT...]")
+        sys.exit(2)
+    sys.exit(main(sys.argv[1:]))

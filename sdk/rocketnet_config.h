@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_CONFIG_H
 #define ROCKETNET_CONFIG_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
 
 // The config engine (#106): the machinery behind the per-transport config
@@ -44,12 +44,46 @@ const struct rocketnet_config_field_t * rocketnet_client_transport_config_fields
 
 const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields( int * num_fields );
 
-// the mechanical env var derivation: "driver" -> "ROCKETNET_DRIVER". this
+// the mechanical env var derivation: "driver" -> "ROCKETNET_TRANSPORT". this
 // is the pre-ruling process-wide spelling; it is kept only to NAME the old
 // variable a create refuses aloud (see rocketnet_config_apply_env). returns
 // false when the buffer cannot hold the derived name.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
+
+// the public configs' send budget fields (sdk/rocketnet_api.cpp), one int
+// each: send_kbps for the client, per_client_send_kbps for the server. with
+// the transport tables and the message table they are every env-backed field
+// of rocketnet_client_config_t and rocketnet_server_config_t.
+
+const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( int * num_fields );
+
+const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( int * num_fields );
+
+// the name of a public struct's field by its index in the ABI descriptors
+// (sdk/rocketnet_abi.cpp), NULL past the end: the walk the env completeness
+// test takes over rocketnet_client_config_t and rocketnet_server_config_t.
+
+const char * rocketnet_abi_field_name( const char * type_name, int index );
+
+// the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
+// the defaults, into the transport config, the message config and the send
+// budget the layers take. read_env applies the message fields', the budget's
+// and the server's max_clients overrides, as create does; the other transport
+// fields take theirs at the transport's create. false, with a log line, for a
+// string too long for its layer field or a budget out of range.
+
+struct rocketnet_client_transport_config_t;
+struct rocketnet_server_transport_config_t;
+struct rocketnet_message_config_t;
+struct rocketnet_client_config_t;
+struct rocketnet_server_config_t;
+
+bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
+                                     struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+
+bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
+                                     struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 // the per-endpoint derivation (ruling 11): "server" + "max_payload_bytes" ->
 // "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" and "client" + "max_payload_bytes" ->
