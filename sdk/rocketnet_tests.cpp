@@ -7962,7 +7962,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_update( NULL, 1000.0 ) == ROCKETNET_UPDATE_OK ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_INVALID ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_disconnect_reason( NULL ) == ROCKETNET_DISCONNECT_REASON_NONE ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_index( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_transport_name( NULL ) == NULL ) );
@@ -12636,8 +12636,8 @@ void rocketnet_test_config_env_round_trip()
 
 void rocketnet_test_config_env_names_are_per_endpoint()
 {
-    struct rocketnet_test_env_guard_t legacy_guard;
-    rocketnet_test_env_save( &legacy_guard, "ROCKETNET_MAX_PAYLOAD_BYTES" );
+    struct rocketnet_test_env_guard_t process_wide_guard;
+    rocketnet_test_env_save( &process_wide_guard, "ROCKETNET_MAX_PAYLOAD_BYTES" );
 
     struct rocketnet_test_env_guard_t server_guard;
     rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
@@ -12716,7 +12716,7 @@ void rocketnet_test_config_env_names_are_per_endpoint()
 
     unsetenv( "ROCKETNET_MAX_PAYLOAD_BYTES" );
 
-    rocketnet_test_env_restore( &legacy_guard );
+    rocketnet_test_env_restore( &process_wide_guard );
     rocketnet_test_env_restore( &server_guard );
     rocketnet_test_env_restore( &client_guard );
 }

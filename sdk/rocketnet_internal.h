@@ -455,7 +455,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
 /** @brief Size in bytes of the client transport config before game_clock_epoch. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
 /** @brief Size in bytes of client transport config revision 1: with game_clock_epoch and step_driven, before the public link simulator fields. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ), sizeof( uint64_t ) )
 /** @brief Current known client transport config size, in bytes: the public link simulator fields. */
@@ -463,7 +463,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 /** @brief Current known client transport config size, in bytes. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
 /** @brief Current known client transport config size, in bytes. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
 
 // The server transport config table -- the single declaration everything
 // derives from, per the config system comment above. num_xdp_queues' range
@@ -493,13 +493,13 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )
 
 /** @brief Size in bytes of the server transport config before game_clock_epoch. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_LEGACY ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Size in bytes of server transport config revision 1: before the public link simulator fields. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, game_clock_epoch ) + sizeof( uint64_t ), sizeof( uint64_t ) )
 /** @brief Current known server transport config size, in bytes: the public link simulator fields. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Current known server transport config size, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_LEGACY, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
 #error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
