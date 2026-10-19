@@ -4,7 +4,8 @@
 # the readers on the nightly list. Each harness runs on the full bound,
 # 0..ROCKETNET_MAX_PACKET_BYTES bytes; results.md records each result.
 # Each harness then runs again with -DPROOF_WITNESS, where it must fail
-# exactly its "witness:" assertions (its accepting paths are reachable);
+# exactly its "witness:" assertions, every one of them and nothing else
+# (its accepting paths are reachable);
 # otherwise its one line reads VERIFICATION FAILED. A timeout also reads
 # VERIFICATION FAILED, with the reason.
 
@@ -51,7 +52,12 @@ proofs-client_packets:
 	        verdict="VERIFICATION FAILED (cbmc exit $$status)"; cat "$$output"; \
 	    fi; \
 	    rm -f "$$output"; \
-	    if [ $$status -ne 0 ]; then failed=1; fi; \
+	    if [ $$status -ne 0 ]; then \
+	        failed=1; \
+	        if [ "$$verdict" = "VERIFICATION SUCCESSFUL" ]; then \
+	            verdict="VERIFICATION FAILED (cbmc exit $$status)"; \
+	        fi; \
+	    fi; \
 	    output=$$(mktemp); \
 	    status=0; \
 	    timeout $(CLIENT_PACKETS_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(CLIENT_PACKETS_UNWIND) \
@@ -59,7 +65,8 @@ proofs-client_packets:
 	        $(CLIENT_PACKETS_SOURCE) > "$$output" 2>&1 || status=$$?; \
 	    failures=$$(grep -c ": FAILURE$$" "$$output"); \
 	    witnesses=$$(grep ": FAILURE$$" "$$output" | grep -c "witness: "); \
-	    if [ $$status -ne 10 ] || [ $$failures -lt 1 ] || [ $$failures -ne $$witnesses ]; then \
+	    unreached=$$(grep "witness: " "$$output" | grep -c ": SUCCESS$$"); \
+	    if [ $$status -ne 10 ] || [ $$failures -lt 1 ] || [ $$failures -ne $$witnesses ] || [ $$unreached -ne 0 ]; then \
 	        cat "$$output"; failed=1; \
 	        if [ "$$verdict" = "VERIFICATION SUCCESSFUL" ]; then \
 	            verdict="VERIFICATION FAILED (a witness was not reached)"; \
