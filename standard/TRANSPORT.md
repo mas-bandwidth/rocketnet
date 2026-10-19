@@ -838,12 +838,12 @@ types, and the response padding are:
 
 | Name | Value | Unit | Kind | Defined in |
 |---|---|---|---|---|
-| connection request wire size | `710` | bytes | size | [t8 Packet formats](#t8) |
-| connection denied wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
-| connection challenge wire size | `66` | bytes | size | [t8 Packet formats](#t8) |
-| connection response wire size | `50` | bytes | size | [t8 Packet formats](#t8) |
-| connection cookie wire size | `38` | bytes | size | [t8 Packet formats](#t8) |
-| connection keep-alive minimum wire size | `41` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection request wire size | `710` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection denied wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection challenge wire size | `66` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection response wire size | `50` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection cookie wire size | `38` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection keep-alive minimum wire size | `41` | bytes | size | [t8 Packet formats](#t8) |
 | connection payload minimum wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
 | connection disconnect minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
 | connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
