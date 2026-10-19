@@ -28,7 +28,7 @@
 // contract manufactures crashes that no packet can cause, so each surface
 // caps its slice where the transport caps it, and the cap is named.
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_base64.h"

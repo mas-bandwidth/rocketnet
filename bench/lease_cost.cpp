@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Valid-call diagnostic. See lease_cost.md; this does not measure NIC throughput.
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_packet_lease.h"
 #include <atomic>
 #include <chrono>
@@ -93,7 +93,7 @@ int main(int argc, char ** argv)
     CHECK(payload_bytes > 0 && payload_bytes <= 4096 && (threads == 1 || threads == 4) && batches > 0);
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     rocketnet_allocator(allocate, release);
-    CHECK(rocketnet_init());
+    CHECK(rocketnet_init( NULL ));
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);

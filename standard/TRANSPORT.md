@@ -471,11 +471,232 @@ input: address 2001:db8::7, port 56789
 <a id="t5"></a>
 ## t5. Prefilter header
 
-Status: pending
+Every packet a sender emits carries this header, and a receiver reads it
+before any other field. Its size is the row named prefilter header in
+[t3 Constants and registries](#t3).
 
-Scope: the 6-byte header on every packet (type, epoch, filter value); the
-unkeyed value at epoch 0; the keyed value at epochs 1 to 255 and the magic
-generation wrap; structural checks; vectors.
+1. A sender MUST begin every packet with the prefilter header.
+2. A receiver MUST read the packet type from byte offset 0, the filter epoch
+   from byte offset 1, and the filter value from byte offsets 2 through 5. A
+   receiver MUST NOT read a prefilter field at any other offset.
+3. A receiver MUST apply the checks of this section in the order given, before
+   any per-type check and before any cryptographic operation.
+4. A receiver MUST refuse a packet shorter than the prefilter header as too
+   short.
+5. A receiver MUST refuse a packet longer than the receive ceiling, the row
+   named receive ceiling in [t3 Constants and registries](#t3), as too large.
+6. A receiver MUST refuse a packet whose filter epoch is not the unkeyed
+   filter epoch, the row named unkeyed filter epoch in
+   [t3 Constants and registries](#t3), as a wrong epoch.
+7. A receiver MUST refuse a packet whose filter value does not equal the
+   receiver's unkeyed filter value as a wrong value.
+8. A receiver MUST return the packet type byte of a packet that passes every
+   check to the next processing step.
+9. A refusal MUST be silent: the receiver MUST NOT send a response.
+10. The unkeyed filter value MUST be a 32-bit per-title constant agreed by
+    value. A receiver MUST NOT derive it from the packet, from an address or
+    from a port.
+11. An implementation MUST take the unkeyed filter value from the field of
+    [t2.3 Configuration surface](#t2.3).
+12. The unkeyed filter value of the embedded test title is the value carried
+    by the accept vector below.
+
+Fields:
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |  packet type  |  filter epoch |      filter value [0..1]      |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |      filter value [2..3]      |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | the type of the packet that follows | 0 to 9; the per-type checks are later |
+| filter epoch | 1 | 1 | u8 | the rule that produced the filter value | 0, or 1 to 255 under [t5.1 Keyed epochs (optional extension)](#t5.1) |
+| filter value | 2 | 4 | bytes[4] | the unkeyed tag or a keyed MAC | any 4 bytes |
+
+Every constant this section states is a row of the table below.
+
+| Name | Value | Unit | Kind |
+|---|---|---|---|
+| packet type field width | `1` | bytes | size |
+| filter epoch field width | `1` | bytes | size |
+| filter value field width | `4` | bytes | size |
+| prefilter header width | `6` | bytes | size |
+| first keyed filter epoch | `1` | | registry |
+| last keyed filter epoch | `255` | | registry |
+| keyed filter input width | `7` | bytes | size |
+
+### t5.1. Keyed epochs (optional extension)
+
+This subsection is an optional extension. It is not part of conformance: an
+implementation that omits it conforms to this standard.
+
+An implementation MAY accept filter epochs from the row named first keyed
+filter epoch through the row named last keyed filter epoch in the table above.
+A receiver that accepts them MUST hold a prefilter magic for each epoch it
+accepts, and MUST compute the expected filter value as the low 4 bytes,
+little-endian, of SipHash-2-4 under that magic over the keyed filter input:
+the packet type, the packet length as a little-endian 16-bit value, then the
+first 4 bytes after the prefilter header. The packet length is the length of
+the whole packet in bytes. The 4 bytes after the prefilter header are read at
+the same offset for every packet type.
+
+A receiver that accepts keyed epochs MUST refuse a packet whose filter epoch
+names no magic it holds, before computing any MAC, and MUST refuse a packet
+shorter than the prefilter header plus the 4 bytes the keyed filter input
+covers, before computing any MAC. It MUST compare the computed value with the
+packet's filter value in constant time. It MUST NOT accept the unkeyed filter
+epoch.
+
+A sender that uses keyed epochs MUST use the generation most recently
+distributed to it. Generations MUST advance by one from the first keyed filter
+epoch and MUST wrap from the last keyed filter epoch back to the first; the
+unkeyed filter epoch MUST NOT name a generation.
+
+An implementation MUST NOT ship a default prefilter magic.
+
+Vectors:
+
+Each vector states the packet a receiver is given and the packet's bytes. The
+accept vector is the header a sender writes, and a receiver returns packet
+type 5 for it. The reject vector `t5.reject-short` is refused as too short,
+`t5.reject-long` as too large, `t5.reject-epoch` as a wrong epoch and
+`t5.reject-value` as a wrong value.
+
+```vector t5.unkeyed-accept
+packet type: 5
+filter epoch: 0
+filter value: the embedded test filter value
+packet length: 6
+05 00 b7 59 01 00
+```
+
+```vector t5.reject-short
+packet type: 5
+filter epoch: 0
+filter value: the embedded test filter value
+packet length: 5
+05 00 b7 59 01
+```
+
+```vector t5.reject-long
+packet type: 5
+filter epoch: 0
+filter value: the embedded test filter value
+packet length: 1473
+05 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00
+```
+
+```vector t5.reject-epoch
+packet type: 5
+filter epoch: 1
+filter value: the embedded test filter value
+packet length: 6
+05 01 b7 59 01 00
+```
+
+```vector t5.reject-value
+packet type: 5
+filter epoch: 0
+filter value: 00 00 00 00
+packet length: 6
+05 00 00 00 00 00
+```
 
 <a id="t6"></a>
 ## t6. Connect token
@@ -513,10 +734,358 @@ packet type, which key seals which type; sealed vectors.
 <a id="t10"></a>
 ## t10. Receive processing
 
-Status: pending
+A client MUST drop a datagram whose source is not the server it dialed
+before applying this list. A client protocol call with insufficient output
+capacity MUST be refused before this list and MUST increment
+`RECEIVE_CURSOR_TOO_SMALL`; it does not increment `PACKETS_RECEIVED`.
+A receiver MUST process every datagram that reaches this list through the
+ordered checks below. Each check MUST reject exactly the packets named for
+it and MUST increment exactly the counter named for it in
+[t18 Error handling and counters](#t18). A receiver MUST NOT examine a packet
+beyond the first check that rejects it. The list is the same for both ends;
+a row marked server or client applies only at that end.
 
-Scope: the receiver's ordered checks for every packet, from prefilter to
-dispatch, with the counter each refusal increments.
+1. A receiver MUST count the datagram as `PACKETS_RECEIVED` on entry to this
+   list, before any check.
+2. A receiver MUST apply the prefilter of [t5 Prefilter header](#t5). A
+   datagram shorter than the prefilter header is `PREFILTER_TOO_SHORT`; a
+   datagram longer than the receive ceiling is `PREFILTER_TOO_LARGE`; an
+   epoch this receiver does not hold is `PREFILTER_WRONG_EPOCH`; a filter
+   value that does not compare is `PREFILTER_WRONG_VALUE`. The comparison is
+   constant time when the epoch is nonzero.
+3. A receiver MUST reject a packet type at or above the first reserved
+   packet type as `RESERVED_TYPE`.
+4. A server MUST reject the connection denied, connection challenge and
+   connection cookie types as `WRONG_DIRECTION`. A client MUST reject the
+   connection request and connection response types as `WRONG_DIRECTION`.
+   These types travel in one direction only.
+5. A server MUST pass a connection request to
+   [t12 Handshake: server](#t12). A client MUST apply the connection cookie
+   state gate before checking its exact wire size, then pass an accepted cookie
+   to [t11 Handshake: client](#t11). A cookie in any other client state is
+   `CLIENT_COOKIE_WRONG_STATE`; a cookie in an accepted state with the wrong
+   exact size is `CLIENT_COOKIE_WRONG_SIZE`. Connection requests and cookies
+   carry no sealed data.
+6. For every other type with both checks, a receiver MUST apply the type's
+   size check before its state gate and before any decryption. A packet that
+   fails the size check MUST increment the type's `WRONG_SIZE` counter and
+   MUST NOT increment the integrity-failure count or a `DID_NOT_OPEN` counter.
+7. A receiver MUST apply each remaining type's state gate. A packet the
+   current state does not process is dropped with that type's `WRONG_STATE`
+   counter.
+8. A server MUST look up the connection mapping for the source address. A
+   packet with no mapping is `NO_MAPPING`. A client MUST drop a datagram
+   whose source is not the server it dialed, before the list above.
+9. A receiver MUST reconstruct the 64-bit sequence from the 32-bit wire
+   field and the highest sequence already opened. A reconstructed sequence
+   of zero is `ZERO_SEQUENCE`.
+10. For the session types, a receiver MUST reject a sequence already marked
+    received as `ALREADY_RECEIVED`, before decryption. The handshake types
+    have no replay test.
+11. For the connection denied and connection challenge types, the clear
+    session nonce sits between the sequence and the sealed data; a client
+    MUST derive handshake keys into temporary storage and MUST commit them
+    only after the open succeeds.
+12. A receiver MUST open the sealed data with the key for the type and the
+    associated data of [t9 Packet protection](#t9). A packet that does not
+    open, or whose expected handshake plaintext size is not exact, is
+    `DID_NOT_OPEN`; this check alone increments the integrity-failure count
+    that [t14 Replay protection](#t14) bounds.
+13. A server MUST reject a session packet whose mapping has no assigned
+    slot as `NOT_CONNECTED`, after the open and before marking the sequence.
+14. For the session types, a receiver MUST mark the sequence received and
+    then advance the most recent sequence.
+15. For session types, a receiver MUST read and validate the ack block at
+    the front of the opened data as [t15 Acknowledgement](#t15) specifies. A
+    malformed block is `BAD_ACK_BLOCK`; the type data behind it is not
+    examined. Handshake types have no ack block.
+16. For session types, a receiver MUST check the opened size less the ack
+    block against the type. A mismatch is `WRONG_OPENED_SIZE`.
+17. Before applying the ack block, a client MUST validate the index and
+    slot count in a keep-alive. The slot count MUST be from 1 through the
+    maximum client slot count, and the index MUST be less than the slot count.
+    An invalid value is `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+18. After the session checks pass, a receiver MUST apply the ack block's
+    delivery information and refresh the connection's receive time, then
+    perform the type-specific processing. A type-specific refusal increments
+    its counter; a fragment refusal does not undo the ack information or
+    receive-time refresh, as [t16 Fragmentation and reassembly](#t16)
+    specifies. Handshake types follow their type-specific processing after
+    their checks pass.
+
+| Step | Check | Position | Refusal counter |
+|---|---|---|---|
+| 1 | packet counted | entry | |
+| 2 | prefilter length, epoch, value | before decryption | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE`, `PREFILTER_WRONG_EPOCH`, `PREFILTER_WRONG_VALUE` |
+| 3 | reserved type | before decryption | `RESERVED_TYPE` |
+| 4 | direction | before decryption | `WRONG_DIRECTION` |
+| 5 | client cookie state gate | before exact cookie size | `CLIENT_COOKIE_WRONG_STATE` |
+| 5a | client cookie exact size | after cookie state gate | `CLIENT_COOKIE_WRONG_SIZE` |
+| 6 | wire size for each other type | before its state gate and before decryption | the type's `WRONG_SIZE` |
+| 7 | remaining state gates | before decryption | the type's `WRONG_STATE` |
+| 8 | server mapping | before decryption | `NO_MAPPING` |
+| 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
+| 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
+| 12 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
+| 13 | server slot gate | after decryption, before the replay mark | `NOT_CONNECTED` |
+| 15 | session ack block | after decryption | `BAD_ACK_BLOCK` |
+| 16 | session opened size less the ack block | after decryption | `WRONG_OPENED_SIZE` |
+| 17 | client keep-alive index and slot count | after decryption, before ack application | `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE` |
+| 18 | type-specific processing | after session ack application, or after handshake checks | the type's own counters |
+
+The fixed sizes of the handshake types, the minimum wire sizes of the session
+types, and the response padding are:
+
+| Name | Value | Unit | Kind | Defined in |
+|---|---|---|---|---|
+| receive connection request wire size | `710` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection denied wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection challenge wire size | `66` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection response wire size | `50` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection cookie wire size | `38` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection keep-alive minimum wire size | `41` | bytes | size | [t8 Packet formats](#t8) |
+| connection payload minimum wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| connection disconnect minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
+| connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
+| connection payload fragment minimum wire size | `40` | bytes | size | [t8 Packet formats](#t8) |
+| connection response padding | `24` | bytes | size | [t8 Packet formats](#t8) |
+| maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
+
+A session packet's total wire size is its minimum or larger, up to the
+receive ceiling. The payload's opened data holds at least one payload byte
+after the ack block.
+
+The vectors below name one malformed packet per refusal and the counter it
+fires. Each packet begins with the prefilter header of type, epoch and the
+test filter value, and each is truncated or altered at the step it tests.
+
+```vector t10.prefilter-too-short
+input: a connection payload packet truncated one byte below the prefilter header
+counter: PREFILTER_TOO_SHORT
+05 00 b7 59 01
+```
+
+```vector t10.prefilter-wrong-epoch
+input: a connection payload packet whose epoch is not a held generation
+counter: PREFILTER_WRONG_EPOCH
+05 01 b7 59 01 00
+```
+
+```vector t10.prefilter-wrong-value
+input: a connection payload packet whose filter value is not the receiver's
+counter: PREFILTER_WRONG_VALUE
+05 00 00 00 00 00
+```
+
+```vector t10.reserved-type
+input: a packet whose type is the first reserved packet type
+counter: RESERVED_TYPE
+0a 00 b7 59 01 00
+```
+
+```vector t10.server-wrong-direction
+input: a connection denied packet arriving at a server
+counter: WRONG_DIRECTION
+01 00 b7 59 01 00
+```
+
+```vector t10.client-session-wrong-size
+input: a connection keep-alive packet one byte below its minimum wire size
+counter: CLIENT_KEEP_ALIVE_WRONG_SIZE
+04 00 b7 59 01 00
+```
+
+```vector t10.prefilter-too-large
+input: a connection payload packet one byte above the receive ceiling
+counter: PREFILTER_TOO_LARGE
+05 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00
+```
+
+```vector t10.client-wrong-direction
+input: a connection request packet arriving at a client
+counter: WRONG_DIRECTION
+00 00 b7 59 01 00
+```
+
+```vector t10.client-cookie-state-before-size
+input: an undersized connection cookie at a client in a state that rejects cookies
+counter: CLIENT_COOKIE_WRONG_STATE
+07 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00
+```
+
+```vector t10.client-wrong-state
+input: a connection keep-alive packet at a client not in a session state
+counter: CLIENT_KEEP_ALIVE_WRONG_STATE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.server-no-mapping
+input: a connection keep-alive packet from an address with no mapping
+counter: KEEP_ALIVE_NO_MAPPING
+04 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00
+```
+
+```vector t10.server-not-connected
+input: a connection keep-alive packet for a mapping with no assigned slot
+counter: KEEP_ALIVE_NOT_CONNECTED
+04 00 b7 59 01 00 e8 03 00 00 2e 73 ac 3a 5d df
+e7 a5 8a f0 4a f3 97 9d f3 b7 56 9c a5 e6 86 63
+30 2e d1 bf d8 4e f9 ac 23
+```
+
+```vector t10.zero-sequence
+input: a connection keep-alive packet whose reconstructed sequence is zero
+counter: CLIENT_KEEP_ALIVE_ZERO_SEQUENCE
+04 00 b7 59 01 00 00 00 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.already-received
+input: a connection keep-alive packet whose sequence is already marked received
+counter: CLIENT_KEEP_ALIVE_ALREADY_RECEIVED
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.did-not-open
+input: a connection keep-alive packet sealed under a key the receiver does not hold
+counter: CLIENT_KEEP_ALIVE_DID_NOT_OPEN
+04 00 b7 59 01 00 e8 03 00 00 f8 c3 ad 9b 05 4e
+a2 d3 b5 79 df 29 48 34 2f ad 2d ca b4 05 1d 60
+e7 be f3 17 65 04 cf 34 2a
+```
+
+```vector t10.bad-ack-block
+input: a connection keep-alive packet whose ack block is malformed
+counter: CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK
+04 00 b7 59 01 00 e8 03 00 00 1b 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 c1 26 ae 3c ae 1b d1
+78 c4 a3 c6 ca 6f 48 a0 17
+```
+
+```vector t10.wrong-opened-size
+input: a connection keep-alive packet with nine type bytes after the ack block
+counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 c6 2e 2c 88 af c2 45
+4f 6f 62 77 03 4b 30 f3 49 2a
+```
+
+```vector t10.keep-alive-invalid-index
+input: a validly opened keep-alive whose client index equals its slot count
+counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8b 69 ab 93 07 a5 3c d6 11 13 7c 3d 36 90 4e
+d3 30 e5 ec f7 45 2e 8e 62
+```
+
+```vector t10.fragment-zero-payload-id
+input: a connection payload fragment packet naming payload id zero
+counter: FRAGMENT_ZERO_PAYLOAD_ID
+09 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a4 d2 ec a3 b0 d7 eb 0e af 4b
+9b b6 e3 94 bd 3b 5d 2c
+```
 
 <a id="t11"></a>
 ## t11. Handshake: client
@@ -538,10 +1107,166 @@ server's state table.
 <a id="t13"></a>
 ## t13. Session: keep-alive, timeout, disconnect, slot reset
 
-Status: pending
+A connection enters the session when the server assigns its slot and sends
+the first keep-alive. It ends by a deliberate disconnect by either endpoint,
+by either endpoint's timeout, or by the server's stop.
 
-Scope: keep-alive generation, connection timeout from the token, the
-redundant disconnect, slot reset and what a reset clears.
+1. An endpoint MUST generate keep-alives as
+   [t13.1 Keep-alive generation](#t13.1) says, paced by elapsed time at the
+   `send rate` row of [t3 Constants and registries](#t3).
+2. An endpoint MUST refresh the connection's idle clock when it accepts an
+   opened session packet from the peer, whatever the packet type.
+3. Every path that ends a connection MUST run exactly one reset on each side
+   ([t13.4 Slot reset](#t13.4)).
+4. An endpoint MUST ignore a session event in a state whose row of the state
+   table does not list it.
+
+The table is one endpoint's view. `sending connection response` is a client
+state; a server holds a slot from the first keep-alive it sends.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| connected | keep-alive interval elapsed | this endpoint is a server, and no keep-alive it sent has been acknowledged | send a keep-alive and stamp the keep-alive clock | connected |
+| connected | keep-alive interval elapsed | the interval has elapsed since the last send of anything, and this endpoint is a client or a keep-alive has been acknowledged | send a keep-alive | connected |
+| connected | any session packet sent | | stamp the send clock | connected |
+| connected | any session packet accepted from the peer | | refresh the idle clock | connected |
+| connected | idle timeout elapsed | the timeout is positive, and no packet has been accepted for the timeout | reset | disconnected |
+| connected | local disconnect | | send the redundant disconnect burst ([t13.3 Disconnect](#t13.3)) and reset | disconnected |
+| connected | disconnect opened | | reset | disconnected |
+| sending connection response | keep-alive opened | | store the client index and the client slot count, and refresh the idle clock | connected |
+| sending connection response | disconnect opened | | reset | disconnected |
+| sending connection response | local disconnect | | send the redundant disconnect burst ([t13.3 Disconnect](#t13.3)) and reset | disconnected |
+| disconnected | connection established | | assign the slot and send the first keep-alive | connected |
+
+<a id="t13.1"></a>
+### t13.1. Keep-alive generation
+
+A keep-alive is a sealed session packet of type `connection keep-alive packet` ([t3 Constants and registries](#t3)). Its type data names the client
+index and the client slot count.
+
+1. A server MUST send a keep-alive whenever the send rate interval has
+   elapsed since it last sent that peer a keep-alive, until a keep-alive it
+   sent to that peer has been acknowledged. Ordinary traffic MUST NOT
+   suppress this keep-alive.
+2. A server MUST send a keep-alive whenever the send rate interval has
+   elapsed since it last sent that peer anything, once a keep-alive it sent
+   to that peer has been acknowledged. Ordinary traffic suppresses this
+   keep-alive, which appears only while the connection is otherwise idle.
+3. A client in `connected` MUST send a keep-alive whenever the send rate
+   interval has elapsed since it last sent that peer anything. It keeps no
+   acknowledgement latch, so its own traffic always suppresses its
+   keep-alives. A client MUST NOT send a keep-alive in any other state.
+
+A client that receives a keep-alive in `sending connection response` MUST
+store the client index and the client slot count and MUST enter `connected`.
+A client that receives a keep-alive in `connected` MUST refresh its idle
+clock, as it does for any other accepted packet.
+
+An acknowledgement of a keep-alive is the peer's claim to have received it.
+A server MUST take the claim at face value and MUST NOT wait for any other
+evidence before entering the regime of rule 2.
+
+The type data of a keep-alive is:
+
+     0                   1                   2                   3
+     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                          client index                         |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                       client slot count                       |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| client index | 0 | 4 | u32 | the slot the server assigned this connection | 0 to one less than the client slot count |
+| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 to the `maximum client slot count` row of [t3 Constants and registries](#t3) |
+
+A keep-alive's type data is eight bytes and follows the ack block
+([t15 Acknowledgement](#t15)). A keep-alive carries no application bytes.
+
+The transcript below starts two clocks at 1000.0 with no keep-alive
+acknowledged, sends a payload at 1000.10, checks the keep-alive rule at
+1000.05, 1000.15, 1000.20 and 1000.30, acknowledges a keep-alive after
+1000.30, sends a payload at 1000.40, and checks the rule again at 1000.35,
+1000.45 and 1000.55. Each byte is one check: `01` sends a keep-alive, `00`
+suppresses one. The payload before the acknowledgement does not suppress the
+check at 1000.15; the payload after it suppresses the check at 1000.45.
+
+```vector t13.keep-alive-suppression
+input: send rate 10 hertz, both clocks at 1000.0, no keep-alive acknowledged
+input: payload sent at 1000.10
+input: due checks at 1000.05, 1000.15, 1000.20 and 1000.30
+input: keep-alive acknowledged after 1000.30
+input: payload sent at 1000.40
+input: due checks at 1000.35, 1000.45 and 1000.55
+input: one byte per due check, 01 sent and 00 suppressed
+00 01 00 01 00 00 01
+```
+
+<a id="t13.2"></a>
+### t13.2. Timeout
+
+An established connection times out at either end when no packet has been
+accepted from the peer for the connection timeout interval.
+
+The interval is the token's `timeout seconds` field ([t6 Connect token](#t6)).
+The server MUST refuse a connection request whose timeout is zero, MUST
+refuse a negative timeout unless a development mode explicitly permits one,
+and MUST clamp a positive timeout to the `server max_timeout_seconds` row of
+[t2.3 Configuration surface](#t2.3). A positive timeout is the interval; a
+negative timeout disables the timeout.
+
+A server whose connection times out MUST reset its slot
+([t13.4 Slot reset](#t13.4)) and MUST destroy the connection's encryption
+mapping. A client whose connection times out MUST enter `connection timed out` and MUST release its connection state.
+
+The timeout stands behind every lost disconnect: a peer that receives no
+disconnect still ends the connection when the interval has elapsed.
+
+<a id="t13.3"></a>
+### t13.3. Disconnect
+
+An endpoint that ends a connection deliberately MUST send the number of
+sealed disconnect packets named by the `server redundant disconnect packets`
+or `client redundant disconnect packets` row of
+[t3 Constants and registries](#t3), at consecutive session sequence numbers,
+each carrying the current ack block. It MUST then release its state
+immediately, without waiting for an acknowledgement.
+
+A client MUST send the burst only when it holds session keys: from `sending connection response` and `connected`. Outside those states it releases its
+state with no packet.
+
+A disconnect packet is never answered and never retransmitted. An endpoint
+that accepts one MUST treat the connection as ended and MUST reset.
+
+The type data of a disconnect is empty; its sealed plaintext holds only the
+ack block.
+
+<a id="t13.4"></a>
+### t13.4. Slot reset
+
+Every path that ends a connection MUST run exactly one slot reset on each
+side.
+
+A server slot reset MUST clear the slot's client id, user data, confirmed
+flag and mapping reference. It MUST destroy the associated encryption
+mapping, and with it both key phases, both send sequences and both replay
+windows. It MUST zero all key material rather than merely mark the slot
+free. The slot is immediately available for reuse, and a connection later
+assigned to it MUST start with fresh keys and sequences.
+
+A client reset MUST release its connection state and MUST zero its derived
+keys, its token keys and its ephemeral secret key. It ends in `disconnected`.
+
+A slot reset MUST keep the used-token history
+([t12 Handshake: server](#t12)). It MUST keep the disconnect reason until
+the slot's next connection is established, so an application can read why
+the previous connection ended.
+
+When a server stops it MUST disconnect every connected client with the
+redundant burst of [t13.3 Disconnect](#t13.3) and reset every slot. A server
+that starts again MUST begin with every slot free, no key or sequence from
+the previous run, and a fresh used-token history.
 
 <a id="t14"></a>
 ## t14. Replay protection
@@ -1299,6 +2024,8 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_DROPPED_REPLAYED` | `refusal` | `none` |
 | `CLIENT_CHALLENGE_WRONG_SIZE` | `refusal` | `CLIENT_CHALLENGE_RECEIVED` |
 | `CLIENT_DENIED_WRONG_SIZE` | `refusal` | `CLIENT_DENIED_RECEIVED` |
+| `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
+| `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -1412,60 +2139,158 @@ f7 fa 01 00 00 75 4f 7d 3a 00 00 00 b1 eb 07 8c
 00 34 b4 85 d8 00 00 00 b0 cb 42 af 01 00 00 00
 d9 df bc 00 21 00 bd b0 38 5c 01 00 00 9f 8d 1d
 fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
-54 00
+54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00 08 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
 
-Status: pending
+An implementation MUST provide the defences the table below names, each by the
+mechanism its row names. A change to any mechanism MUST be re-checked against
+the property the row it carries.
 
-Scope: what RN-1 defends against and what it does not; the provisioning
-trust anchor; amplification; disclosure of the prefilter magic.
+| Property | Mechanism |
+|---|---|
+| Only backend-authorized clients connect | Ed25519 signature, verified before the sealed block is opened |
+| Session keys confidential in transit | sealed to the server's public key |
+| Client identity hidden from observers | client id inside the sealed block |
+| Token fields unmodifiable | signature over the whole signed buffer |
+| No asymmetric work for a spoofed source | MAC cookie before any signature verification |
+| No slot for a client that is not there | challenge answered from the claimed address before any slot |
+| Packet type and salt unmodifiable | AEAD associated data |
+| Packet replay refused | per-phase, per-direction sequence window; the sequence is the nonce |
+| Token reuse from another address refused | used-token history keyed on a hash of the signed data |
+| A key or nonce never outlives one connection | keys derived per connection from a fresh salt and a fresh session nonce |
+| No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
+| Recorded traffic stays closed after any later compromise | ephemeral X25519 exchange; secrets erased at derivation |
+| A compromised server mints nothing | servers hold no signing key |
+
+<a id="t19.1"></a>
+### t19.1. Amplification
+
+A server MUST NOT send a response larger than the packet that provoked it. Each
+row of the table below names a provoking packet and the response it can elicit,
+at most; a change to any packet size MUST be re-checked against every row.
+
+| Provoking packet | Response |
+|---|---|
+| connection request | connection cookie |
+| connection request | connection challenge, fresh or resent |
+| connection request | connection denied |
+| connection challenge | connection response |
+| connection response | connection keep-alive, minimum |
+| connection response | connection denied |
+| connection cookie | nothing |
+
+The sizes that keep every row true are the pinned rows below. The keep-alive row
+uses its minimum fresh-block size; a keep-alive grows only when the peer's own
+session packets added ranges for it to report, so a larger keep-alive is always
+answered traffic, never an amplifier.
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| connection request wire size | `710` | bytes | the whole connection request packet |
+| connection cookie wire size | `38` | bytes | the only answer to a rejected request |
+| connection challenge wire size | `66` | bytes | a fresh or resent connection challenge |
+| connection response wire size | `50` | bytes | the whole connection response packet |
+| connection keep-alive minimum wire size | `41` | bytes | a first keep-alive with a fresh block |
+| connection denied wire size | `34` | bytes | the whole connection denied packet |
+
+Two rules keep the table true rather than merely accurate. Padding used to
+satisfy a row MUST be checked on read, for length and content. A server MUST NOT
+answer a request it has rejected; the connection cookie is the single exception
+and is smaller than the request.
+
+```vector t19.amplification
+input: each row's packet type (u8) and wire size (u16), in the rows' order
+00 c6 02 07 26 00 02 42 00 03 32 00 04 29 00 01
+22 00
+```
+
+<a id="t19.2"></a>
+### t19.2. Development keys
+
+The published development keys are a fixed backend signing key, a fixed server
+public key and its secret half, and a fixed development protocol id. They are
+public: anyone who holds them can forge a token a server accepts and open every
+session. They exist so a first wiring works without a backend, and they MUST NOT
+be load-bearing in production.
+
+1. A development key MUST NOT be used unless a deployment configured it
+   explicitly. An endpoint whose configuration supplies no key MUST NOT inherit
+   a development credential.
+2. An implementation MUST refuse to create an endpoint that would use a
+   development key when it is compiled without the development flag, and MUST
+   NOT allow configuration alone to override that refusal.
+3. Every start that uses a development key MUST log a warning, at warn level or
+   louder, saying the keys are public and not for production. A server logs it
+   from its own keys; a client logs it when its token's server key is a
+   development key.
+4. An implementation MUST NOT accept the development backend public key when a
+   deployment supplies its own backend public key.
+5. Nothing else is relaxed. A development connection runs the same handshake,
+   cookie exchange, address validation, sealing, key derivation, replay
+   protection and erasure as a production connection.
+
+<a id="t19.3"></a>
+### t19.3. What this section does not defend
+
+RN-1 does not defend against a volumetric flood large enough to fill a link:
+once the link is saturated, nothing a server does with a packet matters, and
+that is answered by capacity and by upstream scrubbing. Nor does RN-1 defend
+against an attacker holding many genuinely issued connect tokens; such an
+attacker is past every bar this protocol has by definition. Both are the
+backend's to answer, and a deployment's denial-of-service posture lives in how
+its backend issues tokens, not in how its servers parse packets.
 
 <a id="t20"></a>
 ## t20. Conformance
 
-Status: pending
+An implementation conforms to RN-1 when it produces and accepts the exact binary
+formats the sections specify, performs the processing steps in the order given,
+and holds the key inventory of [t2 Architecture and key inventory](#t2); in
+particular, no secret shared between a backend and a server beyond the keyed
+prefilter magic of [t5 Prefilter header](#t5), and signature verification before
+the sealed block is trusted.
 
-Scope: what an implementation claims, the conformance classes (client,
-server, backend), and the vectors each class reproduces.
+<a id="t20.1"></a>
+### t20.1. Conformance classes
+
+Conformance is claimed per role: client, server, or backend. A claim names the
+role and the revision of RN-1 it meets.
+
+* A client implementation MUST reproduce the client handshake, the sealed
+  packets, replay protection, acknowledgement and fragmentation, and the
+  client's receive checks.
+* A server implementation MUST reproduce the server handshake, cookie issue and
+  validation, slot assignment, session teardown, and the server's receive
+  checks.
+* A backend implementation MUST mint connect tokens whose bytes match
+  [t6 Connect token](#t6), signed so that signature verification precedes trust
+  in the sealed block.
+
+<a id="t20.2"></a>
+### t20.2. Demonstrating conformance
+
+A conforming implementation MUST publish, and check itself against, fixed
+known-answer vectors covering: a connect token built from fixed keys, the four
+derived per-connection keys, one sealed packet of each type with its exact
+associated data bytes, and one cookie MAC. Self-consistency proves an
+implementation agrees with itself; only known-answer vectors prove that two
+implementations agree with each other.
+
+A negative test of a receive check MUST assert two counters: the reason counter,
+and the packet type's received counter. The reason alone does not show that a
+packet reached the check. A positive test MUST assert the success counter and
+independently observe the result: the bytes on the wire, the state transition, or
+the slot assigned. A counter with no test that names it is an untested branch;
+the counter list and the test list MUST be the same list.
 
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
 
-This appendix indexes every vector of RN-1 by the section that defines it.
-It is generated; the bytes are in the sections.
-
-<!-- vector-index:begin -->
-| Section | Vector |
-|---|---|
-| [t3 Constants and registries](#t3) | `t3.token-identifier` |
-| [t4 Wire encoding primitives](#t4) | `t4.address-ipv4` |
-| [t4 Wire encoding primitives](#t4) | `t4.address-ipv6` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-start` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-steady` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
-| [t15 Acknowledgement](#t15) | `t15.fresh` |
-| [t15 Acknowledgement](#t15) | `t15.fully-received` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-first-too-long` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-first` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-range` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-geometry` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-short` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-walk` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-first` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-gap` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-length` |
-| [t15 Acknowledgement](#t15) | `t15.one-loss` |
-| [t15 Acknowledgement](#t15) | `t15.sequence-wrap` |
-| [t15 Acknowledgement](#t15) | `t15.truncated-oldest` |
-| [t15 Acknowledgement](#t15) | `t15.two-losses` |
-| [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
-| [t17 Timing and defaults](#t17) | `t17.timing-defaults` |
-| [t18 Error handling and counters](#t18) | `t18.counter-registry` |
-<!-- vector-index:end -->
+The index of the vectors of RN-1 by section is printed by
+`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
+in the sections.
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02

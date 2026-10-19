@@ -281,7 +281,7 @@ static void sequenced_no_allocation_after_create()
 {
     rocketnet_term();
     rocketnet_unit_check( rocketnet_allocator( sequenced_counting_malloc, sequenced_counting_free ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_init( NULL ) );
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
     rocketnet_unit_check( arena != NULL );
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -300,7 +300,7 @@ static void sequenced_no_allocation_after_create()
     rn_arena_destroy( arena );
     rocketnet_term();
     rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_init( NULL ) );
 }
 
 REGISTER_UNIT_TEST( older_dropped_newest_delivered );

@@ -4,7 +4,7 @@
 #include "rocketnet_constants.h"
 replay window depth minimum	ROCKETNET_HISTORY_PACKETS_MIN	4096
 replay window depth maximum	ROCKETNET_HISTORY_PACKETS_MAX	32768
-version	ROCKETNET_VERSION	0x4E7C1A93
+version	ROCKETNET_WIRE_VERSION	0x4E7C1A93
 connection request packet	ROCKETNET_CONNECTION_REQUEST_PACKET	0
 connection denied packet	ROCKETNET_CONNECTION_DENIED_PACKET	1
 connection challenge packet	ROCKETNET_CONNECTION_CHALLENGE_PACKET	2

@@ -16,7 +16,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_constants.h"
@@ -67,7 +67,7 @@ static void max_payload_mint_token( uint8_t * token_data )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof(signed_fields) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
