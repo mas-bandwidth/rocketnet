@@ -349,6 +349,47 @@ client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_
 
 Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
 
+## macOS timing and App Nap
+
+macOS throttles a backgrounded or occluded app (App Nap) and coalesces timers
+for threads at a low quality-of-service class. The client I/O thread's wait is
+a guard, not a cadence: `ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS` (1 ms) and
+`rocketnet_platform_thread_wait`. Without an explicit class, a napped game sees
+that wait stretch to tens of milliseconds, the receive thread falls behind, and
+a connection the game left in the background times out.
+
+**What the library sets.** `rocketnet_platform_thread_create`
+(`sdk/rocketnet_platform.cpp`) sets the thread's quality-of-service class with
+`pthread_set_qos_class_self_np` at thread start on macOS and iOS, before the
+thread's loop runs. The class is `QOS_CLASS_USER_INTERACTIVE`, so the I/O
+thread's bounded wait is not coalesced as a background thread's timer. The
+frame-sync path separately asks for `THREAD_TIME_CONSTRAINT_POLICY`
+(`sdk/rocketnet_frame_sync.cpp`) on the waiting thread.
+
+**What the game must do itself.** Setting a thread class is not enough for a
+game whose whole process is napped. While connected, the game holds an
+`NSProcessInfo` activity that keeps the process out of App Nap and marks the
+work latency-critical:
+
+```objc
+id<NSObject> activity =
+    [[NSProcessInfo processInfo]
+        beginActivityWithOptions:(NSActivityUserInitiated | NSActivityLatencyCritical)
+                          reason:@"rocketnet connection"];
+
+// ... while connected ...
+
+[[NSProcessInfo processInfo] endActivity:activity];
+```
+
+The game also keeps calling `rocketnet_client_update` from the frame loop and
+does not move its network cadence onto main-thread run-loop timers, which App
+Nap coalesces independently of the I/O thread's class.
+
+**Measured numbers.** The BASE, head and planted-background-QoS numbers for
+this section come from the macOS member that runs the timing card; they are
+recorded in that card's report.
+
 ## Per-platform cards
 
 **rocketnet-client-io-transport (lands first, platform-generic).** PATHS:
