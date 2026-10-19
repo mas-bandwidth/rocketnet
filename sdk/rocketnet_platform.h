@@ -533,8 +533,10 @@ void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thr
  * Returns when the duration passes or when rocketnet_platform_thread_wake has
  * been called for the calling thread; once woken, every later wait returns at
  * once. The wake is an explicit signal, so a woken thread does not depend on
- * its wait's timeout firing. Called on a thread that thread_create did not
- * start, it sleeps for the duration.
+ * its wait's timeout firing. POSIX waits on a condition variable, macOS and
+ * iOS on a mach semaphore (the primitive usleep waits on there, so the
+ * per-wait cost matches usleep), Windows on an event. Called on a thread that
+ * thread_create did not start, it sleeps for the duration.
  * @param time Requested seconds; must be positive.
  * @return None.
  */
@@ -740,6 +742,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
     #include <pthread.h>
     #include <unistd.h>
+    #include <mach/mach_types.h>
 
     typedef int rocketnet_platform_socket_handle_t;
 
@@ -756,9 +759,8 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         void * context;
         pthread_t handle;
-        pthread_mutex_t wake_mutex;     // guards woken for thread_wait and thread_wake
-        pthread_cond_t wake_cond;       // signalled by thread_wake
-        bool woken;                     // set once by thread_wake; never cleared
+        mach_port_t wake_semaphore;     // a mach semaphore: thread_wait waits on it, thread_wake signals it
+        int woken;                      // set once by thread_wake (atomic store), never cleared
     };
 
     struct rocketnet_platform_mutex_t

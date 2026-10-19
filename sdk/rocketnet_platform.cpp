@@ -2682,13 +2682,10 @@ static void * thread_function_shim( void * data )
 
 static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * thread )
 {
-    if ( pthread_cond_init( &thread->wake_cond, NULL ) != 0 )
+    semaphore_t semaphore = MACH_PORT_NULL;
+    if ( semaphore_create( mach_task_self(), &semaphore, SYNC_POLICY_FIFO, 0 ) != KERN_SUCCESS )
         return false;
-    if ( pthread_mutex_init( &thread->wake_mutex, NULL ) != 0 )
-    {
-        pthread_cond_destroy( &thread->wake_cond );
-        return false;
-    }
+    thread->wake_semaphore = semaphore;
     return true;
 }
 
@@ -2712,7 +2709,7 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->real_thread_data = arg;
     shim_data->thread = thread;
 
-    thread->woken = false;
+    thread->woken = 0;
     if ( !rocketnet_platform_thread_wake_init( thread ) )
     {
         rocketnet_free( context, thread );
@@ -2722,8 +2719,7 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
 
     if ( pthread_create( &thread->handle, NULL, thread_function_shim, shim_data ) != 0 )
     {
-        pthread_cond_destroy( &thread->wake_cond );
-        pthread_mutex_destroy( &thread->wake_mutex );
+        semaphore_destroy( mach_task_self(), (semaphore_t) thread->wake_semaphore );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
         return NULL;
@@ -2741,8 +2737,7 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
-    pthread_cond_destroy( &thread->wake_cond );
-    pthread_mutex_destroy( &thread->wake_mutex );
+    semaphore_destroy( mach_task_self(), (semaphore_t) thread->wake_semaphore );
     rocketnet_free( thread->context, thread );
 }
 
@@ -2754,23 +2749,23 @@ void rocketnet_platform_thread_wait( double time )
         rocketnet_platform_sleep( time );
         return;
     }
+    // woken is stored before the semaphore is signalled: a wake that lands
+    // before this check ends the wait here, one that lands after it ends the
+    // semaphore wait
+    if ( __atomic_load_n( &thread->woken, __ATOMIC_ACQUIRE ) )
+        return;
     const long nanoseconds = (long) ( time * 1000000000.0 );
-    struct timespec relative;
-    relative.tv_sec = nanoseconds / 1000000000L;
-    relative.tv_nsec = nanoseconds % 1000000000L;
-    pthread_mutex_lock( &thread->wake_mutex );
-    if ( !thread->woken )
-        pthread_cond_timedwait_relative_np( &thread->wake_cond, &thread->wake_mutex, &relative );
-    pthread_mutex_unlock( &thread->wake_mutex );
+    mach_timespec_t relative;
+    relative.tv_sec = (unsigned int) ( nanoseconds / 1000000000L );
+    relative.tv_nsec = (clock_res_t) ( nanoseconds % 1000000000L );
+    semaphore_timedwait( (semaphore_t) thread->wake_semaphore, relative );
 }
 
 void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
-    pthread_mutex_lock( &thread->wake_mutex );
-    thread->woken = true;
-    pthread_cond_broadcast( &thread->wake_cond );
-    pthread_mutex_unlock( &thread->wake_mutex );
+    __atomic_store_n( &thread->woken, 1, __ATOMIC_RELEASE );
+    semaphore_signal( (semaphore_t) thread->wake_semaphore );
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
