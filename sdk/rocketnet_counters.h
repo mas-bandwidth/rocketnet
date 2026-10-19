@@ -774,7 +774,7 @@
     X( MESSAGE_SEND_REFUSED, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY: Counts batch entries ignored because the connection in that slot has changed. Unit: occurrences. Class: expected; family: none. */ \
     X( MESSAGE_STALE_CONNECTION_ENTRY, EXPECTED, NONE ) \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED: Counts updates refused while a received message view remains held. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED: Counts the number of held messages each update while a received message view remains held; the update continues and returns ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. Unit: messages. Class: refusal; family: none. */ \
     X( MESSAGE_NOT_RELEASED, REFUSAL, NONE ) \
     \
     /* The kernel prefilter counters (sdk/rocketnet_wire.h */ \
