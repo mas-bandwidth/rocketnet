@@ -265,7 +265,7 @@ int rocketnet_client_transport_default_config_sized( struct rocketnet_client_tra
     if ( !rocketnet_api_null_guard( config ) )
         return 0;
     struct rocketnet_client_transport_config_t defaults;
-    rocketnet_client_transport_default_config( &defaults );
+    rocketnet_client_transport_default_config_current( &defaults );
     return rocketnet_config_write_sized( "rocketnet_client_transport_config_t", config, config_bytes, &defaults, sizeof( defaults ), ROCKETNET_KNOWN_BYTES( rocketnet_client_transport_config_known_bytes ) );
 }
 
@@ -274,7 +274,7 @@ int rocketnet_server_transport_default_config_sized( struct rocketnet_server_tra
     if ( !rocketnet_api_null_guard( config ) )
         return 0;
     struct rocketnet_server_transport_config_t defaults;
-    rocketnet_server_transport_default_config( &defaults );
+    rocketnet_server_transport_default_config_current( &defaults );
     return rocketnet_config_write_sized( "rocketnet_server_transport_config_t", config, config_bytes, &defaults, sizeof( defaults ), ROCKETNET_KNOWN_BYTES( rocketnet_server_transport_config_known_bytes ) );
 }
 
@@ -295,7 +295,7 @@ static const struct rocketnet_client_transport_config_t * rocketnet_client_trans
     if ( config == NULL )
         return NULL;
     struct rocketnet_client_transport_config_t defaults;
-    rocketnet_client_transport_default_config( &defaults );
+    rocketnet_client_transport_default_config_current( &defaults );
     if ( !rocketnet_config_read_sized( "rocketnet_client_transport_config_t", read, &defaults, sizeof( defaults ), config, config_bytes, ROCKETNET_KNOWN_BYTES( rocketnet_client_transport_config_known_bytes ) ) )
         *refused = true;
     return read;
@@ -306,7 +306,7 @@ static const struct rocketnet_server_transport_config_t * rocketnet_server_trans
     if ( config == NULL )
         return NULL;
     struct rocketnet_server_transport_config_t defaults;
-    rocketnet_server_transport_default_config( &defaults );
+    rocketnet_server_transport_default_config_current( &defaults );
     if ( !rocketnet_config_read_sized( "rocketnet_server_transport_config_t", read, &defaults, sizeof( defaults ), config, config_bytes, ROCKETNET_KNOWN_BYTES( rocketnet_server_transport_config_known_bytes ) ) )
         *refused = true;
     return read;
@@ -330,7 +330,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_sized( v
     const struct rocketnet_client_transport_config_t * effective = rocketnet_client_transport_config_read_sized( &read, config, config_bytes, &refused );
     if ( refused )
         return NULL;
-    return rocketnet_client_transport_create( context, connect_token, effective, time );
+    return rocketnet_client_transport_create_current( context, connect_token, effective, time );
 }
 
 // the server config carries the secret key: the stack copy is wiped on every path
@@ -339,7 +339,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_sized( v
     bool refused = false;
     struct rocketnet_server_transport_config_t read;
     const struct rocketnet_server_transport_config_t * effective = rocketnet_server_transport_config_read_sized( &read, config, config_bytes, &refused );
-    struct rocketnet_server_transport_t * server_transport = refused ? NULL : rocketnet_server_transport_create( context, public_address_string, effective );
+    struct rocketnet_server_transport_t * server_transport = refused ? NULL : rocketnet_server_transport_create_current( context, public_address_string, effective );
     sodium_memzero( &read, sizeof( read ) );
     return server_transport;
 }

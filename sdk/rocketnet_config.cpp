@@ -29,22 +29,34 @@
 #define ROCKETNET_CONFIG_DEFAULT_BYTES( name, size, def, flags )        { static const uint8_t rocketnet_default_##name[size] = def; memcpy( config->name, rocketnet_default_##name, size ); }
 #define ROCKETNET_CONFIG_DEFAULT_STRING( name, capacity, def, flags )   snprintf( config->name, capacity, "%s", def );
 
+void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config )
+{
+    memset( config, 0, sizeof(*config) );
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+}
+
 void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return;
-    rocketnet_assert( config );
-    memset( config, 0, sizeof(struct rocketnet_client_transport_config_t) );
-    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+    struct rocketnet_client_transport_config_t defaults;
+    rocketnet_client_transport_default_config_current( &defaults );
+    memcpy( config, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 );
+}
+
+void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config )
+{
+    memset( config, 0, sizeof(*config) );
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
 }
 
 void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return;
-    rocketnet_assert( config );
-    memset( config, 0, sizeof(struct rocketnet_server_transport_config_t) );
-    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+    struct rocketnet_server_transport_config_t defaults;
+    rocketnet_server_transport_default_config_current( &defaults );
+    memcpy( config, &defaults, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
 }
 
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
@@ -97,9 +109,10 @@ static const struct rocketnet_config_field_t rocketnet_message_config_field_tabl
 
 struct rocketnet_client_transport_config_table_t
 {
-    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     void (*state_change_callback)( void * context, int previous_state, int current_state );
     double (*time_callback)( void * context );
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
 
 struct rocketnet_server_transport_config_table_t
@@ -123,9 +136,12 @@ struct rocketnet_message_config_table_t
 
 #define ROCKETNET_CONFIG_LAYOUT_PUBLIC struct rocketnet_client_transport_config_t
 #define ROCKETNET_CONFIG_LAYOUT_TABLE struct rocketnet_client_transport_config_table_t
-ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
+ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
 ROCKETNET_CONFIG_LAYOUT_FIELD( state_change_callback )
 ROCKETNET_CONFIG_LAYOUT_FIELD( time_callback )
+ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
+static_assert( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, "client revision 1 ends at time_callback" );
+static_assert( offsetof( struct rocketnet_client_transport_config_t, simulated_loss_percent ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, "client revision 2 appends after revision 1" );
 static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h client transport config matches its table" );
 #undef ROCKETNET_CONFIG_LAYOUT_PUBLIC
 #undef ROCKETNET_CONFIG_LAYOUT_TABLE

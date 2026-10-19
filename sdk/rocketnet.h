@@ -720,6 +720,10 @@ struct rocketnet_client_config_t
     int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    int simulated_loss_percent;                     // development only: outgoing loss 0..100; 0 is off
+    int simulated_latency_ms;                       // development only: outgoing latency in milliseconds; 0 is off
+    int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
+    int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
 };
 
 // The server is configured explicitly: rocketnet_server_default_config gives
@@ -767,6 +771,10 @@ struct rocketnet_server_config_t
     int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    int simulated_loss_percent;                     // development only: outgoing loss 0..100; 0 is off
+    int simulated_latency_ms;                       // development only: outgoing latency in milliseconds; 0 is off
+    int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
+    int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
 };
 
 // -----------------------------------------

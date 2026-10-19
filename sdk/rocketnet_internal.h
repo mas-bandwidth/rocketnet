@@ -343,16 +343,22 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 //   BYTES_FIELD( name, size, default, flags )
 //   STRING_FIELD( name, capacity, default, flags )
 
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
     BYTES_FIELD(  filter_value,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
+    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )
+
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
     INT_FIELD(    simulated_loss_percent,      0,                         0, 100,                                              0 )                          \
     INT_FIELD(    simulated_latency_ms,        0,                         0, 60000,                                            0 )                          \
     INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            0 )                          \
     INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )
+
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
 
 #define ROCKETNET_CONFIG_STRUCT_INT( name, def, min, max, flags )       int name;
 #define ROCKETNET_CONFIG_STRUCT_UINT64( name, def, flags )              uint64_t name;
@@ -386,7 +392,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 /** @brief Size in bytes of client transport config revision 2: the public link simulator fields. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
 /** @brief Current known client transport config size, in bytes. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2
 
 // The server transport config table -- the single declaration everything
 // derives from, per the config system comment above. num_xdp_queues' range
@@ -419,7 +425,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 /** @brief Size in bytes of server transport config revision 2: the public link simulator fields. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Current known server transport config size, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
 #error ROCKETNET_MAX_CHANNELS must be between 1 and 65536

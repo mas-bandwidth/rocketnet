@@ -881,7 +881,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
         return NULL;
     }
 
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create( context, address, transport_config );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_sized( context, address, transport_config, sizeof(*transport_config) );
     if ( !transport )
         return NULL;
 

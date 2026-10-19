@@ -128,7 +128,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         config = &defaults;
     }
 
-    rocketnet_client_transport_default_config( transport );
+    rocketnet_client_transport_default_config_current( transport );
     memcpy( transport->filter_value, config->filter_value, sizeof( transport->filter_value ) );
     transport->max_payload_bytes = config->max_payload_bytes;
     transport->num_reassembly_slots = config->num_reassembly_slots;
@@ -136,6 +136,10 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     transport->state_change_callback = config->state_change_callback;
     transport->time_callback = config->time_callback;
+    transport->simulated_loss_percent = config->simulated_loss_percent;
+    transport->simulated_latency_ms = config->simulated_latency_ms;
+    transport->simulated_jitter_ms = config->simulated_jitter_ms;
+    transport->simulated_duplicate_percent = config->simulated_duplicate_percent;
 
     rocketnet_message_default_config( message );
 #define RN_COPY( name ) message->name = config->name;
@@ -161,7 +165,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         config = &defaults;
     }
 
-    rocketnet_server_transport_default_config( transport );
+    rocketnet_server_transport_default_config_current( transport );
     transport->protocol_id = config->protocol_id;
     transport->max_clients = config->max_clients;
     memcpy( transport->filter_value, config->filter_value, sizeof( transport->filter_value ) );
@@ -174,6 +178,10 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->num_reassembly_slots = config->num_reassembly_slots;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
+    transport->simulated_loss_percent = config->simulated_loss_percent;
+    transport->simulated_latency_ms = config->simulated_latency_ms;
+    transport->simulated_jitter_ms = config->simulated_jitter_ms;
+    transport->simulated_duplicate_percent = config->simulated_duplicate_percent;
     if ( !rn_copy_config_string( transport->driver, sizeof( transport->driver ), config->transport, "auto", "server", "transport" ) )
         return false;
     if ( !rn_copy_config_string( transport->public_address, sizeof( transport->public_address ), config->public_address, "", "server", "public_address" ) )
@@ -233,13 +241,17 @@ void rocketnet_client_default_config( struct rocketnet_client_config_t * config 
         return;
     memset( config, 0, sizeof( *config ) );
     struct rocketnet_client_transport_config_t transport;
-    rocketnet_client_transport_default_config( &transport );
+    rocketnet_client_transport_default_config_current( &transport );
     memcpy( config->filter_value, transport.filter_value, sizeof( config->filter_value ) );
     config->max_payload_bytes = transport.max_payload_bytes;
     config->num_reassembly_slots = transport.num_reassembly_slots;
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
     config->time_callback = transport.time_callback;
+    config->simulated_loss_percent = transport.simulated_loss_percent;
+    config->simulated_latency_ms = transport.simulated_latency_ms;
+    config->simulated_jitter_ms = transport.simulated_jitter_ms;
+    config->simulated_duplicate_percent = transport.simulated_duplicate_percent;
     config->send_kbps = ROCKETNET_DEFAULT_CLIENT_SEND_KBPS;
     struct rocketnet_message_config_t message;
     rocketnet_message_default_config( &message );
@@ -248,16 +260,33 @@ void rocketnet_client_default_config( struct rocketnet_client_config_t * config 
 #undef RN_COPY
 }
 
+static size_t rn_client_config_bytes_1()
+{
+    return offsetof( struct rocketnet_client_config_t, simulated_loss_percent );
+}
+
+static size_t rn_server_config_bytes_1()
+{
+    return offsetof( struct rocketnet_server_config_t, simulated_loss_percent );
+}
+
+static bool rn_public_config_size_known( size_t bytes, size_t revision_1, size_t current )
+{
+    return bytes == revision_1 || bytes == current;
+}
+
 int rocketnet_client_default_config_sized( struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return 0;
-    if ( config_bytes != sizeof( struct rocketnet_client_config_t ) )
+    if ( !rn_public_config_size_known( config_bytes, rn_client_config_bytes_1(), sizeof( struct rocketnet_client_config_t ) ) )
     {
         rocketnet_error( "client default config refused: %d is not a known size of rocketnet_client_config_t (%d)", (int) config_bytes, (int) sizeof( struct rocketnet_client_config_t ) );
         return 0;
     }
-    rocketnet_client_default_config( config );
+    struct rocketnet_client_config_t defaults;
+    rocketnet_client_default_config( &defaults );
+    memcpy( config, &defaults, config_bytes );
     return 1;
 }
 
@@ -299,12 +328,17 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8
 
 struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
 {
-    if ( config && config_bytes != sizeof( struct rocketnet_client_config_t ) )
+    if ( config && !rn_public_config_size_known( config_bytes, rn_client_config_bytes_1(), sizeof( struct rocketnet_client_config_t ) ) )
     {
         rocketnet_error( "client create refused: %d is not a known size of rocketnet_client_config_t (%d)", (int) config_bytes, (int) sizeof( struct rocketnet_client_config_t ) );
         return NULL;
     }
-    return rocketnet_client_create( context, connect_token, config, memory, memory_bytes );
+    if ( !config || config_bytes == sizeof( struct rocketnet_client_config_t ) )
+        return rocketnet_client_create( context, connect_token, config, memory, memory_bytes );
+    struct rocketnet_client_config_t current;
+    rocketnet_client_default_config( &current );
+    memcpy( &current, config, config_bytes );
+    return rocketnet_client_create( context, connect_token, &current, memory, memory_bytes );
 }
 
 void rocketnet_client_destroy( struct rocketnet_client_t * client )
@@ -500,6 +534,10 @@ static void rn_server_config_from_transport( struct rocketnet_server_config_t * 
     config->num_reassembly_slots = transport->num_reassembly_slots;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
+    config->simulated_loss_percent = transport->simulated_loss_percent;
+    config->simulated_latency_ms = transport->simulated_latency_ms;
+    config->simulated_jitter_ms = transport->simulated_jitter_ms;
+    config->simulated_duplicate_percent = transport->simulated_duplicate_percent;
     config->transport = NULL;
     config->public_address = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS;
@@ -515,7 +553,7 @@ void rocketnet_server_default_config( struct rocketnet_server_config_t * config 
     if ( !rocketnet_api_null_guard( config ) )
         return;
     struct rocketnet_server_transport_config_t transport;
-    rocketnet_server_transport_default_config( &transport );
+    rocketnet_server_transport_default_config_current( &transport );
     rn_server_config_from_transport( config, &transport );
 }
 
@@ -523,12 +561,14 @@ int rocketnet_server_default_config_sized( struct rocketnet_server_config_t * co
 {
     if ( !rocketnet_api_null_guard( config ) )
         return 0;
-    if ( config_bytes != sizeof( struct rocketnet_server_config_t ) )
+    if ( !rn_public_config_size_known( config_bytes, rn_server_config_bytes_1(), sizeof( struct rocketnet_server_config_t ) ) )
     {
         rocketnet_error( "server default config refused: %d is not a known size of rocketnet_server_config_t (%d)", (int) config_bytes, (int) sizeof( struct rocketnet_server_config_t ) );
         return 0;
     }
-    rocketnet_server_default_config( config );
+    struct rocketnet_server_config_t defaults;
+    rocketnet_server_default_config( &defaults );
+    memcpy( config, &defaults, config_bytes );
     return 1;
 }
 
@@ -537,6 +577,7 @@ void rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
     if ( !rocketnet_api_null_guard( config ) )
         return;
     struct rocketnet_server_transport_config_t transport;
+    memset( &transport, 0, sizeof(transport) );
     rocketnet_server_transport_dev_config( &transport );
     rn_server_config_from_transport( config, &transport );
 }
@@ -579,12 +620,17 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
 
 struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
 {
-    if ( config && config_bytes != sizeof( struct rocketnet_server_config_t ) )
+    if ( config && !rn_public_config_size_known( config_bytes, rn_server_config_bytes_1(), sizeof( struct rocketnet_server_config_t ) ) )
     {
         rocketnet_error( "server create refused: %d is not a known size of rocketnet_server_config_t (%d)", (int) config_bytes, (int) sizeof( struct rocketnet_server_config_t ) );
         return NULL;
     }
-    return rocketnet_server_create( context, address, config, memory, memory_bytes );
+    if ( !config || config_bytes == sizeof( struct rocketnet_server_config_t ) )
+        return rocketnet_server_create( context, address, config, memory, memory_bytes );
+    struct rocketnet_server_config_t current;
+    rocketnet_server_default_config( &current );
+    memcpy( &current, config, config_bytes );
+    return rocketnet_server_create( context, address, &current, memory, memory_bytes );
 }
 
 void rocketnet_server_destroy( struct rocketnet_server_t * server )

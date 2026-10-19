@@ -325,11 +325,16 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context );
+    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context, size_t config_bytes );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
+{
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, NULL, NULL, sizeof(struct rocketnet_client_transport_config_t) );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
@@ -337,7 +342,17 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( vo
 {
     if ( !operations )
         return NULL;
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, driver_context );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, driver_context, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token,
+    const struct rocketnet_client_transport_config_t * config, double time,
+    const rocketnet_client_driver_operations_t * operations, void * driver_context )
+{
+    if ( !operations )
+        return NULL;
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, driver_context,
+                                                       sizeof(struct rocketnet_client_transport_config_t) );
 }
 
 rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_transport_t * client_transport )
@@ -346,7 +361,7 @@ rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_t
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context )
+    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context, size_t config_bytes )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -378,10 +393,9 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // validation refuses loudly and never clamps.
 
     struct rocketnet_client_transport_config_t effective_config;
+    rocketnet_client_transport_default_config_current( &effective_config );
     if ( config )
-        effective_config = *config;
-    else
-        rocketnet_client_transport_default_config( &effective_config );
+        memcpy( &effective_config, config, config_bytes );
 
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_client_transport_config_fields( &num_config_fields );

@@ -126,6 +126,12 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
 // termination. refuses loudly, never clamps. driver list content is
 // validated by the ladder parse below, at create.
 
+void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_driver_operations_t * operations, void * driver_context );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
+void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
+
 bool rocketnet_config_validate( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 
 // The public link simulator fields (simulated_loss_percent,

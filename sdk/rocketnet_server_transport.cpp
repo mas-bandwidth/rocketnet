@@ -799,7 +799,30 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     return rocketnet_server_transport_create_ex( context, public_address_string, config, 0.0, NULL );
 }
 
-struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context,
+static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
+                                                                                       const char * public_address_string,
+                                                                                       const struct rocketnet_server_transport_config_t * config,
+                                                                                       double time, int * status );
+
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string,
+                                                                              const struct rocketnet_server_transport_config_t * config,
+                                                                              double time, int * status )
+{
+    if ( !config )
+        return rocketnet_server_transport_create_internal( context, public_address_string, NULL, time, status );
+    struct rocketnet_server_transport_config_t current;
+    rocketnet_server_transport_default_config_current( &current );
+    memcpy( &current, config, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
+    return rocketnet_server_transport_create_internal( context, public_address_string, &current, time, status );
+}
+
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address,
+                                                                                  const struct rocketnet_server_transport_config_t * config )
+{
+    return rocketnet_server_transport_create_internal( context, address, config, 0.0, NULL );
+}
+
+static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
                                                                            const char * public_address_string,
                                                                            const struct rocketnet_server_transport_config_t * config,
                                                                            double time, int * status )
@@ -838,7 +861,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
     if ( config )
         effective_config = *config;
     else
-        rocketnet_server_transport_default_config( &effective_config );
+        rocketnet_server_transport_default_config_current( &effective_config );
 
     // the env layer's public_address is snapshotted against so its SCOPE
     // can be enforced below: the env override redirects the FIRST server

@@ -71,7 +71,7 @@ static void public_link_simulator_production_refusal()
 
     // the server transport, from its real table
     struct rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_default_config( &server_config );
+    rocketnet_server_transport_default_config_current( &server_config );
     int server_fields = 0;
     const struct rocketnet_config_field_t * server_table = rocketnet_server_transport_config_fields( &server_fields );
     public_link_simulator_check_fields( server_table, server_fields );
@@ -165,14 +165,14 @@ static rocketnet_client_transport_t * public_link_simulator_client(
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     public_link_simulator_token( token );
-    return rocketnet_client_transport_create_step_driven( driver, token, config, 1000.0,
+    return rocketnet_client_transport_create_step_driven_current( driver, token, config, 1000.0,
                                                            &rocketnet_fake_client_operations_base, driver );
 }
 
 static void public_link_simulator_drops_at_loss()
 {
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     config.simulated_loss_percent = 100;
     rocketnet_fake_client_driver_t * dropped = new rocketnet_fake_client_driver_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( dropped, &config );
@@ -196,7 +196,7 @@ static void public_link_simulator_drops_at_loss()
 static void public_link_simulator_latency()
 {
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     config.simulated_latency_ms = 25;
     rocketnet_fake_client_driver_t * driver = new rocketnet_fake_client_driver_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( driver, &config );
@@ -214,7 +214,7 @@ static void public_link_simulator_latency()
 static void public_link_simulator_jitter()
 {
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     config.simulated_latency_ms = 10;
     config.simulated_jitter_ms = 20;
 
@@ -244,7 +244,7 @@ static void public_link_simulator_jitter()
 static void public_link_simulator_duplicate()
 {
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     config.simulated_duplicate_percent = 100;
     rocketnet_fake_client_driver_t * driver = new rocketnet_fake_client_driver_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( driver, &config );
@@ -260,7 +260,7 @@ static void public_link_simulator_duplicate()
 static void public_link_simulator_same_seed_same_schedule()
 {
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     config.simulated_loss_percent = 15;
     config.simulated_latency_ms = 5;
     config.simulated_jitter_ms = 30;
@@ -299,3 +299,55 @@ REGISTER_UNIT_TEST( public_link_simulator_latency );
 REGISTER_UNIT_TEST( public_link_simulator_jitter );
 REGISTER_UNIT_TEST( public_link_simulator_duplicate );
 REGISTER_UNIT_TEST( public_link_simulator_same_seed_same_schedule );
+
+static void public_link_simulator_revision_1_prefixes()
+{
+    struct alignas(16) client_revision_1_t
+    {
+        uint8_t bytes[ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1];
+        uint8_t guard[16];
+    } client;
+    memset( &client, 0xa5, sizeof(client) );
+    check( rocketnet_client_transport_default_config_sized(
+        (rocketnet_client_transport_config_t *) client.bytes, sizeof(client.bytes) ) == 1 );
+    for ( size_t i = 0; i < sizeof(client.guard); i++ )
+        check( client.guard[i] == 0xa5 );
+    rocketnet_client_transport_config_t client_current;
+    rocketnet_client_transport_default_config_current( &client_current );
+    snprintf( client_current.driver, sizeof(client_current.driver), "%s", "loopback" );
+    memcpy( client.bytes, &client_current, sizeof(client.bytes) );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    public_link_simulator_token( token );
+    rocketnet_client_transport_t * client_transport = rocketnet_client_transport_create_sized(
+        NULL, token, (const rocketnet_client_transport_config_t *) client.bytes,
+        sizeof(client.bytes), 1000.0 );
+    check( client_transport != NULL );
+    rocketnet_client_transport_destroy( client_transport );
+    for ( size_t i = 0; i < sizeof(client.guard); i++ )
+        check( client.guard[i] == 0xa5 );
+
+    struct alignas(16) server_revision_1_t
+    {
+        uint8_t bytes[ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1];
+        uint8_t guard[16];
+    } server;
+    memset( &server, 0x5a, sizeof(server) );
+    check( rocketnet_server_transport_default_config_sized(
+        (rocketnet_server_transport_config_t *) server.bytes, sizeof(server.bytes) ) == 1 );
+    for ( size_t i = 0; i < sizeof(server.guard); i++ )
+        check( server.guard[i] == 0x5a );
+    rocketnet_server_transport_config_t server_current;
+    memset( &server_current, 0, sizeof(server_current) );
+    rocketnet_server_transport_dev_config( &server_current );
+    snprintf( server_current.driver, sizeof(server_current.driver), "%s", "loopback" );
+    memcpy( server.bytes, &server_current, sizeof(server.bytes) );
+    rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_sized(
+        NULL, "127.0.0.1:0", (const rocketnet_server_transport_config_t *) server.bytes,
+        sizeof(server.bytes) );
+    check( server_transport != NULL );
+    rocketnet_server_transport_destroy( server_transport );
+    for ( size_t i = 0; i < sizeof(server.guard); i++ )
+        check( server.guard[i] == 0x5a );
+}
+
+REGISTER_UNIT_TEST( public_link_simulator_revision_1_prefixes );
