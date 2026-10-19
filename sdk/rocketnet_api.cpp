@@ -17,6 +17,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_send_budget.h"
+#include "rocketnet_connection_reset.h"
 
 #include <sodium.h>
 
@@ -238,12 +239,13 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
 // counters and the last disconnect reason (the model's `kept` and `reason`),
 // and, between rocketnet_client_connect and rocketnet_client_disconnect, one
 // connection: a message client over its own client transport, created in the
-// block by connect (the model's Connect) and destroyed by disconnect (End,
-// then Reset). Every per-connection field lives in that connection, so the
+// block by connect (the model's Connect) and ended by disconnect, destroy, or
+// the next connect after the server ended it (End, then Reset). Every end
+// runs the connection reset of sdk/rocketnet_connection_reset.h (the
+// protocol's at the terminal transition, the message object's here), then
+// destroys the connection, so the
 // next connect starts from a block in which nothing of the last connection
-// remains: the reset is the connection's own destroy, which runs
-// rocketnet_client_connection_reset on the transport and the message object
-// (sdk/rocketnet_connection_reset.h), and the new connection's create.
+// remains.
 //
 // The socket and the I/O thread are per connection: the token decides the
 // server's address family, and the socket binds to that family after the
@@ -502,6 +504,13 @@ static void rn_client_end_connection( struct rocketnet_client_t * client )
     const int reason = rocketnet_message_client_disconnect_reason( client->connection );
     if ( reason != ROCKETNET_MESSAGE_ERROR_NONE || rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         client->last_reason = reason;
+    // the connection reset (sdk/rocketnet_connection_reset.h) on every end:
+    // the protocol's runs on every terminal transition
+    // (rocketnet_client_set_state, and the disconnect burst), the message
+    // object's runs here; the transport's own reset is left to its destroy,
+    // because run here it would drop the staged disconnect burst before the
+    // destroy sends it
+    rocketnet_client_connection_reset( &client->connection->object );
     rocketnet_message_client_destroy( client->connection );
     client->connection = NULL;
 }
@@ -517,7 +526,17 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    (void) time;    // the connection's clock starts at its first update, as create's always has
+    // time is not read: the connection's clock starts at its first update,
+    // as create's always has, so connect takes the game's time only to keep
+    // the call's shape with update (documented in rocketnet.h)
+    (void) time;
+
+    // a connection the server ended (or a kick) is DISCONNECTED while its
+    // object still exists: end it first, so its counters and reason are kept
+    // and nothing of it survives into the new one
+    if ( client->connection && rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_DISCONNECTED )
+        rn_client_end_connection( client );
+
     if ( rn_client_state( client ) != ROCKETNET_CLIENT_STATE_DISCONNECTED )
     {
         rocketnet_api_misuse_record();
@@ -960,10 +979,15 @@ static int rn_server_validate_config_current( const struct rocketnet_server_conf
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     if ( !rn_server_split( config, false, &transport, &message, &kbps ) )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
         return 0;
+    }
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
-    if ( !rocketnet_config_validate( "server", &transport, fields, num_fields ) )
+    const bool transport_valid = rocketnet_config_validate( "server", &transport, fields, num_fields );
+    sodium_memzero( &transport, sizeof( transport ) );
+    if ( !transport_valid )
         return 0;
     return rocketnet_message_validate_config( &message );
 }
@@ -971,7 +995,11 @@ static int rn_server_validate_config_current( const struct rocketnet_server_conf
 int rocketnet_server_validate_config( const struct rocketnet_server_config_t * config )
 {
     struct rocketnet_server_config_t current;
-    return rn_server_validate_config_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+    int result = rn_server_validate_config_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
 int rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
@@ -979,7 +1007,11 @@ int rocketnet_server_validate_config_sized( const struct rocketnet_server_config
     if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
     struct rocketnet_server_config_t current;
-    return rn_server_validate_config_current( rn_server_config_read( &current, config, config_bytes ) );
+    int result = rn_server_validate_config_current( rn_server_config_read( &current, config, config_bytes ) );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
 static uint64_t rn_server_required_memory_current( const struct rocketnet_server_config_t * config )
@@ -989,7 +1021,10 @@ static uint64_t rn_server_required_memory_current( const struct rocketnet_server
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     if ( !rn_server_split( config, true, &transport, &message, &kbps ) )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
         return 0;
+    }
     const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
     sodium_memzero( &transport, sizeof( transport ) );
     return running_bytes == 0 ? 0 : rn_server_header_bytes + running_bytes;
@@ -998,7 +1033,11 @@ static uint64_t rn_server_required_memory_current( const struct rocketnet_server
 uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config )
 {
     struct rocketnet_server_config_t current;
-    return rn_server_required_memory_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+    uint64_t result = rn_server_required_memory_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
 uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
@@ -1006,7 +1045,11 @@ uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_c
     if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
     struct rocketnet_server_config_t current;
-    return rn_server_required_memory_current( rn_server_config_read( &current, config, config_bytes ) );
+    uint64_t result = rn_server_required_memory_current( rn_server_config_read( &current, config, config_bytes ) );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
 static struct rocketnet_server_t * rn_server_create_current( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes )
@@ -1070,8 +1113,12 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
 struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes )
 {
     struct rocketnet_server_config_t current;
-    return rn_server_create_current( context, address,
+    struct rocketnet_server_t * result = rn_server_create_current( context, address,
         rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ), memory, memory_bytes );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
 struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
@@ -1083,7 +1130,11 @@ struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const
     struct rocketnet_server_config_t current;
     rn_server_default_config_current( &current );
     memcpy( &current, config, config_bytes );
-    return rn_server_create_current( context, address, &current, memory, memory_bytes );
+    struct rocketnet_server_t * result = rn_server_create_current( context, address, &current, memory, memory_bytes );
+
+    sodium_memzero( &current, sizeof( current ) );
+
+    return result;
 }
 
 enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server )
@@ -1130,7 +1181,9 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
     // the disconnect packets are staged, so flush them before the transport
     // goes
     rocketnet_server_disconnect_all_clients( server );
-    rocketnet_server_transport_send_packets( rn_server_transport( server ) );
+    rocketnet_message_server_send_packets( server->running );
+    for ( int i = 0; i < server->max_clients; i++ )
+        rocketnet_server_connection_reset( &server->running->object, i );
     for ( int i = 0; i < ROCKETNET_SERVER_COUNTER_COUNT; i++ )
         server->lifetime[i] += rn_server_running_counter( server, i );
     rocketnet_message_server_destroy( server->running );

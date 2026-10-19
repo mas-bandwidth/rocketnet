@@ -992,8 +992,9 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void
 // fails the pre-send checks returns ROCKETNET_STATUS_INVALID_CONNECT_TOKEN or
 // ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED and leaves the matching error state;
 // a socket or thread the platform refuses returns its status and leaves the
-// client DISCONNECTED. The attempt's clock starts at the next update; time
-// is the game's clock now. a NULL client or connect_token is a counted no-op
+// client DISCONNECTED. The attempt's clock starts at the next update, so
+// time (the game's clock now) is accepted and not read; a connection the
+// server ended is ended here first. a NULL client or connect_token is a counted no-op
 // that returns ROCKETNET_STATUS_INVALID_ARGUMENT.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const uint8_t * connect_token, double time );
 
