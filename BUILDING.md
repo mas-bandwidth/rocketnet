@@ -551,7 +551,10 @@ with `fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
 (`crash-*`, `oom-*`, `timeout-*`, `leak-*`) names the bug; a minimized input
 belongs in the target's seed corpus as `regress_<name>` together with its
 pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
-workflow's `fuzz-macos` job runs this same build for each target. `ci.yml`'s
+workflow's `fuzz-macos` job runs this same build for each target; it fails fast
+with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when no `brew
+--prefix llvm` clang is installed on the runner, before any build runs.
+`ci.yml`'s
 `Replay the fuzz corpora without libFuzzer` step stays the gate for the four
 committed corpora: build `fuzz_replay_rocketnet_fuzz`,
 `fuzz_replay_rocketnet_fuzz_message`,
