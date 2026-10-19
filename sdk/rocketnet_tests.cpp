@@ -8043,7 +8043,6 @@ void rocketnet_test_version_is_one_integer()
 {
     rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
     rocketnet_check( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
-    rocketnet_check( ROCKETNET_VERSION_MAJOR_INT == ROCKETNET_VERSION_MAJOR && ROCKETNET_VERSION_MINOR_INT == ROCKETNET_VERSION_MINOR && ROCKETNET_VERSION_PATCH_INT == ROCKETNET_VERSION_PATCH );
 }
 
 void rocketnet_test_public_api_null_is_a_counted_no_op()

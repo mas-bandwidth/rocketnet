@@ -527,7 +527,7 @@ uint64_t rocketnet_protocol_version()
 {
 #if !ROCKETNET_DEVELOPMENT
     #define VERSION_STRING(major,minor) #major #minor
-    return rocketnet_hash_string( VERSION_STRING(ROCKETNET_VERSION_MAJOR_INT, ROCKETNET_VERSION_MINOR_INT) );
+    return rocketnet_hash_string( VERSION_STRING(ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR) );
 #else // #if !ROCKETNET_DEVELOPMENT
     return 0;
 #endif // #if !ROCKETNET_DEVELOPMENT
