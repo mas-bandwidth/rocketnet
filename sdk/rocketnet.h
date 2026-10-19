@@ -819,8 +819,9 @@ struct rocketnet_client_config_t
     /**
      * @brief Development only: the link simulator's outgoing packet loss, percent; 0 .. 100; default 0, which is off.
      *
-     * A revision-2 field: only the _sized calls read or write it. The unsized
-     * validate, required_memory and create calls take it as 0, and the unsized
+     * A revision-2 field: only a _sized call given the revision-2 size reads or
+     * writes it. The unsized validate, required_memory and create calls take it
+     * at its default, 0, and the unsized
      * default calls leave it untouched. A library built without development
      * support refuses a
      * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
@@ -830,8 +831,9 @@ struct rocketnet_client_config_t
     /**
      * @brief Development only: the link simulator's added outgoing latency, milliseconds; 0 .. 60000; default 0, which is off.
      *
-     * A revision-2 field: only the _sized calls read or write it. The unsized
-     * validate, required_memory and create calls take it as 0, and the unsized
+     * A revision-2 field: only a _sized call given the revision-2 size reads or
+     * writes it. The unsized validate, required_memory and create calls take it
+     * at its default, 0, and the unsized
      * default calls leave it untouched. A library built without development
      * support refuses a
      * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
@@ -841,8 +843,9 @@ struct rocketnet_client_config_t
     /**
      * @brief Development only: the link simulator's added outgoing jitter, milliseconds; 0 .. 60000; default 0, which is off.
      *
-     * A revision-2 field: only the _sized calls read or write it. The unsized
-     * validate, required_memory and create calls take it as 0, and the unsized
+     * A revision-2 field: only a _sized call given the revision-2 size reads or
+     * writes it. The unsized validate, required_memory and create calls take it
+     * at its default, 0, and the unsized
      * default calls leave it untouched. A library built without development
      * support refuses a
      * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
@@ -852,8 +855,9 @@ struct rocketnet_client_config_t
     /**
      * @brief Development only: the link simulator's outgoing packet duplication, percent; 0 .. 100; default 0, which is off.
      *
-     * A revision-2 field: only the _sized calls read or write it. The unsized
-     * validate, required_memory and create calls take it as 0, and the unsized
+     * A revision-2 field: only a _sized call given the revision-2 size reads or
+     * writes it. The unsized validate, required_memory and create calls take it
+     * at its default, 0, and the unsized
      * default calls leave it untouched. A library built without development
      * support refuses a
      * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
@@ -955,8 +959,9 @@ struct rocketnet_server_config_t
     /**
      * @brief Development only: the link simulator's outgoing packet loss, percent; 0 .. 100; default 0, which is off.
      *
-     * A revision-2 field: only the _sized calls read or write it. The unsized
-     * validate, required_memory and create calls take it as 0, and the unsized
+     * A revision-2 field: only a _sized call given the revision-2 size reads or
+     * writes it. The unsized validate, required_memory and create calls take it
+     * at its default, 0, and the unsized
      * default calls leave it untouched. A library built without development
      * support refuses a
      * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
@@ -966,8 +971,9 @@ struct rocketnet_server_config_t
     /**
      * @brief Development only: the link simulator's added outgoing latency, milliseconds; 0 .. 60000; default 0, which is off.
      *
-     * A revision-2 field: only the _sized calls read or write it. The unsized
-     * validate, required_memory and create calls take it as 0, and the unsized
+     * A revision-2 field: only a _sized call given the revision-2 size reads or
+     * writes it. The unsized validate, required_memory and create calls take it
+     * at its default, 0, and the unsized
      * default calls leave it untouched. A library built without development
      * support refuses a
      * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
@@ -977,8 +983,9 @@ struct rocketnet_server_config_t
     /**
      * @brief Development only: the link simulator's added outgoing jitter, milliseconds; 0 .. 60000; default 0, which is off.
      *
-     * A revision-2 field: only the _sized calls read or write it. The unsized
-     * validate, required_memory and create calls take it as 0, and the unsized
+     * A revision-2 field: only a _sized call given the revision-2 size reads or
+     * writes it. The unsized validate, required_memory and create calls take it
+     * at its default, 0, and the unsized
      * default calls leave it untouched. A library built without development
      * support refuses a
      * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
@@ -988,8 +995,9 @@ struct rocketnet_server_config_t
     /**
      * @brief Development only: the link simulator's outgoing packet duplication, percent; 0 .. 100; default 0, which is off.
      *
-     * A revision-2 field: only the _sized calls read or write it. The unsized
-     * validate, required_memory and create calls take it as 0, and the unsized
+     * A revision-2 field: only a _sized call given the revision-2 size reads or
+     * writes it. The unsized validate, required_memory and create calls take it
+     * at its default, 0, and the unsized
      * default calls leave it untouched. A library built without development
      * support refuses a
      * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
