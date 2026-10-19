@@ -15,9 +15,10 @@ Makefile is the front door:
     make
 
 Binaries and libraries land in `bin/`. On macOS, [docs/MACOS.md](docs/MACOS.md)
-is the guide: the two transports and how to pin them, the client's threads and
-App Nap, socket errors, the file-descriptor limit, the application firewall
-prompt, lldb, and an ordered verification run. Run the unit suite with:
+is the guide: the build, the two transports and how to pin them, the client's
+threads and App Nap, socket errors, the file-descriptor limit, the application
+firewall prompt, lldb, fuzz corpus replay, and the commands that verify a Mac.
+Run the unit suite with:
 
     ./bin/test
 

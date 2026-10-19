@@ -29,10 +29,11 @@ names.
 | Windows | arm64 | none | none | unsupported | - | - |
 | [macOS](MACOS.md) | x86_64 | none | none | unsupported | - | - |
 
-The macOS rows are covered by [MACOS.md](MACOS.md). The drivers column names
-the backends the row actually exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists portable on every
-platform, gso and xdp on Linux, msgx on macOS and iocp on Windows. A driver
-that the row does not name is not part of that row's claim.
+The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
+and verifying on a Mac. The drivers column names the backends the row actually
+exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
+portable on every platform, gso and xdp on Linux, msgx on macOS and iocp on
+Windows. A driver that the row does not name is not part of that row's claim.
 
 ## Policy rules
 
