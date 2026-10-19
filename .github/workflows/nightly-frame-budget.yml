@@ -55,9 +55,11 @@ jobs:
 
   macos-frame-budget:
     name: frame budget (${{ matrix.ref }} / macos-15 msgx report-only)
-    # Report-only, so the budget is recorded rather than enforced and the step
-    # needs no quiet reservation. The workflow concurrency group above keeps
-    # one run of this workflow per ref.
+    # Report-only: the fleet Mac is not reserved quiet (it also carries other
+    # fleet work), so the budget is recorded rather than enforced. Its one
+    # runner takes one job at a time, so no other workflow job overlaps the
+    # measurement, and the workflow concurrency group above keeps one run of
+    # this workflow per ref.
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
     timeout-minutes: 10
     strategy:

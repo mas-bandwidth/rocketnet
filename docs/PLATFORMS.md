@@ -17,14 +17,14 @@ names.
 | --- | --- | --- | --- | --- | --- | --- |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
-| macOS 15 | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | supported | .github/workflows/ci.yml | windows-2025 |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
-| macOS 15 | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| macOS 15 | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| macOS 15 | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
 | Linux | arm64 | none | none | unsupported | - | - |
@@ -110,9 +110,9 @@ new support claim:
 - `nightly-frame-budget.yml` runs its Linux leg on the
   `self-hosted, Linux, X64, rocketnet-quiet` label, its macOS leg report-only
   on `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on
-  hosted `windows-2025`. The macOS leg is report-only because the runner is
-  not reserved quiet; the workflow concurrency group keeps one run per ref so
-  the recording does not overlap a louder run.
+  hosted `windows-2025`. The macOS leg is report-only because the fleet Mac
+  is not reserved quiet; its one runner takes one job at a time and the
+  workflow concurrency group keeps one run per ref.
 - `nightly-examples.yml` runs its Linux leg on
   `self-hosted, Linux, X64, fleet`, its macOS leg on
   `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on hosted
