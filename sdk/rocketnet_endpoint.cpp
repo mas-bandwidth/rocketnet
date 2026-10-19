@@ -177,12 +177,12 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
             ( reliability == ROCKETNET_UNRELIABLE_SEQUENCED && bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES );
         const bool promote = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
             bytes + header + 1 > record_capacity : (uint32_t) bytes > endpoint->unreliable_limit;
-        if ( over_max && reliability != ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
+        if ( over_max )
         {
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
             return NULL;
         }
-        if ( promote || ( over_max && reliability == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT ) )
+        if ( promote )
         {
             // RakNet ReliabilityLayer promotion: code 0 to 2, code 1 to 4, and
             // code 5 to its reliable receipt twin (wire code 2, receipt kept).

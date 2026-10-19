@@ -286,13 +286,26 @@ static void unreliable_promotion_every_mode()
         }
     }
 
-    // a send past the configured maximum is still refused, and is not counted
-    // as a promotion
-    boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
-    std::vector<uint8_t> too_big=boundary_data(7,16385);
-    check(rocketnet_message_client_send(pair.client,0,ROCKETNET_UNRELIABLE,too_big.data(),16385)==0);
-    check(rocketnet_counter_value(rocketnet_message_client_counters(pair.client),ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE)==0);
-    check(rocketnet_counter_value(rocketnet_message_client_counters(pair.client),ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==1);
-    boundary_teardown(&pair);
+    // The configured maximum refuses every unreliable source mode on both
+    // start paths before RakNet promotion; none can consume a promotion count.
+    for (int m=0; m<3; ++m) {
+        boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
+        std::vector<uint8_t> too_big=boundary_data((uint32_t)(7+m),16385);
+        const int reliability=modes[m];
+        const int promotion_counter=reliability==ROCKETNET_UNRELIABLE ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE :
+            reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED :
+            ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT;
+        const rocketnet_counters_t * client_counters=rocketnet_message_client_counters(pair.client);
+        const rocketnet_counters_t * server_counters=rocketnet_message_server_counters(pair.server);
+        check(rocketnet_message_client_send(pair.client,0,reliability,too_big.data(),16385)==0);
+        check(rocketnet_counter_value(client_counters,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==1);
+        check(rocketnet_counter_value(client_counters,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==0);
+        check(rocketnet_counter_value(client_counters,promotion_counter)==0);
+        check(rocketnet_message_server_start(pair.server,0,0,reliability,16385)==NULL);
+        check(rocketnet_counter_value(server_counters,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==1);
+        check(rocketnet_counter_value(server_counters,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==0);
+        check(rocketnet_counter_value(server_counters,promotion_counter)==0);
+        boundary_teardown(&pair);
+    }
 }
 REGISTER_UNIT_TEST(unreliable_promotion_every_mode);
