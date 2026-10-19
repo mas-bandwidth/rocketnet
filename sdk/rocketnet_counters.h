@@ -612,7 +612,15 @@
     /* counts MESSAGE_UNRELIABLE_OVER_BUDGET. EXPECTED: a client's sends */ \
     /* before CONNECTED take it. Counted on the owner's counters, once per */ \
     /* message. appended: indices are the contract. */ \
-    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE )
+    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
+    \
+    /* A datagram the transport's socket dropped because its send call */ \
+    /* failed: ENOBUFS from a full interface queue, EAGAIN from a full send */ \
+    /* buffer, a refused destination. Read from the driver's send_failures */ \
+    /* (the socket's own count, rocketnet_platform_socket_send_failures) */ \
+    /* when the counters are read; a driver without it leaves it zero. */ \
+    /* appended: indices are the contract. */ \
+    X( SEND_FAILED, REFUSAL, NONE )
 
 enum
 {

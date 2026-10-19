@@ -698,6 +698,9 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_driver
 
         const uint64_t dropped = rocketnet_platform_socket_send_failures( pair.server_socket ) - failures_before;
         posix_check( dropped >= 8 );
+        // the transport surfaces the socket's count as SEND_FAILED
+        posix_check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED] ==
+                     rocketnet_platform_socket_send_failures( pair.server_socket ) );
         posix_check( strcmp( rocketnet_platform_socket_pump( pair.server_socket ), server_pump ) == 0 );
 
         // none of the dropped payloads arrives
