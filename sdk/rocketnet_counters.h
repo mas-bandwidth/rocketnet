@@ -583,7 +583,13 @@
     /* beside TOKEN_EXPIRED in class and parent, and are appended here because */ \
     /* the indices are the contract. */ \
     X( CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
-    X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED )
+    X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
+    \
+    /* A send the driver refused for want of a link-layer destination: the */ \
+    /* xdp driver on a segment with no default route, to an address with no */ \
+    /* learned MAC that answers no received frame (DRIVERS.md, xdp). Never */ \
+    /* sent and never counted as sent. appended: indices are the contract. */ \
+    X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE )
 
 enum
 {
