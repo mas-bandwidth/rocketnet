@@ -17,6 +17,7 @@ static development library. Each page lives in `docs/examples/`.
 | [transports](transports.c) | server transport selection (`auto`, a single-transport pin, a candidate list, and refusal of an unknown transport) | [transports.md](../docs/examples/transports.md) |
 | [stats](stats.c) | connection state, RTT, jitter, packet loss, bandwidth, and counters queried from both client and server | [stats.md](../docs/examples/stats.md) |
 | [game_loop](game_loop.c) | a 60 Hz fixed-step loop driving one server and N clients, measuring frame order and per-frame client cost | [game_loop.md](../docs/examples/game_loop.md) |
+| [soak](soak.c) | 1000 clients against one server over a lossy link, checking every message's integrity and order and measuring tick and update timings, packet and byte rates, and allocator activity; a stress demo, not a load claim | [soak.md](../docs/examples/soak.md) |
 
 An example that needs two processes is split into `<name>_server.c` and
 `<name>_client.c`, built as `example_<name>_server` and

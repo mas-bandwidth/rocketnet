@@ -4,22 +4,24 @@ RocketNet's support claim is a claim about what every commit builds and tests
 across operating systems, architectures, compilers, and transports. A platform
 is **supported** when per-commit verification builds the library and runs the
 unit and functional test suites on it for every pull request and every push to
-`main`. A platform that runs in scheduled verification is **nightly**. A
-platform with no verification leg is **unsupported**, even if the source
-compiles there.
+`main`. The supported platforms are Linux x86_64, macOS arm64 and Windows
+x86_64. s390x is a **byte-order check**: verification builds and checks the
+library there to catch an endianness break, and it is not a supported
+deployment platform. A platform with no verification leg is **not tested**,
+even if the source compiles there.
 
 ## Platform matrix
 
 | Operating system | Architecture | Compiler | Transports | Tier |
 | --- | --- | --- | --- | --- |
 | Ubuntu 24.04 (Linux) | x86_64 | GCC 13, Clang | portable, gso, io_uring, xdp, loopback | supported |
-| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable, loopback | supported |
 | macOS 15 | arm64 | Apple Clang | portable, msgx, loopback | supported |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp, rio, loopback | supported |
-| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable, loopback | nightly |
-| Linux | arm64 | none | none | unsupported |
-| Windows | arm64 | none | none | unsupported |
-| macOS | x86_64 | none | none | unsupported |
+| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable, loopback | byte-order check, every commit |
+| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable, loopback | byte-order check, nightly |
+| Linux | arm64 (aarch64) | none | none | not tested |
+| Windows | arm64 | none | none | not tested |
+| macOS | x86_64 | none | none | not tested |
 
 The **Transports** column names the transports built and exercised on that
 platform. The built-in transport registry (`rocketnet_drivers.inc`) provides:
@@ -42,10 +44,14 @@ A supported row promises three things:
 3. Every listed transport for that platform is compiled and exercised by its
    unit and functional tests.
 
-In particular, the per-commit `big-endian` leg cross-compiles the library and
-suite for `s390x` and runs the wire and cryptography checks under `qemu-user`;
-the full socket-crossing suite runs on `s390x` in the nightly full-system
-guest.
+One limit on the Linux row: verification runs unprivileged, so the `xdp`
+transport is compiled and its unprivileged checks run, but its privileged path
+(BPF program load and attach, AF_XDP binds) is not exercised by verification;
+see [BUILDING.md](../BUILDING.md).
+
+The s390x byte-order check: every commit cross-compiles the library and suite
+for `s390x` and runs the wire and cryptography checks under `qemu-user`; the
+full socket-crossing suite runs on `s390x` nightly in a full-system guest.
 
 ### Adding or dropping a platform
 

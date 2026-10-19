@@ -297,7 +297,7 @@ argument set: real create still obeys those overrides and a mismatch fails loudl
 RSS and requested allocator bytes measure different things; untouched allocations
 may not yet be resident. The probe never commits an XDP attachment.
 
-On the shared test machine, Release portable plans matched all 40 live allocations:
+On one Linux x86_64 test host, Release portable plans matched all 40 live allocations:
 
 | Clients | Payload bytes | Reassembly slots | Planned/observed allocator bytes |
 | ---: | ---: | ---: | ---: |
@@ -325,12 +325,14 @@ batched send), and `portable`; on macOS `msgx` (Darwin batch pump) and
 I/O), and `portable`; plus the in-memory `loopback` transport (pin-only) on
 every platform — and the endpoint walks an ordered candidate list at create. The list rides the config's transport field or the
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
-environment variables (precedence: default < struct < env). The old names
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
-`ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied:
+environment variables (precedence: default < struct < env). With no list,
+each endpoint walks its platform's `auto` order: a Linux server tries `xdp`,
+`gso`, `io_uring`, then `portable`; a macOS endpoint tries `msgx`, then
+`portable`; a Windows server tries `portable`, `iocp`, then `rio`; a Linux or
+Windows client uses `portable`:
 
     ./bin/functional                                # auto: the platform's recommended ladder
-                                                #   (linux: xdp,gso,portable — falls on refusal)
+                                                #   (linux: xdp,gso,io_uring,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 # a one-element list is a pin: that transport
                                                 #   or loud failure, never a silent fall
@@ -346,20 +348,17 @@ clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport 
 past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
-batch pump's live-refusal pause. The legacy `ROCKETNET_PUMP=portable` override is
-absorbed into this system with its exact old meaning — the msgx pump off —
-honored and named in the logs, with `ROCKETNET_SERVER_TRANSPORT=portable` and
-`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors;
-`ROCKETNET_SERVER_NUM_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS` likewise keep
-working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
-`ROCKETNET_NUM_OS_CPUS`. Run `./bin/functional` against each rung. The unit
+batch pump's live-refusal pause. Queue and core counts are set with
+`ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`, the names
+[USAGE.md](USAGE.md) and `sdk/rocketnet.h` give them. Run `./bin/functional`
+against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
 
-The SDK test suite temporarily clears config overrides derived from both
-config tables and their legacy aliases, then restores them on return.
+The SDK test suite temporarily clears every configuration override it reads,
+then restores them on return.
 `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
-test pins, and the old transport names are cleared; `ROCKETNET_TEST_VERBOSE`
+test pins; `ROCKETNET_TEST_VERBOSE`
 keeps its diagnostic meaning. Passing ordinary runs print test names and
 explicitly named platform skips. Failures retain the captured diagnostic log.
 
@@ -381,8 +380,8 @@ per buffer, and 16384 send frames across all workers. These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
-IOCP is currently an explicit selection; Windows `auto` keeps portable first
-while this new transport is reviewed. Windows CI runs both configurations, plus
+Windows `auto` ranks portable first, so IOCP is chosen by naming it. Windows
+CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
@@ -475,8 +474,7 @@ negative-errno error convention the pre-flight's error reporting assumes
 
 ## Floating point: rocketnet builds with -ffp-contract=off
 
-Estate policy for mas-bandwidth network libraries: builds are strict about floating point
-contraction. This build sets the right flag on every target, so nothing is required of you to
+rocketnet builds are strict about floating point contraction. This build sets the right flag on every target, so nothing is required of you to
 build rocketnet itself:
 
   - GCC/Clang: `-ffp-contract=off`. Not merely the absence of `-ffast-math` — GCC's default

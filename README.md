@@ -2,7 +2,7 @@
 
 RocketNet is a low-level client/server UDP transport and message library for real-time multiplayer games in C99 (with a C++17 implementation), built on public-key connect tokens, authenticated per-connection encryption, eight reliability modes over up to 32 independent channels, per-connection send budgets, zero allocations after create, and runtime-selected server transports (`portable`, `gso`, `io_uring`, `xdp`, `msgx`, `iocp`, `rio`, `loopback`).
 
-Supported platforms: Linux (`x86_64`, `aarch64`), macOS (`arm64`), and Windows (`x86_64`); see [docs/PLATFORMS.md](docs/PLATFORMS.md).
+Supported platforms: Linux (`x86_64`), macOS (`arm64`), and Windows (`x86_64`). Other architectures, Linux `aarch64` included, are not tested; see [docs/PLATFORMS.md](docs/PLATFORMS.md).
 
 ## Quick start
 

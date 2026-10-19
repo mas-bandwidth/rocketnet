@@ -9,6 +9,8 @@ Subcommands:
   usage        Compile every ```c and ```cpp fenced block of USAGE.md against
                sdk/rocketnet.h with -Wall -Werror (linking whole programs against the
                built library) and check every rocketnet_*/ROCKETNET_* identifier.
+  selftest     Prove the fragment path: a one-line fragment with no #include of its
+               own compiles, as C and as C++, with #include "rocketnet.h" prepended.
 """
 
 import os
@@ -199,6 +201,67 @@ def has_top_level_function(code):
     return bool(re.search(r"^[A-Za-z_][A-Za-z0-9_\s\*]*\([^;]*\)\s*\{", code, re.MULTILINE))
 
 
+FRAGMENT_INCLUDE = '#include "rocketnet.h"'
+
+
+def fragment_source(code):
+    """Wrap a fragment (statements with no function of their own) in a function body.
+
+    The file starts with #include "rocketnet.h"; any #include lines the fragment has are
+    hoisted to file scope above the function. The function's parameters are the names a
+    fragment may use: client, server, client_index, channel and time.
+    """
+    includes = [FRAGMENT_INCLUDE]
+    body = []
+    for line in code.splitlines():
+        if line.strip().startswith("#include"):
+            if line.strip() not in includes:
+                includes.append(line.strip())
+        else:
+            body.append(line)
+    return (
+        "\n".join(includes)
+        + "\n\n"
+        + "void rocketnet_usage_fragment( struct rocketnet_client_t * client, "
+        "struct rocketnet_server_t * server, int client_index, int channel, double time )\n{\n"
+        "    (void) client; (void) server; (void) client_index; (void) channel; (void) time;\n"
+        + "\n".join(body)
+        + "\n}\n"
+    )
+
+
+def find_compilers():
+    cc = os.environ.get("CC") or shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    cxx = os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+    return cc, cxx
+
+
+def check_selftest():
+    """Prove the fragment path: a one-line fragment with no #include compiles as C and C++."""
+    fragment = "rocketnet_client_update( client, time );"
+    source = fragment_source(fragment)
+    if not source.startswith(FRAGMENT_INCLUDE + "\n"):
+        print("selftest: fragment source does not start with " + FRAGMENT_INCLUDE, file=sys.stderr)
+        return 1
+    cc, cxx = find_compilers()
+    failures = []
+    with tempfile.TemporaryDirectory(prefix="rocketnet-selftest-") as tmpdir:
+        tmp = Path(tmpdir)
+        for lang, compiler, std_flag in (("c", cc, "-std=c99"), ("cpp", cxx, "-std=c++17")):
+            src_file = tmp / f"fragment.{lang}"
+            src_file.write_text(source, encoding="utf-8")
+            cmd = [compiler, std_flag, "-Wall", "-Werror", "-I", str(ROOT / "sdk"), "-c", str(src_file), "-o", str(tmp / f"fragment_{lang}.o")]
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            if proc.returncode != 0:
+                failures.append(f"one-line fragment failed to compile as {lang}:\n{proc.stderr.strip()}")
+    if failures:
+        for f in failures:
+            print(f"selftest: {f}", file=sys.stderr)
+        return 1
+    print("check_docs selftest: one-line fragment compiled as c and cpp")
+    return 0
+
+
 def check_usage():
     usage_path = ROOT / "USAGE.md"
     header_path = ROOT / "sdk" / "rocketnet.h"
@@ -231,8 +294,7 @@ def check_usage():
         print("usage: no ```c or ```cpp fenced blocks found in USAGE.md", file=sys.stderr)
         return 1
 
-    cc = os.environ.get("CC") or shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
-    cxx = os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+    cc, cxx = find_compilers()
     lib_static = ROOT / "build" / "librocketnet.a"
     lib_shared_so = ROOT / "bin" / "librocketnet.so"
     lib_shared_dylib = ROOT / "bin" / "librocketnet.dylib"
@@ -248,15 +310,7 @@ def check_usage():
             if is_main or has_top_level_function(code):
                 source_text = code + "\n"
             else:
-                source_text = (
-                    #include rocketnet.h
-
-                    "void rocketnet_usage_fragment( struct rocketnet_client_t * client, "
-                    "struct rocketnet_server_t * server, int client_index, int channel, double time )\n{\n"
-                    "    (void) client; (void) server; (void) client_index; (void) channel; (void) time;\n"
-                    + code
-                    + "\n}\n"
-                )
+                source_text = fragment_source(code)
             src_file = tmp / f"block_{idx}.{ext}"
             src_file.write_text(source_text, encoding="utf-8")
             if is_main:
@@ -298,11 +352,14 @@ def main(argv):
         return check_links()
     if cmd == "usage":
         return check_usage()
+    if cmd == "selftest":
+        return check_selftest()
     if cmd == "all":
         rc = 0
         rc |= check_archaeology()
         rc |= check_links()
         rc |= check_usage()
+        rc |= check_selftest()
         return 1 if rc else 0
     print(f"unknown subcommand: {cmd}", file=sys.stderr)
     return 2

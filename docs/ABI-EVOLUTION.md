@@ -104,8 +104,9 @@ revision keeps its value when the struct grows past it.
 
 ## 4. Every Public Struct, Its Sizes per Revision
 
-Sizes are bytes on every supported target (64-bit Linux x86_64 and s390x,
-macOS arm64, Windows x86_64; [docs/PLATFORMS.md](PLATFORMS.md)). On any target,
+Sizes are bytes on every supported target (Linux x86_64, macOS arm64,
+Windows x86_64) and on the s390x byte-order check target
+([docs/PLATFORMS.md](PLATFORMS.md)). On any target,
 `rocketnet_abi_type_size` is the authority.
 
 | Struct | Direction | Sized |
