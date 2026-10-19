@@ -826,16 +826,18 @@ static void in_place_unreliable_keeps_acks_and_order()
 // test vectors' keys, which are the development keys.
 // ---------------------------------------------------------------------------
 
-static int ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token );
+static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );
 #define rocketnet_write_dev_connect_token ip_write_connect_token
 #include "functional/channel_harness.h"
 #undef rocketnet_write_dev_connect_token
 
-static int ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token )
+static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes )
 {
+    if ( connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_address_t server_address;
     if ( !rocketnet_address_parse( &server_address, server_address_string ) || server_address.type != ROCKETNET_ADDRESS_IPV4 )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ADDRESS;
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
@@ -856,7 +858,7 @@ static int ip_write_connect_token( const char * server_address_string, uint64_t 
         private_fields.client_to_server_key[i] = (uint8_t) ( 0x31 + i );
         private_fields.server_to_client_key[i] = (uint8_t) ( 0x75 + i );
     }
-    return rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, connect_token );
+    return rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, connect_token ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
 
 static void unreliable_fit_in_place_every_transport()

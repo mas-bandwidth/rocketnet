@@ -564,7 +564,7 @@ static void mc_step_client_first( mc_pair_t * pair, double dt = 0.01 )
 static int g_mc_mismatch_lines = 0;
 static char g_mc_mismatch_line[2][512];
 
-static void mc_capture( void * context, int level, const char * message, size_t length )
+static void mc_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_ERROR || !strstr( message, "CONFIG mismatch" ) )

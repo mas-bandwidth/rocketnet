@@ -36,7 +36,7 @@ static int g_dev_warn_lines = 0;
 static int g_dev_warn_level = -1;
 static char g_dev_warn_buf[4096];
 
-static void capture_callback( void * context, int level, const char * message, size_t length )
+static void capture_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
     (void) context;
     g_total_lines++;
