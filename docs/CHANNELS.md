@@ -182,8 +182,9 @@ the design these points:
   `MESSAGE_SEND_QUEUE_FULL`; a full store counts `MESSAGE_SEND_STORE_FULL`.
   Each counts once per refused send, on the owner's counters, atomically,
   because an object's regions share them. A size outside 1 to
-  `max_message_bytes` is the caller's refusal to count (`MESSAGE_SEND_REFUSED`,
-  layer 8) and takes nothing here.
+  `max_message_bytes` is the caller's refusal: the unreliable modes count
+  `MESSAGE_UNRELIABLE_SEND_FAILED`, the rest `MESSAGE_SEND_REFUSED` (layer 8),
+  and it takes nothing here.
 - **Each class's links live inside its third.** The thirds are 64-aligned
   (`floor(S/3)` rounded down to 64). Each holds its chunks, then one u32 link
   per chunk, so a class has `floor(third / (chunk + 4))` chunks and nothing

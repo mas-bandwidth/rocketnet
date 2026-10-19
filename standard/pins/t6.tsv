@@ -1,0 +1,10 @@
+# The rows of RN-1 t6 (TRANSPORT.md, Connect token): document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+address flag IPv4	ROCKETNET_ADDRESS_FLAG_IPV4	0x01
+address flag IPv6	ROCKETNET_ADDRESS_FLAG_IPV6	0x02
+address flags both	ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6	0x03
+# Every other number t6 binds is a row of t3 (version, Ed25519 signature,
+# sealed box overhead, connect token, signed connect data, sealed block,
+# private block, user data, token key, token identifier), pinned in
+# transport.tsv and referenced from t6 by name. Field tables and vectors
+# carry no other pins.
