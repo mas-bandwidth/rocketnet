@@ -203,4 +203,34 @@ static void token_time_refusals_are_distinct()
     token_time_teardown( &t );
 }
 
+// the accepted side of each boundary as its own check: the request is answered
+// with a cookie, so it is not ignored and no token-time refusal counter moves
+
+static void token_expiring_one_second_ahead_is_accepted()
+{
+    struct token_time_server_t t;
+    token_time_setup( &t );
+    token_time_accept( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW + 1 );
+    token_time_teardown( &t );
+}
+
+static void token_created_at_the_skew_limit_is_accepted()
+{
+    struct token_time_server_t t;
+    token_time_setup( &t );
+    token_time_accept( &t, TOKEN_TIME_NOW + 5, TOKEN_TIME_NOW + 10 );
+    token_time_teardown( &t );
+}
+
+static void token_lifetime_at_the_maximum_is_accepted()
+{
+    struct token_time_server_t t;
+    token_time_setup( &t );
+    token_time_accept( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + TOKEN_TIME_MAX_LIFETIME );
+    token_time_teardown( &t );
+}
+
 REGISTER_UNIT_TEST( token_time_refusals_are_distinct );
+REGISTER_UNIT_TEST( token_expiring_one_second_ahead_is_accepted );
+REGISTER_UNIT_TEST( token_created_at_the_skew_limit_is_accepted );
+REGISTER_UNIT_TEST( token_lifetime_at_the_maximum_is_accepted );
