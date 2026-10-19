@@ -651,7 +651,7 @@ ROCKETNET_EXPORT uint64_t rocketnet_protocol_version( void );
 /** @brief Returns monotonic elapsed time in seconds from an unspecified process-local origin. @return Nondecreasing platform clock value; use the same clock for all time-taking calls. */
 ROCKETNET_EXPORT double rocketnet_time( void );
 
-/** @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; provide a finite nonnegative value representable by the platform. This blocks the calling thread. */
+/** @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; a negative, zero or NaN value returns at once, and a value above 2000 seconds sleeps 2000 seconds. This blocks the calling thread. */
 ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 
 // -----------------------------------------

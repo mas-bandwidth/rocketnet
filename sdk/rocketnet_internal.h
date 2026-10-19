@@ -475,4 +475,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // asserts, field by field, that each public struct and its table agree in
 // name, order, offset and size, so the two cannot drift.
 
+// the longest single rocketnet_sleep, in seconds: its microsecond count fits
+// a 32-bit int
+#define ROCKETNET_SLEEP_MAX_SECONDS 2000.0
+
+// the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
+// or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
+double rocketnet_sleep_clamp( double seconds );
+
 #endif // #ifndef ROCKETNET_INTERNAL_H
