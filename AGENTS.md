@@ -1,0 +1,436 @@
+# AGENTS.md: Guide for AI Coding Agents Integrating RocketNet
+
+This guide is the technical reference for an AI coding agent integrating RocketNet into a C or C++ game client and dedicated server. Every function, struct, macro, enum, and configuration variable named here matches [sdk/rocketnet.h](sdk/rocketnet.h).
+
+- [What RocketNet is](#what-rocketnet-is)
+- [Building and linking on Linux, Windows and macOS](#building-and-linking-on-linux-windows-and-macos)
+- [The integration loop](#the-integration-loop)
+- [Choosing a transport](#choosing-a-transport)
+- [The eight channel types and how they map from RakNet's PacketReliability](#the-eight-channel-types-and-how-they-map-from-raknets-packetreliability)
+- [Connect tokens and security](#connect-tokens-and-security)
+- [Errors and refusals](#errors-and-refusals)
+- [Threading rules](#threading-rules)
+- [Testing an integration](#testing-an-integration)
+- [Common mistakes](#common-mistakes)
+- [Zero-copy messages: an intentional difference from RakNet](#zero-copy-messages-an-intentional-difference-from-raknet)
+
+---
+
+## What RocketNet is
+
+RocketNet is a low-level, connection-oriented client/server UDP transport and message library written in C++ with a pure C public interface:
+
+- **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
+- **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
+- **Version macros:** `ROCKETNET_VERSION` (`"1.0.0"`), `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR`, and `ROCKETNET_VERSION_PATCH`.
+- **Up to 1000 clients per server (`ROCKETNET_MAX_CLIENTS`):** Clients are addressed by slot index `0 .. max_clients - 1`. Each client and server allocates its connection memory once at creation (`rocketnet_client_required_memory`, `rocketnet_server_required_memory`, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`) and performs zero dynamic allocations while connections are live.
+- **Up to 32 channels (`ROCKETNET_MAX_CHANNELS`) and 8 delivery modes:** Every message is sent on a channel `0 .. num_channels - 1` with one of eight reliability modes matching RakNet's `PacketReliability`.
+
+---
+
+## Building and linking on Linux, Windows and macOS
+
+Full build instructions live in [BUILDING.md](BUILDING.md).
+
+### Prerequisites
+
+- **Linux (Ubuntu 24.04):**
+  ```sh
+  sudo apt update
+  sudo apt install -y cmake build-essential libbpf-dev libxdp-dev liburing-dev xxd
+  ```
+- **macOS:**
+  ```sh
+  brew install cmake
+  ```
+- **Windows:** MSVC (`cl.exe`, v18 / 2026 toolchain) and CMake 4.2 or later.
+
+RocketNet vendors a pinned copy of libsodium under `sodium/` and compiles it directly into the library target, so no external libsodium package is required on any platform.
+
+### Building and installing
+
+On Linux and macOS:
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel 4
+cmake --install build --prefix /path/to/prefix
+```
+
+On Windows (x64):
+
+```powershell
+cmake -B build -A x64
+cmake --build build --config Release --parallel 4
+cmake --install build --config Release --prefix C:/path/to/prefix
+```
+
+### Linking from CMake
+
+When consuming an installed prefix:
+
+```cmake
+find_package(RocketNet 1.0.0 EXACT CONFIG REQUIRED)
+target_link_libraries(game PRIVATE RocketNet::rocketnet)
+```
+
+Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project. For a shared library build, configure RocketNet with `-DBUILD_SHARED_LIBS=ON`.
+
+When embedding the source tree with `add_subdirectory`:
+
+```cmake
+add_subdirectory(external/rocketnet)
+target_link_libraries(game PRIVATE rocketnet)
+```
+
+---
+
+## The integration loop
+
+A RocketNet integration follows a strict lifecycle and per-frame call order:
+
+1. **Initialize the library once per process:** Call `rocketnet_init(NULL)` (returns `true` on success, `false` on failure) or `rocketnet_init_ex(NULL, &status)` (writes `ROCKETNET_STATUS_OK` or a `rocketnet_status_t` code into `status`).
+2. **Create the server and client:**
+   - Fill `struct rocketnet_server_config_t` with `rocketnet_server_default_config_sized(&server_config, sizeof(server_config))` (or `rocketnet_server_default_config(&server_config)`), set `protocol_id`, `backend_public_key`, `server_public_key`, and `server_secret_key` (or use `rocketnet_server_dev_config_sized` / `rocketnet_server_dev_config` in local development builds), and call `rocketnet_server_create_sized` (or `rocketnet_server_create`).
+   - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config_sized(&client_config, sizeof(client_config))` (or `rocketnet_client_default_config(&client_config)`) and call `rocketnet_client_create_sized` (or `rocketnet_client_create`) with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
+3. **Run the five-step frame loop in exact order every tick** (using the caller's monotonic `double time` in seconds):
+   - **Step 1 — Update:** Call `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` first to pump the transport, process incoming packets and ACKs, and advance connection state.
+   - **Step 2 — Receive and release:** Drain every pending message on each channel with `rocketnet_client_receive` / `rocketnet_server_receive`, copy or process its payload, and release the view in the **same** frame before the next update with `rocketnet_client_release` / `rocketnet_server_release`. Read any ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
+   - **Step 3 — Simulate:** Run the game simulation for the frame.
+   - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start` / `rocketnet_server_start`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish` / `rocketnet_server_finish` (or cancel with `rocketnet_client_abort` / `rocketnet_server_abort`, or fan out to all connected clients with `rocketnet_server_broadcast`).
+   - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
+4. **Disconnect, destroy, and terminate:** Call `rocketnet_client_disconnect` (or `rocketnet_server_disconnect_client`), destroy every client and server with `rocketnet_client_destroy` and `rocketnet_server_destroy`, and call `rocketnet_term()` (or `rocketnet_term_ex()`).
+
+### Compilable loopback integration example
+
+<!-- check_agents_md:example:begin -->
+```c
+#include "rocketnet.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+int main( void )
+{
+    int status = ROCKETNET_STATUS_OK;
+    if ( !rocketnet_init_ex( NULL, &status ) || status != ROCKETNET_STATUS_OK )
+        return 1;
+
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+
+    if ( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) != ROCKETNET_STATUS_OK )
+        return 1;
+    if ( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) != ROCKETNET_STATUS_OK )
+        return 1;
+
+    const uint64_t protocol_id = 0x1122334455667788ULL;
+    const char * server_address = "127.0.0.1:40000";
+
+    struct rocketnet_server_config_t server_config;
+    if ( !rocketnet_server_default_config_sized( &server_config, sizeof( server_config ) ) )
+        return 1;
+    server_config.protocol_id = protocol_id;
+    server_config.max_clients = 8;
+    server_config.transport = "loopback";
+    memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public_key, sizeof( server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_secret_key ) );
+
+    struct rocketnet_server_t * server = rocketnet_server_create_sized(
+        NULL, server_address, &server_config, sizeof( server_config ), NULL, 0 );
+    if ( !server )
+        return 1;
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    if ( rocketnet_write_production_connect_token(
+             backend_secret_key,
+             server_public_key,
+             protocol_id,
+             &server_address,
+             1,
+             42ULL,
+             1ULL,
+             4102444800ULL,
+             15,
+             NULL,
+             connect_token,
+             sizeof( connect_token ) ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        return 1;
+    }
+
+    struct rocketnet_client_config_t client_config;
+    if ( !rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) )
+    {
+        rocketnet_server_destroy( server );
+        return 1;
+    }
+    client_config.transport = "loopback";
+    client_config.step_driven = 1;
+
+    struct rocketnet_client_t * client = rocketnet_client_create_sized(
+        NULL, connect_token, &client_config, sizeof( client_config ), NULL, 0 );
+    if ( !client )
+    {
+        rocketnet_server_destroy( server );
+        return 1;
+    }
+
+    double time = 1000.0;
+    const double dt = 1.0 / 60.0;
+    int client_sent = 0;
+    int server_received_and_replied = 0;
+    int client_received_reply = 0;
+
+    for ( int tick = 0; tick < 120 && !client_received_reply; tick++, time += dt )
+    {
+        if ( rocketnet_client_update( client, time ) != ROCKETNET_MESSAGE_OK )
+            return 1;
+        if ( rocketnet_server_update( server, time ) != ROCKETNET_MESSAGE_OK )
+            return 1;
+
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
+        {
+            if ( bytes == 4 && memcmp( data, "pong", 4 ) == 0 )
+                client_received_reply = 1;
+            rocketnet_client_release( client, data );
+        }
+
+        int slot = rocketnet_client_index( client );
+        if ( slot >= 0 && rocketnet_server_client_connected( server, slot ) )
+        {
+            while ( rocketnet_server_receive( server, slot, 0, &data, &bytes ) )
+            {
+                if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
+                    server_received_and_replied = 1;
+                rocketnet_server_release( server, slot, data );
+
+                if ( server_received_and_replied )
+                {
+                    uint8_t * reply = rocketnet_server_start( server, slot, 0, ROCKETNET_RELIABLE_ORDERED, 4 );
+                    if ( !reply )
+                        return 1;
+                    memcpy( reply, "pong", 4 );
+                    if ( rocketnet_server_finish( server, slot, 4 ) == 0 )
+                        return 1;
+                }
+            }
+        }
+
+        if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        {
+            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, 4 );
+            if ( !out )
+                return 1;
+            memcpy( out, "ping", 4 );
+            if ( rocketnet_client_finish( client, 4 ) == 0 )
+                return 1;
+            client_sent = 1;
+        }
+
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
+    }
+
+    if ( !client_sent || !server_received_and_replied || !client_received_reply )
+        return 1;
+
+    rocketnet_client_disconnect( client );
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+
+    if ( rocketnet_term_ex() != ROCKETNET_STATUS_OK )
+        return 1;
+
+    return 0;
+}
+```
+<!-- check_agents_md:example:end -->
+
+---
+
+## Choosing a transport
+
+Both `rocketnet_client_config_t` and `rocketnet_server_config_t` expose a `transport` field (overridable in the environment via `ROCKETNET_CLIENT_TRANSPORT` and `ROCKETNET_SERVER_TRANSPORT`).
+
+- **Ordered candidate list:** `transport` accepts a comma-separated list of transport names tried left-to-right at creation (for example, `"xdp,gso,portable"`). The first candidate that initializes on the host wins. A single name pins that transport and fails creation loudly if unavailable.
+- **`"auto"` (the default when `transport` is `NULL` or `""`):** Selects the platform's recommended preference order:
+  - **Linux server:** tries `"xdp"`, `"gso"`, `"io_uring"`, `"portable"`.
+  - **macOS server and client:** tries `"msgx"`, `"portable"`.
+  - **Windows server:** tries `"portable"`, `"iocp"`, `"rio"`.
+  - **Linux and Windows client:** uses `"portable"`.
+- **No-root high-performance Linux server path:** When running without root or `CAP_BPF` / `CAP_NET_ADMIN`, `"xdp"` is skipped and `"gso"` (UDP `UDP_SEGMENT` / `UDP_GRO` coalescing with `sendmmsg` / `recvmmsg` worker threads) or `"io_uring"` (asynchronous batched ring I/O) provides high-throughput multi-queue UDP without kernel privileges.
+- **AF_XDP (`"xdp"`):** Kernel-bypass eBPF/AF_XDP server dataplane on Linux when root (or `CAP_BPF` and `CAP_NET_ADMIN`) and NIC support are present.
+- **In-process `"loopback"`:** Carries packets in memory with no sockets and is pin-only (`"auto"` never selects `"loopback"`).
+- **Inspecting the active transport:** Call `rocketnet_client_transport_name(client)` and `rocketnet_server_transport_name(server)` after creation to read the winning transport name.
+
+---
+
+## The eight channel types and how they map from RakNet's PacketReliability
+
+RocketNet implements all eight RakNet `PacketReliability` modes across up to `ROCKETNET_MAX_CHANNELS` (`32`) independent channels (`0 .. num_channels - 1`). Details of the wire codes and channel state machines live in [docs/RAKNET-RELIABILITY.md](docs/RAKNET-RELIABILITY.md) and [docs/CHANNELS.md](docs/CHANNELS.md).
+
+| RakNet `PacketReliability` | RocketNet macro | What the receiver sees | Receipt delivered via `rocketnet_client_receipts` / `rocketnet_server_receipts` |
+| --- | --- | --- | --- |
+| `UNRELIABLE` | `ROCKETNET_UNRELIABLE` | Arrives at most once, in arrival order, or is dropped; an oversize message above one packet is promoted to `ROCKETNET_RELIABLE` | None |
+| `UNRELIABLE_SEQUENCED` | `ROCKETNET_UNRELIABLE_SEQUENCED` | Latest-only on the channel: any message older than the newest delivered sequencing index is dropped; oversize above one packet is promoted to `ROCKETNET_RELIABLE_SEQUENCED` | None |
+| `RELIABLE` | `ROCKETNET_RELIABLE` | Every message arrives exactly once; may arrive out of order relative to other messages | None |
+| `RELIABLE_ORDERED` | `ROCKETNET_RELIABLE_ORDERED` | Every message on the channel arrives exactly once and in exact send order | None |
+| `RELIABLE_SEQUENCED` | `ROCKETNET_RELIABLE_SEQUENCED` | The newest message on the channel is guaranteed to arrive; older out-of-order messages overtaken before delivery are skipped | None |
+| `UNRELIABLE_WITH_ACK_RECEIPT` | `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT` | Same delivery as `ROCKETNET_UNRELIABLE` | `ROCKETNET_RECEIPT_ACKED` or `ROCKETNET_RECEIPT_LOSS` (if promoted for size, `ROCKETNET_RECEIPT_ACKED` only) |
+| `RELIABLE_WITH_ACK_RECEIPT` | `ROCKETNET_RELIABLE_WITH_ACK_RECEIPT` | Same delivery as `ROCKETNET_RELIABLE` | `ROCKETNET_RECEIPT_ACKED` only (when all fragments are acknowledged) |
+| `RELIABLE_ORDERED_WITH_ACK_RECEIPT` | `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT` | Same delivery as `ROCKETNET_RELIABLE_ORDERED` | `ROCKETNET_RECEIPT_ACKED` only (when all fragments are acknowledged) |
+
+---
+
+## Connect tokens and security
+
+RocketNet's security model is documented in [SECURITY.md](SECURITY.md):
+
+- **Who mints connect tokens:** A client never connects to a raw IP address. Instead, your authentication or matchmaking backend mints a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte (`304`-byte) connect token using `rocketnet_write_production_connect_token` and hands it to the client over HTTPS. For local development and tests built with the development library, `rocketnet_write_dev_connect_token` mints a token against the published development keys.
+- **Keys and key generation:**
+  - **Backend signing keypair (Ed25519):** Generated via `rocketnet_generate_backend_keypair` or deterministically via `rocketnet_generate_backend_keypair_from_seed` (`ROCKETNET_BACKEND_SEED_BYTES` = `32`, `ROCKETNET_BACKEND_PUBLIC_KEY_BYTES` = `32`, `ROCKETNET_BACKEND_SECRET_KEY_BYTES` = `64`). The backend keeps `backend_secret_key`; each game server receives `backend_public_key` (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`).
+  - **Server sealing keypair (X25519):** Generated via `rocketnet_generate_server_keypair` (`ROCKETNET_SERVER_PUBLIC_KEY_BYTES` = `32`, `ROCKETNET_SERVER_SECRET_KEY_BYTES` = `32`). The backend seals private token data to `server_public_key`; the server opens it with `server_secret_key` (`ROCKETNET_SERVER_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SERVER_SECRET_KEY`).
+  - **No default production keys:** `rocketnet_server_default_config` and `rocketnet_server_default_config_sized` leave the three key fields all-zero, and `rocketnet_server_create` / `rocketnet_server_create_sized` refuses creation until non-zero keys are provided. `rocketnet_server_dev_config` / `rocketnet_server_dev_config_sized` populates the development keys explicitly.
+  - **User data:** Each token carries `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` (`128` bytes) of signed application metadata.
+- **What the server checks on every handshake:**
+  1. Packet size, `filter_value` (`ROCKETNET_SERVER_FILTER_VALUE` / `ROCKETNET_CLIENT_FILTER_VALUE`), wire version, `protocol_id` (`ROCKETNET_SERVER_PROTOCOL_ID`), and `create_timestamp <= expire_timestamp`.
+  2. Current timestamp within `[create_timestamp, expire_timestamp)` and the server's advertised `public_address` (`ROCKETNET_SERVER_PUBLIC_ADDRESS`) present in the token's address list.
+  3. Stateless cookie challenge before spending asymmetric cryptography under load, plus a per-update signature verification budget (`ROCKETNET_SERVER_COUNTER_HANDSHAKES_OVER_BUDGET`).
+  4. Ed25519 signature verification over the signed token fields under `backend_public_key`.
+  5. Single-use token replay history and active client/address tables (`rocketnet_server_client_id`).
+  6. X25519 sealed-box decryption of the private token block under `server_secret_key` and `server_public_key`, binding the 32-byte session keys to the authenticated client.
+
+---
+
+## Errors and refusals
+
+RocketNet never clamps invalid configuration or silently ignores API misuse; every refusal is explicit and counted.
+
+- **Status codes (`enum rocketnet_status_t` and `rocketnet_status_string`):**
+  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded (`ROCKETNET_NUM_STATUS_CODES` bounds the enum).
+  - `ROCKETNET_STATUS_ALREADY_INITIALIZED`, `ROCKETNET_STATUS_NOT_INITIALIZED`, `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`, `ROCKETNET_STATUS_CRYPTO_INIT_FAILED`: lifecycle and allocator state codes for `rocketnet_init_ex`, `rocketnet_term_ex`, and `rocketnet_allocator_ex`.
+  - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration validation failures (`rocketnet_client_validate_config`, `rocketnet_client_validate_config_sized`, `rocketnet_server_validate_config`, `rocketnet_server_validate_config_sized`).
+  - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.
+  - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
+- **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start`, `rocketnet_server_start`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish`, `rocketnet_server_finish`, `rocketnet_server_broadcast`, `rocketnet_client_receive`, `rocketnet_server_receive`, `rocketnet_client_set_send_kbps`, `rocketnet_server_set_send_kbps`) return `0` when refused. Every API misuse increments the process-wide counter returned by `rocketnet_api_misuse_count()`.
+- **Update return codes:** `rocketnet_client_update` and `rocketnet_server_update` return `ROCKETNET_MESSAGE_OK` (`0`), or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` (`-1`) if the caller failed to release a received message view before the next update.
+- **Client states (`enum rocketnet_client_state_t`, `rocketnet_client_state`, `rocketnet_client_state_name`):**
+  - Progress states: `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), `ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE` (`1`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST` (`2`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE` (`3`), `ROCKETNET_CLIENT_STATE_CONNECTED` (`4`).
+  - Negative terminal failure states: `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`).
+- **Disconnect reasons (`rocketnet_client_disconnect_reason`, `rocketnet_server_disconnect_reason`):**
+  - `ROCKETNET_MESSAGE_ERROR_NONE` (`0`): no message-layer error.
+  - `ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH` (`1`): wire-checked channel configuration fields (`num_channels`, `window_messages`, `receive_ring_bytes`, `max_message_bytes`) differed between client and server.
+  - `ROCKETNET_MESSAGE_ERROR_CONFIG_TIMEOUT` (`2`): peer's channel configuration record did not arrive within `reliable_timeout_ms`.
+  - `ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION` (`3`): peer sent a malformed message record or violated window/ring bounds.
+  - `ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT` (`4`): a reliable message went unacknowledged past `reliable_timeout_ms`.
+  - `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED` (`5`): connection send descriptors (`send_queue_messages`) or send buffer (`send_buffer_bytes`) ran out of room for a send that could not be dropped.
+- **Counters and stats to watch:**
+  - Read client counters with `rocketnet_client_counter` (`enum rocketnet_client_counter_t`: `ROCKETNET_CLIENT_COUNTER_PACKETS_SENT`, `ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED`, `ROCKETNET_CLIENT_COUNTER_BYTES_SENT`, `ROCKETNET_CLIENT_COUNTER_BYTES_RECEIVED`, `ROCKETNET_CLIENT_COUNTER_PAYLOADS_RECEIVED`, `ROCKETNET_CLIENT_COUNTER_MESSAGES_RESENT`, `ROCKETNET_CLIENT_COUNTER_MESSAGES_DUPLICATE`, `ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED`, `ROCKETNET_CLIENT_COUNTER_RECEIPTS_LOST`, `ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS`, `ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED`, `ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED`).
+  - Read server-wide counters with `rocketnet_server_counter` (`enum rocketnet_server_counter_t`: `ROCKETNET_SERVER_COUNTER_PACKETS_SENT`, `ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED`, `ROCKETNET_SERVER_COUNTER_BYTES_SENT`, `ROCKETNET_SERVER_COUNTER_BYTES_RECEIVED`, `ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED`, `ROCKETNET_SERVER_COUNTER_CLIENTS_DENIED_FULL`, `ROCKETNET_SERVER_COUNTER_HANDSHAKES_OVER_BUDGET`, `ROCKETNET_SERVER_COUNTER_PAYLOADS_RECEIVED`, `ROCKETNET_SERVER_COUNTER_MESSAGES_RESENT`, `ROCKETNET_SERVER_COUNTER_MESSAGES_DUPLICATE`, `ROCKETNET_SERVER_COUNTER_RECEIPTS_ACKED`, `ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST`, `ROCKETNET_SERVER_COUNTER_BUDGET_DROPS`, `ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED`) and per-slot counters with `rocketnet_server_client_counter` (`enum rocketnet_server_client_counter_t`: `ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT`, `ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_RECEIVED`, `ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_SENT`, `ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_RECEIVED`).
+  - Read latency, jitter, packet loss, and bandwidth gauges with `rocketnet_client_stat` (`enum rocketnet_client_stat_t`, such as `ROCKETNET_CLIENT_STAT_RTT`, `ROCKETNET_CLIENT_STAT_JITTER`, `ROCKETNET_CLIENT_STAT_PACKET_LOSS`, `ROCKETNET_CLIENT_STAT_BANDWIDTH_SENT`, `ROCKETNET_CLIENT_STAT_BANDWIDTH_RECEIVED`), `rocketnet_server_stat` (`enum rocketnet_server_stat_t`), and `rocketnet_server_client_stat` (`enum rocketnet_server_client_stat_t`, such as `ROCKETNET_SERVER_CLIENT_STAT_RTT`, `ROCKETNET_SERVER_CLIENT_STAT_JITTER`, `ROCKETNET_SERVER_CLIENT_STAT_PACKET_LOSS`, `ROCKETNET_SERVER_CLIENT_STAT_BANDWIDTH_ACKED`).
+
+---
+
+## Threading rules
+
+- **Main-thread ownership:** A `rocketnet_client_t` or `rocketnet_server_t` instance is owned by one caller thread for its frame loop. Run `rocketnet_client_update` / `rocketnet_server_update`, `rocketnet_client_receive` / `rocketnet_server_receive`, `rocketnet_client_release` / `rocketnet_server_release`, `rocketnet_client_start` / `rocketnet_server_start`, `rocketnet_client_finish` / `rocketnet_server_finish`, `rocketnet_client_abort` / `rocketnet_server_abort`, `rocketnet_server_broadcast`, `rocketnet_client_send_packets` / `rocketnet_server_send_packets`, `rocketnet_client_receipts` / `rocketnet_server_receipts`, and `rocketnet_client_disconnect` / `rocketnet_server_disconnect_client` sequentially on that owning thread—never concurrently on the same object.
+- **What the background I/O thread does:** By default (`step_driven == 0`), socket drivers run background I/O threads that pull UDP datagrams off the NIC, decrypt and authenticate packets off the main thread, and drain staged outgoing batches when `rocketnet_client_send_packets` / `rocketnet_server_send_packets` flushes them. The caller thread never touches locks during message reads or writes; handoff happens inside `update` and `send_packets`.
+- **Step-driven client mode (`step_driven`):** Setting `client_config.step_driven = 1` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1` in the environment) disables the client's background I/O thread. The client then runs its socket/transport receive step inside `rocketnet_client_update` and its send step inside `rocketnet_client_send_packets` directly on the caller's thread. Use `step_driven = 1` in deterministic simulations, single-threaded harnesses, or when the host engine manages every thread explicitly.
+
+---
+
+## Testing an integration
+
+- **Use the `"loopback"` transport:** Set `server_config.transport = "loopback"` and `client_config.transport = "loopback"` (with `client_config.step_driven = 1`). The `"loopback"` driver routes datagrams in memory across up to `ROCKETNET_LOOPBACK_MAX_ENDPOINTS` (`1001`) endpoints per process without opening any OS socket or touching the network stack.
+- **Pass synthetic monotonic `time`:** Both `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` take `double time` in seconds as an explicit parameter. Start test clocks at a fixed value such as `1000.0` and advance by `1.0 / 60.0` per tick—never sleep or read wall-clock time in unit tests.
+- **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, set `simulated_loss_percent` (`0..100`), `simulated_latency_ms`, `simulated_jitter_ms`, and `simulated_duplicate_percent` (`0..100`) on `rocketnet_client_config_t` and `rocketnet_server_config_t` to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_LOSS` handling deterministically over `"loopback"`.
+
+---
+
+## Common mistakes
+
+1. **Holding a received message pointer across `update`:** The `const uint8_t *` returned by `rocketnet_client_receive` or `rocketnet_server_receive` is a zero-copy view valid only until the next `update`. Failing to call `rocketnet_client_release` or `rocketnet_server_release` before the next `rocketnet_client_update` / `rocketnet_server_update` triggers an assert in debug builds, returns `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` in release builds, and increments `ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED` / `ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED`.
+2. **Calling a second `start` before `finish` or `abort`:** Only one `rocketnet_client_start` (per client) or `rocketnet_server_start` (per server) may be pending at a time. Calling `start` again while one is open returns `NULL`, increments `rocketnet_api_misuse_count()`, and leaves the first reservation open.
+3. **Keeping the `start` pointer after `finish` or `abort`:** Once `rocketnet_client_finish` / `rocketnet_server_finish` or `rocketnet_client_abort` / `rocketnet_server_abort` is called, the buffer belongs to the transport queue or free pool. Never read or write through the pointer after committing or aborting.
+4. **Passing a dishonest maximum to `start` or writing past it:** `start` reserves room for `bytes` bytes (`1 .. max_message_bytes`). Writing past `bytes` corrupts adjacent region memory; passing `bytes_written < 1` or `bytes_written > bytes` to `finish` is refused (`0` returned, `start` stays pending).
+5. **Calling `send_packets` before queuing messages:** Calling `rocketnet_client_send_packets` or `rocketnet_server_send_packets` at the top of the frame instead of the end leaves every message queued during the frame sitting in the region until the next frame, adding a full tick of latency.
+6. **Passing wall-clock time in deterministic tests:** Mixing wall-clock time with simulated ticks causes non-deterministic timeouts (`ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT` or `ROCKETNET_MESSAGE_ERROR_CONFIG_TIMEOUT`). Pass a controlled monotonic `time` variable instead.
+7. **Forgetting keys on `rocketnet_server_default_config`:** `rocketnet_server_default_config` zeroes `backend_public_key`, `server_public_key`, and `server_secret_key`; `rocketnet_server_create` returns `NULL` unless valid keys are populated or `rocketnet_server_dev_config` is used in development.
+
+---
+
+## Zero-copy messages: an intentional difference from RakNet
+
+In RakNet, `RakPeerInterface::Send` takes a `const char *` or `RakNet::BitStream *` and copies the caller's payload into internal `BitStream` and `InternalPacket` allocations. RocketNet removes that copy. RocketNet's only per-connection send path is the zero-copy start/finish pair:
+
+- `rocketnet_client_start(client, channel, reliability, bytes)` and `rocketnet_server_start(server, client_index, channel, reliability, bytes)` reserve space for up to `bytes` bytes and return a `uint8_t *` pointer directly into the buffer that will be sent.
+- The caller serializes or writes the message into that pointer in place.
+- `rocketnet_client_finish(client, bytes_written)` and `rocketnet_server_finish(server, client_index, bytes_written)` commit `bytes_written` bytes (`1 <= bytes_written <= bytes`) and return the message's nonzero `uint32_t` receipt serial (`0` if refused).
+- `rocketnet_client_abort(client)` and `rocketnet_server_abort(server, client_index)` cancel an open reservation and return its storage to the connection's region without sending.
+- `rocketnet_server_broadcast(server, channel, reliability, data, bytes)` is the sole copying helper, provided because broadcasting one message to every connected client must copy into each connected slot's independent region.
+
+### Why RocketNet works this way
+
+This API is an intentional design choice of RocketNet's author:
+
+1. **A message that fits in one packet goes out with no copy:** The caller writes the payload once into the connection's pre-allocated region, and the packet writer frames it directly from that region into the outgoing transport frame.
+2. **Room for headers is reserved in front of the payload:** Framing headers and record metadata sit outside the caller's payload slice, never shifting or reallocating the bytes the caller wrote.
+3. **The declared maximum (`bytes`) in `start` lets the library choose the right buffer up front:** Before a single byte is serialized, RocketNet knows whether the message fits in a fixed send-store chunk (`128`, `512`, or `1152` bytes) or requires a contiguous multi-fragment span in the connection's send-span ring (`1153 .. max_message_bytes`).
+
+In practice, this means zero per-message heap allocations, no intermediate `BitStream` copy, lower CPU cost per client at `1000`+ connected clients (`ROCKETNET_MAX_CLIENTS`), and completely predictable per-connection memory (`rocketnet_client_required_memory` and `rocketnet_server_required_memory`).
+
+### Using `start`, `finish`, and `abort` correctly
+
+- **Declare an honest maximum `bytes`:** Pass the upper bound `bytes` (`1 .. max_message_bytes`) that your serializer may write. Write only within `out[0 .. bytes - 1]`.
+- **Commit the exact `bytes_written`:** Pass the actual serialized length `bytes_written` (`1 <= bytes_written <= bytes`) to `rocketnet_client_finish` or `rocketnet_server_finish`. You may reserve an upper bound (for example, `256` bytes) and finish fewer bytes (for example, `72` bytes). Passing `bytes_written < 1` or `bytes_written > bytes` returns `0`, increments `rocketnet_api_misuse_count()`, and leaves the `start` pending until finished with a valid size or cancelled with `abort`.
+- **One `start` pending per object at a time:** Finish or abort the current reservation before calling `start` again on the same client or server object, and never keep the `uint8_t *` pointer after `finish` or `abort`.
+- **How reliable and oversize unreliable messages are buffered:**
+  - **Reliable modes (`ROCKETNET_RELIABLE`, `ROCKETNET_RELIABLE_ORDERED`, `ROCKETNET_RELIABLE_SEQUENCED`, `ROCKETNET_RELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT`):** Messages up to `1152` bytes take one O(1) chunk from the connection's `128`-, `512`-, or `1152`-byte send store. Messages above `1152` bytes up to `max_message_bytes` take a contiguous slice in the connection's send-span ring so your serializer still writes into one contiguous `uint8_t *` buffer, which RocketNet fragments at `1152`-byte stride without copying.
+  - **Single-packet vs. oversize unreliable modes (`ROCKETNET_UNRELIABLE`, `ROCKETNET_UNRELIABLE_SEQUENCED`, `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`):** When the message record fits in a single packet (`ROCKETNET_MESSAGE_SINGLE_BYTES` = `1415` bytes on the wire: up to `1411` payload bytes for `ROCKETNET_UNRELIABLE` and `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`, or up to `1405` bytes on channels `0..255` and `1404` bytes on channels `>= 256` for `ROCKETNET_UNRELIABLE_SEQUENCED`), it is sent as an unreliable record. When `bytes` exceeds one packet (up to `max_message_bytes`), RocketNet accepts the send and transparently promotes it on the wire to its reliable twin (`ROCKETNET_RELIABLE`, `ROCKETNET_RELIABLE_SEQUENCED`, or `ROCKETNET_RELIABLE_WITH_ACK_RECEIPT`), matching RakNet's `ReliabilityLayer`. If `start` reserved an oversize bound that triggered promotion, but `finish` commits a smaller `bytes_written` that fits in one packet, `finish` downgrades the descriptor back to the single-packet unreliable path in place with no copy.
+- **What a `NULL` return from `start` means:**
+  - **Caller misuse or disconnected slot:** If the client or server slot is not connected, another `start` is already pending, `channel` is outside `0 .. num_channels - 1`, `reliability` is invalid, or `bytes` is outside `1 .. max_message_bytes`, `start` returns `NULL` immediately without disconnecting a live peer.
+  - **Connection send memory exhausted:** If a connected peer's send descriptor pool (`send_queue_messages`) or send buffer (`send_buffer_bytes`) has no room for the reservation, `start` returns `NULL` and terminates that connection with `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED` (the server disconnects that client slot; the client moves to `ROCKETNET_CLIENT_STATE_DISCONNECTED`).
+
+### Porting RakNet-style code: before and after
+
+**Before (RakNet `BitStream` + copy into `Send`):**
+
+```cpp
+// RakNet: serializes into a temporary BitStream, then copies inside Send()
+RakNet::BitStream bs;
+bs.Write((uint8_t)ID_PLAYER_INPUT);
+bs.Write(tick);
+bs.Write(move_x);
+bs.Write(move_y);
+peer->Send(&bs, HIGH_PRIORITY, UNRELIABLE_SEQUENCED, 0, server_addr, false);
+```
+
+**After (RocketNet zero-copy `start` / `finish`):**
+
+```cpp
+// RocketNet: reserves the outgoing buffer first and writes in place
+const int max_bytes = 1 + (int)sizeof(uint32_t) + 2 * (int)sizeof(float);
+uint8_t * out = rocketnet_client_start(client, 0, ROCKETNET_UNRELIABLE_SEQUENCED, max_bytes);
+if (out)
+{
+    int offset = 0;
+    out[offset++] = 1; // message type tag
+    memcpy(out + offset, &tick, sizeof(tick));
+    offset += (int)sizeof(tick);
+    memcpy(out + offset, &move_x, sizeof(move_x));
+    offset += (int)sizeof(move_x);
+    memcpy(out + offset, &move_y, sizeof(move_y));
+    offset += (int)sizeof(move_y);
+
+    uint32_t serial = rocketnet_client_finish(client, offset);
+    (void)serial;
+}
+```
