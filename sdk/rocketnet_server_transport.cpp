@@ -645,18 +645,6 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport
 // rocketnet_server_transport_default_config lives in rocketnet_config.cpp,
 // written from the config table so every default is declared exactly once
 
-void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config )
-{
-    if ( !rocketnet_api_null_guard( config ) )
-        return;
-    rocketnet_assert( config );
-    rocketnet_server_transport_default_config_current( config );
-    config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
-}
-
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
