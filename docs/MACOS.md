@@ -354,6 +354,11 @@ Run these in order on the Mac, from the checkout, one at a time. Each must exit
 zero; a non-empty `git status --short` means the tree is not the commit being
 verified.
 
+The requirements are a macOS (Darwin) arm64 member with the Command Line Tools
+(Apple clang), `cmake`, `make`, `xxd` and Python 3. These commands run only on
+that member; a non-macOS machine does not run them and none are claimed run
+here.
+
 ```sh
 uname -s                  # Darwin
 uname -m                  # arm64 on the supported row
