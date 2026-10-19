@@ -519,6 +519,61 @@ jobs:
           ./bin/Release/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  # THE HAPPY PATH: the real server and client binaries as separate processes
+  # over loopback, watched stage by stage. It is deliberately small -- connect,
+  # one message of every reliability type, receipts, clean disconnect, clean
+  # stop -- and it is its own job with NO needs, so it starts at once beside
+  # build-and-test and adds nothing to the wall time of the per-commit gate.
+  # The tools/happy_path Go tool is standard library only; nothing here needs
+  # root and nothing selects XDP (the tool pins the portable transport).
+
+  happy-path:
+    name: happy path / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build (Linux and macOS, through the Makefile)
+        if: runner.os != 'Windows'
+        run: make
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -A x64
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel
+
+      # the two C programs share this directory with the Go tool, so name the
+      # tool's .go file rather than the directory
+      - name: Run happy_path
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          cd tools/happy_path
+          go run happy_path.go
+
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
   # into frames, and reads bytes it did not write, which is the shape of
