@@ -54,11 +54,11 @@ is the kernel XDP program, not a server. The library embeds and loads it
 itself (`CMakeLists.txt:75-89`; `sdk/rocketnet_server_socket_linux.cpp:1302-1352`).
 It is read-only for every card of this run. The xdp driver is a runtime
 choice. The config's `driver` field (`sdk/rocketnet.h:933`) or
-`ROCKETNET_SERVER_DRIVER` gives the candidate list, and a one-element list is
+`ROCKETNET_SERVER_TRANSPORT` gives the candidate list, and a one-element list is
 a pin: that driver or a loud failure, never a silent fall to gso or portable
 (`sdk/rocketnet_server_transport.cpp:54-67`; registry row
 `sdk/rocketnet_drivers.inc:7`). The run starts `server` with
-`ROCKETNET_SERVER_DRIVER=xdp`. It also passes `--driver xdp`, so the config
+`ROCKETNET_SERVER_TRANSPORT=xdp`. It also passes `--driver xdp`, so the config
 records the pin. It reads `rocketnet_server_transport_driver`
 (`sdk/rocketnet.h:1062`) after create and refuses to continue unless it
 reads `xdp`.
@@ -699,7 +699,7 @@ file run over ssh under a timeout (section 12):
    watchdog acts. This is the server-side watchdog the card asks for, and
    `RNLiveFleetRun` models it (`WatchdogFires`, `OrchestratorDies`).
 4. **Load the server,** `systemd-run --unit=rn-live-server`, with
-   `ROCKETNET_SERVER_DRIVER=xdp`, `ROCKETNET_SERVER_PRINT_COUNTERS=1` and the
+   `ROCKETNET_SERVER_TRANSPORT=xdp`, `ROCKETNET_SERVER_PRINT_COUNTERS=1` and the
    matrix flags.
 5. **Within 10 s of the load,** open a fresh ssh connection (a new TCP
    connection, no shared control master) and run `true`. If it fails, the

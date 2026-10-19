@@ -9,7 +9,7 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>
@@ -263,7 +263,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_VERSION;
-        if ( rocketnet_read_uint32( &p ) != ROCKETNET_VERSION )
+        if ( rocketnet_read_uint32( &p ) != ROCKETNET_WIRE_VERSION )
         {
             rocketnet_debug( "server ignored connection request. wrong version" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION]++;

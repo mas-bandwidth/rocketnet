@@ -11,7 +11,7 @@ unsigned long long g_ack_visit_count = 0;
 #include "rocketnet_read_write.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_platform.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <string.h>
 #include <math.h>

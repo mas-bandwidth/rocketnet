@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Pre-allocation plan and optional allocator-observed server footprint.
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include <errno.h>
 #include <limits.h>
@@ -95,7 +95,7 @@ int main(int argc, char ** argv)
         (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
     if (plan_only) return 0; // No init, sockets, worker threads or UMEM registration.
     rocketnet_allocator(allocate, release);
-    if (!rocketnet_init()) return 1;
+    if (!rocketnet_init( NULL )) return 1;
     rocketnet_forbid_xdp_commit();
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     if (!server) { fprintf(stderr, "memory profile configuration refused\n"); rocketnet_term(); return 1; }
