@@ -258,34 +258,11 @@ static const char * xdp_host_verdict_name( int verdict )
     }
 }
 
-// The AF_XDP transport serves IPv4 (DRIVERS.md): a frame whose ethertype is
-// IPv6 passes to the kernel stack, never redirected and never dropped, and
-// moves no counter but PASSED_IPV6_EXTENSION, which counts an extension
-// header behind a whole fixed header. The rows are written once for both
-// families; this is the verdict every IPv6 row is held to.
-
-static bool xdp_host_row_is_ipv6( const xdp_host_row_t & row )
-{
-    return row.frame.family == 6 && ( row.frame.ethertype == 0 || row.frame.ethertype == 0x86dd );
-}
-
-static xdp_host_row_t xdp_host_ipv6_passes( xdp_host_row_t row )
-{
-    if ( !xdp_host_row_is_ipv6( row ) )
-        return row;
-    row.want_verdict = XDP_HOST_PASS;
-    if ( row.want_counter != XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION ) )
-        row.want_counter = XDP_HOST_NO_COUNTER;
-    return row;
-}
-
 // Runs one row from a reset state and checks it; on any mismatch the row,
 // its verdict and every counter print before the check fails.
 
-static void xdp_host_run_row( const xdp_host_row_t & given )
+static void xdp_host_run_row( const xdp_host_row_t & row )
 {
-    const xdp_host_row_t row = xdp_host_ipv6_passes( given );
-
     rocketnet_xdp_host_reset();
     xdp_host_apply_config( row.config );
     if ( row.populated_slot >= 0 )
@@ -326,11 +303,6 @@ static void xdp_host_run_row( const xdp_host_row_t & given )
         rocketnet_unit_check( rocketnet_xdp_host_redirect_calls() == 1 );
         rocketnet_unit_check( rocketnet_xdp_host_last_redirect_key() == row.queue );
     }
-
-    // an IPv6 frame never reaches the redirect helper
-
-    if ( xdp_host_row_is_ipv6( row ) )
-        rocketnet_unit_check( rocketnet_xdp_host_redirect_calls() == 0 );
 }
 
 static void xdp_host_run_rows( const std::vector<xdp_host_row_t> & rows )
@@ -399,7 +371,7 @@ static void xdp_host_ipv4_rocketnet_packet_redirects()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_rocketnet_packet_passes()
+static void xdp_host_ipv6_rocketnet_packet_redirects()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_redirect_rows( 6, rows );
@@ -590,8 +562,8 @@ static void xdp_host_ipv4_options_pass()
 }
 
 // ---------------------------------------------------------------------------
-// short headers: an IPv4 frame that cannot hold its fixed header drops,
-// uncounted; an IPv6 one passes to the kernel stack, uncounted
+// short headers: a frame that names an IP family but cannot hold its fixed
+// header drops, uncounted
 
 static void xdp_host_ipv4_short_header_drops()
 {
@@ -620,7 +592,7 @@ static void xdp_host_ipv4_short_header_drops()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_short_header_passes()
+static void xdp_host_ipv6_short_header_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int cuts[3] = { 14, 15, 14 + 39 };
@@ -629,20 +601,20 @@ static void xdp_host_ipv6_short_header_passes()
         xdp_host_row_t row = xdp_host_row( "IPv6 header cut short", 6 );
         row.label += " (frame " + std::to_string( cuts[i] ) + " bytes)";
         row.frame.truncate_to = cuts[i];
-        rows.push_back( xdp_host_expect( row, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+        rows.push_back( xdp_host_expect( row, XDP_HOST_DROP, XDP_HOST_NO_COUNTER ) );
     }
 
     xdp_host_row_t whole = xdp_host_row( "IPv6 header whole, no UDP", 6 );
     whole.frame.truncate_to = 14 + 40;
     rows.push_back( xdp_host_expect( whole, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
 
-    // a short header behind an extension next header passes uncounted: the
-    // extension count needs the whole fixed header
+    // a short header behind an extension next header still drops: the
+    // length check comes first
 
     xdp_host_row_t extension = xdp_host_row( "IPv6 header cut short, next header hop-by-hop", 6 );
     extension.frame.protocol = 0;
     extension.frame.truncate_to = 14 + 39;
-    rows.push_back( xdp_host_expect( extension, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+    rows.push_back( xdp_host_expect( extension, XDP_HOST_DROP, XDP_HOST_NO_COUNTER ) );
 
     xdp_host_run_rows( rows );
 }
@@ -957,13 +929,7 @@ static void xdp_host_type_and_size_sweep_matches_the_standard()
 
                 int want_verdict = XDP_HOST_DROP;
                 int want_counter;
-                if ( families[f] == 6 )
-                {
-                    // IPv6 passes to the kernel stack, uncounted
-                    want_verdict = XDP_HOST_PASS;
-                    want_counter = XDP_HOST_NO_COUNTER;
-                }
-                else if ( bytes < floor )
+                if ( bytes < floor )
                     want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
                 else if ( bytes > ceiling )
                     want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
@@ -975,8 +941,7 @@ static void xdp_host_type_and_size_sweep_matches_the_standard()
                     want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
                     redirects++;
                 }
-                if ( want_counter != XDP_HOST_NO_COUNTER )
-                    want_counters[want_counter]++;
+                want_counters[want_counter]++;
 
                 const int verdict = rocketnet_xdp_host_run( image.data(), (int) image.size(), 0 );
                 bool ok = verdict == want_verdict;
@@ -996,10 +961,10 @@ static void xdp_host_type_and_size_sweep_matches_the_standard()
     }
 
     // 2 families x 256 types x 1474 sizes, and the accepted set is exactly
-    // the table's, for IPv4 only: 1 + 1 + 1432 + 1439 + 1440 + 1440 + 1433
+    // the table's: 2 x ( 1 + 1 + 1432 + 1439 + 1440 + 1440 + 1433 )
 
     rocketnet_unit_check( runs == 2L * 256 * ( ceiling + 2 ) );
-    rocketnet_unit_check( redirects == 1L * ( 1 + 1 + 1432 + 1439 + 1440 + 1440 + 1433 ) );
+    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1432 + 1439 + 1440 + 1440 + 1433 ) );
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,11 +1064,9 @@ static void xdp_host_replay_never_writes_the_map()
             frame.family = families[f];
             frame.packet_type = i < 0 ? ROCKETNET_CONNECTION_PAYLOAD_PACKET : session[i % 5];
             frame.sequence = i < 0 ? 0x7fffffffu : (uint32_t) ( i * 3 );
-            const bool ipv6 = families[f] == 6;     // passes to the kernel stack, uncounted
             const bool behind = (int32_t) ( 100u - frame.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
-            const int want_verdict = ipv6 ? XDP_HOST_PASS : behind ? XDP_HOST_DROP : XDP_HOST_REDIRECT;
-            const int want_counter = ipv6 ? XDP_HOST_NO_COUNTER
-                                   : behind ? XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED )
+            const int want_verdict = behind ? XDP_HOST_DROP : XDP_HOST_REDIRECT;
+            const int want_counter = behind ? XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED )
                                             : XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
 
             uint64_t before[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
@@ -1130,11 +1093,10 @@ static void xdp_host_replay_never_writes_the_map()
             rocketnet_unit_check( high_water == 100 );
         }
 
-        // IPv4: 1 forged redirect, then rows 0..28 (sequence 0..84) drop and
-        // rows 29..99 (sequence 87..297) redirect; IPv6: every frame passes
-        const bool ipv6 = families[f] == 6;
-        rocketnet_unit_check( rocketnet_xdp_host_counter( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED ) == ( ipv6 ? 0u : 29u ) );
-        rocketnet_unit_check( rocketnet_xdp_host_counter( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED ) == ( ipv6 ? 0u : 72u ) );
+        // 1 forged redirect, then rows 0..28 (sequence 0..84) drop and rows
+        // 29..99 (sequence 87..297) redirect
+        rocketnet_unit_check( rocketnet_xdp_host_counter( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED ) == 29 );
+        rocketnet_unit_check( rocketnet_xdp_host_counter( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED ) == 72 );
 
         uint32_t high_water = 0;
         rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key, &high_water ) == 1 );
@@ -1219,7 +1181,7 @@ static void xdp_host_every_counter_has_a_case()
     }
 
 XDP_HOST_SKIPPED( xdp_host_ipv4_rocketnet_packet_redirects )
-XDP_HOST_SKIPPED( xdp_host_ipv6_rocketnet_packet_passes )
+XDP_HOST_SKIPPED( xdp_host_ipv6_rocketnet_packet_redirects )
 XDP_HOST_SKIPPED( xdp_host_redirect_needs_a_populated_slot )
 XDP_HOST_SKIPPED( xdp_host_unconfigured_passes )
 XDP_HOST_SKIPPED( xdp_host_other_port_passes )
@@ -1227,7 +1189,7 @@ XDP_HOST_SKIPPED( xdp_host_ipv4_wrong_address_passes )
 XDP_HOST_SKIPPED( xdp_host_ipv6_wrong_address_passes )
 XDP_HOST_SKIPPED( xdp_host_ipv4_options_pass )
 XDP_HOST_SKIPPED( xdp_host_ipv4_short_header_drops )
-XDP_HOST_SKIPPED( xdp_host_ipv6_short_header_passes )
+XDP_HOST_SKIPPED( xdp_host_ipv6_short_header_drops )
 XDP_HOST_SKIPPED( xdp_host_ipv6_extension_headers_pass_counted )
 XDP_HOST_SKIPPED( xdp_host_ipv6_fragment_passes_counted )
 XDP_HOST_SKIPPED( xdp_host_icmpv6_passes_uncounted )
@@ -1245,7 +1207,7 @@ XDP_HOST_SKIPPED( xdp_host_replay_never_writes_the_map )
 #endif // #if ROCKETNET_XDP_FILTER_HOST
 
 REGISTER_UNIT_TEST( xdp_host_ipv4_rocketnet_packet_redirects );
-REGISTER_UNIT_TEST( xdp_host_ipv6_rocketnet_packet_passes );
+REGISTER_UNIT_TEST( xdp_host_ipv6_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( xdp_host_redirect_needs_a_populated_slot );
 REGISTER_UNIT_TEST( xdp_host_unconfigured_passes );
 REGISTER_UNIT_TEST( xdp_host_other_port_passes );
@@ -1253,7 +1215,7 @@ REGISTER_UNIT_TEST( xdp_host_ipv4_wrong_address_passes );
 REGISTER_UNIT_TEST( xdp_host_ipv6_wrong_address_passes );
 REGISTER_UNIT_TEST( xdp_host_ipv4_options_pass );
 REGISTER_UNIT_TEST( xdp_host_ipv4_short_header_drops );
-REGISTER_UNIT_TEST( xdp_host_ipv6_short_header_passes );
+REGISTER_UNIT_TEST( xdp_host_ipv6_short_header_drops );
 REGISTER_UNIT_TEST( xdp_host_ipv6_extension_headers_pass_counted );
 REGISTER_UNIT_TEST( xdp_host_ipv6_fragment_passes_counted );
 REGISTER_UNIT_TEST( xdp_host_icmpv6_passes_uncounted );
