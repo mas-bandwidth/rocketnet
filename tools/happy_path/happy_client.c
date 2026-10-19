@@ -62,7 +62,12 @@ int main( int argc, char ** argv )
     rocketnet_client_default_config( &config );
     config.transport = "portable";
 
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, &config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     if ( !client )
     {
         printf( "error: failed to create client\n" );

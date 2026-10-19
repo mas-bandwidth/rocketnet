@@ -74,6 +74,11 @@ int main( void )
     memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
 
     server = rocketnet_server_create( NULL, "127.0.0.1:40000", &config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     FILE * keys = fopen( KEY_FILE, "w" );

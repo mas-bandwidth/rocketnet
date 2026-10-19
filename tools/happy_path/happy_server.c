@@ -53,6 +53,11 @@ int main( int argc, char ** argv )
     config.transport = "portable";
 
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, &config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     if ( !server )
     {
         printf( "error: failed to create server\n" );

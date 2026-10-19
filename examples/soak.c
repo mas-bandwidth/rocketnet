@@ -165,13 +165,23 @@ int main( int argc, char ** argv ) {
     s_cfg.sequenced_holds = c_cfg.sequenced_holds = 8; s_cfg.simulated_loss_percent = c_cfg.simulated_loss_percent = 1;
     s_cfg.rto_min_ms = c_cfg.rto_min_ms = s_cfg.rto_initial_ms = c_cfg.rto_initial_ms = 200; s_cfg.rto_max_ms = c_cfg.rto_max_ms = 500;
     server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &s_cfg, sizeof( s_cfg ), NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
     char addr[64];
     snprintf( addr, sizeof( addr ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ ) {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         CHECK( rocketnet_write_dev_connect_token( addr, c + 1, 4102444800ULL, token ) );
-        clients[c] = rocketnet_client_create_sized( NULL, token, &c_cfg, sizeof( c_cfg ), NULL, 0 );
+        clients[c] = rocketnet_client_create_sized( NULL, &c_cfg, sizeof( c_cfg ), NULL, 0 );
+        if ( clients[c] && rocketnet_client_connect( clients[c], token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+        {
+            rocketnet_client_destroy( clients[c] );
+            clients[c] = NULL;
+        }
         CHECK( clients[c] != NULL );
     }
     double sim_time = 1000.0;

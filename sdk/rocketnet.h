@@ -325,9 +325,10 @@ enum rocketnet_status_t
 // -----------------------------------------
 
 // What rocketnet_client_state returns. A connect attempt runs up from
-// DISCONNECTED through the three handshake states to CONNECTED; every
-// negative value is a way the attempt or the connection ended, and the
-// client stays in it until it is destroyed.
+// DISCONNECTED through the three handshake states to CONNECTED. A negative
+// state is how the last attempt or connection ended, kept until
+// rocketnet_client_disconnect, which returns the client to DISCONNECTED so it
+// can connect again.
 
 enum rocketnet_client_state_t
 {
@@ -338,7 +339,7 @@ enum rocketnet_client_state_t
     ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT     = -3,   // the server never answered the connection request
     ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT         = -2,   // the server never answered the cookie request
     ROCKETNET_CLIENT_STATE_CONNECTION_DENIED                = -1,   // the server refused the client
-    ROCKETNET_CLIENT_STATE_DISCONNECTED                     =  0,   // before the first update, and after rocketnet_client_disconnect
+    ROCKETNET_CLIENT_STATE_DISCONNECTED                     =  0,   // after create, and after rocketnet_client_disconnect
     ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE                =  1,   // handshake, first leg
     ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST       =  2,   // handshake, second leg
     ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE      =  3,   // handshake, third leg
@@ -350,7 +351,8 @@ enum rocketnet_client_state_t
 // -----------------------------------------
 
 // What a client counts, read with rocketnet_client_counter. Every value is
-// monotonic over the client's life and starts at 0 at create.
+// monotonic over the client's life, across connections, and starts at 0 at
+// create.
 
 enum rocketnet_client_counter_t
 {
@@ -385,8 +387,8 @@ enum rocketnet_client_stat_t
 };
 
 // What a server counts over all its clients, read with
-// rocketnet_server_counter. Every value is monotonic over the server's life
-// and starts at 0 at create.
+// rocketnet_server_counter. Every value is monotonic over the server's life,
+// across starts and stops, and starts at 0 at create.
 
 enum rocketnet_server_counter_t
 {
@@ -937,6 +939,15 @@ ROCKETNET_EXPORT int rocketnet_write_production_connect_token( const uint8_t * b
 // the server, carries the keys, and is the credential -- minted by a backend
 // in production, or locally by rocketnet_write_dev_connect_token against the
 // published development keys.
+//
+// The client is reusable, as netcode's is: create makes a DISCONNECTED
+// client; rocketnet_client_connect starts a connection with a token;
+// rocketnet_client_disconnect ends it, from any state, and returns the client
+// to DISCONNECTED, ready to connect again with a new token; destroy works
+// from any state. Each connection starts fresh: nothing of an earlier one
+// is delivered or kept except the lifetime counters and the last disconnect
+// reason. The socket is per connection, opened by connect for the address
+// family the token names.
 
 // The unsized form writes the revision-1 prefix. Use the sized form with
 // sizeof(*config) to initialize fields added after revision 1.
@@ -967,25 +978,39 @@ ROCKETNET_EXPORT uint64_t rocketnet_client_required_memory_sized( const struct r
 ROCKETNET_EXPORT int rocketnet_write_dev_connect_token( const char * server_address_string, uint64_t client_id, uint64_t unix_timestamp, uint8_t * connect_token );
 #endif // #if ROCKETNET_DEVELOPMENT
 
-// connect_token is ROCKETNET_CONNECT_TOKEN_BYTES long. create reads no clock:
-// the connect attempt starts at the first update. NULL config is the
-// defaults. a NULL connect_token is a counted no-op that returns NULL.
-ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, void * memory, uint64_t memory_bytes );
+// A DISCONNECTED client. create reads no clock and opens no socket. NULL
+// config is the defaults; NULL on a refused config or memory block.
+ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, uint64_t memory_bytes );
 
 // create with a config config_bytes long; an unknown size is refused with a
 // log line and returns NULL before any other check.
-ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes );
+ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes );
 
-// a NULL client is a counted no-op.
+// Starts a connection with connect_token, ROCKETNET_CONNECT_TOKEN_BYTES long.
+// Only from DISCONNECTED: any other state returns
+// ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED with nothing changed. A token that
+// fails the pre-send checks returns ROCKETNET_STATUS_INVALID_CONNECT_TOKEN or
+// ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED and leaves the matching error state;
+// a socket or thread the platform refuses returns its status and leaves the
+// client DISCONNECTED. The attempt's clock starts at the next update; time
+// is the game's clock now. a NULL client or connect_token is a counted no-op
+// that returns ROCKETNET_STATUS_INVALID_ARGUMENT.
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const uint8_t * connect_token, double time );
+
+// From any state: the connection, if any, is torn down and the client is
+// freed. a NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
 // ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. a NULL client is a counted no-op that returns ROCKETNET_MESSAGE_OK.
 ROCKETNET_EXPORT int rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
-// a NULL client is a counted no-op.
+// sends this frame's queued messages. a NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_send_messages( struct rocketnet_client_t * client );
 
-// Ends the connection: the disconnect is sent and the state becomes DISCONNECTED. a NULL client is a counted no-op.
+// Ends the connection and returns the client to DISCONNECTED. From a
+// handshake state or CONNECTED the disconnect packets are sent first; from
+// an error state the error ends. The client stays valid and can connect
+// again. a NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_disconnect( struct rocketnet_client_t * client );
 
 // a NULL client is a counted no-op that returns ROCKETNET_CLIENT_STATE_DISCONNECTED.
@@ -994,13 +1019,13 @@ ROCKETNET_EXPORT enum rocketnet_client_state_t rocketnet_client_state( const str
 // the name of a state ("connected"), or "???" for a value that is not one.
 ROCKETNET_EXPORT const char * rocketnet_client_state_name( int state );
 
-// ROCKETNET_MESSAGE_ERROR_* the client ended its connection with, NONE while it has not. a NULL client is a counted no-op that returns NONE.
+// ROCKETNET_MESSAGE_ERROR_* the last connection ended with, kept until the next connection is established; NONE while connected. a NULL client is a counted no-op that returns NONE.
 ROCKETNET_EXPORT int rocketnet_client_disconnect_reason( const struct rocketnet_client_t * client );
 
-// the client's slot on the server, valid while connected. a NULL client is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_client_index( const struct rocketnet_client_t * client );
+// the client's index on the server, valid while connected. a NULL client is a counted no-op that returns 0.
+ROCKETNET_EXPORT uint64_t rocketnet_client_index( const struct rocketnet_client_t * client );
 
-// the transport that won the candidate list at create ("portable", "msgx"). a NULL client is a counted no-op that returns NULL.
+// the transport that won the candidate list at connect ("portable", "msgx"), NULL while DISCONNECTED. a NULL client is a counted no-op that returns NULL.
 ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client );
 
 // the first step of the send: a pointer into the connection's region for a
@@ -1018,7 +1043,9 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 //     }
 //
 // The pointer is valid until finish or abort; one start is pending per object
-// at a time. a NULL client is a counted no-op that returns NULL.
+// at a time. Messages flow only while CONNECTED: in every other state start
+// returns NULL and finish 0, counted. a NULL client is a counted no-op that
+// returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, int reliability, int bytes );
 
 // the queued message's receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. for a message written in place, finish completes and stages that packet buffer, with no copy. a NULL client is a counted no-op that returns 0.
@@ -1059,7 +1086,15 @@ ROCKETNET_EXPORT double rocketnet_client_stat( const struct rocketnet_client_t *
 // -----------------------------------------
 
 // Clients are identified by index, 0 .. max_clients - 1, the slot each
-// connection takes.
+// connection takes, as a uint64_t (ROCKETNET_FLOW_ID_BIT is never set in a
+// client index).
+//
+// The server is reusable, as netcode's is: create validates the config and
+// makes the memory block but binds nothing, and the server starts stopped.
+// rocketnet_server_start binds the transport and accepts clients;
+// rocketnet_server_stop disconnects every client, resets every slot and
+// releases the transport, and the server can start again. The per-client
+// calls below are valid while running; on a stopped server they read 0.
 
 // The unsized form writes the revision-1 prefix. Use the sized form with
 // sizeof(*config) to initialize fields added after revision 1.
@@ -1091,30 +1126,51 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory( const struct rocketn
 ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 // address is where clients reach the server, "a.b.c.d:port" or "[v6]:port"; a
-// port of 0 takes an ephemeral port (read it back with rocketnet_server_port).
-// NULL config is the defaults, which create refuses until keys are given. a
-// NULL address is a counted no-op that returns NULL.
+// port of 0 takes an ephemeral port (read it back with rocketnet_server_port
+// once started). The server is created stopped and binds nothing. NULL config
+// is the defaults, which start refuses until keys are given. a NULL address
+// is a counted no-op that returns NULL.
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes );
 
 // create with a config config_bytes long; an unknown size is refused with a
 // log line and returns NULL before any other check.
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes );
 
-// Disconnects every client and frees the server. a NULL server is a counted no-op.
+// Binds the transport at the address and accepts clients, up to the
+// config's max_clients. Only from stopped: a running server returns
+// ROCKETNET_STATUS_SERVER_NOT_STOPPED with nothing changed. A transport that
+// does not start returns its status (ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED,
+// TRANSPORT_PORT_ZERO_UNSUPPORTED, MISSING_KEYS, THREAD_CREATE_FAILED,
+// TIMER_CREATE_FAILED, MUTEX_CREATE_FAILED, OUT_OF_MEMORY, ...) and leaves the
+// server stopped. a NULL server is a counted no-op that returns
+// ROCKETNET_STATUS_INVALID_ARGUMENT.
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );
+
+// Disconnects every client cleanly (the redundant disconnect packets), resets
+// every slot, releases the transport and leaves the server stopped; it can
+// start again. A stopped server's stop is a no-op. a NULL server is a counted
+// no-op.
+ROCKETNET_EXPORT void rocketnet_server_stop( struct rocketnet_server_t * server );
+
+// 1 running, 0 stopped. a NULL server is a counted no-op that returns 0.
+ROCKETNET_EXPORT int rocketnet_server_running( const struct rocketnet_server_t * server );
+
+// From either state: a running server is stopped first, then freed. a NULL
+// server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
-// ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. a NULL server is a counted no-op that returns ROCKETNET_MESSAGE_OK.
+// ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. On a stopped server a counted no-op. a NULL server is a counted no-op that returns ROCKETNET_MESSAGE_OK.
 ROCKETNET_EXPORT int rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
-// a NULL server is a counted no-op.
+// sends this frame's queued messages. On a stopped server a counted no-op. a NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_send_messages( struct rocketnet_server_t * server );
 
 // The port the server bound: the address's port, or the ephemeral port a
-// port of 0 was given. Build a token address from it in tests and tools. a
-// NULL server is a counted no-op that returns 0.
+// port of 0 was given; 0 while stopped. Build a token address from it in
+// tests and tools. a NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint16_t rocketnet_server_port( const struct rocketnet_server_t * server );
 
-// the transport that won the candidate list at create ("xdp", "gso", "msgx", "portable"). a NULL server is a counted no-op that returns NULL.
+// the transport that won the candidate list at start ("xdp", "gso", "msgx", "portable"), NULL while stopped. a NULL server is a counted no-op that returns NULL.
 ROCKETNET_EXPORT const char * rocketnet_server_transport_name( const struct rocketnet_server_t * server );
 
 // a NULL server is a counted no-op that returns 0.
@@ -1124,17 +1180,21 @@ ROCKETNET_EXPORT int rocketnet_server_max_clients( const struct rocketnet_server
 ROCKETNET_EXPORT int rocketnet_server_num_connected_clients( const struct rocketnet_server_t * server );
 
 // 1 when a client holds the slot. a NULL server is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_server_client_connected( const struct rocketnet_server_t * server, int client_index );
+ROCKETNET_EXPORT int rocketnet_server_client_connected( const struct rocketnet_server_t * server, uint64_t client_index );
 
 // the client id from the connect token of the client in the slot, 0 for a free slot. a NULL server is a counted no-op that returns 0.
-ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index );
+ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, uint64_t client_index );
 
 // Disconnects one client deliberately and frees its slot. Why is the game's
 // decision. a NULL server is a counted no-op.
-ROCKETNET_EXPORT void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int client_index );
+ROCKETNET_EXPORT void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, uint64_t client_index );
+
+// Disconnects every connected client as rocketnet_server_disconnect_client
+// does; the server keeps running. a NULL server is a counted no-op.
+ROCKETNET_EXPORT void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server );
 
 // ROCKETNET_MESSAGE_ERROR_* the slot's last connection ended with, until the slot's next connection. a NULL server is a counted no-op that returns NONE.
-ROCKETNET_EXPORT int rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, int client_index );
+ROCKETNET_EXPORT int rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, uint64_t client_index );
 
 // the first step of the send: a pointer into the connection's region for a
 // message of bytes, or, for an unreliable message whose declared bytes fit one
@@ -1143,45 +1203,49 @@ ROCKETNET_EXPORT int rocketnet_server_disconnect_reason( const struct rocketnet_
 // layer and the transport), or NULL when refused. Write the message there once,
 // or copy it in when the caller already holds a buffer:
 //
-//     uint8_t * out = rocketnet_server_start_message( server, client_index, channel, reliability, bytes );
+//     uint8_t * out = rocketnet_server_start_message( server, destination_id, channel, reliability, bytes );
 //     if ( out )
 //     {
 //         memcpy( out, data, bytes );
-//         serial = rocketnet_server_finish_message( server, client_index, bytes );
+//         serial = rocketnet_server_finish_message( server, destination_id, bytes );
 //     }
 //
-// The pointer is valid until finish or abort; one start is pending per object
-// at a time. a NULL server is a counted no-op that returns NULL.
-ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, int client_index, int channel, int reliability, int bytes );
+// destination_id is a client index today. An id with ROCKETNET_FLOW_ID_BIT
+// set is a flow id, reserved for a future flow feature and refused for now
+// (NULL, 0 or nothing, counted; ROCKETNET_STATUS_FLOW_ID_RESERVED in the log).
+// To send to every connected client, loop over the slots. The pointer is
+// valid until finish or abort; one start is pending per object at a time. a
+// NULL server is a counted no-op that returns NULL.
+ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, int reliability, int bytes );
 
-// the queued message's receipt serial, nonzero; 0 when no start is pending, bytes_written is outside 1 to the bytes started, or client_index is not a connected client. for a message written in place, finish completes and stages that packet buffer, with no copy. a NULL server is a counted no-op that returns 0.
-ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, int client_index, int bytes_written );
+// the queued message's receipt serial, nonzero; 0 when no start is pending, bytes_written is outside 1 to the bytes started, or destination_id is not a connected client. for a message written in place, finish completes and stages that packet buffer, with no copy. a NULL server is a counted no-op that returns 0.
+ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, uint64_t destination_id, int bytes_written );
 
 // a NULL server is a counted no-op.
-ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server, int client_index );
+ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_t destination_id );
 
 // 1 with the next message on channel, 0 when there is none. a NULL server, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_server_receive_message( struct rocketnet_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
+ROCKETNET_EXPORT int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t client_index, int channel, const uint8_t ** data, int * bytes );
 
 // a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-ROCKETNET_EXPORT void rocketnet_server_release_message( struct rocketnet_server_t * server, int client_index, const uint8_t * data );
+ROCKETNET_EXPORT void rocketnet_server_release_message( struct rocketnet_server_t * server, uint64_t client_index, const uint8_t * data );
 
 /** @brief Copy one connected server client's receipt outcomes.
  * Call after update and before the next update, without a concurrent update.
  * Repeated calls copy the same visible entries; the server owns the internal
  * list, and the caller owns the output array.
  * @param server Server object; NULL returns 0.
- * @param client_index Slot index in [0, configured max_clients); an invalid or
- * disconnected slot returns 0.
+ * @param client_index Client index in [0, configured max_clients); an invalid or
+ * disconnected slot, or a stopped server, returns 0.
  * @param out Writable array with room for capacity entries; NULL returns 0.
  * @param capacity Array length in entries; values below 1 return 0.
  * @return Entries copied, from 0 through capacity. Zero means none are visible
  * or an input is invalid; it is not an error status.
  */
-ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity );
+ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, uint64_t client_index, struct rocketnet_receipt_t * out, int capacity );
 
 // 1 when the client's budget took the new rate, from now on. 0 or less disables the budget in this direction, server to that client (NOT RECOMMENDED); a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns 0 with the rate unchanged. a NULL server is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, int client_index, int kbps );
+ROCKETNET_EXPORT int rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, uint64_t client_index, int kbps );
 
 // a counter by its enum; 0 for a value outside the enum. a NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint64_t rocketnet_server_counter( const struct rocketnet_server_t * server, enum rocketnet_server_counter_t counter );
@@ -1190,10 +1254,10 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_counter( const struct rocketnet_serve
 ROCKETNET_EXPORT double rocketnet_server_stat( const struct rocketnet_server_t * server, enum rocketnet_server_stat_t stat );
 
 // one client slot's counter by its enum; 0 for a free slot or a value outside the enum. a NULL server is a counted no-op that returns 0.
-ROCKETNET_EXPORT uint64_t rocketnet_server_client_counter( const struct rocketnet_server_t * server, int client_index, enum rocketnet_server_client_counter_t counter );
+ROCKETNET_EXPORT uint64_t rocketnet_server_client_counter( const struct rocketnet_server_t * server, uint64_t client_index, enum rocketnet_server_client_counter_t counter );
 
 // one client slot's stat by its enum; 0 for a free slot or a value outside the enum. a NULL server is a counted no-op that returns 0.
-ROCKETNET_EXPORT double rocketnet_server_client_stat( const struct rocketnet_server_t * server, int client_index, enum rocketnet_server_client_stat_t stat );
+ROCKETNET_EXPORT double rocketnet_server_client_stat( const struct rocketnet_server_t * server, uint64_t client_index, enum rocketnet_server_client_stat_t stat );
 
 #ifdef __cplusplus
 }

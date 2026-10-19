@@ -708,7 +708,12 @@ static void run_matrix( opts_t * o )
         cc.send_kbps = o->send_kbps;
         cc.max_packets_per_update = 64;     // the budget, section 2
 
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, &cc, NULL, 0 );
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0 );
+        if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+        {
+            rocketnet_client_destroy( client );
+            client = NULL;
+        }
         if ( !client )
         {
             r_fail( res, o->label, window, 0, 0, 0, 0, "client-create-failed", 0, 0, "client", "-", "create" );

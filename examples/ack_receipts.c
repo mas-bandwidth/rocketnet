@@ -47,6 +47,11 @@ int main( void )
     server_config.max_clients = 2;
     server_config.transport = "loopback";
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
@@ -55,7 +60,12 @@ int main( void )
     CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
     client_config.transport = "loopback";
     client_config.simulated_loss_percent = 30;
-    client = rocketnet_client_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), NULL, 0 );
+    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
 
     const double start = rocketnet_time();

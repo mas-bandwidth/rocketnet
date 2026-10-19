@@ -103,6 +103,11 @@ int main( int argc, char ** argv )
     server_config.max_clients = num_clients;
     server_config.transport = "loopback";
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     if ( !server ) { printf( "FAIL: server create\n" ); goto cleanup; }
     printf( "%d clients, server transport %s\n", num_clients, rocketnet_server_transport_name( server ) );
 
@@ -115,7 +120,8 @@ int main( int argc, char ** argv )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];       // a development token stamped far ahead, as in hello
         if ( !rocketnet_write_dev_connect_token( server_address, (uint64_t) i, 4102444800ull, token ) ||
-             !( clients[i] = rocketnet_client_create( NULL, token, &client_config, NULL, 0 ) ) )
+             !( clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 ) ) ||
+             rocketnet_client_connect( clients[i], token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
             { printf( "FAIL: client %d create\n", i ); goto cleanup; }
     }
 

@@ -47,6 +47,11 @@ int main( void )
     server_config.transport = "portable";
 
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
     CHECK( strcmp( rocketnet_server_transport_name( server ), "portable" ) == 0 );
     CHECK( rocketnet_server_max_clients( server ) == 1 );
@@ -61,7 +66,12 @@ int main( void )
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
 
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, &client_config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
     CHECK( strcmp( rocketnet_client_transport_name( client ), "portable" ) == 0 );
 

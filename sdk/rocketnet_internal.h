@@ -86,6 +86,20 @@ int rocketnet_term_ex( void );
 /** @brief Replaces allocator callbacks and returns the refusal reason. @param malloc_function Non-NULL allocator callback. @param free_function Non-NULL matching deallocator. @return The section-2.1 code: ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a partial pair, ALREADY_INITIALIZED after init or during the transition, or LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line. Install before init with no live allocations. */
 int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
+// The connection a public client holds (NULL while DISCONNECTED) and the
+// running message server a public server holds (NULL while stopped), for
+// tests and tools that read the layers underneath.
+struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client );
+struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
+
+// For tests that build the layers by hand: a public client holding an
+// existing connection, and a public server holding an existing running
+// message server; destroy destroys what was adopted. The adopted object has
+// no block of its own, so a connect or start after the adopted one ends
+// allocates its own, with default configs.
+struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection );
+struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running );
+
 #ifdef __cplusplus
 }
 #endif

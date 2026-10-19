@@ -110,6 +110,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     snprintf( bind, sizeof( bind ), "127.0.0.1:%u", (unsigned) fixed_port );
     pair->server = rocketnet_server_create( NULL, bind, &server_config, NULL, 0 );
     check( pair->server != NULL );
+    check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
 
     uint8_t local_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     const uint8_t * token = existing_token;
@@ -121,8 +122,9 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     rocketnet_client_config_t client_config;
     public_step_client_config( &client_config );
     pair->threads_before_client = public_step_thread_count();
-    pair->client = rocketnet_client_create( NULL, token, &client_config, NULL, 0 );
+    pair->client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
     check( pair->client != NULL );
+    check( rocketnet_client_connect( pair->client, token, pair->time ) == ROCKETNET_STATUS_OK );
     pair->threads_after_client = public_step_thread_count();
 }
 

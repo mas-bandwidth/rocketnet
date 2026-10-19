@@ -170,8 +170,9 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     if ( !client )
         return false;
 
-    pair->server = (struct rocketnet_server_t *) server;
-    pair->client = (struct rocketnet_client_t *) client;
+    pair->server = rocketnet_server_adopt( NULL, server );
+    pair->client = rocketnet_client_adopt( NULL, client );
+    check( pair->server != NULL && pair->client != NULL );
     pair->client_transport = client_transport;
     return true;
 }

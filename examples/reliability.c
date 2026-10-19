@@ -48,6 +48,11 @@ int main( void ) {
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
     server_config.simulated_loss_percent = 25; server_config.simulated_latency_ms = 20; server_config.simulated_jitter_ms = 35;
     server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
@@ -56,7 +61,12 @@ int main( void ) {
     CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
     client_config.transport = "loopback"; client_config.num_channels = NUM_MODES; client_config.step_driven = 1;
     client_config.simulated_loss_percent = 25; client_config.simulated_latency_ms = 20; client_config.simulated_jitter_ms = 35;
-    client = rocketnet_client_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), NULL, 0 );
+    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
 
     const double wall_start = rocketnet_time();

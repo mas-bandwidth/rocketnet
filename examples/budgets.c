@@ -61,6 +61,11 @@ int main( void )
     server_config.max_clients = 2;
     server_config.transport = "loopback";
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
@@ -71,7 +76,12 @@ int main( void )
     client_config.send_kbps = CLIENT_SEND_KBPS;
     printf( "client send budget from config at create: %d kbps\n", client_config.send_kbps );
 
-    client = rocketnet_client_create( NULL, connect_token, &client_config, NULL, 0 );
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
     CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == 1 );
     printf( "runtime set-send-kbps returned 1\n" );

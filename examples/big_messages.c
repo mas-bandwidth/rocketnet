@@ -54,6 +54,11 @@ int main( void )
     server_config.max_message_bytes = LIMIT_BYTES;
     server_config.receive_ring_bytes = LIMIT_BYTES;
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     rocketnet_client_default_config( &client_config );
@@ -63,7 +68,12 @@ int main( void )
     // the token names the server and carries the keys; this development token
     // expires thirty seconds after its timestamp, so it uses one far ahead
     CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
-    client = rocketnet_client_create( NULL, connect_token, &client_config, NULL, 0 );
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token, rocketnet_time() ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
     const double start = rocketnet_time();
     const int max_clients = rocketnet_server_max_clients( server );
