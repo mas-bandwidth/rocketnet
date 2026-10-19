@@ -22,7 +22,21 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+// the pair is built over the in-memory loopback driver, which this test names in
+// the server transport config; the caller's ROCKETNET_SERVER_TRANSPORT pin wins
+// over the struct by design, so a CI leg pinned to a real driver would open a
+// socket the step-driven loopback client never reaches. The pin is set aside
+// for the create and put back after, as test_unit_status_server_transport_create_ex.cpp does.
+#if defined(_WIN32)
+static int public_not_released_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
+static int public_not_released_unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+#else
+static int public_not_released_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
+static int public_not_released_unsetenv( const char * name ) { return unsetenv( name ); }
+#endif
 
 #define check rocketnet_unit_check
 
@@ -87,9 +101,20 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     memcpy( server_transport_config.server_secret_key, server_secret_key, sizeof( server_transport_config.server_secret_key ) );
     snprintf( server_transport_config.driver, sizeof( server_transport_config.driver ), "%s", "loopback" );
 
+    const char * pin = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    char saved_pin[256];
+    const bool pinned = pin != NULL;
+    saved_pin[0] = '\0';
+    if ( pinned )
+        snprintf( saved_pin, sizeof( saved_pin ), "%s", pin );
+    public_not_released_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+
     int status = -1;
     struct rocketnet_server_transport_t * server_transport =
         rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_transport_config, pair->time, &status );
+
+    if ( pinned )
+        public_not_released_setenv( "ROCKETNET_SERVER_TRANSPORT", saved_pin );
     check( status == ROCKETNET_STATUS_OK );
     if ( !server_transport )
         return false;

@@ -27,6 +27,7 @@
     the pass bound is 10 s of wall time.
 */
 
+#include "../test/time_scale.h"
 #include "rocketnet.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_connect_token.h"
@@ -57,8 +58,9 @@
 #define LIVE_MATRIX_TIMED_SECONDS           1.0             // mode 4 and unreliable spans: released by arrival, or after this long on the clock
 #define LIVE_MATRIX_SPAN_MIN_BYTES          ( ROCKETNET_LIVE_BLOCK_STRIDE + 1 )     // RN_SPAN_MIN_BYTES: a message above the store's large chunk takes a span
 #define LIVE_MATRIX_RECEIPT_TABLE           ( 1 << 15 )
-#define LIVE_MATRIX_WALL_BOUND              30.0
-#define LIVE_MATRIX_PASS_SECONDS            10.0
+// Release bounds as written; a Debug or sanitizer build scales them (test/time_scale.h)
+#define LIVE_MATRIX_WALL_BOUND              ( 30.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE )
+#define LIVE_MATRIX_PASS_SECONDS            ( 10.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE )
 #define LIVE_MATRIX_MAX_FAIL_LINES          24
 
 static void live_matrix_check_failed( const char * condition, const char * function, const char * file, int line )
