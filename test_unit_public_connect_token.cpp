@@ -10,7 +10,18 @@
 
 #include "test_unit_registry.h"
 
+#include "rocketnet_internal.h"
+#include "rocketnet_protocol.h"
+#include "rocketnet_constants.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_encryption_map.h"
+#include "rocketnet_client_slots.h"
+#include "rocketnet_fragment.h"
+#include "rocketnet_token_tables.h"
+#include "rocketnet_server_protocol.h"
+#include "rocketnet_client_protocol.h"
+#include "rocketnet_test_vectors.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -59,6 +70,59 @@ static int public_token_mint( const uint8_t * backend_secret_key,
                                                      public_token_client_id, public_token_create_timestamp,
                                                      public_token_expire_timestamp, public_token_timeout_seconds,
                                                      user_data, token, token_bytes );
+}
+
+// a server protocol with the minting keys, a different protocol id and only
+// the tables the request path touches before the protocol id check
+
+struct public_token_server_t
+{
+    struct rocketnet_server_protocol_t server;
+    struct rocketnet_counters_t counters;
+};
+
+static void public_token_server_setup( struct public_token_server_t * t, uint64_t protocol_id,
+                                       const uint8_t * backend_public_key,
+                                       const uint8_t * server_public_key,
+                                       const uint8_t * server_secret_key )
+{
+    memset( t, 0, sizeof(*t) );
+    struct rocketnet_server_protocol_t * server = &t->server;
+    server->protocol_id = protocol_id;
+    memcpy( server->filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server->backend_public_key, backend_public_key, ROCKETNET_KEY_BYTES );
+    memcpy( server->server_public_key, server_public_key, ROCKETNET_KEY_BYTES );
+    memcpy( server->server_secret_key, server_secret_key, ROCKETNET_KEY_BYTES );
+    server->encryption_map = rocketnet_encryption_map_create( NULL, 4 );
+    server->used_token_history = rocketnet_used_token_history_create( NULL, 8 );
+    server->client_slots = rocketnet_client_slots_create( NULL, 2 );
+    server->counters = &t->counters;
+    rocketnet_unit_check( server->encryption_map && server->used_token_history && server->client_slots );
+}
+
+static void public_token_server_teardown( struct public_token_server_t * t )
+{
+    rocketnet_encryption_map_destroy( t->server.encryption_map );
+    rocketnet_used_token_history_destroy( t->server.used_token_history );
+    rocketnet_client_slots_destroy( t->server.client_slots );
+}
+
+// the first connection request the client protocol sends for a token, built
+// on mocked time; the caller passes it to a server protocol directly
+
+static int public_token_connection_request( const uint8_t * token, uint8_t * packet, int * packet_bytes )
+{
+    struct rocketnet_client_protocol_t client;
+    struct rocketnet_counters_t counters;
+    rocketnet_client_protocol_init( &client, &counters );
+    client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, 8 );
+    rocketnet_unit_check( client.reassembly );
+    rocketnet_reassembly_set_begin_update( client.reassembly );
+    rocketnet_unit_check( rocketnet_client_protocol_connect( &client, token, 1000.0,
+                                                             public_token_create_timestamp ) == 1 );
+    rocketnet_client_protocol_update( &client, 1000.0, packet, packet_bytes );
+    rocketnet_reassembly_set_destroy( client.reassembly );
+    return *packet_bytes;
 }
 
 void public_connect_token_round_trip()
@@ -156,12 +220,34 @@ void public_connect_token_wrong_protocol_id_refused()
     rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, public_token_protocol_id,
                                              token, sizeof(token) ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_connect_token_t parsed;
-    rocketnet_read_connect_token( &parsed, token );
-    struct rocketnet_signed_connect_data_t signed_fields;
-    rocketnet_read_signed_connect_data( &signed_fields, parsed.signed_connect_data );
-    rocketnet_unit_check( signed_fields.protocol_id == public_token_protocol_id );
-    rocketnet_unit_check( signed_fields.protocol_id != public_token_other_protocol_id );
+    // the same keys, a server listening for a different protocol id: the
+    // request is ignored before any crypto runs and the counter names why
+
+    struct public_token_server_t server;
+    public_token_server_setup( &server, public_token_other_protocol_id, backend_public_key,
+                               server_public_key, server_secret_key );
+
+    uint8_t request[ROCKETNET_RECEIVE_CEILING];
+    int request_bytes = 0;
+    rocketnet_unit_check( public_token_connection_request( token, request, &request_bytes ) > 0 );
+
+    struct rocketnet_address_t from;
+    rocketnet_unit_check( rocketnet_address_parse( &from, "198.51.100.7:56789" ) );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    const int result = rocketnet_server_protocol_process_packet( &server.server, &from, request, request_bytes,
+                                                                 public_token_create_timestamp, 1000.0,
+                                                                 response, &response_bytes,
+                                                                 payload, &payload_bytes, &payload_client_index );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] == 1 );
+
+    public_token_server_teardown( &server );
 }
 
 void public_connect_token_null_or_short_buffer_refused()
@@ -215,7 +301,46 @@ void public_connect_token_null_or_short_buffer_refused()
                                                                     sizeof(token) ) == ROCKETNET_STATUS_OK );
 }
 
+// two mints of the same inputs draw fresh sealing and session material: a
+// fixed ephemeral key would repeat the sealed block, tied to every token the
+// backend ever minted for that server
+
+void public_connect_token_sealed_block_varies()
+{
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    public_token_make_keys( backend_public_key, backend_secret_key, server_public_key, server_secret_key );
+
+    uint8_t token_a[ROCKETNET_CONNECT_TOKEN_BYTES];
+    uint8_t token_b[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, public_token_protocol_id,
+                                             token_a, sizeof(token_a) ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, public_token_protocol_id,
+                                             token_b, sizeof(token_b) ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_connect_token_t parsed_a;
+    struct rocketnet_connect_token_t parsed_b;
+    rocketnet_read_connect_token( &parsed_a, token_a );
+    rocketnet_read_connect_token( &parsed_b, token_b );
+
+    struct rocketnet_signed_connect_data_t fields_a;
+    struct rocketnet_signed_connect_data_t fields_b;
+    rocketnet_read_signed_connect_data( &fields_a, parsed_a.signed_connect_data );
+    rocketnet_read_signed_connect_data( &fields_b, parsed_b.signed_connect_data );
+
+    rocketnet_unit_check( memcmp( fields_a.sealed_private_block, fields_b.sealed_private_block,
+                                  ROCKETNET_SEALED_BLOCK_BYTES ) != 0 );
+    // the sealed block opens with the ephemeral public key, so a fixed
+    // ephemeral key shows here even though the session keys still differ
+    rocketnet_unit_check( memcmp( fields_a.sealed_private_block, fields_b.sealed_private_block,
+                                  ROCKETNET_KEY_BYTES ) != 0 );
+    rocketnet_unit_check( memcmp( token_a, token_b, ROCKETNET_CONNECT_TOKEN_BYTES ) != 0 );
+}
+
 REGISTER_UNIT_TEST( public_connect_token_round_trip );
 REGISTER_UNIT_TEST( public_connect_token_wrong_server_key_refused );
 REGISTER_UNIT_TEST( public_connect_token_wrong_protocol_id_refused );
 REGISTER_UNIT_TEST( public_connect_token_null_or_short_buffer_refused );
+REGISTER_UNIT_TEST( public_connect_token_sealed_block_varies );
