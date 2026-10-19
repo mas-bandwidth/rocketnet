@@ -59,7 +59,8 @@ struct rn_message_object_t;
     X( KEEP, time ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
     X( KEEP, max_payload_bytes ) X( KEEP, send_arena ) X( KEEP, reassembly ) \
     X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, client_io ) \
-    X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, counters ) X( RESET, protocol ) \
+    X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, link_simulator ) X( KEEP, link_simulator_from ) \
+    X( KEEP, counters ) X( RESET, protocol ) \
     X( KEEP, client_stats ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \
     X( RESET, packet_loss_tracker ) X( RESET, jitter_tracker )
 
@@ -114,9 +115,48 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
 void rocketnet_client_connection_reset( struct rn_message_object_t * client );
 void rocketnet_server_connection_reset( struct rn_message_object_t * server, int client_index );
 
-// Unit-test witness for the private transport layout and RESET fields.
+/*
+    The field walk. members is a struct's declaration manifest (its
+    *_LAYOUT_FIELDS list, from which the struct is declared), decisions its
+    RESET/KEEP inventory above. The walk passes when every member has exactly
+    one decision of the same offset and size, every decision names a member,
+    and the members tile the struct from first_offset to its end with nothing
+    but alignment padding between them. Otherwise it writes the first failure,
+    naming "<structure>.<member>", into failure and returns false.
+*/
+struct rocketnet_reset_member_t
+{
+    const char * name;
+    size_t offset;
+    size_t bytes;
+    size_t alignment;
+    int reset;                                  // 1 RESET, 0 KEEP, -1 a manifest entry
+};
+
+#define ROCKETNET_RESET_MEMBER( type, field, reset ) \
+    { #field, offsetof( type, field ), sizeof( ((type *) 0)->field ), alignof( decltype( ((type *) 0)->field ) ), reset }
+
+bool rocketnet_reset_inventory_matches( const char * structure,
+                                        const struct rocketnet_reset_member_t * members, size_t num_members,
+                                        const struct rocketnet_reset_member_t * decisions, size_t num_decisions,
+                                        size_t first_offset, size_t struct_bytes, size_t struct_alignment,
+                                        char * failure, size_t failure_bytes );
+
+// Unit-test witnesses for the private structs. The inventory witnesses run the
+// field walk over a struct only its own file can see; the reset witness
+// poisons the client transport's RESET fields and runs its reset; the clean
+// queries read the state an ended connection must have left, without
+// resetting anything, so a disconnect path that skips the reset is seen.
+bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size_t failure_bytes );
+bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t failure_bytes );
+bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, size_t failure_bytes );
 bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_transport_t * client );
+void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet_client_transport_t * client );
+bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketnet_client_transport_t * client,
+                                                                 char * failure, size_t failure_bytes );
 void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index );
 bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketnet_server_transport_t * server );
+bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_transport_t * server, int client_index,
+                                                     char * failure, size_t failure_bytes );
 
 #endif // #ifndef ROCKETNET_CONNECTION_RESET_H

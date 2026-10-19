@@ -25,109 +25,108 @@
 
 #define check rocketnet_unit_check
 
-struct reset_field_t
+#define CLIENT_PROTOCOL_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_client_protocol_t, field, #decision[0] == 'R' ),
+static const rocketnet_reset_member_t client_protocol_fields[] =
 {
-    const char * name;
-    size_t offset;
-    size_t bytes;
-    size_t alignment;
-    int reset;
+    ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS( CLIENT_PROTOCOL_DECISION )
 };
+#undef CLIENT_PROTOCOL_DECISION
 
-#define RESET_FIELD( decision, field ) { #field, offsetof( rocketnet_client_protocol_t, field ), sizeof( ((rocketnet_client_protocol_t*)0)->field ), alignof(decltype(((rocketnet_client_protocol_t*)0)->field)), #decision[0] == 'R' },
-static const reset_field_t client_protocol_fields[] =
+#define CLIENT_PROTOCOL_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_client_protocol_t, field, -1 ),
+static const rocketnet_reset_member_t client_protocol_layout[] =
 {
-    ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS( RESET_FIELD )
+    ROCKETNET_CLIENT_PROTOCOL_LAYOUT_FIELDS( CLIENT_PROTOCOL_MEMBER )
 };
-#undef RESET_FIELD
+#undef CLIENT_PROTOCOL_MEMBER
 
-#define CLIENT_LAYOUT_FIELD( field, declaration ) { #field, offsetof( rocketnet_client_protocol_t, field ), sizeof( ((rocketnet_client_protocol_t*)0)->field ), alignof(decltype(((rocketnet_client_protocol_t*)0)->field)), -1 },
-static const reset_field_t client_protocol_layout[] =
+#define MAPPING_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_encryption_mapping_t, field, #decision[0] == 'R' ),
+static const rocketnet_reset_member_t encryption_mapping_fields[] =
 {
-    ROCKETNET_CLIENT_PROTOCOL_LAYOUT_FIELDS( CLIENT_LAYOUT_FIELD )
+    ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( MAPPING_DECISION )
 };
-#undef CLIENT_LAYOUT_FIELD
+#undef MAPPING_DECISION
 
-#define MAPPING_FIELD( decision, field ) { #field, offsetof( rocketnet_encryption_mapping_t, field ), sizeof( ((rocketnet_encryption_mapping_t*)0)->field ), alignof(decltype(((rocketnet_encryption_mapping_t*)0)->field)), #decision[0] == 'R' },
-static const reset_field_t encryption_mapping_fields[] =
+#define MAPPING_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_encryption_mapping_t, field, -1 ),
+static const rocketnet_reset_member_t encryption_mapping_layout[] =
 {
-    ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( MAPPING_FIELD )
+    ROCKETNET_ENCRYPTION_MAPPING_LAYOUT_FIELDS( MAPPING_MEMBER )
 };
-#undef MAPPING_FIELD
+#undef MAPPING_MEMBER
 
-#define ENDPOINT_FIELD( decision, field ) { #field, offsetof( rn_endpoint_t, field ), sizeof( ((rn_endpoint_t*)0)->field ), alignof(decltype(((rn_endpoint_t*)0)->field)), #decision[0] == 'R' },
-static const reset_field_t endpoint_fields[] =
+#define ENDPOINT_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rn_endpoint_t, field, #decision[0] == 'R' ),
+static const rocketnet_reset_member_t endpoint_fields[] =
 {
-    ROCKETNET_ENDPOINT_CONNECTION_FIELDS( ENDPOINT_FIELD )
+    ROCKETNET_ENDPOINT_CONNECTION_FIELDS( ENDPOINT_DECISION )
 };
-#undef ENDPOINT_FIELD
+#undef ENDPOINT_DECISION
+
+#define ENDPOINT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rn_endpoint_t, field, -1 ),
+static const rocketnet_reset_member_t endpoint_layout[] =
+{
+    RN_ENDPOINT_LAYOUT_FIELDS( ENDPOINT_MEMBER )
+};
+#undef ENDPOINT_MEMBER
 
 #define MESSAGE_FIELD( decision, field ) { #field, offsetof( rn_message_connection_t, field ), sizeof( ((rn_message_connection_t*)0)->field ), alignof(decltype(((rn_message_connection_t*)0)->field)), #decision[0] == 'R' },
-static const reset_field_t message_connection_fields[] =
+static const rocketnet_reset_member_t message_connection_fields[] =
 {
     ROCKETNET_MESSAGE_CONNECTION_FIELDS( MESSAGE_FIELD )
 };
 #undef MESSAGE_FIELD
 
-static size_t reset_align_up( size_t value, size_t alignment )
-{
-    return ( value + alignment - 1 ) & ~( alignment - 1 );
-}
+#define RESET_COUNT( array ) ( sizeof(array) / sizeof((array)[0]) )
 
-static void reset_inventory_member_present( int present, const char * structure, const char * member )
+// one inventory field walk: a failure names <struct>.<member>
+static void reset_walk_passes( bool passed, const char * failure )
 {
-    if ( !present )
+    if ( !passed )
     {
-        printf( "reset inventory missing %s.%s\n", structure, member );
+        printf( "reset inventory: %s\n", failure );
         fflush( stdout );
     }
-    check( present );
+    check( passed );
 }
 
-static void reset_inventory_layout( const reset_field_t * fields, size_t count, size_t first, size_t bytes, size_t alignment )
+// one RESET or KEEP comparison after a reset: a failure names <struct>.<member>
+static void reset_field_holds( const char * structure, const char * member, const char * decision,
+                               const void * value, const void * expected, size_t bytes )
 {
-    size_t last_end = first;
-    for ( size_t i = 0; i < count; i++ )
+    const bool holds = memcmp( value, expected, bytes ) == 0;
+    if ( !holds )
     {
-        check( fields[i].name && fields[i].bytes > 0 && fields[i].alignment > 0 );
-        check( fields[i].offset == reset_align_up( last_end, fields[i].alignment ) );
-        check( fields[i].offset + fields[i].bytes <= bytes );
-        last_end = fields[i].offset + fields[i].bytes;
+        printf( "reset %s field %s.%s does not hold after the reset\n", decision, structure, member );
+        fflush( stdout );
     }
-    check( reset_align_up( last_end, alignment ) == bytes );
+    check( holds );
 }
 
 static void connection_reset_inventory_covers_every_field()
 {
-    const size_t inventory_count = sizeof(client_protocol_fields)/sizeof(client_protocol_fields[0]);
-    const size_t layout_count = sizeof(client_protocol_layout)/sizeof(client_protocol_layout[0]);
+    char failure[256];
+
+    reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_client_protocol_t",
+        client_protocol_layout, RESET_COUNT( client_protocol_layout ),
+        client_protocol_fields, RESET_COUNT( client_protocol_fields ), 0,
+        sizeof(rocketnet_client_protocol_t), alignof(rocketnet_client_protocol_t), failure, sizeof(failure) ), failure );
     int reset_fields = 0;
     int keep_fields = 0;
-    for ( size_t i = 0; i < layout_count; i++ )
-    {
-        const reset_field_t & layout = client_protocol_layout[i];
-        int matches = 0;
-        for ( size_t j = 0; j < inventory_count; j++ )
-        {
-            const reset_field_t & inventory = client_protocol_fields[j];
-            if ( strcmp( layout.name, inventory.name ) != 0 )
-                continue;
-            matches++;
-            check( layout.offset == inventory.offset );
-            check( layout.bytes == inventory.bytes );
-            check( layout.alignment == inventory.alignment );
-        }
-        reset_inventory_member_present( matches == 1, "rocketnet_client_protocol_t", layout.name );
-    }
-    check( inventory_count == layout_count );
-    for ( size_t i = 0; i < inventory_count; i++ )
+    for ( size_t i = 0; i < RESET_COUNT( client_protocol_fields ); i++ )
     {
         if ( client_protocol_fields[i].reset ) reset_fields++; else keep_fields++;
     }
-    reset_inventory_layout( client_protocol_layout, layout_count, 0,
-        sizeof(rocketnet_client_protocol_t), alignof(rocketnet_client_protocol_t) );
     check( reset_fields == 33 );
     check( keep_fields == 8 );
+
+    reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",
+        encryption_mapping_layout, RESET_COUNT( encryption_mapping_layout ),
+        encryption_mapping_fields, RESET_COUNT( encryption_mapping_fields ), 0,
+        sizeof(rocketnet_encryption_mapping_t), alignof(rocketnet_encryption_mapping_t), failure, sizeof(failure) ), failure );
+    reset_walk_passes( rocketnet_reset_inventory_matches( "rn_endpoint_t",
+        endpoint_layout, RESET_COUNT( endpoint_layout ), endpoint_fields, RESET_COUNT( endpoint_fields ), 0,
+        sizeof(rn_endpoint_t), alignof(rn_endpoint_t), failure, sizeof(failure) ), failure );
+    reset_walk_passes( rocketnet_client_transport_inventory_matches_for_test( failure, sizeof(failure) ), failure );
+    reset_walk_passes( rocketnet_client_slots_inventory_matches_for_test( failure, sizeof(failure) ), failure );
+    reset_walk_passes( rocketnet_server_replay_marks_inventory_matches_for_test( failure, sizeof(failure) ), failure );
 
     // Poison every RESET decision, preserve every KEEP decision, and compare
     // the result field-by-field with a freshly initialized protocol object.
@@ -149,22 +148,14 @@ static void connection_reset_inventory_covers_every_field()
 
     rocketnet_client_protocol_t fresh;
     rocketnet_client_protocol_init( &fresh, &counters );
-#define CHECK_RESET( field ) check( memcmp( &value.field, &fresh.field, sizeof(value.field) ) == 0 );
-#define CHECK_KEEP( field ) check( memcmp( &value.field, &before.field, sizeof(value.field) ) == 0 );
+#define CHECK_RESET( field ) reset_field_holds( "rocketnet_client_protocol_t", #field, "RESET", &value.field, &fresh.field, sizeof(value.field) );
+#define CHECK_KEEP( field ) reset_field_holds( "rocketnet_client_protocol_t", #field, "KEEP", &value.field, &before.field, sizeof(value.field) );
 #define CHECK_FIELD( decision, field ) CHECK_##decision( field )
     ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS( CHECK_FIELD )
 #undef CHECK_FIELD
 #undef CHECK_KEEP
 #undef CHECK_RESET
 
-    reset_inventory_layout( encryption_mapping_fields,
-        sizeof(encryption_mapping_fields) / sizeof(encryption_mapping_fields[0]), 0,
-        sizeof(rocketnet_encryption_mapping_t), alignof(rocketnet_encryption_mapping_t) );
-    reset_inventory_layout( endpoint_fields,
-        sizeof(endpoint_fields) / sizeof(endpoint_fields[0]), 0, sizeof(rn_endpoint_t), alignof(rn_endpoint_t) );
-    reset_inventory_layout( message_connection_fields,
-        sizeof(message_connection_fields) / sizeof(message_connection_fields[0]), sizeof(rn_endpoint_t),
-        sizeof(rn_message_connection_t), alignof(rn_message_connection_t) );
     check( rocketnet_client_slots_reset_witness_for_test() );
     check( rocketnet_server_replay_marks_reset_witness_for_test() );
 
@@ -188,7 +179,7 @@ static void connection_reset_inventory_covers_every_field()
     rocketnet_encryption_map_remove( map, mapping_index );
     check( rocketnet_encryption_map_add( map, &address, 1005.0 ) == mapping_index );
     rocketnet_encryption_mapping_t * reused_mapping = rocketnet_encryption_map_entry( map, mapping_index );
-#define CHECK_MAPPING_RESET( field ) check( memcmp( &reused_mapping->field, &fresh_mapping.field, sizeof(reused_mapping->field) ) == 0 );
+#define CHECK_MAPPING_RESET( field ) reset_field_holds( "rocketnet_encryption_mapping_t", #field, "RESET", &reused_mapping->field, &fresh_mapping.field, sizeof(reused_mapping->field) );
 #define CHECK_MAPPING_KEEP( field )
 #define CHECK_MAPPING( decision, field ) CHECK_MAPPING_##decision( field )
     ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( CHECK_MAPPING )
@@ -207,6 +198,14 @@ static void connection_reset_inventory_covers_every_field()
                                                              ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 1000.0 );
     check( object );
     rn_message_connection_t * connection = &object->connections[0];
+#define MESSAGE_MEMBER( field, declaration ) { #field, (size_t) ( (const uint8_t *) &connection->field - (const uint8_t *) connection ), \
+    sizeof( connection->field ), alignof( decltype( connection->field ) ), -1 },
+    const rocketnet_reset_member_t message_connection_layout[] = { RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( MESSAGE_MEMBER ) };
+#undef MESSAGE_MEMBER
+    reset_walk_passes( rocketnet_reset_inventory_matches( "rn_message_connection_t",
+        message_connection_layout, RESET_COUNT( message_connection_layout ),
+        message_connection_fields, RESET_COUNT( message_connection_fields ), sizeof(rn_endpoint_t),
+        sizeof(rn_message_connection_t), alignof(rn_message_connection_t), failure, sizeof(failure) ), failure );
     rocketnet_client_connection_reset( object );
     const rn_endpoint_t fresh_endpoint = *connection;
     const rn_message_connection_t fresh_connection = *connection;
@@ -230,15 +229,15 @@ static void connection_reset_inventory_covers_every_field()
 #undef POISON_MESSAGE_RESET
     const rn_message_connection_t before_connection = *connection;
     rocketnet_client_connection_reset( object );
-#define CHECK_ENDPOINT_RESET( field ) check( memcmp( &connection->field, &fresh_endpoint.field, sizeof(connection->field) ) == 0 );
-#define CHECK_ENDPOINT_KEEP( field ) check( memcmp( &connection->field, &before_connection.field, sizeof(connection->field) ) == 0 );
+#define CHECK_ENDPOINT_RESET( field ) reset_field_holds( "rn_endpoint_t", #field, "RESET", &connection->field, &fresh_endpoint.field, sizeof(connection->field) );
+#define CHECK_ENDPOINT_KEEP( field ) reset_field_holds( "rn_endpoint_t", #field, "KEEP", &connection->field, &before_connection.field, sizeof(connection->field) );
 #define CHECK_ENDPOINT( decision, field ) CHECK_ENDPOINT_##decision( field )
     ROCKETNET_ENDPOINT_CONNECTION_FIELDS( CHECK_ENDPOINT )
 #undef CHECK_ENDPOINT
 #undef CHECK_ENDPOINT_KEEP
 #undef CHECK_ENDPOINT_RESET
-#define CHECK_MESSAGE_RESET( field ) check( memcmp( &connection->field, &fresh_connection.field, sizeof(connection->field) ) == 0 );
-#define CHECK_MESSAGE_KEEP( field ) check( memcmp( &connection->field, &before_connection.field, sizeof(connection->field) ) == 0 );
+#define CHECK_MESSAGE_RESET( field ) reset_field_holds( "rn_message_connection_t", #field, "RESET", &connection->field, &fresh_connection.field, sizeof(connection->field) );
+#define CHECK_MESSAGE_KEEP( field ) reset_field_holds( "rn_message_connection_t", #field, "KEEP", &connection->field, &before_connection.field, sizeof(connection->field) );
 #define CHECK_MESSAGE( decision, field ) CHECK_MESSAGE_##decision( field )
     ROCKETNET_MESSAGE_CONNECTION_FIELDS( CHECK_MESSAGE )
 #undef CHECK_MESSAGE
@@ -575,9 +574,101 @@ static void reset_server_teardown( reset_server_fixture_t * f )
     rocketnet_encryption_map_destroy( f->server.encryption_map );
 }
 
+
+static void reset_client_transport_clean( rocketnet_client_transport_t * transport )
+{
+    char failure[256];
+    const bool clean = rocketnet_client_transport_connection_state_clean_for_test( transport, failure, sizeof(failure) );
+    if ( !clean )
+    {
+        printf( "reset: %s\n", failure );
+        fflush( stdout );
+    }
+    check( clean );
+}
+
+static void reset_server_slot_clean( rocketnet_message_server_t * server, int client_index )
+{
+    char failure[256];
+    const bool clean = rocketnet_server_transport_slot_clean_for_test( rocketnet_message_server_transport( server ),
+                                                                       client_index, failure, sizeof(failure) );
+    if ( !clean )
+    {
+        printf( "reset: %s\n", failure );
+        fflush( stdout );
+    }
+    check( clean );
+}
+
+// The server's idle sweep ends a slot whose client went silent: the
+// transport's own timeout (rocketnet_server_protocol_update), not a message
+// layer kick. The slot is clean the moment the sweep ends it, and the next
+// client given that slot index connects and delivers both ways.
+static void reset_loopback_server_sweep_timeout_scenario()
+{
+    reset_loopback_t f;
+    memset( &f, 0, sizeof(f) );
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+    const int a_slot = reset_loopback_connect( &f, 0, 0xA003 );
+    const uint8_t a_payload[] = { 'A', '-', 'i', 'd', 'l', 'e' };
+    check( rocketnet_message_client_send( f.clients[0], 0, ROCKETNET_RELIABLE_ORDERED, a_payload, sizeof(a_payload) ) != 0 );
+    check( rocketnet_message_server_send( f.server, a_slot, 0, ROCKETNET_RELIABLE_ORDERED, a_payload, sizeof(a_payload) ) != 0 );
+    for ( int i = 0; i < 40; i++ )
+        reset_loopback_step( &f );
+
+    // the client goes silent: only the server runs from here
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
+    const uint64_t timed_out_before = rocketnet_server_transport_counters( transport )->values[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
+    for ( int i = 0; i < 400 && rocketnet_server_transport_is_client_connected( transport, a_slot ); i++ )
+    {
+        f.now += 0.05;
+        check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_message_server_send_packets( f.server );
+    }
+    check( !rocketnet_server_transport_is_client_connected( transport, a_slot ) );
+    check( rocketnet_server_transport_counters( transport )->values[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out_before + 1 );
+    reset_server_slot_clean( f.server, a_slot );
+
+    rocketnet_message_client_destroy( f.clients[0] );
+    f.clients[0] = NULL;
+    const int b_slot = reset_loopback_connect( &f, 1, 0xB003 );
+    check( b_slot == a_slot );
+    const uint8_t c2s[] = { 'B', '-', 'u', 'p' };
+    const uint8_t s2c[] = { 'B', '-', 'd', 'n' };
+    check( rocketnet_message_client_send( f.clients[1], 1, ROCKETNET_RELIABLE_ORDERED, c2s, sizeof(c2s) ) != 0 );
+    check( rocketnet_message_server_send( f.server, b_slot, 1, ROCKETNET_RELIABLE_ORDERED, s2c, sizeof(s2c) ) != 0 );
+    int got_c2s = 0, got_s2c = 0;
+    for ( int i = 0; i < 400 && !( got_c2s && got_s2c ); i++ )
+    {
+        reset_loopback_step( &f );
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        for ( int channel = 0; channel < 2; channel++ )
+        {
+            if ( rocketnet_message_server_receive( f.server, b_slot, channel, &data, &bytes ) )
+            {
+                check( channel == 1 && bytes == (int) sizeof(c2s) && memcmp( data, c2s, sizeof(c2s) ) == 0 );
+                rocketnet_message_server_release( f.server, b_slot, data );
+                got_c2s = 1;
+            }
+            if ( rocketnet_message_client_receive( f.clients[1], channel, &data, &bytes ) )
+            {
+                check( channel == 1 && bytes == (int) sizeof(s2c) && memcmp( data, s2c, sizeof(s2c) ) == 0 );
+                rocketnet_message_client_release( f.clients[1], data );
+                got_s2c = 1;
+            }
+        }
+    }
+    check( got_c2s && got_s2c );
+    reset_loopback_destroy( &f );
+}
+
 static void connection_reset_server_slot_reuse_is_clean()
 {
     reset_loopback_slot_reuse_scenario();
+    reset_loopback_server_sweep_timeout_scenario();
     reset_server_fixture_t f;
     reset_server_setup( &f );
     const int a = reset_server_assign( &f, "198.51.100.1:4000", 1 );
@@ -624,8 +715,65 @@ static void connection_reset_server_reset_touches_only_its_slot()
 }
 REGISTER_UNIT_TEST( connection_reset_server_reset_touches_only_its_slot );
 
+
+// The client ends the connection itself, by its own timeout: the server goes
+// silent and only the client runs. The transport state a connection leaves
+// behind is marked first, so the reset on the transport's update path is the
+// only thing that can make it clean.
+static void reset_loopback_client_timeout_scenario()
+{
+    reset_loopback_t f;
+    memset( &f, 0, sizeof(f) );
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+    reset_loopback_connect( &f, 0, 0xF001 );
+    for ( int i = 0; i < 20; i++ )
+        reset_loopback_step( &f );
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( f.clients[0] );
+    rocketnet_client_transport_mark_connection_state_for_test( transport );
+    for ( int i = 0; i < 400 && rocketnet_message_client_state( f.clients[0] ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
+    {
+        f.now += 0.05;
+        check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_message_client_send_packets( f.clients[0] );
+    }
+    check( rocketnet_message_client_state( f.clients[0] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
+    reset_client_transport_clean( transport );
+    reset_loopback_destroy( &f );
+}
+
+// The client's connection ends by a denial: both slots are taken, so the
+// server denies a third client mid-handshake.
+static void reset_loopback_client_denied_scenario()
+{
+    reset_loopback_t f;
+    memset( &f, 0, sizeof(f) );
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+    reset_loopback_connect( &f, 0, 0xF101 );
+    reset_loopback_connect( &f, 1, 0xF102 );
+    rocketnet_message_client_t * denied = reset_loopback_client_create( f.server, 0xF103 );
+    check( denied );
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( denied );
+    rocketnet_client_transport_mark_connection_state_for_test( transport );
+    for ( int i = 0; i < 400 && rocketnet_message_client_state( denied ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
+    {
+        reset_loopback_step( &f );
+        check( rocketnet_message_client_update( denied, f.now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_message_client_send_packets( denied );
+    }
+    check( rocketnet_message_client_state( denied ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
+    reset_client_transport_clean( transport );
+    rocketnet_message_client_destroy( denied );
+    reset_loopback_destroy( &f );
+}
+
 static void connection_reset_client_disconnect_is_clean()
 {
+    reset_loopback_client_timeout_scenario();
+    reset_loopback_client_denied_scenario();
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rocketnet_client_protocol_t client;

@@ -6,6 +6,15 @@ internal reset for that side before a slot or client object can be reused. A
 `tla/ClientSession.tla` models the client `End` transition and
 `tla/ServerSession.tla` models `EndClient` and the per-slot `Reset(i)`.
 
+The same decisions are data in `sdk/rocketnet_connection_reset.h`, one X-macro
+per struct. Each of these structs is declared from a manifest list beside it
+(`rocketnet_client_protocol_t`, `rocketnet_client_transport_t`,
+`rocketnet_encryption_mapping_t`, `rocketnet_client_slots_t`, the replay mark
+`rocketnet_server_replay_slot_mark_t`, `rn_endpoint_t` and
+`rn_message_connection_t`), and `connection_reset_inventory_covers_every_field`
+walks every one: a member with no RESET or KEEP decision fails the suite
+naming `<struct>.<member>`.
+
 ## Client per-connection state
 
 | Struct | Field | What it is | Decision | Reason |
@@ -31,6 +40,7 @@ internal reset for that side before a slot or client object can be reused. A
 | `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
 | | packet-loss and jitter trackers | transport estimators | RESET | no samples from the ended session |
 | | config, driver, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction and public monotonic statistics |
+| | `link_simulator`, `link_simulator_from` | the simulated link and its source address | KEEP | a property of the link, not of a connection; packets already on it are on the wire, sealed under the ended session |
 | `rn_message_connection_t` / `rn_endpoint_t` | endpoint region; ordered/reliable queues; descriptors; receive ring; send store; packet, delivery, hold, receipt and resend rings | channel and allocator state | RESET | `rn_endpoint_reset` carves the region fresh |
 | | packet/message serials, ordering/sequencing indices, unreliable queue, pending start, write pass and send-budget accumulator | message send state | RESET | no work may cross connections |
 | | `views`, `cursors` | allocation pointers | KEEP | storage is fixed; pointed-to contents reset |
@@ -63,7 +73,7 @@ other session state.
 | | component pointers | allocation owners | KEEP | their named per-slot records reset |
 | | update output tags | receipt attribution | KEEP | produced rows retain attribution for the update |
 | server replay marks | marks for this client index | staged replay ownership | RESET | driver cleanup removes this slot's marks |
-| `rocketnet_server_transport_t` | per-client wire totals, staged frames and estimators | transport slot state | RESET | attribution starts fresh on reassignment |
+| `rocketnet_server_transport_t` | `client_wire_totals[client_index]` | the slot's wire packet and byte totals | KEEP through the reset | not touched by `rocketnet_server_connection_reset`; cleared when the slot is next assigned (`rocketnet_server_wire_totals_assign`), which also folds in the new client's pre-slot handshake totals. `rocketnet_server_transport_client_stats` reads zeros for an empty slot, so the ended connection's totals are never observable |
 | | other slots, server totals, driver/config and counters | server-wide state | KEEP | lifetime state or another connection |
 | message connection / endpoint | the client table's message and channel fields | per-slot message state | RESET | endpoint reset makes the slot fresh |
 | | `disconnect_reason` | last connection's reason | KEEP | cleared only when a new id is observed |

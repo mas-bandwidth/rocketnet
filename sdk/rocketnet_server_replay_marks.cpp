@@ -9,11 +9,22 @@
 
 #include <string.h>
 
+/*
+    The declaration manifest: the struct is declared from this list, so a
+    member exists only as an entry here. The RESET/KEEP inventory in
+    rocketnet_connection_reset.h is compared with it by name, and a member with
+    no decision is named in connection_reset_inventory_covers_every_field.
+*/
+#define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( X ) \
+    X( has_mark, int has_mark )                                    \
+    X( marked_value, uint32_t marked_value )                       \
+    X( marked_address, struct rocketnet_address_t marked_address )
+
 struct rocketnet_server_replay_slot_mark_t
 {
-    int has_mark;
-    uint32_t marked_value;
-    struct rocketnet_address_t marked_address;
+#define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
+    ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS_DECLARE )
+#undef ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS_DECLARE
 };
 
 struct rocketnet_server_replay_marks_t
@@ -133,18 +144,22 @@ static void rocketnet_replay_witness_forget( void * context, const rocketnet_add
 
 static void rocketnet_replay_witness_mark( void *, const rocketnet_address_t *, uint32_t ) {}
 
+bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, size_t failure_bytes )
+{
+#define MARK_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_server_replay_slot_mark_t, field, -1 ),
+    static const rocketnet_reset_member_t members[] = { ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( MARK_MEMBER ) };
+#undef MARK_MEMBER
+#define MARK_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_server_replay_slot_mark_t, field, #decision[0] == 'R' ),
+    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION ) };
+#undef MARK_DECISION
+    return rocketnet_reset_inventory_matches( "rocketnet_server_replay_slot_mark_t", members, sizeof(members) / sizeof(members[0]),
+                                              decisions, sizeof(decisions) / sizeof(decisions[0]), 0,
+                                              sizeof(rocketnet_server_replay_slot_mark_t),
+                                              alignof(rocketnet_server_replay_slot_mark_t), failure, failure_bytes );
+}
+
 bool rocketnet_server_replay_marks_reset_witness_for_test()
 {
-    rocketnet_server_replay_slot_mark_t layout;
-    size_t end = 0;
-#define REPLAY_LAYOUT( decision, field ) \
-    do { const size_t offset = offsetof( rocketnet_server_replay_slot_mark_t, field ); \
-         if ( offset < end ) return false; end = offset + sizeof(layout.field); } while (0);
-    ROCKETNET_SERVER_REPLAY_MARK_FIELDS( REPLAY_LAYOUT )
-#undef REPLAY_LAYOUT
-    if ( end > sizeof(layout) || sizeof(layout) - end >= alignof(rocketnet_server_replay_slot_mark_t) )
-        return false;
-
     rocketnet_server_replay_marks_t * marks = rocketnet_server_replay_marks_create( NULL, 1 );
     rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
     rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 1 );

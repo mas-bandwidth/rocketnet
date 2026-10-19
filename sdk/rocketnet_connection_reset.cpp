@@ -13,6 +13,7 @@
 #include "rocketnet_message_object.h"
 
 #include <sodium.h>
+#include <stdio.h>
 #include <string.h>
 
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client )
@@ -127,4 +128,73 @@ void rocketnet_server_connection_reset( struct rn_message_object_t * server, int
     rocketnet_assert( server );
     rocketnet_assert( server->is_server );
     rocketnet_message_connection_reset( server, client_index );
+}
+
+static size_t rocketnet_reset_align_up( size_t value, size_t alignment )
+{
+    return ( value + alignment - 1 ) & ~( alignment - 1 );
+}
+
+bool rocketnet_reset_inventory_matches( const char * structure,
+                                        const struct rocketnet_reset_member_t * members, size_t num_members,
+                                        const struct rocketnet_reset_member_t * decisions, size_t num_decisions,
+                                        size_t first_offset, size_t struct_bytes, size_t struct_alignment,
+                                        char * failure, size_t failure_bytes )
+{
+    rocketnet_assert( structure && members && decisions && failure && failure_bytes > 0 );
+    failure[0] = '\0';
+
+    for ( size_t i = 0; i < num_members; i++ )
+    {
+        int matches = 0;
+        for ( size_t j = 0; j < num_decisions; j++ )
+        {
+            if ( strcmp( members[i].name, decisions[j].name ) != 0 )
+                continue;
+            matches++;
+            if ( decisions[j].offset != members[i].offset || decisions[j].bytes != members[i].bytes )
+            {
+                snprintf( failure, failure_bytes, "%s.%s: the inventory entry does not cover the member", structure, members[i].name );
+                return false;
+            }
+        }
+        if ( matches != 1 )
+        {
+            snprintf( failure, failure_bytes, "%s.%s: %s", structure, members[i].name,
+                      matches == 0 ? "no RESET or KEEP decision" : "more than one decision" );
+            return false;
+        }
+    }
+
+    for ( size_t j = 0; j < num_decisions; j++ )
+    {
+        size_t matches = 0;
+        for ( size_t i = 0; i < num_members; i++ )
+            matches += strcmp( members[i].name, decisions[j].name ) == 0;
+        if ( matches == 0 )
+        {
+            snprintf( failure, failure_bytes, "%s.%s: decided, but not a member", structure, decisions[j].name );
+            return false;
+        }
+    }
+
+    size_t end = first_offset;
+    for ( size_t i = 0; i < num_members; i++ )
+    {
+        if ( members[i].bytes == 0 || members[i].alignment == 0 ||
+             members[i].offset != rocketnet_reset_align_up( end, members[i].alignment ) ||
+             members[i].offset + members[i].bytes > struct_bytes )
+        {
+            snprintf( failure, failure_bytes, "%s.%s: bytes before it are covered by no member", structure, members[i].name );
+            return false;
+        }
+        end = members[i].offset + members[i].bytes;
+    }
+    if ( rocketnet_reset_align_up( end, struct_alignment ) != struct_bytes )
+    {
+        snprintf( failure, failure_bytes, "%s.%s: bytes after it are covered by no member", structure,
+                  num_members ? members[num_members - 1].name : "(none)" );
+        return false;
+    }
+    return true;
 }

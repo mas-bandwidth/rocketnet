@@ -30,6 +30,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_server_replay_marks.h"
+#include "rocketnet_connection_reset.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_fragment.h"
@@ -277,6 +278,42 @@ bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketne
     return server && server->protocol.encryption_map && server->protocol.client_slots &&
         rocketnet_encryption_map_num_mappings( server->protocol.encryption_map ) == 0 &&
         rocketnet_client_slots_num_connected( server->protocol.client_slots ) == 0;
+}
+
+bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_transport_t * server, int client_index,
+                                                     char * failure, size_t failure_bytes )
+{
+    rocketnet_assert( server && failure && failure_bytes > 0 );
+    failure[0] = '\0';
+    struct rocketnet_server_protocol_t * protocol = &server->protocol;
+    rocketnet_assert( client_index >= 0 && client_index < rocketnet_client_slots_max_clients( protocol->client_slots ) );
+    const char * member = NULL;
+    if ( rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
+        member = "rocketnet_client_slots_t.connected";
+    int iterator = -1;
+    while ( !member && rocketnet_encryption_map_next( protocol->encryption_map, &iterator ) )
+        if ( rocketnet_encryption_map_entry( protocol->encryption_map, iterator )->client_index == client_index )
+            member = "rocketnet_encryption_mapping_t.client_index";
+    if ( !member && protocol->connection_ids[client_index] != 0 )
+        member = "rocketnet_server_protocol_t.connection_ids";
+    if ( !member )
+    {
+        struct rocketnet_ack_endpoint_t * fresh = (struct rocketnet_ack_endpoint_t *) malloc( sizeof(struct rocketnet_ack_endpoint_t) );
+        rocketnet_assert( fresh );
+        rocketnet_ack_endpoint_reset( fresh );
+        if ( memcmp( fresh, &protocol->acks->endpoints[client_index], sizeof(*fresh) ) != 0 )
+            member = "rocketnet_server_acks_t.endpoints";
+        free( fresh );
+    }
+    if ( !member && protocol->reassembly->newest_completed[client_index] != 0 )
+        member = "rocketnet_reassembly_set_t.newest_completed";
+    const uint8_t * slice = (const uint8_t *) ( protocol->reassembly->slots + client_index * protocol->reassembly->num_slots );
+    for ( size_t i = 0; !member && i < (size_t) protocol->reassembly->num_slots * sizeof(struct rocketnet_reassembly_slot_t); i++ )
+        if ( slice[i] != 0 )
+            member = "rocketnet_reassembly_set_t.slots";
+    if ( member )
+        snprintf( failure, failure_bytes, "%s[%d]: not reset when the connection ended", member, client_index );
+    return member == NULL;
 }
 
 static struct rocketnet_server_pending_wire_totals_t * rocketnet_server_pending_wire_find(
@@ -1600,7 +1637,6 @@ void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_
     server_transport->admission_context = context;
 }
 
-// tla/RNDriverSendStaging.tla Update
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp )
 {
     rocketnet_assert( server_transport );
@@ -1608,6 +1644,7 @@ void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_tran
     server_transport->test_timestamp = timestamp;
 }
 
+// tla/RNDriverSendStaging.tla Update
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -2768,10 +2805,12 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     if ( client_index < 0 || client_index >= acks->max_clients )
         return;
 
-    // An empty slot reads as zeros, exactly as an index out of range does:
-    // a slot keeps its ack endpoint after its client leaves, so without this
-    // a departed client's numbers would outlive its slot. The endpoint is
-    // reset when a new client is assigned, and that stays as it is.
+    // An empty slot reads as zeros, exactly as an index out of range does.
+    // rocketnet_server_connection_reset returns the slot's ack endpoint to
+    // its initial state when the connection ends; the slot's wire totals are
+    // not part of that reset and are cleared when the slot is next assigned
+    // (rocketnet_server_wire_totals_assign), so until then this check is what
+    // keeps a departed client's totals from being read.
 
     if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, client_index ) )
         return;
