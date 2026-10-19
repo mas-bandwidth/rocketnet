@@ -20,8 +20,7 @@ Channels == 1..2
 Codes == {0,1,2,3,4,5}
 PromotionSources == {0,1,5}
 Twin(k) == CASE k = 0 -> 2 [] k = 1 -> 4 [] k = 5 -> 2 [] OTHER -> k
-LargeMessages == IF Scenario = "promote" THEN {1,2,3} ELSE {}
-Large(m) == m \in LargeMessages
+PromotePlanCodes == <<1,0,5,2>>
 MaxMessages == 4
 Messages == 1..MaxMessages
 Pids == 1..(2*MaxMessages)
@@ -34,7 +33,8 @@ Plans ==
       [] Scenario = "reset" -> {Plan(<<3,1,3,4>>, <<1,1,1,1>>)}
       [] Scenario = "twice" -> {Plan(<<2,2,3,1>>, <<1,1,1,1>>)}
       [] Scenario = "hold" -> {Plan(<<3,1,4,2>>, <<1,1,1,1>>)}
-      [] Scenario = "promote" -> {Plan(<<1,0,5,2>>, <<1,1,1,1>>)}
+      [] Scenario = "promote" -> {Plan(PromotePlanCodes, <<1,1,1,1>>),
+                                  Plan(<<1,3,4,2>>, <<1,1,1,1>>)}
       [] OTHER -> {Plan(<<1,3,4,2>>, <<1,1,1,1>>),
                    Plan(<<4,1,3,2>>, <<1,1,1,1>>),
                    Plan(<<1,1,4,2>>, <<1,1,1,1>>),
@@ -57,6 +57,13 @@ VARIABLES plan, queue, ordered_write, sequenced_write, written, numbers,
 vars == <<plan, queue, ordered_write, sequenced_write, written, numbers,
           opened, lost, acked, resend, receiver, orderedInputs,
           referenceTrace, connected, reason>>
+
+\* The first three sends of the promote plan are too big for one record, so
+\* each unreliable one is promoted to its reliable twin (RakNet's rule). The
+\* promote scenario also runs the mixed plan with nothing large, so the main
+\* configuration keeps checking it.
+Large(m) == Scenario = "promote" /\ m \in {1,2,3} /\
+            [i \in DOMAIN plan |-> plan[i].code] = PromotePlanCodes
 
 \* Message ids stand for stable reliable numbers after first packet write.
 \* numbers records their independent late assignment order; code 1 takes none.

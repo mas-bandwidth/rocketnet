@@ -38,7 +38,9 @@ An unreliable send too big for one packet's record is promoted to its
 reliable twin: 0 to 2, 1 to 4, and 5 to the reliable code-2 path (the receipt
 stays with the layer above). `Source(m)` is the API mode and `Code(m)` is the
 wire twin, so every sender and receiver rule runs on the twin. The `promote`
-scenario passes codes 1, 0 and 5 as `LargeMessages`; `PromotedIsTwin` checks
+scenario sends codes 1, 0 and 5 large (`Large(m)`, on the plan 1, 0, 5, 2)
+and also runs the mixed plan 1, 3, 4, 2 with nothing large, so
+`MCRNChannelTypes.cfg` checks both; `PromotedIsTwin` checks
 the mapping and `PromotedNeverUnreliable` checks that a promoted code-0 or
 code-5 send is delivered, never dropped as unreliable. A promoted code-1 send
 follows code-4 sequenced semantics, including their permitted supersession.
