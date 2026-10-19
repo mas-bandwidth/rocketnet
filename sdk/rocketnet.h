@@ -862,9 +862,20 @@ struct rocketnet_server_config_t
 // ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE,
 // ROCKETNET_RELIABLE_ORDERED, ROCKETNET_RELIABLE_SEQUENCED,
 // ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT
-// and ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT. Plain UNRELIABLE is one
-// message in one packet, up to ROCKETNET_MESSAGE_SINGLE_BYTES; the other
-// types are bounded by the config's max_message_bytes.
+// and ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT. An unreliable send too
+// big for one packet's record is promoted to its reliable twin, as RakNet's
+// ReliabilityLayer does, and counted (MESSAGE_PROMOTED_UNRELIABLE,
+// MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED,
+// MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT); the receiver sees the twin's
+// wire code. Plain UNRELIABLE is one record in one packet up to 1411 bytes
+// and promotes to RELIABLE above that.
+// UNRELIABLE_SEQUENCED is one record up to 1405 bytes (1404 when the channel
+// is WIDE) and promotes to RELIABLE_SEQUENCED past that, keeping its channel.
+// UNRELIABLE_WITH_ACK_RECEIPT is the code-0 wire form up to 1411 bytes and
+// promotes to RELIABLE_WITH_ACK_RECEIPT semantics (the code-2 block path)
+// above that, keeping its ACKED-only receipt. The reliable types and promoted
+// sends are bounded by the config's max_message_bytes; a send above it is
+// refused in every unreliable mode, with no second record-length refusal.
 //
 // A send the connection's region has no room for ends the connection: the
 // server disconnects that client, the client disconnects itself, with the
