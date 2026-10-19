@@ -248,9 +248,9 @@ struct rocketnet_client_transport_config_t
     int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
-    uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     void (*state_change_callback)( void * context, int previous_state, int current_state );
     double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
+    uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
 };
 
 // a NULL config is a counted no-op.
