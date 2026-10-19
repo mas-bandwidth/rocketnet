@@ -104,6 +104,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_client_slots.cpp
     sdk/rocketnet_client_transport.cpp
     sdk/rocketnet_config.cpp
+    sdk/rocketnet_connection_reset.cpp
     sdk/rocketnet_driver.cpp
     sdk/rocketnet_driver_builtin.cpp
     sdk/rocketnet_driver_loopback.cpp
