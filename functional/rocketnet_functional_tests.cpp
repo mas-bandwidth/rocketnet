@@ -445,6 +445,20 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
                     rocketnet_platform_sleep( 0.001 );
                 }
             }
+            if ( !payload )
+            {
+                // name which refusal held for the whole deadline: a client no
+                // longer connected (start_payload refuses), or a Filling ring
+                // the I/O thread never released (SEND_RING_FULL with deferred
+                // hand-offs), or the lease table
+                const uint64_t * values = rocketnet_client_transport_counters( client )->values;
+                printf( "%s: start refused for 5 s at tag %d: client_state=%d server_connected=%d ring_full=%llu deferred=%llu lease_full=%llu\n",
+                        name, tag, rocketnet_client_transport_state( client ), rocketnet_server_transport_num_connected_clients( server ),
+                        (unsigned long long) values[ROCKETNET_COUNTER_SEND_RING_FULL],
+                        (unsigned long long) values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED],
+                        (unsigned long long) values[ROCKETNET_COUNTER_SEND_LEASE_FULL] );
+                fflush( stdout );
+            }
             rocketnet_check( payload );
             payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
             payload[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
