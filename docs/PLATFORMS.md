@@ -1,60 +1,136 @@
 # Supported platforms
 
-RocketNet's support claim is a claim about what every commit builds and tests
-across operating systems, architectures, compilers, and transports. A platform
-is **supported** when per-commit verification builds the library and runs the
-unit and functional test suites on it for every pull request and every push to
-`main`. The supported platforms are Linux x86_64, macOS arm64 and Windows
-x86_64. s390x is a **byte-order check**: verification builds and checks the
-library there to catch an endianness break, and it is not a supported
-deployment platform. A platform with no verification leg is **not tested**,
-even if the source compiles there.
+RocketNet's support claim is a claim about CI, not about what the source might
+compile on. A platform is supported when a leg in the per-commit workflow
+builds it and runs the suite on it for every pull request and every push to
+`main`. A platform that only a scheduled workflow runs is nightly. A platform
+that no workflow runs is unsupported, even if the code happens to build there.
 
-## Platform matrix
+The table below is the whole claim. Each row names the workflow file and the
+runner label that prove it. `tools/check_platform_policy.py` reads the table
+and refuses a supported or nightly row whose label is not in the workflow it
+names.
 
-| Operating system | Architecture | Compiler | Transports | Tier |
-| --- | --- | --- | --- | --- |
-| Ubuntu 24.04 (Linux) | x86_64 | GCC 13, Clang | portable, gso, io_uring, xdp, loopback | supported |
-| macOS 15 | arm64 | Apple Clang | portable, msgx, loopback | supported |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp, rio, loopback | supported |
-| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | none (in-memory wire check only) | byte-order check, every commit |
-| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable, loopback | byte-order check, nightly |
-| Linux | arm64 (aarch64) | none | none | not tested |
-| Windows | arm64 | none | none | not tested |
-| macOS | x86_64 | none | none | not tested |
+## The table
 
-The **Transports** column names the transports built and exercised on that
-platform. The built-in transport registry (`rocketnet_drivers.inc`) provides:
+| Operating system | Architecture | Compiler | Drivers | Tier | Workflow | Runner label |
+| --- | --- | --- | --- | --- | --- | --- |
+| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
+| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
+| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp | supported | .github/workflows/ci.yml | windows-2025 |
+| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
+| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | self-hosted, Linux, X64, fleet |
+| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
+| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
+| Linux | arm64 | none | none | unsupported | - | - |
+| Windows | arm64 | none | none | unsupported | - | - |
+| macOS | x86_64 | none | none | unsupported | - | - |
 
-- `portable` and `loopback` on every supported platform,
-- `gso`, `io_uring`, and `xdp` on Linux,
-- `msgx` on macOS,
-- `iocp` and `rio` on Windows.
+The drivers column names the backends the row actually exercises or proves in
+CI. The registry (`rocketnet_drivers.inc`) also lists portable on every
+platform, gso and xdp on Linux, msgx on macOS and iocp on Windows. A driver
+that the row does not name is not part of that row's claim.
 
 ## Policy rules
 
 ### What supported promises
 
-A supported row promises three things:
+A supported row promises three things, and only these three:
 
-1. Every commit builds the library with the compiler in the row and runs the
-   unit and functional suites (or the documented platform subset) on the
-   operating system and architecture in the row.
-2. A failure on that platform blocks merging.
-3. Every listed transport for that platform is compiled and exercised by its
-   unit and functional tests.
+1. Every commit's CI includes a leg that builds the library with the compiler
+   in the row and runs the unit and functional suite, or the platform-specific
+   subset the row describes, on the operating system and architecture in the
+   row.
+2. A red leg on that platform is a merge blocker. It is not a nightly finding
+   that may wait for morning.
+3. The workflow file and runner label in the row are the ones that run it, and
+   the label is present in that file.
 
-One limit on the Linux row: verification runs unprivileged, so the `xdp`
-transport is compiled and its unprivileged checks run, but its privileged path
-(BPF program load and attach, AF_XDP binds) is not exercised by verification;
-see [BUILDING.md](../BUILDING.md).
+It does not promise another compiler, another architecture, another runner
+image, privileged XDP attach, line-rate measurements, or a driver the row does
+not name. In particular, the per-commit `big-endian` leg in `ci.yml`
+cross-compiles the library and suite for s390x and runs the wire and sodium
+checks under qemu-user; the socket-crossing suite runs on s390x only in the
+nightly full-system guest. The nightly row is how that suite is claimed.
 
-The s390x byte-order check: every commit cross-compiles the library and suite
-for `s390x` and runs the wire and cryptography checks under `qemu-user`; the
-full socket-crossing suite runs on `s390x` nightly in a full-system guest.
+### Adding a platform
 
-### Adding or dropping a platform
+1. Register a runner with a stable label and add a leg to `ci.yml` that builds
+   and runs the suite on it. If the platform is not fit for the per-commit
+   budget, add the leg to a nightly workflow instead and it becomes nightly,
+   not supported.
+2. Add one row to the table in the same change. The row names the operating
+   system, architecture, compiler, drivers, tier, workflow file and runner
+   label.
+3. Run `python3 tools/check_platform_policy.py`. A row whose label is absent
+   from the named workflow fails the check.
 
-A platform is added as supported by enabling its per-commit verification leg
-and adding its row to the table in the same change. To drop or demote a platform,
-update or remove its verification leg and its table row together.
+A platform is not added by landing code that compiles on it, by adding it to a
+comment, or by naming it in a release note. It is added by the CI leg and the
+row together.
+
+### Dropping a platform
+
+Remove the CI leg and its row in the same change. A row may not outlive the
+leg that proves it. To demote a platform, move its leg from `ci.yml` to a
+nightly workflow and change the row's tier, workflow and label in the same
+change. To withdraw support entirely, delete the leg and the row; the
+unsupported rows in the table record architectures for which no leg exists.
+
+### A claim with no leg is refused
+
+A supported or nightly row must name both a workflow file and a runner label.
+An empty value, `-`, or a label that does not occur in the named workflow is a
+failed check, not a documentation note. `tools/check_platform_policy.py` exits
+1 and names the row. This is deliberate: a support claim without a leg is the
+one thing the policy exists to prevent.
+
+## Workflows that do not add a platform row
+
+These workflows run on a platform already in the table and add checks, not a
+new support claim:
+
+- `release-check.yml` runs its version-consistency job on hosted
+  `ubuntu-24.04` per commit and its wire-change job on pushes to `main`. It
+  checks release metadata, not the library build.
+- `cbmc.yml` runs arithmetic proofs on hosted `ubuntu-24.04` for pull requests
+  that touch `sdk/` or `proofs/cbmc/`.
+- `static.yml`, `tlc.yml`, `msan.yml` and `nightly-leaks.yml` run on the
+  self-hosted `[self-hosted, Linux, X64, fleet]` runners. They are analysis
+  and leak gates on the supported Linux x86_64 platform.
+- `nightly-soak.yml` runs its soak job on `ubuntu-latest` with the
+  `self-hosted, Linux, X64, fleet` label, its soak job on the
+  `self-hosted, macOS, ARM64, rocketnet-macos` label, and on hosted
+  `windows-2025`, and its sanitized-soak job on hosted `ubuntu-24.04`.
+- `nightly-frame-budget.yml` runs its Linux leg on the
+  `self-hosted, Linux, X64, rocketnet-quiet` label, its macOS leg report-only
+  on `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on
+  hosted `windows-2025`. The macOS leg is report-only because the fleet Mac
+  is not reserved quiet; its one runner takes one job at a time and the
+  workflow concurrency group keeps one run per ref.
+- `nightly-examples.yml` runs its Linux leg on
+  `self-hosted, Linux, X64, fleet`, its macOS leg on
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on hosted
+  `windows-2025`.
+- `ci.yml`'s `platform-selftests` job runs on the
+  `self-hosted, Linux, X64, fleet` and
+  `self-hosted, macOS, ARM64, rocketnet-macos` labels.
+- `fuzz-nightly.yml` runs on the `self-hosted, Linux, X64, fleet` label.
+
+## Checking the table
+
+From the repository root:
+
+```sh
+python3 tools/check_platform_policy.py
+```
+
+The checker is standard-library Python. It parses the markdown table, then for
+every supported or nightly row reads the named workflow file and requires every
+token of the runner label to occur in it. It does not parse YAML; the workflow
+files are searched as text because the labels are how the runners are chosen.

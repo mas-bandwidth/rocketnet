@@ -167,6 +167,7 @@ MCRNXdpReplayBrokenNoForget.cfg	MCRNXdpReplay.tla	invariant	NewSessionNeverDropp
 MCRNRioDriver.cfg	MCRNRioDriver.tla	pass	-	check	rnriodriver	required	-
 MCRNRioDriverBrokenSwitchWithoutDrain.cfg	MCRNRioDriver.tla	invariant	NoReserveIntoPostedPhase	check	rnriodriver	required	-
 MCRNRioDriverBrokenFreeBeforeDrain.cfg	MCRNRioDriver.tla	invariant	FreedOnlyWhenDrained	check	rnriodriver	required	-
+MCRNRioDriverBrokenRetireOnRefusal.cfg	MCRNRioDriver.tla	invariant	ReceiveDepthNeverShrinks	check	rnriodriver	required	-
 MCRNFlows.cfg	MCRNFlows.tla	pass	-	check	rnflows	required	-
 MCRNFlowsBrokenSendAfterUnsubscribe.cfg	MCRNFlows.tla	invariant	DeliveredOnlyToSubscribers	check	rnflows	required	-
 MCRNClientIoDecrypt.cfg	MCRNClientIoDecrypt.tla	pass	-	check	rnclientiodecrypt	required	-
