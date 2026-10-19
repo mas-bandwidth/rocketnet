@@ -1,5 +1,7 @@
 # The Session Layer: Identity, Rolling Magic, and the Keyed Filter Value
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 This document is the design for RocketNet's optional session layer: identity
 authentication with a backend (one identity, one seat, the old seat kicked),
 the rolling magic that feeds the keyed filter value at epochs 1-255, and replay
