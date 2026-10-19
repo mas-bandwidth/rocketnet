@@ -2662,7 +2662,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 1. On a connection request, a server MUST apply the checks below in the order given, and MUST stop at the first that refuses.
 2. A server MUST ignore a request whose size is not the request wire size, whose version is not the protocol version, whose protocol id is not the server's, whose timeout is zero or negative without permission, whose address flags name no family, whose advertised address is not one this server serves, or whose server public key is not this server's. It MUST NOT answer such a request.
 3. A server MUST ignore a request from a source address that is already connected. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, and it MUST NOT create a second mapping or derive new keys for that address.
-4. A server MUST refuse a token whose expire timestamp is not later than the server's current time, whose create timestamp is more than the creation skew after the server's current time, or whose lifetime exceeds the configured maximum token lifetime. It MUST count the first refusal as `CONNECTION_REQUEST_TOKEN_EXPIRED`, the second as `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and the third as `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`, and MUST NOT answer.
+4. A server MUST refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
 5. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 6. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
 7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request from a source that has spent the failed-signature budget in the current window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`.
@@ -2857,6 +2857,61 @@ d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
 1d b0 9d 03 06 5e 5c f5 5a 57 f8 4e a7 ba 39 b1
 55 04 96 f2 aa 05
 ```
+
+
+
+
+```vector t12.token-expired
+input: the request of [t8 Packet formats](#t8)
+input: signed create timestamp 1756166300, expire 1756166350, server time 1756166400
+input: the return cookie is valid for the source and connection salt
+00 00 b7 59 01 00 03 f9 ac 68 00 00 00 00 0f b2
+b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9 53 41
+4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
+9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
+c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+22 11 9c f8 ac 68 00 00 00 00 ce f8 ac 68 00 00
+00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
+24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
+06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c 34
+e4 2d 4a f5 ef 94 a0 7a 3a 84 20 1b 88 9d 4c d1
+a7 43 cb 27 b1 1b 6a 10 43 8a 8f eb 8e 58 47 08
+df eb b3 86 fe 9d 32 82 32 59 14 c7 92 00 5b 3f
+0c bd b6 0f 45 ee cb e3 8e a0 a7 2c ec 1b 6b a0
+e1 4a fd 6e fb 43 6d 00 34 5c 40 4c 4d e3 92 57
+86 d2 59 cc 06 b1 23 9e 25 9c a8 eb 13 7f 93 49
+19 1a 21 1c a7 f0 17 04 ae 96 dd d5 2c 86 e1 69
+34 78 9b 7c 3a 07 74 d0 88 e0 35 28 a4 af a2 da
+c5 aa 04 d2 41 80 59 30 ca 24 ff 62 b9 41 7c 1e
+b7 f3 62 48 71 75 57 ad 34 0a 1a 21 11 eb 1f 6b
+5b 71 ab ab 8f 60 44 45 0e 18 00 58 98 b6 88 6f
+8b aa 2d e5 bf 46 1e e4 f9 b3 26 38 73 2e 4f 4d
+9e a8 37 61 de a2 a1 73 c2 e7 4f 13 83 bb 45 09
+26 b3 cd 38 89 ef 3b 4d d3 d8 4f b8 5a ad 0a 12
+e5 a7 7b e7 01 40 2d 52 07 05 78 41 e3 58 89 d9
+9f 82 43 09 bf 6b 60 e2 40 3c 77 16 53 be ac 7b
+23 68 00 70 fa f4 a9 19 5e 31 69 fb 4d d8 36 91
+b7 7e 19 bf a6 51 03 42 21 6a 03 49 39 1e 2e 9c
+c7 c9 68 b0 16 63 7d 9f 8a e4 9c 24 52 8a 35 75
+42 ae c0 1e f8 32 4a 94 6a f6 ac d6 15 6b 9c 17
+7f 06 cf 3b 82 9b fc e6 0e c0 09 d5 79 2d 16 2e
+6d 9b 58 85 2d 11 b4 df 6c 62 3a 1d 39 3a e3 15
+c2 46 ed 69 60 57 f4 f8 d7 b9 18 af 57 43 1a 7e
+c5 0c dd 40 aa 72 bf ed 55 c0 cf 4a a8 c9 18 8b
+d9 4c 05 63 fe 96 fe cc 32 27 7a bf cc 8b fb 18
+d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
+4d 80 76 ed 82 74 32 f3 3d 0c f7 3b a8 81 af 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 b2 89 10 2e ed 08 cc 04 fa f6
+3d b4 bc fe 50 bd 70 e8 ef 89 80 a3 75 9f 79 f5
+5d 90 ef 7c 76 82 25 64 c4 01 68 1b 65 ff 37 81
+c6 cb 4d 2b e9 6e 69 da dc 39 95 9d d6 7f 85 ea
+f8 24 2b 06 9d 06
+```
+
 
 <a id="t13"></a>
 ## t13. Session: keep-alive, timeout, disconnect, slot reset
