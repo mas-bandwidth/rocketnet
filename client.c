@@ -62,7 +62,7 @@ static void usage( const char * prog )
 {
     printf( "usage: %s [address] [flags]\n", prog );
     printf( "flags:\n" );
-    printf( "  --matrix                 run the message matrix stress mode\n" );
+    printf( "  --matrix                 run the message matrix stress mode (docs/LIVE-XDP.md)\n" );
     printf( "  --address A:P            the server address to mint tokens for\n" );
     printf( "  --label L                bench label written on every result line\n" );
     printf( "  --duration S             stress window length in seconds (default 35)\n" );

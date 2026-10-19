@@ -12,14 +12,12 @@
 // equal to, so a mapped-versus-native mismatch or a wrong drop is a named row
 // rather than a hidden one.
 //
-// The standard's rules, cited per row below:
-//   standard/TRANSPORT.md:334-340 -- "Address normalization is a law of this protocol
-//     ... an IPv4-mapped IPv6 address (::ffff:a.b.c.d) must never exist. A
-//     receiver converts a mapped source to native IPv4 exactly once, at the
-//     socket boundary, before any address is used for a session table or an
-//     encryption mapping."
-//   standard/TRANSPORT.md:330-333 -- "A server MAY advertise both an IPv4 and an IPv6
-//     address, and it accepts a connection request arriving at either."
+// The rules under test, as implemented in sdk/rocketnet_address.cpp/.h:
+//   rocketnet_address_accept_received_source canonicalises an IPv4-mapped
+//     source to native IPv4 exactly once, at the socket boundary, so a mapped
+//     address never enters a session table or an encryption mapping.
+//   a dual-stack socket advertises both IPv4 and IPv6 and accepts a
+//     connection request arriving at either.
 //   sdk/rocketnet_address.h:56-58 / RFC 4291 2.5.5.2 -- "anywhere the real
 //     ipv6 header is seen -- a raw or xdp ipv6 path, or an ipv6-only socket --
 //     a mapped source never occurs legitimately: it is spoofed, and dropped."
@@ -56,7 +54,7 @@ static bool socket_mode_is_dual_stack( socket_mode_t mode )
 }
 
 // the native forms the table compares against. Index 0 is the native ipv4 an
-// accepted mapped source canonicalises to (standard/TRANSPORT.md:336-338).
+// accepted mapped source canonicalises to (sdk/rocketnet_address.cpp).
 
 static const char * k_native_forms[] =
 {
@@ -82,8 +80,8 @@ struct address_case_t
 static const struct address_case_t k_cases[] =
 {
     // native ipv4 passes through untouched on every mode (sdk/rocketnet_address.h:60-61).
-    { "1.2.3.4:40000",          SOCKET_V4_ONLY,    true,  "1.2.3.4:40000",        0,  "standard/TRANSPORT.md:330-333; native ipv4 accepted" },
-    { "1.2.3.4:40000",          SOCKET_DUAL_STACK, true,  "1.2.3.4:40000",        0,  "standard/TRANSPORT.md:330-333; native ipv4 accepted" },
+    { "1.2.3.4:40000",          SOCKET_V4_ONLY,    true,  "1.2.3.4:40000",        0,  "STANDARD.md:330-333; native ipv4 accepted" },
+    { "1.2.3.4:40000",          SOCKET_DUAL_STACK, true,  "1.2.3.4:40000",        0,  "STANDARD.md:330-333; native ipv4 accepted" },
     { "1.2.3.4:40000",          SOCKET_V6_ONLY,    true,  "1.2.3.4:40000",        0,  "rocketnet_address.h:60-61; not mapped, unchanged" },
     { "1.2.3.4:40000",          SOCKET_RAW,        true,  "1.2.3.4:40000",        0,  "rocketnet_address.h:60-61; not mapped, unchanged" },
 
@@ -93,8 +91,8 @@ static const struct address_case_t k_cases[] =
     { "[2001:db8::1]:40000",    SOCKET_RAW,        true,  "[2001:db8::1]:40000",  1,  "rocketnet_address.h:60-61; not mapped, unchanged" },
 
     // the mapped source on a dual stack socket is canonicalised to native ipv4,
-    // the same address an ipv4 socket sees (standard/TRANSPORT.md:334-338).
-    { "[::ffff:1.2.3.4]:40000", SOCKET_DUAL_STACK, true,  "1.2.3.4:40000",        0,  "standard/TRANSPORT.md:334-338; mapped accepted and canonicalised" },
+    // the same address an ipv4 socket sees (sdk/rocketnet_address.cpp).
+    { "[::ffff:1.2.3.4]:40000", SOCKET_DUAL_STACK, true,  "1.2.3.4:40000",        0,  "STANDARD.md:334-338; mapped accepted and canonicalised" },
 
     // the same mapped source where the real ipv6 header is seen is spoofed and
     // dropped (sdk/rocketnet_address.h:56-58; RFC 4291 2.5.5.2).
@@ -103,12 +101,12 @@ static const struct address_case_t k_cases[] =
 
     // the zero address, port 0: a real ipv4/ipv6 address, not NONE, and equal
     // only to itself (sdk/rocketnet_address.cpp:202-237 compares type, port and bytes).
-    { "0.0.0.0:0",              SOCKET_V4_ONLY,    true,  "0.0.0.0",              2,  "standard/TRANSPORT.md:386-392; zero ipv4 is an ipv4 endpoint" },
-    { "[::]:0",                 SOCKET_V6_ONLY,    true,  "::",                   3,  "standard/TRANSPORT.md:386-392; zero ipv6 is an ipv6 endpoint" },
+    { "0.0.0.0:0",              SOCKET_V4_ONLY,    true,  "0.0.0.0",              2,  "STANDARD.md:386-392; zero ipv4 is an ipv4 endpoint" },
+    { "[::]:0",                 SOCKET_V6_ONLY,    true,  "::",                   3,  "STANDARD.md:386-392; zero ipv6 is an ipv6 endpoint" },
 
-    // the port is part of the identity (standard/TRANSPORT.md:342-351): same address,
+    // the port is part of the identity (sdk/rocketnet_address.cpp): same address,
     // port 0, is not the non-zero-port form. to_string omits a zero port.
-    { "1.2.3.4:0",              SOCKET_DUAL_STACK, true,  "1.2.3.4",              4,  "standard/TRANSPORT.md:342-351; port is part of the key" },
+    { "1.2.3.4:0",              SOCKET_DUAL_STACK, true,  "1.2.3.4",              4,  "STANDARD.md:342-351; port is part of the key" },
 
     // NONE is not a source and is not equal to itself or any other address
     // (sdk/rocketnet_address.cpp:207-211 returns false for a non-ipv4/ipv6 type).

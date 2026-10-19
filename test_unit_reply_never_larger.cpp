@@ -44,12 +44,12 @@
 #include "test/counters_expect.h"
 
 // Keep the table's normative sizes independent of the shared wire constants.
-static_assert( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES == 710, "request size" );
-static_assert( ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES == 38, "cookie size" );
-static_assert( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES == 66, "challenge size" );
-static_assert( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES == 50, "response size" );
-static_assert( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES == 34, "denied size" );
-static_assert( ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES == 41, "fresh keep-alive size" );
+static_assert( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES == 710, "STANDARD.md request size" );
+static_assert( ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES == 38, "STANDARD.md cookie size" );
+static_assert( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES == 66, "STANDARD.md challenge size" );
+static_assert( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES == 50, "STANDARD.md response size" );
+static_assert( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES == 34, "STANDARD.md denied size" );
+static_assert( ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES == 41, "STANDARD.md fresh keep-alive size" );
 
 // ---------------------------------------------------------------------------
 // The fixture: a server with the two token tables, one slot table and a small
