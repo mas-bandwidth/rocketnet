@@ -1668,11 +1668,11 @@ The constants this section names are:
    Counter: `MESSAGE_PROTOCOL_VIOLATION`.
 4. A record's length MUST be at least 1, and its data MUST lie inside the
    body. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
-5. A record with a channel field MUST carry a channel below C, and a WIDE
-   record MUST carry a channel at or above `wide channel threshold`. Counter:
-   `MESSAGE_BAD_CHANNEL`.
-6. An application record MUST carry a code present in the receiver's enabled
-   mask. A CONTROL record is exempt. Counter: `MESSAGE_TYPE_NOT_ENABLED`.
+ 5. A record with a channel field MUST carry a channel below C, and a WIDE
+    record MUST carry a channel at or above `wide channel threshold`. Counter:
+    `MESSAGE_PROTOCOL_VIOLATION`.
+ 6. An application record MUST carry a code present in the receiver's enabled
+    mask. A CONTROL record is exempt. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
  7. In the whole-payload scan, a block record MUST satisfy all of: its
     fragment count is at least 1; its fragment index is at most its fragment
     count; its fragment count plus one is at most W; its fragment count plus
@@ -1687,8 +1687,8 @@ The constants this section names are:
    is its length rounded up to 16 bytes, added to 16 times its ring value. The
    span of a block runs from its base, the ring value less the fragment index
    times `message fragment bytes` divided by 16, to the end of its last
-   fragment; a fragment that is not the last is measured as the shortest block
-   it could belong to. Counter: `MESSAGE_BAD_RING`.
+    fragment; a fragment that is not the last is measured as the shortest block
+    it could belong to. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
 9. A reliable or CONTROL record MUST NOT lie in a payload longer than
    `payload capacity`. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
 10. A reliable record MUST have a number less than W ahead of the receiver's
@@ -1731,25 +1731,25 @@ counter: MESSAGE_PROTOCOL_VIOLATION
 
 ```vector m4.check-5-bad-channel
 input: a code 1 record on channel 4, the receiver channel count
-counter: MESSAGE_BAD_CHANNEL
+counter: MESSAGE_PROTOCOL_VIOLATION
 01 01 00 00 00 00 00 00 00 04 aa 01
 ```
 
 ```vector m4.check-6-type-not-enabled
 input: a code 2 record whose code is absent from the enabled mask
-counter: MESSAGE_TYPE_NOT_ENABLED
+counter: MESSAGE_PROTOCOL_VIOLATION
 02 01 00 00 00 00 aa 01
 ```
 
 ```vector m4.check-7-bad-block
 input: a block fragment whose fragment count is zero
-counter: MESSAGE_BAD_BLOCK
+counter: MESSAGE_PROTOCOL_VIOLATION
 0a 01 00 00 00 00 00 00 00 00 00 00 aa 01
 ```
 
 ```vector m4.check-8-bad-ring
 input: a code 3 record at ring 65535 in a 65536-byte ring
-counter: MESSAGE_BAD_RING
+counter: MESSAGE_PROTOCOL_VIOLATION
 03 01 00 00 00 00 ff ff 00 00 00 00 aa 01
 ```
 
