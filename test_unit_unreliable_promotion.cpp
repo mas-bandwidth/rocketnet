@@ -4,6 +4,7 @@
 */
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #include <vector>
 #include "test_unit_registry.h"
 #include "sdk/rocketnet.h"
@@ -307,5 +308,14 @@ static void unreliable_promotion_every_mode()
         check(rocketnet_counter_value(server_counters,promotion_counter)==0);
         boundary_teardown(&pair);
     }
+
+    // A huge code-1 size is refused before record-overhead arithmetic can overflow.
+    boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
+    const rocketnet_counters_t * cc=rocketnet_message_client_counters(pair.client);
+    check(rocketnet_message_client_start(pair.client,0,ROCKETNET_UNRELIABLE_SEQUENCED,INT_MAX)==NULL);
+    check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==1);
+    check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED)==0);
+    check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==0);
+    boundary_teardown(&pair);
 }
 REGISTER_UNIT_TEST(unreliable_promotion_every_mode);

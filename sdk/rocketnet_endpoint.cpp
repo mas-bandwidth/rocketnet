@@ -175,13 +175,14 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         // its reliable twin, as RakNet's ReliabilityLayer does.
         const bool over_max = (uint32_t) bytes > endpoint->config->max_message_bytes ||
             ( reliability == ROCKETNET_UNRELIABLE_SEQUENCED && bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES );
-        const bool promote = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
-            bytes + header + 1 > record_capacity : (uint32_t) bytes > endpoint->unreliable_limit;
         if ( over_max )
         {
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
             return NULL;
         }
+        // Reject the configured maximum before adding record overhead, which can overflow an int.
+        const bool promote = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
+            bytes + header + 1 > record_capacity : (uint32_t) bytes > endpoint->unreliable_limit;
         if ( promote )
         {
             // RakNet ReliabilityLayer promotion: code 0 to 2, code 1 to 4, and
