@@ -36,7 +36,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <sys/resource.h>
 
 #define LIVE_MATRIX_DIRECTIONS              2
 #define LIVE_MATRIX_MODES                   8
@@ -236,17 +235,12 @@ static double live_matrix_now( struct live_matrix_t * m )
     return 1000.0 + ( rocketnet_platform_time() - m->wall_start ) + m->offset;
 }
 
-// The pass bound is the case's own CPU time (getrusage), not the wall clock:
-// under the member's scheduler contention the wall clock inflates with load
-// unrelated to this case, so the bound would be flaky; the case's own work is
-// deterministic and its self time is the honest measure of the 10 s bound.
-static double live_matrix_self_cpu_seconds( void )
-{
-    struct rusage ru;
-    getrusage( RUSAGE_SELF, &ru );
-    return (double) ru.ru_utime.tv_sec + (double) ru.ru_utime.tv_usec / 1000000.0
-         + (double) ru.ru_stime.tv_sec + (double) ru.ru_stime.tv_usec / 1000000.0;
-}
+// The pass bound is the case's own finish time, measured as the wall-clock
+// duration of the case body. Whole-process CPU time (getrusage RUSAGE_SELF)
+// sums the parallel transport worker threads and the kernel time servicing
+// page faults, so it over-counts the case's work (it can exceed the wall
+// clock), scaling with the member's parallelism rather than with how long the
+// case takes; it is therefore a broken instrument for the 10 s bound.
 
 static void live_matrix_fail( struct live_matrix_t * m, const char * label, int direction, int mode, int channel, int64_t sequence, const char * reason, int bytes )
 {
@@ -1245,7 +1239,7 @@ void live_message_matrix_loopback()
     snprintf( m->server_address, sizeof( m->server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( m->server ) ) );
 
     m->wall_start = rocketnet_platform_time();
-    m->cpu_start = live_matrix_self_cpu_seconds();
+    m->cpu_start = m->wall_start;
     const double deadline = m->wall_start + LIVE_MATRIX_WALL_BOUND;
 
     // window 0, ending in a clean disconnect the server sees
@@ -1333,7 +1327,7 @@ void live_message_matrix_loopback()
     rocketnet_message_client_destroy( m->client );
     m->client = NULL;
 
-    const double elapsed = live_matrix_self_cpu_seconds() - m->cpu_start;
+    const double elapsed = rocketnet_platform_time() - m->cpu_start;
 
     live_matrix_print_table();
     printf( "live_message_matrix_loopback: verified=%llu failures=%llu edge_failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (bound %.0f s)\n",
