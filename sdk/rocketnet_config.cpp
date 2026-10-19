@@ -704,6 +704,70 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
     return true;
 }
 
+#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+static bool rocketnet_public_link_simulator_test_hook = false;
+void rocketnet_public_link_simulator_test_development( int enabled )
+{
+    rocketnet_public_link_simulator_test_hook = enabled != 0;
+}
+#endif
+
+bool rocketnet_public_link_simulator_development( void )
+{
+#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+    return ROCKETNET_DEVELOPMENT != 0 || rocketnet_public_link_simulator_test_hook;
+#else
+    return ROCKETNET_DEVELOPMENT != 0;
+#endif
+}
+
+bool rocketnet_config_validate_public_link_simulator( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields, bool development )
+{
+    rocketnet_assert( transport_name );
+    rocketnet_assert( config );
+    rocketnet_assert( fields );
+
+    if ( development )
+        return true;
+
+    static const char * simulator_names[] =
+    {
+        "simulated_loss_percent",
+        "simulated_latency_ms",
+        "simulated_jitter_ms",
+        "simulated_duplicate_percent"
+    };
+
+    for ( int i = 0; i < num_fields; i++ )
+    {
+        const struct rocketnet_config_field_t * field = &fields[i];
+        if ( field->kind != ROCKETNET_CONFIG_KIND_INT )
+            continue;
+
+        bool simulator_field = false;
+        for ( int j = 0; j < (int) ( sizeof(simulator_names) / sizeof(simulator_names[0]) ); j++ )
+        {
+            if ( strcmp( field->name, simulator_names[j] ) == 0 )
+            {
+                simulator_field = true;
+                break;
+            }
+        }
+        if ( !simulator_field )
+            continue;
+
+        int value;
+        memcpy( &value, (const uint8_t*) config + field->offset, sizeof(value) );
+        if ( value != 0 )
+        {
+            rocketnet_error( "%s config %s %d is development only: the public link simulator is not available in a production library", transport_name, field->name, value );
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // ----------------------------------------------------------------
 //                        the driver ladder
 // ----------------------------------------------------------------
