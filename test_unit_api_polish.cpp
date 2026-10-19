@@ -27,6 +27,12 @@
 #include <string.h>
 #include <type_traits>
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
 #define check rocketnet_unit_check
 
 // --- the removed names stay removed ----------------------------------------
@@ -113,22 +119,51 @@ REGISTER_UNIT_TEST( api_polish_status_returns );
 
 // --- ruling 2: the dev token writer takes its buffer size ---------------------
 
+// The unit suite links the release archive, where the development writer is
+// compiled out; the development shared library built beside it carries it, so
+// the writer is loaded from there (as test_unit_connect_token_vectors.cpp
+// does) and called through the new signature. The old four-argument writer
+// would ignore the size and return 1, failing every check below.
+typedef rocketnet_status_t ( *api_polish_dev_writer_t )( const char *, uint64_t, uint64_t, uint8_t *, size_t );
+
 #if ROCKETNET_DEVELOPMENT
-static_assert( rn_same<decltype( &rocketnet_write_dev_connect_token ),
-                       rocketnet_status_t (*)( const char *, uint64_t, uint64_t, uint8_t *, size_t )>::value, "ruling 2: dev token signature" );
+static_assert( rn_same<decltype( &rocketnet_write_dev_connect_token ), api_polish_dev_writer_t>::value, "ruling 2: dev token signature" );
+#endif // #if ROCKETNET_DEVELOPMENT
+
+static api_polish_dev_writer_t api_polish_dev_writer()
+{
+    api_polish_dev_writer_t writer = NULL;
+#if defined(_WIN32)
+    HMODULE library = LoadLibraryA( "rocketnet_dev.dll" );
+    if ( library == NULL )
+        library = LoadLibraryA( "bin\\rocketnet_dev.dll" );
+    check( library != NULL );
+    writer = (api_polish_dev_writer_t) (void *) GetProcAddress( library, "rocketnet_write_dev_connect_token" );
+#else
+    const char * names[] = { "bin/librocketnet_dev.so", "librocketnet_dev.so",
+                             "bin/librocketnet_dev.dylib", "librocketnet_dev.dylib" };
+    void * library = NULL;
+    for ( size_t i = 0; i < sizeof( names ) / sizeof( names[0] ) && library == NULL; i++ )
+        library = dlopen( names[i], RTLD_NOW | RTLD_LOCAL );
+    check( library != NULL );
+    writer = (api_polish_dev_writer_t) dlsym( library, "rocketnet_write_dev_connect_token" );
+#endif
+    check( writer != NULL );
+    return writer;
+}
 
 static void api_polish_dev_token_buffer()
 {
+    api_polish_dev_writer_t write_dev = api_polish_dev_writer();
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES + 1];
     memset( token, 0xAB, sizeof( token ) );
-    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( write_dev( "127.0.0.1:40000", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( token[0] == 0xAB && token[ROCKETNET_CONNECT_TOKEN_BYTES - 2] == 0xAB );      // nothing written
-    check( rocketnet_write_dev_connect_token( "not an address", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ADDRESS );
-    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( write_dev( "not an address", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( write_dev( "127.0.0.1:40000", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( token[ROCKETNET_CONNECT_TOKEN_BYTES] == 0xAB );                                // nothing past the token
 }
 REGISTER_UNIT_TEST( api_polish_dev_token_buffer );
-#endif // #if ROCKETNET_DEVELOPMENT
 
 // --- ruling 3: typed enums, values unchanged ----------------------------------
 
