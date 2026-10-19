@@ -10,6 +10,13 @@
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
 #define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
 
+/**
+ * @brief Names the SDK's IP address type used by the socket, conversion and
+ * resolve helpers.
+ *
+ * The full type is defined in the internal layers header; this header only
+ * forward-declares it so the functions below can take and return it.
+ */
 struct rocketnet_address_t;
 /**
  * @brief Names the IPv4 socket-address type used by the conversion helpers.
@@ -805,6 +812,12 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         return (uint64_t) _InterlockedExchangeAdd64( (volatile long long *) value, (long long) add );
     }
 
+    /**
+     * @brief Atomically reads an unsigned 64-bit shared word.
+     *
+     * @param value Aligned, initialized shared word; must be non-NULL.
+     * @return The value observed at read time. The read has relaxed ordering.
+     */
     inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
     {
     #if defined(_M_IX86)
@@ -887,6 +900,12 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         return __atomic_fetch_add( value, add, __ATOMIC_RELAXED );
     }
 
+    /**
+     * @brief Atomically reads an unsigned 64-bit shared word.
+     *
+     * @param value Aligned, initialized shared word; non-NULL.
+     * @return The value observed at read time. The read has relaxed ordering.
+     */
     inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
     {
         return __atomic_load_n( value, __ATOMIC_RELAXED );
