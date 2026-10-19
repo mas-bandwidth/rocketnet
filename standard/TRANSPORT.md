@@ -781,10 +781,12 @@ counter: WRONG_DIRECTION
 ```vector t10.client-cookie-state-before-size
 input: an undersized connection cookie at a client in a state that rejects cookies
 counter: CLIENT_COOKIE_WRONG_STATE
-07 00 b7 59 01 00
+07 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00
 ```
 
-```vector t10.client-wrong-state
+vector t10.client-wrong-state
 input: a connection keep-alive packet at a client not in a session state
 counter: CLIENT_KEEP_ALIVE_WRONG_STATE
 04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
@@ -851,12 +853,9 @@ a0 8f 69 ab 93 03 a5 3c d6 c6 2e 2c 88 af c2 45
 ```vector t10.keep-alive-invalid-index
 input: a validly opened keep-alive whose client index equals its slot count
 counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
-00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00
-00
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8b 69 ab 93 07 a5 3c d6 11 13 7c 3d 36 90 4e
+d3 30 e5 ec f7 45 2e 8e 62
 ```
 
 ```vector t10.fragment-zero-payload-id
