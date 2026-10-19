@@ -95,12 +95,17 @@ static const struct rocketnet_config_field_t rocketnet_message_config_field_tabl
 // must name a public field at the same offset with the same size, and the two
 // structs must have the same size, so the header and the tables cannot drift.
 
+#define ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64( name, def, flags )                                           \
+    void (*state_change_callback)( void * context, int previous_state, int current_state );                 \
+    double (*time_callback)( void * context );                                                              \
+    uint64_t name;
+
 struct rocketnet_client_transport_config_table_t
 {
-    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
-    void (*state_change_callback)( void * context, int previous_state, int current_state );
-    double (*time_callback)( void * context );
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
+
+#undef ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64
 
 struct rocketnet_server_transport_config_table_t
 {
