@@ -14,12 +14,16 @@ in [PLATFORMS.md](PLATFORMS.md); this page does not widen them.
 
 ## What is supported
 
-The supported row is macOS 15 on arm64 with Apple Clang, transports `portable`
+The supported row is macOS 27 on arm64 with Apple Clang, transports `portable`
 and `msgx` (`docs/PLATFORMS.md`, the table). CI runs it on a self-hosted
 Apple-silicon runner labelled `rocketnet-macos`, as a Debug row and a Release
 row (`.github/workflows/ci.yml`, the `macos-15` entries of the
-`build-and-test` matrix). macOS on x86_64 is an unsupported row
-(`docs/PLATFORMS.md`).
+`build-and-test` matrix, whose `runner` is
+`self-hosted, macOS, ARM64, rocketnet-macos`). The same runner carries the
+macOS nightly rows: soak, frame budget and examples
+(`docs/PLATFORMS.md`; `.github/workflows/nightly-soak.yml`,
+`nightly-frame-budget.yml`, `nightly-examples.yml`). macOS on x86_64 is an
+unsupported row (`docs/PLATFORMS.md`).
 
 ## Build
 
@@ -163,8 +167,8 @@ running `test_transport_udp_loopback`, `test_transport_ipv6_loopback`,
 ## The client's threads, QoS and App Nap
 
 On macOS the platform layer builds the kqueue wake (`sdk/rocketnet_platform.h`,
-`ROCKETNET_PLATFORM_HAS_WAKE`), so a socket client runs the client I/O thread
-of [CLIENT-IO.md](CLIENT-IO.md): a kqueue holds the socket's `EVFILT_READ` and
+`ROCKETNET_PLATFORM_HAS_WAKE`), so a socket client runs a client I/O thread
+(`sdk/rocketnet_client_transport.cpp`): a kqueue holds the socket's `EVFILT_READ` and
 an `EVFILT_USER` trigger (`sdk/rocketnet_platform.cpp`, the kqueue wake). The
 thread is a plain `pthread_create` with default attributes
 (`rocketnet_platform_thread_create`). The SDK sets no QoS class on it and makes

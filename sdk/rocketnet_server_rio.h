@@ -82,6 +82,28 @@ uint64_t rocketnet_server_rio_allocation_bytes();
 // region rather than free it under the kernel. Zero when every destroy drained.
 uint64_t rocketnet_server_rio_leaked_regions();
 
+#if defined(ROCKETNET_RIO_TESTS)
+// The fault seam, compiled only into the test executable. The next count
+// events at a fault point fail with status, as the host fails them: a send or
+// receive completion reports status as its completion status; a send or
+// receive post is refused before the RIO call, with status as its error, and
+// starts no I/O; a commit is refused the same way. Main thread only.
+enum rocketnet_server_rio_test_fault_t
+{
+    ROCKETNET_RIO_TEST_FAULT_SEND_COMPLETION,
+    ROCKETNET_RIO_TEST_FAULT_RECEIVE_COMPLETION,
+    ROCKETNET_RIO_TEST_FAULT_SEND_POST,
+    ROCKETNET_RIO_TEST_FAULT_RECEIVE_POST,
+    ROCKETNET_RIO_TEST_FAULT_COMMIT,
+    ROCKETNET_RIO_TEST_NUM_FAULTS
+};
+void rocketnet_server_rio_test_fail_next( rocketnet_server_rio_t * rio, int fault, int count, int status );
+int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fault );
+// receive slices whose re-post was refused and that wait for the next
+// receive_packets to re-post them
+int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio );
+#endif
+
 #if defined(_WIN32)
 bool rocketnet_server_rio_available();
 #else
