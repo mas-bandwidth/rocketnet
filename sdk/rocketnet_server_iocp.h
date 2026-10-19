@@ -37,10 +37,6 @@
 #define ROCKETNET_IOCP_DISABLE_USO 1
 #define ROCKETNET_IOCP_DISABLE_URO 2
 
-// immediate reposts of a receive whose post failed with a reset status
-// before it waits on the retry list
-#define ROCKETNET_IOCP_RESET_REPOSTS 16
-
 // rocketnet_server_iocp_features bits
 #define ROCKETNET_IOCP_FEATURE_USO 1
 #define ROCKETNET_IOCP_FEATURE_URO 2
@@ -99,4 +95,19 @@ void rocketnet_server_iocp_test_force_flags( int flags );
 void rocketnet_server_iocp_test_hold_completions( rocketnet_server_iocp_t * iocp, bool hold );
 bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view );
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp );
+
+// The fault seam. The next count events at a fault point fail with status, as
+// the host fails them: a send or receive completion reports status as its
+// completion status; a send or receive post is refused before the Winsock
+// call, with status as its error, and starts no I/O. Any thread may arm it.
+enum rocketnet_server_iocp_test_fault_t
+{
+    ROCKETNET_IOCP_TEST_FAULT_SEND_COMPLETION,
+    ROCKETNET_IOCP_TEST_FAULT_RECEIVE_COMPLETION,
+    ROCKETNET_IOCP_TEST_FAULT_SEND_POST,
+    ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST,
+    ROCKETNET_IOCP_TEST_NUM_FAULTS
+};
+void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status );
+int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault );
 #endif
