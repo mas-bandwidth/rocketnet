@@ -34,7 +34,7 @@
 (* it and only then frees the transport; destroy makes the last hand-off  *)
 (* first, so no committed slot is dropped.                                *)
 (*                                                                         *)
-(* Five switches restore the defects the reversed witnesses must catch:   *)
+(* Seven switches restore the defects the reversed witnesses must catch:   *)
 (* ReopenBeforeSent lets the main thread reopen a ring the I/O thread is  *)
 (* still sending; ReceiveIntoExposed lets the I/O thread write a          *)
 (* datagram into the buffer update has exposed; SwapNeedsReady restores   *)
@@ -53,13 +53,16 @@ CONSTANTS NumSlots,            \* slots per send ring
           ReceiveIntoExposed,  \* defect: receive writes the exposed buffer
           SwapNeedsReady,      \* defect: update returns only when it exposes
           HandOffWaits,        \* defect: a hand-off waits for the other ring
-          FullWaitReadable     \* defect: a full buffer waits on readable too
+          FullWaitReadable,    \* defect: a full buffer waits on readable too
+          StepDriven,          \* caller runs non-blocking I/O steps; no thread
+          StepModeStartsThread \* defect: step mode also starts an I/O thread
 
 ASSUME NumSlots \in Nat \ {0} /\ BufferCap \in Nat \ {0}
 ASSUME MaxDatagrams \in Nat
 ASSUME /\ ReopenBeforeSent \in BOOLEAN /\ ReceiveIntoExposed \in BOOLEAN
        /\ SwapNeedsReady \in BOOLEAN /\ HandOffWaits \in BOOLEAN
        /\ FullWaitReadable \in BOOLEAN
+       /\ StepDriven \in BOOLEAN /\ StepModeStartsThread \in BOOLEAN
 
 Rings   == {"A", "B"}
 Slots   == 1..NumSlots
@@ -292,7 +295,15 @@ Arrive ==
     /\ UNCHANGED <<wake, waiting, waitReadable, buf, count, snap, owed,
                    delivered, phase, ioAlive>>
 
-(* ---- the I/O thread ---- *)
+(* ---- the I/O executor ---- *)
+
+\* In threaded mode these actions run on the I/O thread. In step-driven
+\* mode CallerStep executes the same non-blocking send, receive, publish and
+\* exit actions from update/send_packets; IoWait is disabled.
+\* IoThreadActionEnabled distinguishes the executor of the core actions.
+\* Under StepDriven they are CallerStep actions unless the witness defect
+\* incorrectly leaves the I/O-thread executor enabled.
+IoThreadActionEnabled == ~StepDriven \/ StepModeStartsThread
 
 IoReady == ioAlive /\ ~waiting
 
@@ -367,6 +378,7 @@ IoOwe ==
 \* full.  The wait returns on readable only while the buffer has room
 \* (wait's readable argument); a full buffer waits on the wake alone.
 IoWait ==
+    /\ ~StepDriven
     /\ IoReady
     /\ phase = "Running"
     /\ ioRing = "none"
@@ -420,11 +432,17 @@ MainNext ==
     \/ \E r \in Rings : Reopen(r)
     \/ Expose \/ Return \/ Stop \/ Join \/ Free
 
-IoNext ==
+IoCoreNext ==
     \/ \E r \in Rings, s \in Slots : IoSend(r, s)
     \/ \E r \in Rings : IoFinishRing(r)
     \/ IoReceive \/ IoPublish \/ IoOwe \/ IoWait \/ IoWake \/ IoClearWake
     \/ IoExit
+
+\* The core has exactly one executor in the passing designs. The witness
+\* enables the I/O-thread executor as well as CallerStep in step mode.
+CallerStep == StepDriven /\ IoCoreNext
+IoThreadNext == IoThreadActionEnabled /\ IoCoreNext
+IoNext == CallerStep \/ IoThreadNext
 
 Next == MainNext \/ IoNext \/ Arrive \/ Done
 
@@ -478,6 +496,11 @@ HandOffNeverWaits == ~mainWait
 \* socket, and the thread spins until update returns a buffer
 FullWaitsOnWake ==
     (waiting /\ count[FillBuffer] = BufferCap) => ~waitReadable
+
+\* Step-driven mode has no I/O-thread executor; the same core actions are
+\* performed only by CallerStep. StepModeStartsThread is the witness defect.
+NoIoThreadActionInStepMode ==
+    ~StepDriven \/ ~ENABLED IoThreadNext
 
 \* while the transport runs, received datagrams in the I/O thread's buffer
 \* always have a next step toward update: a publish, an expose, a return,

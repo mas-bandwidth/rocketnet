@@ -382,6 +382,17 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     config = &effective_config;
 
+    // step_driven is a public boolean stored at full width for ABI stability.
+    // Refuse any spelling other than zero or one before selecting a driver.
+    if ( config->step_driven > 1 )
+    {
+        rocketnet_error( "client config step_driven %llu is out of range (0 to 1)",
+                         (unsigned long long) config->step_driven );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return NULL;
+    }
+
     // Refuse large cross-field allocations before sockets, drivers or arenas
     // are acquired. Independent field maxima do not define a usable budget.
     const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
@@ -1075,7 +1086,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     if ( io_core )
     {
         if ( client_transport->step_in_update )
-            rocketnet_client_io_step( &client_transport->client_io, false );
+            rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
         receive_buffer = rocketnet_client_io_expose( &client_transport->client_io );
     }
     else
@@ -1132,7 +1143,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
         rocketnet_client_transport_io_hand_off( client_transport );
         if ( client_transport->step_in_update )
-            rocketnet_client_io_step( &client_transport->client_io, false );
+            rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
     }
     else if ( packet_bytes > 0 )
     {
@@ -1492,7 +1503,7 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
         rocketnet_client_transport_io_hand_off( client_transport );
         rocketnet_send_arena_reset( client_transport->send_arena );
         if ( client_transport->step_in_update )
-            rocketnet_client_io_step( &client_transport->client_io, false );
+            rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
         return;
     }
 

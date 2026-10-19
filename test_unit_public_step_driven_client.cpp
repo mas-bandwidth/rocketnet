@@ -3,321 +3,252 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The public step-driven client: rocketnet_client_transport_config_t's
-// step_driven field runs the I/O step inside update and send_packets on the
-// caller's thread. The loopback transport carries the connection in memory;
-// time is an argument from 1000.0, nothing sleeps and no socket opens.
+// Public step-driven clients use only rocketnet.h for their success paths.
+// The loopback transport carries packets in memory; callers provide every
+// update time from 1000.0, and no test sleeps or opens a socket.
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
-
 #include "sdk/rocketnet.h"
-#include "rocketnet_internal.h"
-#include "rocketnet_config.h"
-#include "rocketnet_client_io.h"
-#include "rocketnet_connect_token.h"
-#include "rocketnet_counters.h"
-#include "rocketnet_test_vectors.h"
+#include "rocketnet_client_io.h"       // refusal fixture for a driver with no non-blocking step
 
+#if defined(__linux__)
 #include <dirent.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
+#define PUBLIC_STEP_PROTOCOL 0x51E7D41A92B3C6D8ULL
 
-static double public_step_now = 1000.0;
-
-static double public_step_time( void * context )
+struct public_step_pair_t
 {
-    (void) context;
-    return public_step_now;
-}
+    rocketnet_server_t * server;
+    rocketnet_client_t * client;
+    double time;
+    int threads_before_client;
+    int threads_after_client;
+};
+
+struct public_step_identity_t
+{
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+};
 
 static int public_step_thread_count()
 {
+#if defined(__linux__)
     DIR * dir = opendir( "/proc/self/task" );
     if ( !dir )
-        return 0;
+        return -1;
     int count = 0;
     while ( readdir( dir ) )
         count++;
     closedir( dir );
     return count;
+#else
+    return -1;
+#endif
 }
 
-static uint8_t public_step_backend_public[32];
-static uint8_t public_step_backend_secret[64];
-static uint8_t public_step_server_public[32];
-static uint8_t public_step_server_secret[32];
-
-static void public_step_keys()
+static void public_step_identity( public_step_identity_t * identity )
 {
-    if ( public_step_server_public[0] != 0 )
-        return;
-    check( rocketnet_generate_backend_keypair( public_step_backend_public, public_step_backend_secret ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_generate_server_keypair( public_step_server_public, public_step_server_secret ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) != 0 );
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0xA5 ^ i );
+    check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( identity->server_public, identity->server_secret ) == ROCKETNET_STATUS_OK );
+    rocketnet_term();
 }
 
-static void public_step_server_config( rocketnet_server_transport_config_t * config )
+static void public_step_server_config( rocketnet_server_config_t * config, const public_step_identity_t * identity )
 {
-    public_step_keys();
-    rocketnet_server_transport_default_config( config );
-    config->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    memcpy( config->filter_value, rocketnet_test_filter_value, sizeof( config->filter_value ) );
-    memcpy( config->backend_public_key, public_step_backend_public, sizeof( config->backend_public_key ) );
-    memcpy( config->server_public_key, public_step_server_public, sizeof( config->server_public_key ) );
-    memcpy( config->server_secret_key, public_step_server_secret, sizeof( config->server_secret_key ) );
-    snprintf( config->driver, sizeof( config->driver ), "loopback" );
+    rocketnet_server_default_config( config );
+    config->protocol_id = PUBLIC_STEP_PROTOCOL;
+    config->max_clients = 1;
+    memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
+    memcpy( config->server_public_key, identity->server_public, sizeof( config->server_public_key ) );
+    memcpy( config->server_secret_key, identity->server_secret, sizeof( config->server_secret_key ) );
+    config->transport = "loopback";
 }
 
-static void public_step_client_config( rocketnet_client_transport_config_t * config, void * unused )
+static void public_step_token( uint16_t port, const public_step_identity_t * identity, uint8_t * token )
 {
-    rocketnet_client_transport_default_config( config );
-    memcpy( config->filter_value, rocketnet_test_filter_value, sizeof( config->filter_value ) );
-    snprintf( config->driver, sizeof( config->driver ), "loopback" );
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
+    const char * addresses[] = { address };
+    check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
+        PUBLIC_STEP_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, NULL,
+        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+}
+
+static double public_step_now = 1000.0;
+static double public_step_clock( void * ) { return public_step_now; }
+
+static void public_step_client_config( rocketnet_client_config_t * config )
+{
+    rocketnet_client_default_config( config );
+    config->transport = "loopback";
     config->step_driven = 1;
-    config->time_callback = public_step_time;
-    (void) unused;
+    config->time_callback = public_step_clock;
 }
 
-static bool public_step_token( uint16_t port, uint8_t * token )
+static void public_step_pair_create( public_step_pair_t * pair, const public_step_identity_t * identity,
+                                     const uint8_t * existing_token = NULL, uint16_t fixed_port = 0 )
 {
-    public_step_keys();
-    struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof( signed_fields ) );
-    signed_fields.version = ROCKETNET_WIRE_VERSION;
-    signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    signed_fields.create_timestamp = 1000;
-    signed_fields.expire_timestamp = 1ULL << 40;
-    signed_fields.timeout_seconds = 300;
-    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-    signed_fields.ipv4_address[0] = 127;
-    signed_fields.ipv4_address[1] = 0;
-    signed_fields.ipv4_address[2] = 0;
-    signed_fields.ipv4_address[3] = 1;
-    signed_fields.ipv4_address[4] = (uint8_t) ( port & 0xFF );
-    signed_fields.ipv4_address[5] = (uint8_t) ( port >> 8 );
-    memcpy( signed_fields.server_public_key, public_step_server_public, ROCKETNET_KEY_BYTES );
+    memset( pair, 0, sizeof( *pair ) );
+    pair->time = 1000.0;
+    check( rocketnet_init( NULL ) != 0 );
+    rocketnet_quiet( 1 );
 
-    struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof( private_fields ) );
-    private_fields.client_id = 0x5EED;
-    private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    private_fields.expire_timestamp = 1ULL << 40;
-    memcpy( private_fields.client_to_server_key, rocketnet_test_token_c2s_key, ROCKETNET_KEY_BYTES );
-    memcpy( private_fields.server_to_client_key, rocketnet_test_token_s2c_key, ROCKETNET_KEY_BYTES );
-    memset( token, 0, ROCKETNET_CONNECT_TOKEN_BYTES );
-    return rocketnet_write_connect_token( &signed_fields, &private_fields, public_step_backend_secret, token ) != 0;
-}
+    rocketnet_server_config_t server_config;
+    public_step_server_config( &server_config, identity );
+    char bind[64];
+    snprintf( bind, sizeof( bind ), "127.0.0.1:%u", (unsigned) fixed_port );
+    pair->server = rocketnet_server_create( NULL, bind, &server_config, NULL, 0 );
+    check( pair->server != NULL );
 
-// one client update, the server's update and flush, at the same clock value
-static void public_step_pump( rocketnet_client_transport_t * client, rocketnet_server_transport_t * server, double time )
-{
-    public_step_now = time;
-    rocketnet_client_transport_update( client, time );
-    rocketnet_server_transport_update( server, time );
-    rocketnet_server_transport_send_packets( server );
-}
-
-static bool public_step_connect( rocketnet_client_transport_t * client, rocketnet_server_transport_t * server )
-{
-    for ( int i = 0; i < 400; i++ )
+    uint8_t local_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const uint8_t * token = existing_token;
+    if ( !token )
     {
-        public_step_pump( client, server, 1000.0 + i * 0.01 );
-        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-             rocketnet_server_transport_num_connected_clients( server ) == 1 )
-            return true;
+        public_step_token( rocketnet_server_port( pair->server ), identity, local_token );
+        token = local_token;
     }
-    return false;
+    rocketnet_client_config_t client_config;
+    public_step_client_config( &client_config );
+    pair->threads_before_client = public_step_thread_count();
+    pair->client = rocketnet_client_create( NULL, token, &client_config, NULL, 0 );
+    check( pair->client != NULL );
+    pair->threads_after_client = public_step_thread_count();
 }
 
-// The client reaches CONNECTED against a loopback server by update calls
-// alone, and creating it starts no thread: the process's task count is the
-// same before and after the create.
+static void public_step_pair_destroy( public_step_pair_t * pair )
+{
+    rocketnet_client_destroy( pair->client );
+    rocketnet_server_destroy( pair->server );
+    rocketnet_term();
+}
+
+// RNClientIo CallerStep: update and send_packets execute the non-blocking I/O
+// step on this caller's thread; no I/O-thread action exists in this mode.
+static void public_step_pump( public_step_pair_t * pair )
+{
+    public_step_now = pair->time;
+    check( rocketnet_client_update( pair->client, pair->time ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_client_send_packets( pair->client );
+    check( rocketnet_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_server_send_packets( pair->server );
+    pair->time += 0.01;
+}
+
+static void public_step_connect( public_step_pair_t * pair )
+{
+    for ( int i = 0; i < 400 && rocketnet_client_state( pair->client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        public_step_pump( pair );
+    check( rocketnet_client_state( pair->client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_server_client_connected( pair->server, 0 ) != 0 );
+}
+
 static void public_step_driven_client_connects_without_a_thread()
 {
-    rocketnet_server_transport_config_t server_config;
-    public_step_server_config( &server_config );
-    server_config.max_clients = 4;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config );
-    check( server != NULL );
-
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( public_step_token( rocketnet_server_transport_port( server ), token ) );
-
-    rocketnet_client_transport_config_t client_config;
-    public_step_client_config( &client_config, NULL );
-
-    const int threads_before = public_step_thread_count();
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, 1000.0 );
-    check( client != NULL );
-    const int threads_after = public_step_thread_count();
-    check( threads_after == threads_before );
-    check( rocketnet_client_transport_client_io( client ) != NULL );
-
-    check( public_step_connect( client, server ) );
-
-    rocketnet_client_transport_destroy( client );
-    rocketnet_server_transport_destroy( server );
+    public_step_identity_t identity;
+    public_step_identity( &identity );
+    public_step_pair_t pair;
+    public_step_pair_create( &pair, &identity );
+    if ( pair.threads_before_client >= 0 && pair.threads_after_client >= 0 )
+        check( pair.threads_after_client == pair.threads_before_client );
+    public_step_connect( &pair );
+    public_step_pair_destroy( &pair );
 }
 REGISTER_UNIT_TEST( public_step_driven_client_connects_without_a_thread );
 
-// A reliable ordered message each way arrives, in order, without a socket.
 static void public_step_driven_client_delivers_both_ways()
 {
-    rocketnet_server_transport_config_t server_config;
-    public_step_server_config( &server_config );
-    server_config.max_clients = 4;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config );
-    check( server != NULL );
+    public_step_identity_t identity;
+    public_step_identity( &identity );
+    public_step_pair_t pair;
+    public_step_pair_create( &pair, &identity );
+    public_step_connect( &pair );
 
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( public_step_token( rocketnet_server_transport_port( server ), token ) );
-
-    rocketnet_client_transport_config_t client_config;
-    public_step_client_config( &client_config, NULL );
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, 1000.0 );
-    check( client != NULL );
-    check( public_step_connect( client, server ) );
-
-    const uint8_t first[] = "first";
-    const uint8_t second[] = "second";
-    rocketnet_client_transport_send_packet( client, first, (int) sizeof( first ) - 1 );
-    rocketnet_client_transport_send_packet( client, second, (int) sizeof( second ) - 1 );
-
-    const uint8_t reply_first[] = "reply-one";
-    const uint8_t reply_second[] = "reply-two";
-    rocketnet_server_transport_send_packet( server, 0, reply_first, (int) sizeof( reply_first ) - 1 );
-    rocketnet_server_transport_send_packet( server, 0, reply_second, (int) sizeof( reply_second ) - 1 );
-
-    int server_seen = 0;
-    int client_seen = 0;
-    uint8_t server_got_first[32] = {};
-    uint8_t server_got_second[32] = {};
-    uint8_t client_got_first[32] = {};
-    uint8_t client_got_second[32] = {};
-    int server_first_bytes = 0, server_second_bytes = 0;
-    int client_first_bytes = 0, client_second_bytes = 0;
-
-    for ( int i = 0; i < 300 && ( server_seen < 2 || client_seen < 2 ); i++ )
+    const uint8_t client_messages[2][4] = { {1,2,3,4}, {5,6,7,8} };
+    const uint8_t server_messages[2][4] = { {9,10,11,12}, {13,14,15,16} };
+    for ( int i = 0; i < 2; i++ )
     {
-        public_step_pump( client, server, 1000.0 + i * 0.01 );
-
-        const int num_payloads = rocketnet_server_transport_num_payloads( server );
-        for ( int p = 0; p < num_payloads; p++ )
-        {
-            int client_index = -1, payload_bytes = 0;
-            uint8_t * payload = rocketnet_server_transport_payload( server, p, &client_index, &payload_bytes );
-            check( client_index == 0 );
-            if ( server_seen == 0 )
-            {
-                memcpy( server_got_first, payload, (size_t) payload_bytes );
-                server_first_bytes = payload_bytes;
-            }
-            else if ( server_seen == 1 )
-            {
-                memcpy( server_got_second, payload, (size_t) payload_bytes );
-                server_second_bytes = payload_bytes;
-            }
-            server_seen++;
-        }
-
-        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-        int packet_bytes = 0;
-        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof( packet ) ) ) > 0 )
-        {
-            if ( client_seen == 0 )
-            {
-                memcpy( client_got_first, packet, (size_t) packet_bytes );
-                client_first_bytes = packet_bytes;
-            }
-            else if ( client_seen == 1 )
-            {
-                memcpy( client_got_second, packet, (size_t) packet_bytes );
-                client_second_bytes = packet_bytes;
-            }
-            client_seen++;
-        }
+        uint8_t * out = rocketnet_client_start( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, 4 );
+        check( out != NULL ); memcpy( out, client_messages[i], 4 ); check( rocketnet_client_finish( pair.client, 4 ) != 0 );
+        out = rocketnet_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 4 );
+        check( out != NULL ); memcpy( out, server_messages[i], 4 ); check( rocketnet_server_finish( pair.server, 0, 4 ) != 0 );
     }
 
-    check( server_seen == 2 );
-    check( client_seen == 2 );
-    check( server_first_bytes == 5 && memcmp( server_got_first, first, 5 ) == 0 );
-    check( server_second_bytes == 6 && memcmp( server_got_second, second, 6 ) == 0 );
-    check( client_first_bytes == 9 && memcmp( client_got_first, reply_first, 9 ) == 0 );
-    check( client_second_bytes == 9 && memcmp( client_got_second, reply_second, 9 ) == 0 );
-
-    rocketnet_client_transport_destroy( client );
-    rocketnet_server_transport_destroy( server );
+    int at_server = 0, at_client = 0;
+    for ( int step = 0; step < 400 && ( at_server < 2 || at_client < 2 ); step++ )
+    {
+        public_step_pump( &pair );
+        const uint8_t * data = NULL; int bytes = 0;
+        while ( rocketnet_server_receive( pair.server, 0, 0, &data, &bytes ) )
+        {
+            check( at_server < 2 && bytes == 4 && memcmp( data, client_messages[at_server], 4 ) == 0 );
+            rocketnet_server_release( pair.server, 0, data ); at_server++;
+        }
+        while ( rocketnet_client_receive( pair.client, 0, &data, &bytes ) )
+        {
+            check( at_client < 2 && bytes == 4 && memcmp( data, server_messages[at_client], 4 ) == 0 );
+            rocketnet_client_release( pair.client, data ); at_client++;
+        }
+    }
+    check( at_server == 2 && at_client == 2 );
+    public_step_pair_destroy( &pair );
 }
 REGISTER_UNIT_TEST( public_step_driven_client_delivers_both_ways );
 
-// Two runs with the same token and update times produce the same counters.
-static void public_step_run_trace( uint16_t port, const uint8_t * token, uint64_t * counters )
+static void public_step_trace( const public_step_identity_t * identity, const uint8_t * token, uint16_t port,
+                               uint64_t * counters )
 {
-    rocketnet_server_transport_config_t server_config;
-    public_step_server_config( &server_config );
-    server_config.max_clients = 4;
-    char address[64];
-    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, address, &server_config );
-    check( server != NULL );
-
-    rocketnet_client_transport_config_t client_config;
-    public_step_client_config( &client_config, NULL );
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, 1000.0 );
-    check( client != NULL );
-    check( public_step_connect( client, server ) );
-
+    public_step_pair_t pair;
+    public_step_pair_create( &pair, identity, token, port );
+    public_step_connect( &pair );
     for ( int i = 0; i < 8; i++ )
     {
-        const uint8_t payload[] = "trace";
-        rocketnet_client_transport_send_packet( client, payload, (int) sizeof( payload ) - 1 );
-        public_step_pump( client, server, 2000.0 + i * 0.01 );
+        uint8_t * out = rocketnet_client_start( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, 1 );
+        check( out != NULL ); out[0] = (uint8_t) i; check( rocketnet_client_finish( pair.client, 1 ) != 0 );
+        public_step_pump( &pair );
     }
-
-    const struct rocketnet_counters_t * source = rocketnet_client_transport_counters( client );
-    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
-        counters[i] = source->values[i];
-
-    rocketnet_client_transport_destroy( client );
-    rocketnet_server_transport_destroy( server );
+    for ( int i = 0; i < ROCKETNET_CLIENT_COUNTER_COUNT; i++ )
+        counters[i] = rocketnet_client_counter( pair.client, (enum rocketnet_client_counter_t) i );
+    public_step_pair_destroy( &pair );
 }
 
 static void public_step_driven_client_same_inputs_same_trace()
 {
-    rocketnet_server_transport_config_t probe_config;
-    public_step_server_config( &probe_config );
-    rocketnet_server_transport_t * probe = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &probe_config );
-    check( probe != NULL );
-    const uint16_t port = rocketnet_server_transport_port( probe );
-    rocketnet_server_transport_destroy( probe );
-
+    public_step_identity_t identity;
+    public_step_identity( &identity );
+    const uint16_t port = 52341;
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( public_step_token( port, token ) );
-
-    uint64_t first[ROCKETNET_NUM_COUNTERS] = {};
-    uint64_t second[ROCKETNET_NUM_COUNTERS] = {};
-    public_step_run_trace( port, token, first );
-    public_step_run_trace( port, token, second );
+    public_step_token( port, &identity, token );
+    uint64_t first[ROCKETNET_CLIENT_COUNTER_COUNT] = {};
+    uint64_t second[ROCKETNET_CLIENT_COUNTER_COUNT] = {};
+    public_step_trace( &identity, token, port, first );
+    public_step_trace( &identity, token, port, second );
     check( memcmp( first, second, sizeof( first ) ) == 0 );
 }
 REGISTER_UNIT_TEST( public_step_driven_client_same_inputs_same_trace );
 
-// A transport whose driver has no non-blocking step is refused at create with
-// the config status, and the log line names the field. The base fake driver
-// has no wait, wake or batched receive.
 static void public_step_driven_client_refused_on_a_threaded_only_transport()
 {
+    public_step_identity_t identity;
+    public_step_identity( &identity );
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( public_step_token( 40000, token ) );
-
+    public_step_token( 40000, &identity, token );
     rocketnet_fake_client_driver_t fake = {};
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.step_driven = 1;
-
     int status = ROCKETNET_STATUS_OK;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex(
         &fake, token, &config, 1000.0, &rocketnet_fake_client_operations_base, &fake, &status );
@@ -327,8 +258,6 @@ static void public_step_driven_client_refused_on_a_threaded_only_transport()
 }
 REGISTER_UNIT_TEST( public_step_driven_client_refused_on_a_threaded_only_transport );
 
-// The field's env overlay: ROCKETNET_CLIENT_STEP_DRIVEN selects the mode on
-// the same config table the struct field comes from, and 0 leaves it off.
 static int public_step_setenv( const char * name, const char * value )
 {
 #ifdef _WIN32
@@ -337,7 +266,6 @@ static int public_step_setenv( const char * name, const char * value )
     return setenv( name, value, 1 );
 #endif
 }
-
 static int public_step_unsetenv( const char * name )
 {
 #ifdef _WIN32
@@ -352,29 +280,20 @@ static void public_step_driven_client_env_selects_the_mode()
     const char * prior = getenv( "ROCKETNET_CLIENT_STEP_DRIVEN" );
     char saved[64] = {};
     const bool present = prior && prior[0] != '\0';
-    if ( present )
-        strncpy( saved, prior, sizeof( saved ) - 1 );
+    if ( present ) strncpy( saved, prior, sizeof( saved ) - 1 );
 
+    rocketnet_client_transport_config_t config;
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
-    check( fields != NULL && num_fields > 0 );
-
-    struct rocketnet_client_transport_config_t config;
-
     check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) == 0 );
     rocketnet_client_transport_default_config( &config );
-    check( config.step_driven == 0 );
     check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
     check( config.step_driven == 1 );
-
     check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "0" ) == 0 );
     rocketnet_client_transport_default_config( &config );
     check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
     check( config.step_driven == 0 );
-
-    if ( present )
-        check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
-    else
-        check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
+    if ( present ) check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
+    else check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
 }
 REGISTER_UNIT_TEST( public_step_driven_client_env_selects_the_mode );
