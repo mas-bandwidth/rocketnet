@@ -165,6 +165,17 @@ counters_find(char const*) test_unit_counter_classes.cpp:313:14
 # origin: counters_every_outcome_in_at_most_one_family() test_unit_counter_classes.cpp:709:50
 # origin: rocketnet_unit_tests_run_named(char const*) test_unit_registry.h:145:9
 # origin: rocketnet_unit_worker(char const*) test.cpp:84:18
+counters_find(char const*) test_unit_counter_classes.cpp:314:14
+# Clang 18 / libstdc++ 13 reports this helper's read at line 314; the head
+# source line is 314:14.
+# origin: Uninitialized value was created by a heap allocation
+# origin: operator new(unsigned long) (bin/test)
+# origin: void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_construct<char const*>(char const*, char const*, std::forward_iterator_tag) include/c++/bits/basic_string.tcc:229:14
+# origin: std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::substr(unsigned long, unsigned long) const (/lib/x86_64-linux-gnu/libstdc++.so.6+0x16bd1e)
+# origin: counters_incremented(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) test_unit_counter_classes.cpp:687:39
+# origin: counters_every_outcome_in_at_most_one_family() test_unit_counter_classes.cpp:711:50
+# origin: rocketnet_unit_tests_run_named(char const*) test_unit_registry.h:145:9
+# origin: rocketnet_unit_worker(char const*) test.cpp:84:18
 ctv_unhex(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, unsigned char*, int) test_unit_connect_token_vectors.cpp:223:18
 # origin: Uninitialized value was created by a heap allocation
 # origin: operator new(unsigned long) (bin/test)
