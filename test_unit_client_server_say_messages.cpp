@@ -88,9 +88,15 @@ static const allowlist_row_t allowlist[] =
 
     // FRAGMENT PACKING: how messages are packed into packets.
     { F_H, "message one packet carries", "FRAGMENT PACKING" },
-    { F_H, "message in one packet", "FRAGMENT PACKING" },
+    { F_H, "one record in one packet", "FRAGMENT PACKING" },
+    { F_H, "single-packet message", "FRAGMENT PACKING" },
+    { F_H, "one packet's record", "FRAGMENT PACKING" },
+    { F_H, "A lost packet loses it", "FRAGMENT PACKING" },
+    { F_H, "carrying packet is acknowledged", "FRAGMENT PACKING" },
     { F_O, "one record in one packet", "FRAGMENT PACKING" },
     { F_M, "the record ends this packet", "FRAGMENT PACKING" },
+    { "sdk/rocketnet_message.h", "message-to-packet", "FRAGMENT PACKING" },
+    { F_S, "in the packet", "FRAGMENT PACKING" },
 
     // HANDSHAKE: the handshake's own packet.
     { F_H, "before the first packet was sent", "HANDSHAKE" },
@@ -173,6 +179,30 @@ static const allowlist_row_t allowlist[] =
     { F_S, "abort_packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
     { F_S, "finish_packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
     { F_S, "start_packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
+    { F_H, "acknowledged the packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
+    { F_H, "receipt packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
+    { F_H, "transport packet buffer", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
+    { F_H, "packet buffer", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
+    { F_O, "rocketnet_packet_context_t", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
+    { F_S, "context.packet_id", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
+    { F_S, "packet allowance", "PACKET BUILD CAP" },
+    { F_S, "one packet of it", "PACKET BUILD CAP" },
+    { F_H, "send_packets", "SEND PACKETS" },
+    { F_H, "rocketnet_client_send_packets", "SEND PACKETS" },
+    { F_H, "rocketnet_server_send_packets", "SEND PACKETS" },
+    { F_H, "disconnect packets", "SEND PACKETS" },
+    { F_API, "rocketnet_client_send_packets", "SEND PACKETS" },
+    { F_API, "rocketnet_message_client_send_packets", "SEND PACKETS" },
+    { F_API, "rocketnet_server_send_packets", "SEND PACKETS" },
+    { F_API, "rocketnet_message_server_send_packets", "SEND PACKETS" },
+    { F_API, "disconnect packets", "SEND PACKETS" },
+    { F_API, "packets, then the per-slot connection reset", "SEND PACKETS" },
+    { F_C, "rocketnet_message_client_send_packets", "SEND PACKETS" },
+    { F_C, "rn_message_object_send_packets", "SEND PACKETS" },
+    { F_S, "rocketnet_message_server_send_packets", "SEND PACKETS" },
+    { F_S, "rn_message_object_send_packets", "SEND PACKETS" },
+    { F_S, "send_packets", "SEND PACKETS" },
+    { F_O, "rn_message_object_send_packets", "SEND PACKETS" },
 };
 
 static const size_t allowlist_count = sizeof(allowlist) / sizeof(allowlist[0]);
