@@ -29,7 +29,7 @@
 #define check rocketnet_unit_check
 
 // the quit flag destroy writes and the receive loop reads is a lock-free atomic
-static_assert( std::atomic<bool>::is_always_lock_free, "quit is a lock-free atomic" );
+static_assert( ATOMIC_BOOL_LOCK_FREE == 2, "quit is a lock-free atomic" );
 
 // four create and destroy cycles of a step-driven client: every destroy
 // returns and closes its driver once
