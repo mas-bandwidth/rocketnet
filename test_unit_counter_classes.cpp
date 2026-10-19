@@ -278,7 +278,6 @@ static const char * const counters_base_names[] =
 static const char * const counters_appended_names[] =
 {
     "CONNECTION_RESPONSE_INTERNAL_ERROR",
-    "CONNECTION_REQUEST_MAPPING_SALT_MISMATCH",
     "SEND_HISTORY_LOST",
     "MESSAGE_BAD_CHANNEL",
     "MESSAGE_BAD_BLOCK",
@@ -295,7 +294,6 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_INVALID_TYPE",
     "XDP_KERNEL_DROPPED_WRONG_EPOCH",
     "XDP_KERNEL_PASSED_IPV6_EXTENSION",
-    "CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED",
     "CLIENT_SEND_DEFERRED",
     "XDP_KERNEL_DROPPED_REPLAYED",
     "CLIENT_CHALLENGE_WRONG_SIZE",

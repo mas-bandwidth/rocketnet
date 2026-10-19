@@ -496,13 +496,6 @@
     /* own counter now. appended: indices are the contract. */ \
     X( CONNECTION_RESPONSE_INTERNAL_ERROR, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     \
-    /* A request from an address that holds a handshake in flight, carrying */ \
-    /* a different salt than the mapping's, is answered with the mapping's */ \
-    /* stored challenge, so nothing increments this counter now. It stays */ \
-    /* declared because the indices are the contract. appended: indices are */ \
-    /* the contract. */ \
-    X( CONNECTION_REQUEST_MAPPING_SALT_MISMATCH, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
-    \
     /* History was overwritten before its ACK, and the peer had acknowledged */ \
     /* a sequence at least ROCKETNET_LOSS_PACKET_THRESHOLD above it: the */ \
     /* packet was lost on the path. An outcome, not a refusal. Together with */ \
@@ -546,13 +539,6 @@
     X( XDP_KERNEL_DROPPED_INVALID_TYPE, REFUSAL, NONE ) \
     X( XDP_KERNEL_DROPPED_WRONG_EPOCH, REFUSAL, NONE ) \
     X( XDP_KERNEL_PASSED_IPV6_EXTENSION, EXPECTED, NONE ) \
-    \
-    /* A connection response that opened for a token already in the */ \
-    /* admitted-token set. Retired with the set (docs/SESSION.md 1.6): the */ \
-    /* client-id check refuses the second of two addresses holding one */ \
-    /* token while the first is connected. appended: indices are the */ \
-    /* contract, so it keeps its index and always reads zero. */ \
-    X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     \
     /* A client hand-off deferred because the other send ring is still */ \
     /* handed off or sending (docs/CLIENT-IO.md, Reuse only after sent; a */ \
