@@ -1,6 +1,6 @@
 # RNEndpoint: two endpoints end to end, with CONFIG
 
-`RNEndpoint` is the model `docs/CHANNELS.md` section 15 plans for layer 7:
+`RNEndpoint` is the model `standard/MESSAGES.md` section 15 plans for layer 7:
 two message endpoints, one at each end of a connection, joined by two
 instances of `tla/Link.tla` (`AB` carries a's packets to b, `BA` carries b's
 to a), with the transport's ack semantics and the CONFIG announcement of
@@ -208,7 +208,7 @@ loaded bench may need a quieter one.
 
 ## Reversed witnesses, each checked by hand
 
-The traces were read by hand against `docs/CHANNELS.md` 10.3 and 13.4.
+The traces were read by hand against `standard/MESSAGES.md` 10.3 and 13.4.
 No code implements CONFIG or the endpoint yet (`sdk/` defines only the
 error code), so the check is against the design, which is the spec the
 two code cards implement.

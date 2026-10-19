@@ -1,6 +1,6 @@
 # RNScheduler: the order items are first written in
 
-`tla/RNScheduler.tla` is layer 6's scheduler (docs/CHANNELS.md 9.2): the order
+`tla/RNScheduler.tla` is layer 6's scheduler (`standard/MESSAGES.md` 9.2): the order
 in which the packet builder takes queued items into packets. The code is
 `rn_packet_builder_write` in `sdk/rocketnet_packet_builder.cpp`; each of its
 scheduler functions names the action it implements. The model was written
@@ -23,7 +23,7 @@ Three orders nest, outermost first.
 2. **RakNet's four priorities inside a class.** Each level has a clock. The
    level with the smallest clock goes next and its clock advances by its
    stride: 1, 5, 14 and 35 for IMMEDIATE, HIGH, MEDIUM and LOW
-   (`(1 << p) * (p + 1) + p`, docs/RAKNET-RELIABILITY.md 5.3). A clock behind
+   (`(1 << p) * (p + 1) + p`, 5.3). A clock behind
    the last level taken counts as that level's clock (RakNet's pull-forward).
    A tie goes to the more urgent level. When nothing is queued the clocks
    reset to RakNet's seeds 0, 3, 10 and 27. Under a backlog adjacent levels
@@ -114,7 +114,7 @@ clocks and the round-robin cursor to their values at the packet's start.
    (R6). An IMMEDIATE unreliable item waits behind a LOW reliable one.
 2. **Priority boosts the whole channel; channels stay FIFO.** RakNet orders
    each message by its own weight, so a later high-priority send on a channel
-   can be pulled before an earlier low-priority one (docs/CHANNELS.md 17.3
+   can be pulled before an earlier low-priority one (`standard/MESSAGES.md` 17.3
    item 3). Here a channel is offered only at its head, at the best priority
    among its queued items.
 3. **Round robin across channels within a level.** RakNet pulls a level's

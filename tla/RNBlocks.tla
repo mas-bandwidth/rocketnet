@@ -1,6 +1,6 @@
 ------------------------------ MODULE RNBlocks ------------------------------
 (***************************************************************************)
-(* rocketnet: layer 5, blocks (docs/CHANNELS.md section 8; section 15, the *)
+(* rocketnet: layer 5, blocks (standard/MESSAGES.md section 8; section 15, *)
 (* RNBlocks row).  A reliable ordered message whose record would not fit   *)
 (* one packet is a block: split at the fixed stride F, numbered at once    *)
 (* with k consecutive reliable numbers, placed in one contiguous ring span *)

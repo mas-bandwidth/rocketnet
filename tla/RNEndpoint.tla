@@ -1,7 +1,7 @@
 ----------------------------- MODULE RNEndpoint -----------------------------
 (***************************************************************************)
 (* rocketnet: two message endpoints end to end over the transport, with    *)
-(* the CONFIG announcement (docs/CHANNELS.md layer 7: sections 10.1, 10.3, *)
+(* CONFIG announcement (standard/MESSAGES.md layer 7: sections 10.1, 10.3, *)
 (* 13.4 and the RNEndpoint row of section 15).  Written before the code:  *)
 (* the model is the spec the CONFIG card and the endpoint card implement,  *)
 (* and its action names are the planned function names of 10.1.           *)
@@ -14,7 +14,7 @@
 (* "unreliable" (UNRELIABLE), on channel MsgChan[k].                       *)
 (*                                                                         *)
 (* The transport underneath is abstracted to its ack semantics             *)
-(* (CHANNELS.md section 2):                                                *)
+(* (MESSAGES.md section 2):                                                *)
 (*   P2  acked implies opened: a packet's reliable records are put in the  *)
 (*       opening end's pending acks when the packet is opened, whatever    *)
 (*       the message layer then does with them (an endpoint that refuses   *)

@@ -1,15 +1,13 @@
 # RNSecurityTables
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 The security tables at the table grain: the used-token history
 (`sdk/rocketnet_token_tables.cpp`) and the one-live-connection rule (the
 admitted-token set it replaced survives as a reversed witness), the cookie gate
 and its key generation, and the per-update verify budget, as
-`sdk/rocketnet_server_protocol.cpp` drives them and STANDARD.md
+`sdk/rocketnet_server_protocol.cpp` drives them and TRANSPORT.md
 specifies them. This module lands the held draft of `tla/Security.tla`
 (branch `sprint/rn-tla-security.w3.g1.e15`, commit `2f8de9d`) at the
-grain of inventory modules 5 and 6 in `docs/TLA-INVENTORY.md`: the full
+grain of inventory modules 5 and 6: the full
 handshake, the lossy link and the replay window stay in that draft;
 here a request past the cookie gate, a response that opens under its
 mapping, another client taking a slot, a disconnect and a tick are the
@@ -17,7 +15,7 @@ only events. The attacker is the quantification itself: any address
 presents any token under any cookie generation it has seen. Only an
 address in `Holds[t]` holds token `t`'s keys, so only it can open a
 response under `t`; the instance has `tf` held at `A` alone, so `B`
-replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
+replaying `tf` is the on-path attacker of TRANSPORT.md's replay paragraph.
 
 - **The history.** Per token: absent, or bound to an address with an
   expiry, an insert order and a ghost `opened` (whether a response that
@@ -31,7 +29,7 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   oldest entry, live or not (`rocketnet_token_table_select_slot` with
   `evict_oldest = 1`, reached from `rocketnet_used_token_history_record`).
 - **One live connection.** The code has no admitted-token set (removed
-  2026-10-18, `docs/SESSION.md` 1.6). A token is kept to one live
+  2026-10-18). A token is kept to one live
   connection by the history (another address is refused while the entry
   lives), by the connected-address check at the top of the request path
   (`CONNECTION_REQUEST_ALREADY_CONNECTED`, the `Request` guard on `slots`)

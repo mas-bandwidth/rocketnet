@@ -1,7 +1,7 @@
 ------------------------- MODULE RNConnectionMemory -------------------------
 (***************************************************************************)
 (* Per-connection message memory, and the kick on exhaustion               *)
-(* (docs/CHANNELS.md 4; sdk/rocketnet_allocator.cpp, the region's          *)
+(* (standard/MESSAGES.md 4; sdk/rocketnet_allocator.cpp, the region's      *)
 (* exhausted state, rn_region_reset and rn_connection_memory_decide).      *)
 (*                                                                         *)
 (* A server owns one region per client slot, all carved from one block at  *)

@@ -1,7 +1,7 @@
 ---------------------------- MODULE RNScheduler ----------------------------
 (***************************************************************************)
 (* rocketnet: layer 6's scheduler, the order in which queued items are     *)
-(* first written into packets (docs/CHANNELS.md 9.2; the code is           *)
+(* first written into packets (standard/MESSAGES.md 9.2; the code is       *)
 (* rn_packet_builder_write in sdk/rocketnet_packet_builder.cpp).           *)
 (*                                                                         *)
 (* Three rules nest, outermost first:                                      *)
@@ -77,7 +77,7 @@ ASSUME /\ NC \in Nat \ {0}
        /\ UPerTick \in Nat /\ MaxLoss \in Nat
        /\ ChannelFIFO \in BOOLEAN /\ UnreliableLast \in BOOLEAN
 
-\* RakNet's stride and seed per level (docs/RAKNET-RELIABILITY.md 5.3)
+\* RakNet's stride and seed per level
 Pow2(p) == CASE p = 0 -> 1 [] p = 1 -> 2 [] p = 2 -> 4 [] p = 3 -> 8
 Stride(p) == Pow2(p) * (p + 1) + p          \* 1, 5, 14, 35
 Seed(p) == Pow2(p) * p + p                  \* 0, 3, 10, 27
