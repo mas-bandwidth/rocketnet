@@ -748,7 +748,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or THREAD_CREATE_FAILED. Correct the reported cause before retrying. A failure logs an error line.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. Correct the reported cause before retrying. A failure logs an error line.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init(NULL);

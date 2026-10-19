@@ -30,7 +30,7 @@ void rocketnet_address_load_ipv4( struct rocketnet_address_t * address, uint32_t
 /** @brief Parse a numeric IPv4 or IPv6 address and optional port.
  * @param address [out] Non-NULL destination; it is cleared before parsing.
  * @param address_string [in] Non-NULL, NUL-terminated numeric address shorter than ROCKETNET_MAX_ADDRESS_STRING_LENGTH. Accepts dotted IPv4 with optional :port, bare IPv6 without a port, or bracketed IPv6 with optional :port; decimal ports range from 0 through 65535.
- * @return True when parsing succeeds; false for NULL, empty, overlong, malformed, or unsupported text. A false result leaves address cleared.
+ * @return True when parsing succeeds; false for empty, overlong, malformed, or unsupported text, which leaves address cleared. A NULL argument asserts; with assertions disabled, a NULL address returns false and writes nothing, and a NULL address_string clears address and returns false.
  */
 bool rocketnet_address_parse( struct rocketnet_address_t * address, const char * address_string );
 
