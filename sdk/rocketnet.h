@@ -1188,7 +1188,8 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create_sized( void
 
 // a NULL client is a counted no-op.
 /**
- * @brief Disconnect and destroy a client and its owned resources.
+ * @brief Destroy a client and free its owned resources without sending a disconnect packet.
+ * Hands off committed payloads, retires keys, stops I/O, and frees state; it sends no disconnect packet, so the server frees the slot by timeout. Call rocketnet_client_disconnect before rocketnet_client_destroy for a clean disconnect.
  * @param client Client handle returned by create; NULL is a counted no-op.
  */
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
@@ -1458,9 +1459,10 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
  */
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes );
 
-// Disconnects every client and frees the server. a NULL server is a counted no-op.
+// Frees server state and sockets without sending disconnect packets; clients reach their timeout. a NULL server is a counted no-op.
 /**
- * @brief Disconnect clients and destroy a server and its owned resources.
+ * @brief Destroy a server and free its owned state and sockets without sending disconnect packets.
+ * Frees server state and sockets and sends no disconnect packet; connected clients reach their timeout.
  * @param server Server handle returned by create; NULL is a counted no-op.
  */
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
