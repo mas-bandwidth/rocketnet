@@ -49,6 +49,16 @@ static void dst_seeds_differ()
     rocketnet_unit_check( a.trace_hash != b.trace_hash );
 }
 
+static void dst_seed_range_uint64_max_terminates()
+{
+    const uint64_t maximum = ~(uint64_t) 0;
+    uint64_t next = maximum;
+    rocketnet_unit_check( rocketnet_dst_seed_range_next( maximum - 1, maximum, &next ) );
+    rocketnet_unit_check( next == maximum );
+    rocketnet_unit_check( !rocketnet_dst_seed_range_next( maximum, maximum, &next ) );
+    rocketnet_unit_check( next == maximum );
+}
+
 static void dst_substreams_independent()
 {
     const uint64_t seed = 0x1122334455667788ULL;
@@ -75,6 +85,7 @@ static void dst_fail_names_seed()
     const uint64_t seed = 0xABCDEF0123456789ULL;
     struct rocketnet_dst_options_t options = dst_test_options( 100 );
     options.clients = 2;
+    options.faults = ROCKETNET_DST_FAULT_LOSS | ROCKETNET_DST_FAULT_DUP;
     options.force_fail_step = 37;
 
     struct rocketnet_dst_result_t first;
@@ -97,6 +108,8 @@ static void dst_fail_names_seed()
     rocketnet_unit_check( strstr( first_line, seed_text ) != NULL );
     rocketnet_unit_check( strstr( first_line, "step=37" ) != NULL );
     rocketnet_unit_check( strstr( first_line, "./bin/dst --seeds" ) != NULL );
+    rocketnet_unit_check( strstr( first_line, "--faults loss,dup" ) != NULL );
+    rocketnet_unit_check( strstr( first_line, "--faults none" ) == NULL );
     rocketnet_unit_check( strcmp( first_line, replay_line ) == 0 );
     rocketnet_unit_check( replay.step == first.step );
 }
@@ -104,4 +117,5 @@ static void dst_fail_names_seed()
 REGISTER_UNIT_TEST( dst_same_seed_same_trace );
 REGISTER_UNIT_TEST( dst_seeds_differ );
 REGISTER_UNIT_TEST( dst_substreams_independent );
+REGISTER_UNIT_TEST( dst_seed_range_uint64_max_terminates );
 REGISTER_UNIT_TEST( dst_fail_names_seed );

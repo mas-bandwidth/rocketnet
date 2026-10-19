@@ -212,7 +212,7 @@ int main( int argc, char ** argv )
     struct rocketnet_dst_trace_t range_trace;
     rocketnet_dst_trace_init( &range_trace );
 
-    for ( uint64_t seed = seeds_a; seed <= seeds_b; seed++ )
+    for ( uint64_t seed = seeds_a; ; )
     {
         rocketnet_dst_substream_init( &dst_keys_stream, seed, "keys" );
 
@@ -239,6 +239,11 @@ int main( int argc, char ** argv )
             if ( (int) failed >= max_fails )
                 break;
         }
+
+        uint64_t next_seed;
+        if ( !rocketnet_dst_seed_range_next( seed, seeds_b, &next_seed ) )
+            break;
+        seed = next_seed;
     }
 
     if ( failed )

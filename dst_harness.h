@@ -1116,12 +1116,68 @@ static inline int rocketnet_dst_run_seed( uint64_t seed, uint64_t steps, int pin
     return rocketnet_dst_run_seed_with_options( seed, &options, result );
 }
 
+static inline void rocketnet_dst_faults_list( uint32_t faults, char * out, size_t out_bytes )
+{
+    if ( out_bytes == 0 )
+        return;
+    if ( faults == ROCKETNET_DST_FAULT_ALL )
+    {
+        snprintf( out, out_bytes, "all" );
+        return;
+    }
+    if ( faults == 0 )
+    {
+        snprintf( out, out_bytes, "none" );
+        return;
+    }
+
+    const struct
+    {
+        uint32_t bit;
+        const char * name;
+    } kinds[] =
+    {
+        { ROCKETNET_DST_FAULT_LOSS, "loss" },
+        { ROCKETNET_DST_FAULT_DUP, "dup" },
+        { ROCKETNET_DST_FAULT_JITTER, "jitter" },
+        { ROCKETNET_DST_FAULT_REORDER, "reorder" },
+        { ROCKETNET_DST_FAULT_DELAY, "delay" },
+        { ROCKETNET_DST_FAULT_SKEW, "skew" },
+        { ROCKETNET_DST_FAULT_CRASH_CLIENT, "crash-client" },
+        { ROCKETNET_DST_FAULT_CRASH_SERVER, "crash-server" },
+    };
+    size_t used = 0;
+    out[0] = '\0';
+    for ( size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++ )
+    {
+        if ( faults & kinds[i].bit )
+        {
+            const int written = snprintf( out + used, out_bytes - used, "%s%s", used ? "," : "", kinds[i].name );
+            if ( written < 0 || (size_t) written >= out_bytes - used )
+            {
+                out[out_bytes - 1] = '\0';
+                return;
+            }
+            used += (size_t) written;
+        }
+    }
+}
+
+static inline int rocketnet_dst_seed_range_next( uint64_t seed, uint64_t last_seed, uint64_t * next_seed )
+{
+    if ( seed == last_seed )
+        return 0;
+    *next_seed = seed + 1;
+    return 1;
+}
+
 // The replay line names the seed alone and every non-default flag of this run.
 static inline void rocketnet_dst_replay_command( uint64_t seed, const struct rocketnet_dst_options_t * options,
                                                  char * out, size_t out_bytes )
 {
     const char * shape = options->shape == ROCKETNET_DST_SHAPE_PUSH ? "push" : "full";
     char flags[256];
+    char faults[128];
     int used = snprintf( flags, sizeof(flags), " --shape %s", shape );
     if ( options->clients > 0 )
         used += snprintf( flags + used, sizeof(flags) - (size_t) used, " --clients %d", options->clients );
@@ -1129,7 +1185,10 @@ static inline void rocketnet_dst_replay_command( uint64_t seed, const struct roc
         used += snprintf( flags + used, sizeof(flags) - (size_t) used, " --steps %llu",
                           (unsigned long long) options->fault_steps );
     if ( options->faults != ROCKETNET_DST_FAULT_ALL )
-        used += snprintf( flags + used, sizeof(flags) - (size_t) used, " --faults none" );
+    {
+        rocketnet_dst_faults_list( options->faults, faults, sizeof(faults) );
+        used += snprintf( flags + used, sizeof(flags) - (size_t) used, " --faults %s", faults );
+    }
     snprintf( out, out_bytes, "./bin/dst --seeds %llu-%llu%s",
               (unsigned long long) seed, (unsigned long long) seed, flags );
 }
