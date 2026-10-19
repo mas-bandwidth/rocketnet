@@ -20,6 +20,16 @@ option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETN
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_IO_URING "Build the io_uring server driver against liburing when it is found (Linux)" ON)
+option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF)
+if(ROCKETNET_SANITIZE_ADDRESS)
+    if(MSVC)
+        add_compile_options(/fsanitize=address /Zi)
+        add_link_options(/DEBUG /INCREMENTAL:NO)
+    else()
+        add_compile_options(-fsanitize=address)
+        add_link_options(-fsanitize=address)
+    endif()
+endif()
 set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
 set(ROCKETNET_DRIVER_SOURCES "" CACHE STRING "Additional native driver source files")
 if(ROCKETNET_DRIVER_REGISTRY_HEADER)
@@ -36,6 +46,17 @@ if(ROCKETNET_TOP_LEVEL)
     endif()
     if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
         set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
+    endif()
+endif()
+if(ROCKETNET_SANITIZE_ADDRESS AND MSVC AND DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    get_filename_component(ROCKETNET_MSVC_BIN_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+    if(EXISTS "${ROCKETNET_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll")
+        add_custom_target(rocketnet_asan_runtime ALL
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${ROCKETNET_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll"
+                "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/clang_rt.asan_dynamic-x86_64.dll"
+            VERBATIM)
     endif()
 endif()
 

@@ -84,6 +84,15 @@ loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
 takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`
 line continuation, so on Windows write each command on one line.
 
+Configure with `-DROCKETNET_SANITIZE_ADDRESS=ON` (default `OFF`) to build every
+target with AddressSanitizer: `/fsanitize=address` and `/Zi` with
+`/INCREMENTAL:NO` at link under MSVC, and `-fsanitize=address` elsewhere. On
+Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
+`cmake --build build --config Release --parallel 4`), the build copies the MSVC
+AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
+into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
+
 The examples are an echo server and a client that connects to it with a
 development token. Run each in its own window:
 

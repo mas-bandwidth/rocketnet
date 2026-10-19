@@ -176,3 +176,60 @@ jobs:
 
       - name: External driver backend
         run: python tools/check_driver_extension.py build --config Release
+
+  # Windows MSVC AddressSanitizer over unit, lifecycle, IOCP/RIO driver and
+  # functional suites (portable, iocp and rio transports) on the native Windows
+  # fleet runner. Configured via -DROCKETNET_SANITIZE_ADDRESS=ON (adds
+  # /fsanitize=address /Zi and link /DEBUG /INCREMENTAL:NO on every target and
+  # stages clang_rt.asan_dynamic-x86_64.dll beside the built executables).
+  build-and-test-windows-asan:
+    name: windows / Release ASan
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-windows-asan-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure with AddressSanitizer
+        run: cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Run unit suite under ASan
+        shell: bash
+        run: ./bin/Release/test.exe
+
+      - name: Run lifecycle suite under ASan
+        shell: bash
+        run: ./bin/Release/test_lifecycle.exe
+
+      - name: Run IOCP and RIO driver suite under ASan
+        shell: bash
+        run: ./bin/Release/test_iocp.exe
+
+      - name: Run functional suite under ASan (default)
+        timeout-minutes: 30
+        shell: bash
+        run: ./bin/Release/functional.exe
+
+      - name: Run functional suite under ASan (ROCKETNET_SERVER_TRANSPORT=iocp)
+        timeout-minutes: 30
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: iocp
+        run: ./bin/Release/functional.exe
+
+      - name: Run functional suite under ASan (ROCKETNET_SERVER_TRANSPORT=rio)
+        timeout-minutes: 30
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: rio
+        run: ./bin/Release/functional.exe
