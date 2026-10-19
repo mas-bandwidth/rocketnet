@@ -1432,13 +1432,13 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     rocketnet_test_captured_log[0] = '\0';
     const int saved_level = rocketnet_get_log_level();
-    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
 
     rocketnet_log_level( saved_level );
-    rocketnet_log_function( rocketnet_test_suite_log_function );
+    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( client );
     rocketnet_check( strstr( rocketnet_test_captured_log, "client socket is ipv4 because ipv6 is unavailable on this host" ) != NULL );
@@ -1522,13 +1522,13 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     int create_status = ROCKETNET_STATUS_OK;
     rocketnet_test_captured_log[0] = '\0';
-    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_client_transport_t * refused = rocketnet_client_transport_create_ex( NULL, connect_token, NULL, rocketnet_platform_time(), &create_status );
 
     rocketnet_log_level( saved_level );
-    rocketnet_log_function( rocketnet_test_suite_log_function );
+    rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( refused == NULL );
     rocketnet_check( create_status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
