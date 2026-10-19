@@ -15,3 +15,21 @@ directory remains the complete drop-in set.
 `./bin/test` prints test names and nothing else, because the suite captures
 the library's log into a ring and dumps it only when a check fails — set
 `ROCKETNET_TEST_VERBOSE=1` to skip the capture and watch the log live.
+
+## Peak memory per case
+
+Both runners record each case process's peak resident set (`wait4`
+`ru_maxrss` on POSIX, normalised from kilobytes on Linux and bytes on macOS;
+`PeakWorkingSetSize` on Windows) and print it after the timing summary, largest
+first. `./bin/functional` prints one line a case:
+
+    <case> peak_rss_mb=<n> bound_mb=<b>
+
+`./bin/test` prints its ten largest as `test_timing_rss_NN [SKIPPED <case>
+peak_rss_mb=<n> bound_mb=<b>]`, the names-only spelling its checker accepts.
+A case whose peak is over the bound fails the suite with the same
+`<case> peak_rss_mb=<n> bound_mb=<b>` text on its `FAIL:` line. The bound is
+`ROCKETNET_TEST_MAX_CASE_RSS_MB` in `test/suite_runner.h`; the environment
+variable of the same name overrides it with a positive value. A sanitizer build
+prints the peaks and enforces no bound unless that variable sets one, because
+sanitizer shadow memory is not the case's own footprint.
