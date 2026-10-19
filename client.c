@@ -26,7 +26,12 @@
 #include <time.h>
 #include <errno.h>
 #include <stdint.h>
+#if defined(_WIN32)
+#include <process.h>
+#define getpid _getpid
+#else
 #include <unistd.h>
+#endif
 
 static volatile int quit;
 

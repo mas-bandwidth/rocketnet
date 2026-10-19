@@ -300,11 +300,14 @@ if(ROCKETNET_BUILD_TESTS)
     # The filter epoch window's MAC tally (test_unit_filter_epochs.cpp) exists
     # only for the unit suite.
     target_compile_definitions(rocketnet PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
+    # The message layer's payload copy count (test_unit_unreliable_in_place.cpp)
+    # exists only for the unit suite, like the filter epoch tally above.
+    target_compile_definitions(rocketnet PRIVATE ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
     add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
-    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
+    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
         # the library in test builds, matching the filter-epoch seam above, so
@@ -369,6 +372,12 @@ if(ROCKETNET_BUILD_TESTS)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
         rocketnet_use_sodium(test)
+    endif()
+    # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
+    # which includes <sodium.h>: the vendored header, as the transport's own
+    # targets see it (a host with no system libsodium, such as Windows, has no other)
+    if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
+        set_property( SOURCE test_unit_driver_loopback.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/sodium" )
     endif()
     # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
     # compiled unchanged with the BPF build's defines behind a shadow include
