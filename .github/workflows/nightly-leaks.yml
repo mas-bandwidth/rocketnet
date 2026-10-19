@@ -108,3 +108,86 @@ jobs:
             test_portable.log
             functional.log
           if-no-files-found: ignore
+
+  # macOS has no LeakSanitizer runtime, so the Linux job above cannot cover
+  # it. This job uses Apple clang's ASan+UBSan and TSan through the one
+  # ROCKETNET_SANITIZE option, then checks leaks with the system leaks tool
+  # on a plain Release build (MallocStackLogging=1, /usr/bin/leaks --atExit).
+  # setarch has no macOS form, so the TSan legs run without the Linux
+  # address-space-randomisation wrapper.
+  macos-sanitizers-and-leaks:
+    name: macOS ASan+UBSan, TSan and leaks
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 60
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the member's macOS tools are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake clang c++ xxd python3; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          if [ ! -x /usr/bin/leaks ]; then
+            echo "TOOL-MISSING leaks (any) (/usr/bin/leaks missing) on $RUNNER_NAME"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Build ASan+UBSan
+        run: |
+          cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_SANITIZE=address
+          cmake --build build-asan --parallel 4
+
+      - name: Run every suite under ASan+UBSan on every pin
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          set -euo pipefail
+          ./bin/test
+          ./bin/test_lifecycle
+          ./bin/test_driver
+          ./bin/test_msgx
+          for server in portable msgx; do
+            for client in portable msgx; do
+              echo "functional pin $server/$client"
+              ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client ./bin/functional
+            done
+          done
+
+      - name: Build TSan
+        run: |
+          cmake -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_SANITIZE=thread
+          cmake --build build-tsan --parallel 4
+
+      - name: Run the threaded suites under TSan on every pin
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          ./bin/test
+          for server in portable msgx; do
+            for client in portable msgx; do
+              echo "functional pin $server/$client"
+              ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client ./bin/functional
+            done
+          done
+
+      - name: Build Release without sanitizers
+        run: |
+          cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-release --parallel 4
+
+      - name: Leaks tool self-test
+        run: python3 tools/macos/leaks_run.py --self-test
+
+      - name: Run the suites under the leaks tool on every pin
+        timeout-minutes: 30
+        run: python3 tools/macos/leaks_run.py --matrix
