@@ -287,8 +287,8 @@ jobs:
       # transport, then case=card for each case expected to fail until that
       # card lands: the case fails, or prints a skip naming that card. An
       # expected failure that passes fails the step, so the mark is removed
-      # as the card lands; any other skip fails. The in-memory loopback
-      # driver is not a socket transport and holds the one mark. The xdp
+      # as the card lands; any other skip fails. No cell holds a mark: the
+      # in-memory loopback serves dual stack like the socket transports. The xdp
       # cell needs root, a namespace and a veth pair, so it runs
       # xdp_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
       # client) as root inside a virtme-ng guest on the runner's own kernel,
@@ -302,14 +302,14 @@ jobs:
             portable portable
             gso portable
             io_uring portable
-            loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
+            loopback loopback
             xdp portable
           TRANSPORT_MATRIX_MACOS: |
             portable portable
             portable msgx
             msgx portable
             msgx msgx
-            loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
+            loopback loopback
         run: |
           set +e -uo pipefail
           case "$RUNNER_OS" in
@@ -702,7 +702,7 @@ jobs:
             portable portable
             iocp portable
             rio portable
-            loopback loopback test_transport_dual_stack_ipv4_client=rocketnet-dual-stack-advertises-ipv4
+            loopback loopback
         run: |
           set +e -uo pipefail
           case "$RUNNER_OS" in
