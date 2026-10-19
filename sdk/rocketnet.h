@@ -816,9 +816,49 @@ struct rocketnet_client_config_t
     int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     /** @brief ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000 */
     int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    /**
+     * @brief Development only: the link simulator's outgoing packet loss, percent; 0 .. 100; default 0, which is off.
+     *
+     * A revision-2 field: only the _sized calls read or write it. The unsized
+     * validate, required_memory and create calls take it as 0, and the unsized
+     * default calls leave it untouched. A library built without development
+     * support refuses a
+     * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
+     * line naming the field).
+     */
     int simulated_loss_percent;                     // development only: outgoing loss 0..100; 0 is off
+    /**
+     * @brief Development only: the link simulator's added outgoing latency, milliseconds; 0 .. 60000; default 0, which is off.
+     *
+     * A revision-2 field: only the _sized calls read or write it. The unsized
+     * validate, required_memory and create calls take it as 0, and the unsized
+     * default calls leave it untouched. A library built without development
+     * support refuses a
+     * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
+     * line naming the field).
+     */
     int simulated_latency_ms;                       // development only: outgoing latency in milliseconds; 0 is off
+    /**
+     * @brief Development only: the link simulator's added outgoing jitter, milliseconds; 0 .. 60000; default 0, which is off.
+     *
+     * A revision-2 field: only the _sized calls read or write it. The unsized
+     * validate, required_memory and create calls take it as 0, and the unsized
+     * default calls leave it untouched. A library built without development
+     * support refuses a
+     * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
+     * line naming the field).
+     */
     int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
+    /**
+     * @brief Development only: the link simulator's outgoing packet duplication, percent; 0 .. 100; default 0, which is off.
+     *
+     * A revision-2 field: only the _sized calls read or write it. The unsized
+     * validate, required_memory and create calls take it as 0, and the unsized
+     * default calls leave it untouched. A library built without development
+     * support refuses a
+     * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
+     * line naming the field).
+     */
     int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
 };
 
@@ -912,9 +952,49 @@ struct rocketnet_server_config_t
     int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     /** @brief ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000 */
     int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
+    /**
+     * @brief Development only: the link simulator's outgoing packet loss, percent; 0 .. 100; default 0, which is off.
+     *
+     * A revision-2 field: only the _sized calls read or write it. The unsized
+     * validate, required_memory and create calls take it as 0, and the unsized
+     * default calls leave it untouched. A library built without development
+     * support refuses a
+     * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
+     * line naming the field).
+     */
     int simulated_loss_percent;                     // development only: outgoing loss 0..100; 0 is off
+    /**
+     * @brief Development only: the link simulator's added outgoing latency, milliseconds; 0 .. 60000; default 0, which is off.
+     *
+     * A revision-2 field: only the _sized calls read or write it. The unsized
+     * validate, required_memory and create calls take it as 0, and the unsized
+     * default calls leave it untouched. A library built without development
+     * support refuses a
+     * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
+     * line naming the field).
+     */
     int simulated_latency_ms;                       // development only: outgoing latency in milliseconds; 0 is off
+    /**
+     * @brief Development only: the link simulator's added outgoing jitter, milliseconds; 0 .. 60000; default 0, which is off.
+     *
+     * A revision-2 field: only the _sized calls read or write it. The unsized
+     * validate, required_memory and create calls take it as 0, and the unsized
+     * default calls leave it untouched. A library built without development
+     * support refuses a
+     * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
+     * line naming the field).
+     */
     int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
+    /**
+     * @brief Development only: the link simulator's outgoing packet duplication, percent; 0 .. 100; default 0, which is off.
+     *
+     * A revision-2 field: only the _sized calls read or write it. The unsized
+     * validate, required_memory and create calls take it as 0, and the unsized
+     * default calls leave it untouched. A library built without development
+     * support refuses a
+     * nonzero value at creation (ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, one error
+     * line naming the field).
+     */
     int simulated_duplicate_percent;                // development only: outgoing duplication 0..100; 0 is off
 };
 
@@ -1075,20 +1155,41 @@ ROCKETNET_EXPORT int rocketnet_client_default_config_sized( struct rocketnet_cli
  * @brief Validates the values stored in a client configuration.
  * @param config Configuration to validate, or NULL to validate the defaults.
  * @return 1 when the stored values pass all range and cross-field rules; otherwise 0 after logging the violated rule.
- * @details Environment variables are not read.
+ * @details Reads only the revision-1 prefix of config and takes the later
+ * fields at their defaults; use rocketnet_client_validate_config_sized() to
+ * check them. Environment variables are not read.
  */
 ROCKETNET_EXPORT int rocketnet_client_validate_config( const struct rocketnet_client_config_t * config );
-// Validates a known-size client config; an unknown non-NULL size logs and returns 0.
+/**
+ * @brief Validates a client configuration of a known structure size.
+ * @param config Configuration to validate, or NULL to validate the defaults.
+ * @param config_bytes Size in bytes of the caller's structure, normally
+ * sizeof(*config); ignored when config is NULL.
+ * @return 1 when the values pass every range and cross-field rule; 0 after one
+ * error line for an unknown size or a violated rule.
+ * @details Reads the first config_bytes of config and takes every later field
+ * at its default. Environment variables are not read.
+ */
 ROCKETNET_EXPORT int rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 /**
  * @brief Calculates the caller-owned memory required for a client.
  * @param config Configuration to size, or NULL for defaults. Environment overrides are applied.
  * @return Required bytes, or 0 when configuration or an environment override is refused.
- * @details Supply at least this many bytes aligned to ROCKETNET_ALLOCATION_ALIGNMENT to client creation, or pass NULL memory to let the SDK allocate.
+ * @details Reads only the revision-1 prefix of config and takes the later fields at their defaults.
+ * Supply at least this many bytes aligned to ROCKETNET_ALLOCATION_ALIGNMENT to client creation, or pass NULL memory to let the SDK allocate.
  */
 ROCKETNET_EXPORT uint64_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
-// Queries a known-size client config; an unknown non-NULL size logs and returns 0.
+/**
+ * @brief Calculates the caller-owned memory a client needs, for a configuration of a known structure size.
+ * @param config Configuration to size, or NULL for defaults. Environment overrides are applied.
+ * @param config_bytes Size in bytes of the caller's structure, normally
+ * sizeof(*config); ignored when config is NULL.
+ * @return Required bytes, or 0 after one error line for an unknown size, a
+ * refused value or a refused environment override.
+ * @details Reads the first config_bytes of config and takes every later field
+ * at its default.
+ */
 ROCKETNET_EXPORT uint64_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 #if ROCKETNET_DEVELOPMENT
@@ -1227,27 +1328,55 @@ ROCKETNET_EXPORT int rocketnet_server_default_config_sized( struct rocketnet_ser
  * @warning Use this identity only for local development; all callers share the published secrets.
  */
 ROCKETNET_EXPORT void rocketnet_server_dev_config( struct rocketnet_server_config_t * config );
-// Writes development defaults for a known server config size; unknown sizes log and are untouched.
+/**
+ * @brief Writes the development defaults for a known server structure size.
+ * @param config Destination structure; NULL records misuse and returns 0.
+ * @param config_bytes Size in bytes of the caller's structure, normally sizeof(*config).
+ * @return 1 after writing the first config_bytes of the development defaults,
+ * or 0 without writing for an unknown size (one error line) or a NULL destination.
+ * @warning Use this identity only for local development; all callers share the published secrets.
+ */
 ROCKETNET_EXPORT int rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /**
  * @brief Validates the values stored in a server configuration.
  * @param config Configuration to validate, or NULL to validate the defaults.
  * @return 1 when stored range and cross-field rules pass; otherwise 0 after logging the violated rule.
- * @details Environment variables and key validity are not checked.
+ * @details Reads only the revision-1 prefix of config and takes the later
+ * fields at their defaults; use rocketnet_server_validate_config_sized() to
+ * check them. Environment variables and key validity are not checked.
  */
 ROCKETNET_EXPORT int rocketnet_server_validate_config( const struct rocketnet_server_config_t * config );
-// Validates a known-size server config; an unknown non-NULL size logs and returns 0.
+/**
+ * @brief Validates a server configuration of a known structure size.
+ * @param config Configuration to validate, or NULL to validate the defaults.
+ * @param config_bytes Size in bytes of the caller's structure, normally
+ * sizeof(*config); ignored when config is NULL.
+ * @return 1 when the values pass every range and cross-field rule; 0 after one
+ * error line for an unknown size or a violated rule.
+ * @details Reads the first config_bytes of config and takes every later field
+ * at its default. Environment variables are not read.
+ */
 ROCKETNET_EXPORT int rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /**
  * @brief Calculates caller-owned memory required for a server and all configured client slots.
  * @param config Configuration to size, or NULL for defaults. Environment overrides, including max_clients, are applied.
  * @return Required bytes, or 0 when configuration or an environment override is refused.
- * @details Supply at least this many bytes aligned to ROCKETNET_ALLOCATION_ALIGNMENT to server creation, or pass NULL memory to let the SDK allocate.
+ * @details Reads only the revision-1 prefix of config and takes the later fields at their defaults.
+ * Supply at least this many bytes aligned to ROCKETNET_ALLOCATION_ALIGNMENT to server creation, or pass NULL memory to let the SDK allocate.
  */
 ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
-// Queries a known-size server config; an unknown non-NULL size logs and returns 0.
+/**
+ * @brief Calculates the caller-owned memory a server needs, for a configuration of a known structure size.
+ * @param config Configuration to size, or NULL for defaults. Environment overrides are applied.
+ * @param config_bytes Size in bytes of the caller's structure, normally
+ * sizeof(*config); ignored when config is NULL.
+ * @return Required bytes, or 0 after one error line for an unknown size, a
+ * refused value or a refused environment override.
+ * @details Reads the first config_bytes of config and takes every later field
+ * at its default.
+ */
 ROCKETNET_EXPORT uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 // address is where clients reach the server, "a.b.c.d:port" or "[v6]:port"; a
