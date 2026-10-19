@@ -1381,8 +1381,10 @@ static void hostile_small_at_held_ordering_is_refused_sim()
 }
 
 // ---------------------------------------------------------------------------
-// 8. zero copy: the start pointer is where the frame is copied from, and
-//    delivery is a view
+// 8. zero copy on the reliable path: the start pointer is where the frame is
+//    copied from (a reliable record outlives the frame for its resends), and
+//    delivery is a view. A fitting unreliable message is written in the frame
+//    itself, with no copy (test_unit_unreliable_in_place.cpp)
 // ---------------------------------------------------------------------------
 
 // every record of a packet, in wire order
