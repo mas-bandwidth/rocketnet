@@ -91,6 +91,12 @@
 
 #define ROCKETNET_MAX_CLIENTS                                       1000
 
+// The in-memory loopback transport holds this many endpoints in one process:
+// enough for one server and ROCKETNET_MAX_CLIENTS clients. It is chosen only
+// by name ("loopback"), for tests and examples; auto never selects it.
+
+#define ROCKETNET_LOOPBACK_MAX_ENDPOINTS          ( ROCKETNET_MAX_CLIENTS + 1 )
+
 // The packet size: the UDP payload of one datagram on a 1500-byte MTU link,
 // the number every other size limit derives from (STANDARD.md _Packet
 // sizes_). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
@@ -131,6 +137,8 @@
 #define ROCKETNET_BACKEND_PUBLIC_KEY_BYTES                  32
 /** @brief Backend signing secret key size in bytes. */
 #define ROCKETNET_BACKEND_SECRET_KEY_BYTES                  64
+/** @brief Backend signing seed size in bytes. */
+#define ROCKETNET_BACKEND_SEED_BYTES                        32
 /** @brief Server sealing public key size in bytes. */
 #define ROCKETNET_SERVER_PUBLIC_KEY_BYTES                   32
 /** @brief Server sealing secret key size in bytes. */
@@ -827,6 +835,14 @@ struct rocketnet_receipt_t
 // ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL pointer, or
 // ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the crypto library refuses.
 ROCKETNET_EXPORT int rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
+
+// Derives the backend's Ed25519 signing keypair from a caller seed: seed is
+// ROCKETNET_BACKEND_SEED_BYTES long, and public_key and secret_key are as
+// above. The same seed always gives the same keypair. Returns
+// ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+// pointer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the crypto library
+// refuses. Secret keys are never logged.
+ROCKETNET_EXPORT int rocketnet_generate_backend_keypair_from_seed( const uint8_t * seed, uint8_t * public_key, uint8_t * secret_key );
 
 // The server's X25519 sealing keypair: public_key and secret_key are each
 // ROCKETNET_SERVER_PUBLIC_KEY_BYTES and ROCKETNET_SERVER_SECRET_KEY_BYTES

@@ -250,6 +250,18 @@ void public_connect_token_wrong_protocol_id_refused()
     public_token_server_teardown( &server );
 }
 
+#if ROCKETNET_ASSERTS
+// The NULL calls below hit rocketnet_api_null_guard, which fires
+// rocketnet_assert in a build with asserts (Debug) before it refuses. Count
+// those expected asserts instead of trapping, as test_unit_counter_classes.cpp
+// does; each NULL call must assert exactly once.
+static int public_token_expected_null_asserts = 0;
+static void public_token_expected_null_assert( const char *, const char *, const char *, int )
+{
+    public_token_expected_null_asserts++;
+}
+#endif
+
 void public_connect_token_null_or_short_buffer_refused()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -261,12 +273,21 @@ void public_connect_token_null_or_short_buffer_refused()
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     public_token_fill_user_data( user_data );
 
+#if ROCKETNET_ASSERTS
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    public_token_expected_null_asserts = 0;
+    rocketnet_assert_function( public_token_expected_null_assert );
+#endif
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
                                                                     public_token_protocol_id, public_token_addresses, 2,
                                                                     public_token_client_id, public_token_create_timestamp,
                                                                     public_token_expire_timestamp, public_token_timeout_seconds,
                                                                     user_data, NULL,
                                                                     ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+#if ROCKETNET_ASSERTS
+    rocketnet_assert_function( saved_assert );
+    rocketnet_unit_check( public_token_expected_null_asserts == 1 );
+#endif
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     memset( token, 0xa5, sizeof(token) );
@@ -279,12 +300,21 @@ void public_connect_token_null_or_short_buffer_refused()
     for ( int i = 0; i < (int) sizeof(token); i++ )
         rocketnet_unit_check( token[i] == 0xa5 );
 
+#if ROCKETNET_ASSERTS
+    saved_assert = rocketnet_assert_function_pointer;
+    public_token_expected_null_asserts = 0;
+    rocketnet_assert_function( public_token_expected_null_assert );
+#endif
     rocketnet_unit_check( rocketnet_write_production_connect_token( NULL, server_public_key,
                                                                     public_token_protocol_id, public_token_one_address, 1,
                                                                     public_token_client_id, public_token_create_timestamp,
                                                                     public_token_expire_timestamp, public_token_timeout_seconds,
                                                                     user_data, token,
                                                                     sizeof(token) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+#if ROCKETNET_ASSERTS
+    rocketnet_assert_function( saved_assert );
+    rocketnet_unit_check( public_token_expected_null_asserts == 1 );
+#endif
 
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
                                                                     public_token_protocol_id, public_token_one_address, 0,

@@ -7404,6 +7404,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_allocator",
     "rocketnet_allocator_ex",
     "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_backend_keypair_from_seed",
     "rocketnet_generate_server_keypair",
     "rocketnet_write_production_connect_token",
     "rocketnet_client_default_config",
@@ -7471,6 +7472,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_allocator",
     "rocketnet_allocator_ex",
     "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_backend_keypair_from_seed",
     "rocketnet_generate_server_keypair",
     "rocketnet_write_production_connect_token",
     "rocketnet_client_default_config",
@@ -7929,6 +7931,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_allocator( NULL, NULL ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_allocator_ex( NULL, NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair_from_seed( NULL, token, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_server_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_write_production_connect_token( token, token, 1, production_address, 1,
                                                                                   1, 0, 1, 10, NULL, NULL,
