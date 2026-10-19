@@ -370,6 +370,12 @@ if(ROCKETNET_BUILD_TESTS)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
         rocketnet_use_sodium(test)
     endif()
+    # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
+    # which includes <sodium.h>: the vendored header, as the transport's own
+    # targets see it (a host with no system libsodium, such as Windows, has no other)
+    if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
+        set_property( SOURCE test_unit_driver_loopback.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/sodium" )
+    endif()
     # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
     # compiled unchanged with the BPF build's defines behind a shadow include
     # directory of minimal kernel and libbpf headers, so the unit suite judges

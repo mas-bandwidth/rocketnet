@@ -213,15 +213,12 @@ static void driver_loopback_destroy_frees_the_port()
 }
 
 
-// The test binary does not link the vendored sodium directly (the production
-// archive carries it under renamed symbols), so the transport compiled into
-// this TU needs its two original-name sodium entry points. Route them to the
-// renamed implementations the archive does provide; the test never exercises
-// real randomness or cleanup past the fake driver's staging.
-extern "C" void rocketnet_sodium_randombytes_buf( void * const buf, const size_t size );
-extern "C" void rocketnet_sodium_sodium_memzero( void * const pnt, const size_t len );
-void randombytes_buf( void * const buf, const size_t size ) { rocketnet_sodium_randombytes_buf( buf, size ); }
-void sodium_memzero( void * const pnt, const size_t len ) { rocketnet_sodium_sodium_memzero( pnt, len ); }
+// The transport compiled into this TU includes <sodium.h>. CMakeLists.txt puts
+// the vendored sodium/ on this one source's include path (as the transport's
+// own targets have it), so its calls reach the renamed implementations the
+// production archive carries; a ROCKETNET_USE_SYSTEM_SODIUM build links the
+// system library instead. No original-name shim is needed either way, and the
+// test no longer depends on a system sodium header being installed.
 
 struct wire_totals_staged_fixture_t
 {
