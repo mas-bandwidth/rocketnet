@@ -1245,6 +1245,20 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                  (int) k >= client->next_connect_step &&
                  ( client->pause_until < 0 || (int) k >= client->pause_until ) )
             {
+                // RNSimFaults Connect: a client whose session ended takes a
+                // new generation, so its message object is built fresh; the
+                // object's one connection is bound at create and never
+                // rebound, and stale fragments of the old session must not
+                // reach the new one.
+                if ( client->generation > 0 )
+                {
+                    rocketnet_dst_client_runtime_destroy( w, i );
+                    if ( !rocketnet_dst_client_runtime_create( w, i ) )
+                    {
+                        rocketnet_dst_fail( w, "client_reconnect", "a client could not rebuild its message object" );
+                        break;
+                    }
+                }
                 rocketnet_dst_connect_client( w, i );
                 client->pause_until = -1;
             }
