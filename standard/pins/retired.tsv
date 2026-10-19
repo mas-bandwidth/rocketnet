@@ -1,0 +1,111 @@
+# Retired STANDARD.md conformance checks
+#
+# This manifest archives every comparison the retired checker
+# (tools/conformance/check_standard.py, dump_constants.cpp,
+# known_divergences.tsv, removed by this card) made, and where each now
+# lives: a pin row in standard/pins/ (named by its file and Name cell), a
+# derived relationship carried by the pins it is built from, or a rule now
+# stated by the standard section that owns it. The checker reads only
+# section-named pin files (standard/STYLE.md section 10); this file is a
+# documentation archive and is not compiled.
+#
+# Columns: old check label	carrying pin (file: Name) or disposition
+#
+# ---- fields at a glance (check_standard.py, Constants at a glance) ----
+version constant	transport.tsv: version
+prefilter header bytes	transport.tsv: prefilter header
+test filter value	RN-1 t5 vectors (TRANSPORT.md t5.unkeyed-accept)
+unkeyed filter epoch (test title constant)	transport.tsv: unkeyed filter epoch
+unkeyed filter epoch (its own row)	transport.tsv: unkeyed filter epoch
+highest packet type	transport.tsv: connection payload fragment packet
+lowest packet type	transport.tsv: connection request packet
+first reserved type	transport.tsv: first reserved packet type
+lowest client state	RN-1 t3 client-state table (carried by the t3 rows)
+highest client state	RN-1 t3 client-state table (carried by the t3 rows)
+associated data bytes	transport.tsv: associated data
+associated data bytes with ephemeral	transport.tsv: associated data with ephemeral key
+per-packet overhead	transport.tsv: per-packet overhead
+minimum ack block	transport.tsv: ack block minimum
+fragment header bytes	transport.tsv: fragment header
+maximum fragments	transport.tsv: fragments per payload maximum
+send budget default	transport.tsv: maximum packet size
+send budget maximum	transport.tsv: receive ceiling
+receive ceiling	transport.tsv: receive ceiling
+message config client_send_kbps default	m9.tsv: client_default_kbps
+message config server_send_kbps default	m9.tsv: server_default_kbps
+link MTU	transport.tsv: link MTU
+IPv4 packet size	transport.tsv: receive ceiling
+IPv6 packet size	carried by the RN-1 t2/t3 IPv6 sizing rows
+IPv4 packet size is the MTU less 20 and 8	derived from link MTU and receive ceiling pins
+IPv6 packet size is the MTU less 40 and 8	derived from the link MTU pin
+send budget is the IPv6 packet size	derived from the maximum packet size pin
+receive ceiling is the IPv4 packet size	derived from the receive ceiling pin
+payload capacity	transport.tsv: payload capacity
+receive payload	transport.tsv: received payload maximum
+payload capacity is the budget less overhead and block, floored to eight	derived from payload capacity, send budget, overhead and ack pins
+receive payload is the ceiling less overhead and block	derived from received payload and receive ceiling pins
+SINGLE message bytes	m2.tsv: SINGLE message limit
+unreliable one-record threshold	m2.tsv: UNRELIABLE record limit
+unreliable sequenced threshold narrow	m2.tsv: UNRELIABLE_SEQUENCED record limit
+unreliable sequenced threshold WIDE	m2.tsv: UNRELIABLE_SEQUENCED record limit, WIDE
+fragment stride sent	transport.tsv: fragment stride
+fragment stride received	transport.tsv: received fragment stride maximum
+connect token bytes	transport.tsv: connect token
+signed connect data bytes	transport.tsv: signed connect data
+sealed block bytes	transport.tsv: sealed block
+private block bytes	transport.tsv: private block
+sequence wire bytes	transport.tsv: sequence
+cookie key bytes	transport.tsv: token key
+KDF context strings	transport.tsv: handshake/server/client session labels
+#
+# ---- the packet size table (check_standard.py, Packet sizes) ----
+packet type N and wire size for type N	RN-1 t5 wire-size rows (transport.tsv and t5.tsv)
+receive ceiling on session types	transport.tsv: receive ceiling
+the implementation defines no unpublished packet type	carried by the t5 packet-type rows
+#
+# ---- known divergences (known_divergences.tsv, removed) ----
+timing.send_rate	transport.tsv: send rate
+timing.cookie_lifetime	transport.tsv: cookie lifetime
+config.max_token_lifetime_seconds	t12.tsv: maximum token lifetime
+config.allow_negative_timeout	no pin; the newer config table has no such field (see report)
+sizing.encryption_map	no pin; prose sizing rule in RN-1 t3 (see report)
+#
+# ---- the transport configuration tables (check_standard.py) ----
+server send_rate field	transport.tsv: send rate
+server handshake_deadline_seconds field	transport.tsv: server handshake_deadline_seconds
+server cookie_lifetime_seconds field	transport.tsv: cookie lifetime
+server max_token_lifetime_seconds field	t12.tsv: maximum token lifetime
+server allow_negative_timeout field	no pin; the newer config table has no such field (see report)
+#
+# ---- the timing table (check_standard.py) ----
+redundant disconnect packets (timing table)	transport.tsv: server redundant disconnect packets
+redundant disconnect packets (client)	transport.tsv: client redundant disconnect packets
+send rate (timing table)	transport.tsv: send rate
+handshake deadline (timing table)	transport.tsv: server handshake_deadline_seconds
+half-open idle deadline (timing table)	t17.tsv: half-open idle deadline
+cookie lifetime (timing table)	transport.tsv: cookie lifetime
+cookie key rotation (timing table)	transport.tsv: cookie key rotation
+connection timeout	carried by the RN-1 t17 connection-timeout rule (no protocol default macro)
+#
+# ---- the glance table's timing and sizing rows (check_standard.py) ----
+send rate (glance table)	transport.tsv: send rate
+handshake deadline (glance table)	transport.tsv: server handshake_deadline_seconds
+handshake work budget (glance table)	t17.tsv: handshake work budget
+failed-signature budget (glance table)	t17.tsv: failed-signature budget
+failed-signature window (glance table)	t17.tsv: failed-signature window
+cookie lifetime (glance table)	transport.tsv: cookie lifetime
+cookie key rotation (glance table)	transport.tsv: cookie key rotation
+redundant disconnects (glance table)	transport.tsv: server/client redundant disconnect packets
+replay buffer at least	transport.tsv: replay window depth minimum
+replay window bits	transport.tsv: replay window depth minimum
+replay buffer maximum	transport.tsv: replay window depth maximum
+kernel replay prefilter window	t14.tsv: kernel replay window
+used-token history ratio	transport.tsv: used-token history per slot
+mapping-table sizing rule (prose)	no pin; prose sizing rule in RN-1 t3 (see report)
+#
+# ---- ordered connection-request checks (check_standard.py) ----
+ordered connection-request check list	carried by the RN-1 t12/t13 receiver-checks order
+expired token refusal rule	carried by the RN-1 t12 token-time refusal checks
+future-created token refusal rule	carried by the RN-1 t12 token-time refusal checks
+overlong token refusal rule	carried by the RN-1 t12 token-time refusal checks
+token-time refusal counters in request order	carried by the RN-1 t18 counter table (check_counter_registry)
