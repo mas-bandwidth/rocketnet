@@ -84,12 +84,15 @@ struct rocketnet_server_send_buffer_t
 // processing walks them. the stride is the receive ceiling, so any packet
 // the wire admits fits a slot; the pump moves the batch in as few syscalls
 // as the platform earned (#100) and every platform serves the same call.
+// the buffer is sized to a full per-update receive budget so one update can
+// absorb everything the budget allows, draining a backlog in as few reads
+// as the endpoint can answer (see ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE).
 
 struct rocketnet_server_receive_buffer_t
 {
-    rocketnet_address_t from[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
-    int packet_bytes[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
-    uint8_t data[ROCKETNET_RECEIVE_CEILING*ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+    rocketnet_address_t from[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];
+    int packet_bytes[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];
+    uint8_t data[ROCKETNET_RECEIVE_CEILING*ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];
 };
 
 // the portable payload ring: what the acquire/commit surface fills between
@@ -1592,8 +1595,13 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     else
     {
 
-    // Pull full batches until the endpoint is empty or this update reaches
-    // its packet budget; each batch is processed before the next is read.
+    // Drain the receive queue up to this update's packet budget. Each read
+    // takes whatever the endpoint has queued, up to the remaining budget, and
+    // is processed before the next read; what is left past the budget stays
+    // in the transport's queue for the next update, as before. The budget is
+    // ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS (16 * 1000
+    // = 16000), which equals the payload-batch capacity, so all packets read
+    // in one update fit the payload batch that feeds the application.
 
     struct rocketnet_server_receive_buffer_t * receive_buffer = &server_transport->receive_buffer;
 
@@ -1605,8 +1613,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     do
     {
         const int remaining_budget = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE - packets_processed;
-        batch_capacity = remaining_budget < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS ?
-            remaining_budget : ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
+        batch_capacity = remaining_budget;
         num_received = server_transport->io.operations->receive_batch( server_transport->io.instance,
                                                                         receive_buffer->from,
                                                                         receive_buffer->data,
