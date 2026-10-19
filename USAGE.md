@@ -332,15 +332,12 @@ channel for that client.
 ```c
 #include "rocketnet.h"
 
-void server_exchange( struct rocketnet_server_t * server, int client_index, int channel )
+void server_frame( struct rocketnet_server_t * server, int client_index, int channel, double time )
 {
-    const uint8_t payload[] = { 1, 2, 3, 4 };
-    uint32_t serial = rocketnet_server_send( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, payload, (int) sizeof( payload ) );
-    if ( serial == 0 )
-    {
-        /* the send was refused: check the connection */
-    }
+    /* 1. pump the transport and take in what arrived */
+    rocketnet_server_update( server, time );
 
+    /* 2. receive and release every delivered message */
     const uint8_t * data;
     int bytes;
     while ( rocketnet_server_receive( server, client_index, channel, &data, &bytes ) )
@@ -348,6 +345,19 @@ void server_exchange( struct rocketnet_server_t * server, int client_index, int 
         /* process data and bytes, then release the view */
         rocketnet_server_release( server, client_index, data );
     }
+
+    /* 3. run the game simulation for this frame */
+
+    /* 4. queue this frame's outgoing messages */
+    const uint8_t payload[] = { 1, 2, 3, 4 };
+    uint32_t serial = rocketnet_server_send( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, payload, (int) sizeof( payload ) );
+    if ( serial == 0 )
+    {
+        /* the send was refused: check the connection */
+    }
+
+    /* 5. last: send now, so this frame's messages leave this frame */
+    rocketnet_server_send_packets( server );
 
     struct rocketnet_receipt_t receipts[64];
     int count = rocketnet_server_receipts( server, client_index, receipts, 64 );
