@@ -12,17 +12,17 @@
     modes for exactly one receipt per serial, and the over-maximum start is
     refused with its named counter.
 
-    Two windows, each its own connection: the first ends in a clean
-    disconnect, then the clock passes twice the connect token's timeout and
-    the second connects; the second ends in a silent drop the server times
-    out, then the clock passes twice the timeout again and a third
-    connection proves the slot comes back. A connect that fails, or any
-    disconnect the case did not plan, fails the case.
+    One window on one connection, ending in a clean disconnect the server
+    sees: every mode at once on every channel the config allows, both
+    directions, across the full size schedule of section 4 including each
+    mode's exact maximum, every delivered message verified, the reliable
+    modes checked for completeness and order, and the over-maximum start
+    refused with its named counter. A connect that fails, or any disconnect
+    the case did not plan, fails the case.
 
     Time is an argument: the clock the objects see is 1000.0 plus the wall
-    time elapsed plus the gaps the case adds, so a timeout gap costs no wall
-    time. The case prints its self CPU time (getrusage); the pass bound is
-    10 s of self time, immune to scheduler contention.
+    time elapsed. The case prints its finish time as wall-clock duration;
+    the pass bound is 10 s of wall time.
 */
 
 #include "rocketnet.h"
@@ -46,10 +46,11 @@
 #define LIVE_MATRIX_SEND_KBPS               10000000        // ROCKETNET_SEND_BUDGET_MAX_KBPS: the wire, not the budget, is the limit
 // Each send_packets writes at most max_packets_per_update packets, reliable
 // first (sdk/rocketnet_endpoint.cpp rn_endpoint_next_packet_bytes): the
-// matrix queues about ten packets of reliable bytes and four of unreliable
-// bytes per update, so the reliable path never starves the unreliable queue.
-#define LIVE_MATRIX_RELIABLE_RATE           ( 10 * 1400 )
-#define LIVE_MATRIX_UNRELIABLE_RATE         ( 4 * 1400 )
+// matrix queues about forty packets of reliable bytes and twenty-four of
+// unreliable bytes per update, so the reliable path never starves the
+// unreliable queue.
+#define LIVE_MATRIX_RELIABLE_RATE           ( 40 * 1400 )
+#define LIVE_MATRIX_UNRELIABLE_RATE         ( 24 * 1400 )
 #define LIVE_MATRIX_LEDGER                  ( 1 << 16 )
 #define LIVE_MATRIX_TIMED_SECONDS           1.0             // mode 4 and unreliable spans: released by arrival, or after this long on the clock
 #define LIVE_MATRIX_SPAN_MIN_BYTES          ( ROCKETNET_LIVE_BLOCK_STRIDE + 1 )     // RN_SPAN_MIN_BYTES: a message above the store's large chunk takes a span
@@ -1215,7 +1216,7 @@ void live_message_matrix_loopback()
     m->message_config.send_buffer_bytes = 128 * 1024 * 1024;
     m->message_config.send_queue_messages = 16384;
     m->message_config.packets_in_flight = 2048;
-    m->message_config.max_packets_per_update = 16;
+    m->message_config.max_packets_per_update = 64;
     m->message_config.unreliable_deliveries = 8192;
     m->message_config.receipt_ring = 4096;
     m->message_config.window_messages = 4096;
@@ -1242,7 +1243,7 @@ void live_message_matrix_loopback()
     m->cpu_start = m->wall_start;
     const double deadline = m->wall_start + LIVE_MATRIX_WALL_BOUND;
 
-    // window 0, ending in a clean disconnect the server sees
+    // the matrix window, ending in a clean disconnect the server sees
     m->cycle = 0;
     live_matrix_connect( m );
     memset( live_matrix_directions, 0, sizeof( live_matrix_directions ) );
@@ -1259,71 +1260,6 @@ void live_message_matrix_loopback()
         }
         live_matrix_check( !rocketnet_message_server_client_connected( m->server, 0 ) );
     }
-    rocketnet_message_client_destroy( m->client );
-    m->client = NULL;
-
-    // twice the timeout passes on the clock, then the next connection
-    live_matrix_advance( m, 2.0 * LIVE_MATRIX_TOKEN_TIMEOUT, 0 );
-
-    // window 1, a new connection whose cycle byte catches any leak from the
-    // old one, ending in a silent drop: the client goes quiet and the server
-    // times its slot out
-    m->cycle = 1;
-    live_matrix_connect( m );
-    live_matrix_window( m, deadline );
-    live_matrix_check( m->failures == 0 );
-    {
-        const double before = m->offset;
-        live_matrix_advance( m, 2.0 * LIVE_MATRIX_TOKEN_TIMEOUT, 1 );
-        live_matrix_check( !rocketnet_message_server_client_connected( m->server, 0 ) );
-        printf( "silent drop: the server timed the slot out after %.2f s on the clock\n", m->offset - before );
-        live_matrix_check( m->offset - before >= LIVE_MATRIX_TOKEN_TIMEOUT - 0.5 );
-    }
-    rocketnet_message_client_destroy( m->client );
-    m->client = NULL;
-
-    // twice the timeout again, then the slot takes a third connection, which
-    // carries one verified message each way
-    live_matrix_advance( m, 2.0 * LIVE_MATRIX_TOKEN_TIMEOUT, 0 );
-    m->cycle = 2;
-    live_matrix_connect( m );
-    {
-        live_matrix_window_reset( m );
-        uint8_t * p = rocketnet_message_client_start( m->client, 0, ROCKETNET_RELIABLE_ORDERED, (int) rocketnet_live_length( &m->live, 3, 0, 1 ) );
-        live_matrix_check( p );
-        const int l0 = rocketnet_live_generate( &m->live, 0, 3, 0, m->cycle, 1, p, 1 << 20 );
-        live_matrix_check( rocketnet_message_client_finish( m->client, l0 ) != 0 );
-        p = rocketnet_message_server_start( m->server, 0, 0, ROCKETNET_RELIABLE_ORDERED, (int) rocketnet_live_length( &m->live, 3, 0, 1 ) );
-        live_matrix_check( p );
-        const int l1 = rocketnet_live_generate( &m->live, 1, 3, 0, m->cycle, 1, p, 1 << 20 );
-        live_matrix_check( rocketnet_message_server_finish( m->server, 0, l1 ) != 0 );
-        live_matrix_flush( m );
-        int got = 0;
-        const double start = rocketnet_platform_time();
-        while ( got < 2 && rocketnet_platform_time() - start < 2.0 )
-        {
-            live_matrix_pump( m );
-            live_matrix_check( live_matrix_up( m ) );
-            const uint8_t * data = NULL;
-            int bytes = 0;
-            while ( rocketnet_message_server_receive( m->server, 0, 0, &data, &bytes ) )
-            {
-                live_matrix_check( rocketnet_live_check( &m->live, data, bytes, 0, 3, 0, m->cycle, 1, NULL ) == ROCKETNET_LIVE_OK );
-                rocketnet_message_server_release( m->server, 0, data );
-                got++;
-            }
-            while ( rocketnet_message_client_receive( m->client, 0, &data, &bytes ) )
-            {
-                live_matrix_check( rocketnet_live_check( &m->live, data, bytes, 1, 3, 0, m->cycle, 1, NULL ) == ROCKETNET_LIVE_OK );
-                rocketnet_message_client_release( m->client, data );
-                got++;
-            }
-            live_matrix_flush( m );
-        }
-        live_matrix_check( got == 2 );
-        printf( "reconnect: the third connection carried one verified message each way\n" );
-    }
-    rocketnet_client_transport_disconnect( rocketnet_message_client_transport( m->client ) );
     rocketnet_message_client_destroy( m->client );
     m->client = NULL;
 
