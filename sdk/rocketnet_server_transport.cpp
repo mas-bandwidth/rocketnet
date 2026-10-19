@@ -34,6 +34,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_platform.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
+#include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
 
 #include <sodium.h>
@@ -220,6 +221,7 @@ struct rocketnet_server_transport_t
 
     double time;                                        // the game's clock, last seen
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
+    struct rocketnet_network_simulator_t * link_simulator;     // dev-only outgoing link model; NULL when off
 
     // the fragmentation shape from the config, and the send arena for
     // over-wire-capacity requests -- allocated once at create, to the
@@ -396,6 +398,47 @@ static void rocketnet_server_driver_send_packets( rocketnet_server_transport_t *
     transport->io.operations->flush( transport->io.instance );
 }
 
+// The public link simulator, development only: the transport's outgoing
+// datagrams enter an in-memory wire and due ones leave it for the driver on
+// the caller's update clock. As in the client, the wire's destination field
+// carries the real destination and its source field is a private sink, so one
+// simulator serves every client a server talks to.
+static const rocketnet_address_t rocketnet_server_link_simulator_sink = { { { 0 } }, 0, ROCKETNET_ADDRESS_IPV4 };
+
+static void rocketnet_server_link_flush( rocketnet_server_transport_t * server_transport )
+{
+    if ( !server_transport->link_simulator )
+        return;
+    for (;;)
+    {
+        rocketnet_address_t to;
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        const int bytes = rocketnet_network_simulator_receive( server_transport->link_simulator, &rocketnet_server_link_simulator_sink, server_transport->time, &to, packet );
+        if ( bytes <= 0 )
+            break;
+        rocketnet_platform_send_t send;
+        send.to = &to;
+        send.packet_data = packet;
+        send.packet_bytes = bytes;
+        server_transport->io.operations->send_batch( server_transport->io.instance, &send, 1 );
+    }
+}
+
+static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * server_transport, const rocketnet_platform_send_t * sends, int count )
+{
+    if ( !server_transport->link_simulator )
+    {
+        server_transport->io.operations->send_batch( server_transport->io.instance, sends, count );
+        return;
+    }
+    for ( int i = 0; i < count; i++ )
+    {
+        rocketnet_network_simulator_send( server_transport->link_simulator, sends[i].to, &rocketnet_server_link_simulator_sink,
+                                          sends[i].packet_data, sends[i].packet_bytes, server_transport->time );
+    }
+    rocketnet_server_link_flush( server_transport );
+}
+
 // Control frames borrow this buffer only during synchronous send_batch.
 // Drain full batches as update fills them, so receive responses cannot
 // consume the entire maintenance budget and servers can service >256 slots.
@@ -416,7 +459,7 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
         }
     }
     if ( num_sends > 0 )
-        server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
+        rocketnet_server_link_send_batch( server_transport, sends, num_sends );
     server_transport->send_buffer.num_packets = 0;
 }
 
@@ -809,6 +852,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
         return NULL;
     }
 
+    if ( !rocketnet_config_validate_public_link_simulator( "server", &effective_config, config_fields, num_config_fields, rocketnet_public_link_simulator_development() ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return NULL;
+    }
+
     config = &effective_config;
 
     // Refuse large cross-field allocations before sockets, drivers or arenas
@@ -985,6 +1035,25 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
 
     server_transport->context = context;
     server_transport->time = time;
+
+    if ( config->simulated_loss_percent != 0 || config->simulated_latency_ms != 0 ||
+         config->simulated_jitter_ms != 0 || config->simulated_duplicate_percent != 0 )
+    {
+        server_transport->link_simulator = rocketnet_network_simulator_create( context, 4096, 1 );
+        if ( !server_transport->link_simulator )
+        {
+            rocketnet_error( "server could not allocate the public link simulator" );
+            rocketnet_server_transport_destroy( server_transport );
+            if ( status )
+                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+            return NULL;
+        }
+        rocketnet_network_simulator_config( server_transport->link_simulator,
+                                            (double) config->simulated_latency_ms / 1000.0,
+                                            (double) config->simulated_jitter_ms / 1000.0,
+                                            (float) config->simulated_loss_percent,
+                                            (float) config->simulated_duplicate_percent );
+    }
 
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
@@ -1317,6 +1386,9 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     if ( server_transport->replay_marks )
         rocketnet_server_replay_marks_destroy( server_transport->replay_marks );
 
+    if ( server_transport->link_simulator )
+        rocketnet_network_simulator_destroy( server_transport->link_simulator );
+
     // teardown branches on which socket is live, so a partial create --
     // any rung granted or none -- destroys cleanly
 
@@ -1449,6 +1521,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     server_transport->packet_leases.reset();
 
     server_transport->time = time;
+
+    rocketnet_server_link_flush( server_transport );
 
     rocketnet_server_update_stats( server_transport, time );
 
@@ -2344,7 +2418,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     }
 
     if ( num_sends > 0 )
-        server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
+        rocketnet_server_link_send_batch( server_transport, sends, num_sends );
 
     ring->num_packets = 0;
 
