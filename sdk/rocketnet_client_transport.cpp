@@ -989,14 +989,6 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
         return;
     rocketnet_assert( client_transport );
 
-    const rocketnet_address_t server_address = client_transport->protocol.server_address;
-    if ( client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE ||
-         client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-    {
-        rocketnet_client_transport_disconnect( client_transport );
-        rocketnet_client_link_drain( client_transport );
-    }
-
     if ( ( client_transport->io_thread || client_transport->step_in_update ) &&
          ( client_transport->thread || client_transport->step_driven || client_transport->step_in_update ) )
     {
@@ -1024,7 +1016,7 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
                     rocketnet_platform_sleep( 0.0001 );
             }
             rocketnet_client_send_rings_reopen( &io->rings, other );
-            const int result = rocketnet_client_io_hand_off( io, committed, &server_address );
+            const int result = rocketnet_client_io_hand_off( io, committed, &client_transport->protocol.server_address );
             rocketnet_assert( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
             (void) result;
         }
@@ -1956,8 +1948,6 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
         for ( int i = 0; i < burst_count; i++ )
             rocketnet_client_transport_io_commit_packet( client_transport, burst + i * ROCKETNET_SEND_BUDGET, burst_bytes );
         rocketnet_client_transport_io_hand_off( client_transport, &server_address );
-        if ( client_transport->step_in_update )
-            rocketnet_client_io_step( &client_transport->client_io, false );
         return;
     }
 

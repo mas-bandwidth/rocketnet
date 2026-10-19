@@ -1508,27 +1508,6 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         return;
     rocketnet_assert( server_transport );
 
-    if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_STOPPED &&
-         server_transport->protocol.client_slots &&
-         server_transport->protocol.encryption_map &&
-         server_transport->send_arena )
-    {
-        bool disconnected_any = false;
-        for ( int i = 0; i < rocketnet_client_slots_max_clients( server_transport->protocol.client_slots ); ++i )
-        {
-            if ( rocketnet_server_transport_is_client_connected( server_transport, i ) )
-            {
-                rocketnet_server_transport_disconnect_client( server_transport, i );
-                disconnected_any = true;
-            }
-        }
-        if ( disconnected_any )
-        {
-            rocketnet_server_transport_send_packets( server_transport );
-            rocketnet_server_link_drain( server_transport );
-        }
-    }
-
     if ( server_transport->protocol.encryption_map )
         rocketnet_encryption_map_destroy( server_transport->protocol.encryption_map );
     if ( server_transport->protocol.used_token_history )
