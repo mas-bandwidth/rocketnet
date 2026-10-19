@@ -471,6 +471,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_current( void *
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, NULL, NULL, sizeof(struct rocketnet_client_transport_config_t), 0 );
 }
 
+rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
+{
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof(struct rocketnet_client_transport_config_t), 0 );
+}
+
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
     const rocketnet_client_driver_operations_t * operations, void * driver_context )
 {

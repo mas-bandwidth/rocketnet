@@ -17,7 +17,7 @@
 
 // The lifecycle card that lands after this one renames start, finish, receive,
 // release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_messages. The header at this
+// *_receive_message, *_release_message and *_send_packets. The header at this
 // base still declares the old names, so this example uses them.
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
@@ -55,35 +55,35 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-                rocketnet_client_release( client, data );
+            while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+                rocketnet_client_release_message( client, data );
             for ( int i = 0; i < max_clients; i++ )
             {
                 if ( !rocketnet_server_client_connected( server, i ) )
                     continue;
-                while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+                while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
                 {
-                    uint8_t * out = rocketnet_server_start( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
                     if ( out )
                     {
                         memcpy( out, data, (size_t) bytes );
-                        rocketnet_server_finish( server, i, bytes );
+                        rocketnet_server_finish_message( server, i, bytes );
                     }
-                    rocketnet_server_release( server, i, data );
+                    rocketnet_server_release_message( server, i, data );
                 }
             }
         }
         // (3) simulate; (4) queue this frame's outgoing message once connected
         if ( connected )
         {
-            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
             if ( out )
             {
                 memcpy( out, payload, sizeof( payload ) );
-                rocketnet_client_finish( client, (int) sizeof( payload ) );
+                rocketnet_client_finish_message( client, (int) sizeof( payload ) );
             }
         }
-        // (5) send_messages (send_packets before the lifecycle rename) is last
+        // (5) send_packets is last
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.001 );
@@ -112,12 +112,22 @@ int main( void )
     server_config.max_clients = 2;
     server_config.transport = "loopback";
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
-    client = rocketnet_client_create( NULL, connect_token, &client_config, NULL, 0 );
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
     CHECK( run_connect_and_traffic( server, client ) == 0 );
     const int client_index = rocketnet_client_index( client );
@@ -146,11 +156,14 @@ int main( void )
     }
     printf( "client after disconnect state %s reason %d\n", rocketnet_client_state_name( rocketnet_client_state( client ) ), rocketnet_client_disconnect_reason( client ) );
     printf( "server client %d disconnect reason %d\n", client_index, rocketnet_server_disconnect_reason( server, client_index ) );
-    printf( "PASS\n" );
     result = 0;
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

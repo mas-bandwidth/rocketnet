@@ -952,6 +952,18 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps )
 {
+    return rocketnet_message_server_create_ex( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, NULL );
+}
+
+struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
+                                                                        const struct rocketnet_server_transport_config_t * transport_config,
+                                                                        const struct rocketnet_message_config_t * message_config,
+                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status )
+{
+    int ignored = ROCKETNET_STATUS_OK;
+    if ( !status )
+        status = &ignored;
+    *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !rocketnet_api_null_guard( address ) )
         return NULL;
 
@@ -963,6 +975,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
     if ( per_client_send_kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
     {
         rocketnet_error( "message server create refused: send budget above maximum" );
+        *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return NULL;
     }
     int32_t kbps = (int32_t) per_client_send_kbps;
@@ -983,16 +996,19 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
     if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) || !rn_message_object_send_kbps_env_valid( 1 ) )
     {
         rocketnet_error( "message server create refused: message config, client count or send budget" );
+        *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return NULL;
     }
 
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_sized( context, address, transport_config, sizeof(*transport_config) );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( context, address, transport_config, status );
     if ( !transport )
         return NULL;
 
     rn_message_link_t link;
     rn_message_server_link( &link, transport );
-    return (rocketnet_message_server_t *) rn_message_object_create( context, &link, 1, max_clients, message_config, memory, memory_bytes, kbps, 0.0 );
+    rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create( context, &link, 1, max_clients, message_config, memory, memory_bytes, kbps, 0.0 );
+    *status = server ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY;
+    return server;
 }
 
 void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server )

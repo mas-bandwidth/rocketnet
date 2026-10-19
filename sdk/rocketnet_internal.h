@@ -37,6 +37,73 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
 
+// -----------------------------------------
+//          status-returning lifecycle forms
+// -----------------------------------------
+
+// The status-returning forms of rocketnet_init, rocketnet_term and
+// rocketnet_allocator. Internal: the library, its tests and tools call them;
+// the public API is the bool forms in rocketnet.h.
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Initializes RocketNet and optionally returns the exact status code.
+ *
+ * This has the same lifecycle and logging behavior as rocketnet_init, which is
+ * this call with a NULL status. It writes the exact section-2.1 code to status
+ * on every return path when status is non-NULL; a failure logs one error line.
+ * No client or server may be created until initialization succeeds.
+ *
+ * @param context Opaque allocator context retained for platform allocations; NULL is allowed.
+ * @param status Optional writable int receiving a ROCKETNET_STATUS_* value; NULL skips the write.
+ * @return true on success; false on an existing transition or platform/crypto failure.
+ * @code
+ * int status;
+ * if (!rocketnet_init_ex(NULL, &status)) {
+ *     fprintf(stderr, "init failed: %s\n", rocketnet_status_string(status));
+ * }
+ * @endcode
+ */
+bool rocketnet_init_ex( void * context, int * status );
+
+/**
+ * @brief Terminates the library and returns why termination did or did not occur.
+ *
+ * Call after every client and server is destroyed and every SDK allocation is
+ * released. A failure logs one error line. Do not race termination with other
+ * SDK work.
+ *
+ * @return The section-2.1 code: ROCKETNET_STATUS_OK on termination,
+ * ROCKETNET_STATUS_NOT_INITIALIZED if the library is not initialized (nothing
+ * to terminate) or is transitioning, or ROCKETNET_STATUS_LIVE_ALLOCATIONS while
+ * SDK allocations remain and the term refuses.
+ */
+int rocketnet_term_ex( void );
+
+/** @brief Replaces allocator callbacks and returns the refusal reason. @param malloc_function Non-NULL allocator callback. @param free_function Non-NULL matching deallocator. @return The section-2.1 code: ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a partial pair, ALREADY_INITIALIZED after init or during the transition, or LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line. Install before init with no live allocations. */
+int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
+
+// The connection a public client holds (NULL while DISCONNECTED) and the
+// running message server a public server holds (NULL while stopped), for
+// tests and tools that read the layers underneath.
+struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client );
+struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
+
+// For tests that build the layers by hand: a public client holding an
+// existing connection, and a public server holding an existing running
+// message server; destroy destroys what was adopted. The adopted object has
+// no block of its own, so a connect or start after the adopted one ends
+// allocates its own, with default configs.
+struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection );
+struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running );
+
+#ifdef __cplusplus
+}
+#endif
+
 /** @brief Connection classification when the type is unknown. */
 #define ROCKETNET_CONNECTION_TYPE_UNKNOWN                              0
 /** @brief Connection classification for wired access. */
@@ -454,7 +521,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( send_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( max_packets_per_update,      4,      1, 256,                    0 )                                         \
+    INT_FIELD( max_packets_per_update,    256,      1, 1024,                   0 )                                         \
     INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
     INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \

@@ -3359,6 +3359,11 @@ void rocketnet_test_public_client_server_queries()
     const uint64_t memory_bytes = rocketnet_server_required_memory( &server_config );
     rocketnet_check( memory_bytes > 0 );
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_max_clients( server ) == 3 );
     rocketnet_test_env_restore( &max_clients_guard );
@@ -3371,7 +3376,12 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, token, &client_config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     rocketnet_check( client );
 
     const double wall_start = rocketnet_time();
@@ -3384,22 +3394,22 @@ void rocketnet_test_public_client_server_queries()
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const uint8_t payload[16] = { 1, 2, 3 };
-            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
-            rocketnet_check( rocketnet_client_finish( client, (int) sizeof( payload ) ) != 0 );
-            out = rocketnet_server_start( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            rocketnet_check( rocketnet_client_finish_message( client, (int) sizeof( payload ) ) != 0 );
+            out = rocketnet_server_start_message( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
-            rocketnet_check( rocketnet_server_finish( server, rocketnet_client_index( client ), (int) sizeof( payload ) ) != 0 );
+            rocketnet_check( rocketnet_server_finish_message( server, rocketnet_client_index( client ), (int) sizeof( payload ) ) != 0 );
             exchanged++;
         }
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_server_receive( server, 0, 0, &data, &bytes ) )
-            rocketnet_server_release( server, 0, data );
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
+            rocketnet_server_release_message( server, 0, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.005 );
@@ -3418,7 +3428,7 @@ void rocketnet_test_public_client_server_queries()
     // read every value through its getter and through the layer it names,
     // with no update between, so both see the same numbers
 
-    struct rocketnet_message_client_t * message_client = (struct rocketnet_message_client_t *) client;
+    struct rocketnet_message_client_t * message_client = rocketnet_client_message_client( client );
     struct rocketnet_client_transport_t * client_transport = rocketnet_message_client_transport( message_client );
     const struct rocketnet_counters_t * ct = rocketnet_client_transport_counters( client_transport );
     const struct rocketnet_counters_t * cm = rocketnet_message_client_counters( message_client );
@@ -3449,7 +3459,7 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_BANDWIDTH_RECEIVED ) == (double) cs.bandwidth_received_kbps );
     rocketnet_check( rocketnet_client_stat( client, ROCKETNET_CLIENT_STAT_COUNT ) == 0.0 );
 
-    struct rocketnet_message_server_t * message_server = (struct rocketnet_message_server_t *) server;
+    struct rocketnet_message_server_t * message_server = rocketnet_server_message_server( server );
     struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( message_server );
     const struct rocketnet_counters_t * st = rocketnet_server_transport_counters( server_transport );
     const struct rocketnet_counters_t * sm = rocketnet_message_server_counters( message_server );
