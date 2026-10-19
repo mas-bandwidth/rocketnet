@@ -213,17 +213,15 @@ static void driver_loopback_destroy_frees_the_port()
 }
 
 
-// With a system sodium header the transport compiled into this TU calls the
-// original sodium names, so route them to the renamed implementations the
-// archive provides and the test never exercises real randomness or cleanup
-// past the fake driver's staging. The vendored header already renames those
-// calls to the archive's symbols, so no wrappers are needed there.
-#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
+// The test binary does not link the vendored sodium directly (the production
+// archive carries it under renamed symbols), so the transport compiled into
+// this TU needs its two original-name sodium entry points. Route them to the
+// renamed implementations the archive does provide; the test never exercises
+// real randomness or cleanup past the fake driver's staging.
 extern "C" void rocketnet_sodium_randombytes_buf( void * const buf, const size_t size );
 extern "C" void rocketnet_sodium_sodium_memzero( void * const pnt, const size_t len );
 void randombytes_buf( void * const buf, const size_t size ) { rocketnet_sodium_randombytes_buf( buf, size ); }
 void sodium_memzero( void * const pnt, const size_t len ) { rocketnet_sodium_sodium_memzero( pnt, len ); }
-#endif
 
 struct wire_totals_staged_fixture_t
 {
