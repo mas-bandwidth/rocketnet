@@ -4,7 +4,8 @@ Low-level client/server UDP transport library.
 
 ## Building
 
-See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
+See [BUILDING.md](BUILDING.md) (and [docs/WINDOWS.md](docs/WINDOWS.md) for the
+Windows transport guide). Binaries land in `bin/`, and on Windows in
 `bin\Release\`; run the test suite with `./bin/test`, or with
 `bin\Release\test.exe` on Windows (PowerShell or cmd.exe).
 
@@ -12,6 +13,9 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 
 - [USAGE.md](USAGE.md) — how to drive it: the frame, the delivered-batch and
   burned-sequence contracts, configuration, and driver selection.
+- [docs/WINDOWS.md](docs/WINDOWS.md) — Windows server transports (`portable`,
+  `iocp`, `rio`), `USO`/`URO` offloads, `RIO` pinned memory, firewall rules,
+  and test suites.
 - [sdk/rocketnet.h](sdk/rocketnet.h) — the public header, and the authority
   wherever a contract is written down.
 - [examples/README.md](examples/README.md) — the feature-focused examples series, starting with hello.

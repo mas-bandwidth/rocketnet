@@ -57,7 +57,9 @@ Dependencies, per platform, as CI installs them:
     brew install cmake
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
-under `bin\<config>\`. It needs, installed once:
+under `bin\<config>\` (see [docs/WINDOWS.md](docs/WINDOWS.md) for the Windows
+transport guide covering `portable`, `iocp`, `rio`, `USO`/`URO`, firewall
+rules, and test commands). It needs, installed once:
 
 - Visual Studio 18 (Visual Studio 2026) with the **Desktop development with C++**
   workload, which carries the MSVC x64 toolchain and the Windows SDK.
