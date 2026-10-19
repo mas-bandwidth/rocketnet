@@ -256,6 +256,8 @@ struct rocketnet_client_transport_config_t
     int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
     int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off
     int simulated_duplicate_percent;                // development only: simulated duplicate 0..100, 0 off
+    int simulated_drop_every_nth;                   // development only: drop every Nth outgoing datagram (2 .. 1000000), counted from the first send; 0 off
+    int simulated_reverse_window;                   // development only: reverse each window of W outgoing datagrams (2 .. 64), flushed whole at the end of each send_packets; 0 off
 };
 
 // a NULL config is a counted no-op.
@@ -599,6 +601,8 @@ struct rocketnet_server_transport_config_t
     int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
     int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off
     int simulated_duplicate_percent;                // development only: simulated duplicate 0..100, 0 off
+    int simulated_drop_every_nth;                   // development only: drop every Nth outgoing datagram (2 .. 1000000), counted from the first send; 0 off
+    int simulated_reverse_window;                   // development only: reverse each window of W outgoing datagrams (2 .. 64), flushed whole at the end of each send_packets; 0 off
 };
 
 // a NULL config is a counted no-op.
