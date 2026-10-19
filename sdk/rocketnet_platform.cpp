@@ -2708,10 +2708,10 @@ static void * thread_function_shim( void * data )
     rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
 
-    // A default-QoS thread on macOS is napped and its timers are coalesced, so
-    // the I/O thread's 1 ms bounded wait stretches. Set the class at thread
-    // start, before the wait loop, so the receive cadence holds in a
-    // backgrounded game.
+    // An explicit class at thread start, before the thread's loop: the
+    // library's threads never run below the class the receive cadence needs,
+    // whatever class the creating thread has (docs/CLIENT-IO.md, macOS timing
+    // and App Nap).
     pthread_set_qos_class_self_np( QOS_CLASS_USER_INTERACTIVE, 0 );
 
     real_thread_function( real_thread_data );

@@ -353,17 +353,17 @@ Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
 
 macOS throttles a backgrounded or occluded app (App Nap) and coalesces timers
 for threads at a low quality-of-service class. The client I/O thread's wait is
-a guard, not a cadence: `ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS` (1 ms) and
-`rocketnet_platform_thread_wait`. Without an explicit class, a napped game sees
-that wait stretch to tens of milliseconds, the receive thread falls behind, and
-a connection the game left in the background times out.
+a guard, not a cadence: `ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS` (1 ms), a
+kevent timeout on the driver wait. The game thread's own sleeps and run-loop
+timers are what a napped or background-policy process stretches (the measured
+numbers below).
 
 **What the library sets.** `rocketnet_platform_thread_create`
 (`sdk/rocketnet_platform.cpp`) sets the thread's quality-of-service class with
 `pthread_set_qos_class_self_np` at thread start on macOS and iOS, before the
-thread's loop runs. The class is `QOS_CLASS_USER_INTERACTIVE`, so the I/O
-thread's bounded wait is not coalesced as a background thread's timer. The
-frame-sync path separately asks for `THREAD_TIME_CONSTRAINT_POLICY`
+thread's loop runs. The class is `QOS_CLASS_USER_INTERACTIVE`, so the
+library's threads never run at a lower class than the work needs, whatever
+class the creating thread has. The frame-sync path separately asks for `THREAD_TIME_CONSTRAINT_POLICY`
 (`sdk/rocketnet_frame_sync.cpp`) on the waiting thread.
 
 **What the game must do itself.** Setting a thread class is not enough for a
@@ -386,9 +386,45 @@ The game also keeps calling `rocketnet_client_update` from the frame loop and
 does not move its network cadence onto main-thread run-loop timers, which App
 Nap coalesces independently of the I/O thread's class.
 
-**Measured numbers.** The BASE, head and planted-background-QoS numbers for
-this section come from the macOS member that runs the timing card; they are
-recorded in that card's report.
+**Measured numbers.** `functional/macos_client_timing.cpp` runs a connected
+client over loopback for 60 s at a 60 Hz update while a server thread sends a
+timestamped payload every 10 ms. `wake` is the client I/O thread's wake
+interval, `latency` the receive-to-update latency (server send to the client
+update that returns the payload), `frame` the game thread's update interval;
+p50 / p99 / max in milliseconds, one 60 s run each on an Apple-silicon Mac mini
+(macOS 27.0.1) carrying other work.
+
+| condition | build | I/O QoS | wake | latency | frame |
+|---|---|---|---|---|---|
+| default QoS | BASE | default | 1.26 / 1.41 / 2.44 | 25.4 / 37.2 / 40.4 | 16.5 / 24.1 / 24.9 |
+| default QoS | head | user interactive | 1.26 / 1.40 / 1.96 | 25.3 / 38.2 / 40.8 | 16.4 / 24.6 / 24.9 |
+| `taskpolicy -b` | BASE | default | 1.26 / 1.66 / 17.6 | 183 / 386 / 411 | 0.0 / 212 / 217 |
+| `taskpolicy -b` | head | user interactive | 1.26 / 1.40 / 2.35 | 207 / 411 / 425 | 0.0 / 210 / 217 |
+| `taskpolicy -b` | I/O thread planted background | background | 1.26 / 1.33 / 3.84 | 206 / 384 / 391 | 0.0 / 208 / 216 |
+| game thread background | BASE | default | 1.26 / 1.40 / 4.84 | 170 / 381 / 409 | 0.0 / 208 / 216 |
+| game thread background | head | user interactive | 1.26 / 1.36 / 1.65 | 206 / 389 / 414 | 0.0 / 208 / 215 |
+
+What the numbers show:
+
+- The I/O thread's bounded wait (a kevent timeout) is not coalesced in any
+  condition: its wakes stay at 1.26 ms p50 and under 1.7 ms p99 at the default
+  class, under `taskpolicy -b`, and with the I/O thread itself planted at
+  `QOS_CLASS_BACKGROUND`. The explicit class trims the worst wake under
+  `taskpolicy -b` (17.6 ms at BASE, 2.3 ms at head, one run each).
+- A thread the library creates does not inherit the creating thread's class:
+  with the game thread at `QOS_CLASS_BACKGROUND`, the BASE I/O thread reports
+  the default class.
+- Receive-to-update latency at the default class is one to two update
+  intervals (p50 25 ms, p99 37 to 38 ms at 60 Hz): a datagram received while
+  the game holds one buffer is published when that buffer is returned, at the
+  end of the next update, and is processed by the update after it.
+- Under `taskpolicy -b` or a background game thread, the game thread's own
+  sleep is coalesced to about 200 ms (frame p99 208 to 212 ms, the loop then
+  catching up in a burst), and the latency follows the game thread, not the
+  I/O thread. Raising the game thread to `QOS_CLASS_USER_INTERACTIVE` under
+  `taskpolicy -b` does not restore its cadence (frame p99 207 ms). No
+  connection timed out in any run: the I/O thread kept the session alive. The
+  process activity above is what keeps the game's own frame loop on time.
 
 ## Per-platform cards
 
