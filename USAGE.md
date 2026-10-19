@@ -139,7 +139,7 @@ row per field of both public structs.
 | send_buffer_bytes | ROCKETNET_CLIENT_SEND_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refuses the create unless `16..65536` |
-| max_packets_per_update | ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE | int | `4` | refuses the create unless `1..256` |
+| max_packets_per_update | ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..4096` |
 | unreliable_deliveries | ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES | int | `256` | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_CLIENT_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_CLIENT_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
@@ -170,7 +170,7 @@ row per field of both public structs.
 | send_buffer_bytes | ROCKETNET_SERVER_SEND_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refuses the create unless `16..65536` |
-| max_packets_per_update | ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE | int | `4` (per client) | refuses the create unless `1..256` |
+| max_packets_per_update | ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..4096` |
 | unreliable_deliveries | ROCKETNET_SERVER_UNRELIABLE_DELIVERIES | int | `256` (per client per update) | refuses the create unless `1..65536` |
 | sequenced_holds | ROCKETNET_SERVER_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
 | receipt_ring | ROCKETNET_SERVER_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
@@ -183,15 +183,24 @@ The message fields marked WIRE must be identical on both ends; the connection
 verifies them. The cross rules are in [docs/CHANNELS.md](docs/CHANNELS.md)
 section 14.
 
-## Create and destroy
+## Create, connect, start, stop and destroy
 
-`rocketnet_client_create` takes the connect token, the config, and an optional
-caller memory block. A client connects with a token, never an address: the
-token names the server, carries the keys and is the credential. The connect
-attempt starts at the first update, not at create.
+`rocketnet_client_create` takes the config and an optional caller memory
+block, and makes a client in `DISCONNECTED`. `rocketnet_client_connect` starts
+a connection with a connect token: a client connects with a token, never an
+address, and the token names the server, carries the keys and is the
+credential. The attempt's clock starts at the next update.
+`rocketnet_client_disconnect` ends the connection from any state and returns
+the client to `DISCONNECTED`, ready to connect again with a new token; connect
+anywhere else is refused with `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`. A
+negative state says how the last attempt ended and stays until disconnect.
 
-`rocketnet_server_create` takes the bind address and the config. Clients are
-identified by index, `0 .. max_clients - 1`, the slot each connection takes.
+`rocketnet_server_create` takes the bind address and the config and binds
+nothing: the server starts stopped. `rocketnet_server_start` binds the
+transport and accepts clients; `rocketnet_server_stop` disconnects every
+client, resets every slot and releases the transport, and the server can
+start again. Clients are identified by index (`uint64_t`),
+`0 .. max_clients - 1`, the slot each connection takes.
 `rocketnet_client_required_memory` and `rocketnet_server_required_memory`
 report the bytes a caller block needs. Pass NULL and zero to let RocketNet make
 the allocation; a block of at least the reported size, aligned to
@@ -200,14 +209,26 @@ the allocation; a block of at least the reported size, aligned to
 ```c
 #include "rocketnet.h"
 
-struct rocketnet_client_t * start_client( const uint8_t * token, const struct rocketnet_client_config_t * config )
+struct rocketnet_client_t * start_client( const uint8_t * token, const struct rocketnet_client_config_t * config, double time )
 {
-    return rocketnet_client_create( NULL, token, config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, token, time ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        return NULL;
+    }
+    return client;
 }
 
 struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t * config )
 {
-    return rocketnet_server_create( NULL, "0.0.0.0:40000", config, NULL, 0 );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        return NULL;
+    }
+    return server;
 }
 
 void stop( struct rocketnet_client_t * client, struct rocketnet_server_t * server )

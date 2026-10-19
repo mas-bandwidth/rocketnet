@@ -390,7 +390,7 @@ needs RSS-sharded sockets or a different native backend for the line-rate tier.
 
 ## Deploying the XDP transport: provision, then verify-and-bind
 
-The library never mutates machine state. `rocketnet_server_create()`
+The library never mutates machine state. `rocketnet_server_start()`
 with the xdp transport is verify-and-bind only: a non-mutating pre-flight checks
 that the machine is provisioned and refuses by name — each unmet condition logs
 the knob, the wanted value, and the script that sets it — and the library's own

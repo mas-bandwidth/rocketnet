@@ -67,7 +67,7 @@
  * calling-contract change; append-only additions that preserve old layouts
  * keep the revision unchanged.
  */
-#define ROCKETNET_ABI_VERSION 2
+#define ROCKETNET_ABI_VERSION 3
 
 // -----------------------------------------
 //                       export macro

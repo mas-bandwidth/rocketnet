@@ -1748,12 +1748,15 @@ region follows.
   (`AcksLand`): without it TLC finds a lasso in which every ack names an
   evicted id (`tla/README-RNWindow.md`). The packets a connection writes in
   one RTT are at most `max_packets_per_update` times the updates in one RTT,
-  resends included, because resends share the update's packet limit. At the
-  defaults and RTT 200 ms on a 60 Hz update that is 4 × 12 = 48 packets
-  against `P = 256`, a margin of 5.3×; the 100 ms resend delay changes what
-  fills those packets, not how many there are. `P` holds up to an RTT of
-  about 1 s at 60 Hz (256 / (4 × 60) = 1.07 s), and `MESSAGE_SENT_MAP_EVICTED`
-  counts a shortfall so it shows.
+  resends included, because resends share the update's packet limit, and at
+  most what the send budget pays for. At the defaults (`max_packets_per_update`
+  256, 1 .. 4096, so the send budget is the throttle) and RTT 200 ms, the
+  client's 1000 kbps pays for about 17 packets of 1452 bytes in one RTT and
+  the server's 10000 kbps per client about 172, both inside `P = 256`; the
+  100 ms resend delay changes what fills those packets, not how many there
+  are. A connection whose budget (or an uncapped one) lets it write more than
+  `P` packets in one RTT evicts, and `MESSAGE_SENT_MAP_EVICTED` counts the
+  shortfall so it shows.
 - **Validation at create** refuses any of these:
   - `max_message_bytes > B`;
   - `ceil(max_message_bytes / F) > W`;

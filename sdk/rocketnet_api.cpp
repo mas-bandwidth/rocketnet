@@ -615,7 +615,9 @@ uint64_t rocketnet_client_index( const struct rocketnet_client_t * client )
         return 0;
     if ( !client->connection )
         return 0;
-    return (uint64_t) rocketnet_client_transport_client_index( rocketnet_message_client_transport( client->connection ) );
+    const uint64_t index = (uint64_t) rocketnet_client_transport_client_index( rocketnet_message_client_transport( client->connection ) );
+    rocketnet_assert( ( index & ROCKETNET_FLOW_ID_BIT ) == 0 );      // a client index is never a flow id
+    return index;
 }
 
 const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client )
