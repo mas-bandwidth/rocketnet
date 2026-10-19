@@ -1,7 +1,7 @@
 # RNWindow: the reliable window
 
-`tla/RNWindow.tla` is the message layer's reliable window, CHANNELS layer 3
-(`docs/CHANNELS.md` sections 6, 13.5 and 15): a sender numbering records late under the count
+`tla/RNWindow.tla` is the message layer's reliable window
+(`standard/MESSAGES.md` m5 and m7): a sender numbering records late under the count
 bound `n < U' + W`, its sent-packet map and acks, and a receiver with `R`, the received
 bitset, the descriptors and their live flags, holds, the delivered list, the update
 boundary, and the reconstruction of the 24-bit wire number. Both directions run through
@@ -18,10 +18,8 @@ nothing on main or on any branch. What the code has is the wire codec, which wri
 reads the number as a raw u24 (`sdk/rocketnet_message.h:22`, `:70`, `:110`;
 `sdk/rocketnet_message.cpp:202`, `:312`) and checks a block's fragment count against `W`
 (`sdk/rocketnet_message.cpp:357-361`, matching 13.3 check 7). The model is therefore the
-design, written before the code as the standing practice asks: the card
-`the-receive-window-accepts-each-reliable-number-once` builds to it, and the card
-`the-window-code-replays-every-rnwindow-and-rnring-witness` replays the traces below
-against that code. Every "the code does" below reads "the design says".
+design, written before the code: the receive window is built to it, and a test
+replays the traces below against that code. Every "the code does" below reads "the design says".
 
 `tla/MCRNWindow.tla` holds the instance, and there are seven committed cases, each one
 inside tlacheck's 110 s budget:
@@ -182,7 +180,7 @@ has released a held record, and the 24-bit wrap. After every action the test
 asserts `n < U' + W`, that live ring spans are disjoint and inside `B`, that an
 ack does not free a held record, and that each reliable number is delivered
 once. A failed check prints a replayable seed and the action list. No open
-window-sequence defect card is known on this base, so the test carries no
+window-sequence defect is known, so the test carries no
 expected-fail marker.
 
 On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from `tla/`:
@@ -199,7 +197,7 @@ include. Without it a copy that is not yet due never becomes due.
 
 ### Every run
 
-TLC 2.19 on hetzner2, 2026-10-13, `-workers 4 -Xmx6g`. The `tla/RUNS.tsv` records are not
+TLC 2.19 on Linux, `-workers 4 -Xmx6g`. The `tla/RUNS.tsv` records are not
 written by hand. They are owed to `tlacheck run --group rnwindow`.
 
 Committed cases:
@@ -232,7 +230,7 @@ Bench runs (each is `MCRNWindow.cfg` with the changes named):
 ## What TLC found
 
 Every counterexample was replayed by hand through the module's actions and through the
-argument of CHANNELS.md 6.3 and 13.5. The window code does not exist yet, so none of
+argument of standard/MESSAGES.md 6.3 and 13.5. The window code does not exist yet, so none of
 them is a defect in code. The traces are written `id{numbers}` for a packet. The
 committed instance is `W = 2`, Link capacity 2, `"alternate"` loss both ways (the 1st,
 3rd, 5th ... send on each link is lost), `NumMod = 4`, numbers `0..4`, the block
@@ -380,8 +378,8 @@ abstract RTO is due at every moment), so the opened packet's id has been evicted
 ack lands and the ack is ignored, as 6.4 says. Every ack in the lasso names an evicted id.
 
 This is the model's RTO outpacing the ack path, which the real RTO (above the RTT, RFC
-6298 with back-off) does not do. `AcksLand` excludes it. The design note for the code
-card: `P` must exceed the packets a connection writes in one RTT, resends included, or a
+6298 with back-off) does not do. `AcksLand` excludes it. The design note for the code:
+`P` must exceed the packets a connection writes in one RTT, resends included, or a
 sender under back-off can evict its own acks and stall until `reliable_timeout`; section
 14 now says so (sizing `P`).
 

@@ -15,7 +15,7 @@ The version lives in one file, `sdk/rocketnet.h`, in two branches selected by
   `ROCKETNET_VERSION_FULL "dev"` and the `255.255.255` integer sentinel.
 
 These are the version sites that the `version-consistency` job in
-[.github/workflows/release-check.yml](.github/workflows/release-check.yml)
+[.github/workflows/release-check.yml](../.github/workflows/release-check.yml)
 reads. That job checks both branches, because the branch that is not compiled
 today is the one that drifts. In the shipping branch, `ROCKETNET_VERSION_FULL`
 must equal `MAJOR.MINOR.PATCH`; in the development branch, the full version must
@@ -25,7 +25,7 @@ the tag after the `v` must equal the shipping `ROCKETNET_VERSION_FULL`.
 The public C ABI revision is separate from the wire and release version. If a
 release changes the public C layout or calling contract, update
 `ROCKETNET_ABI_VERSION` in `sdk/rocketnet.h` and `tools/exports.txt` in the same
-change, as [BUILDING.md](BUILDING.md) describes.
+change, as [BUILDING.md](../BUILDING.md) describes.
 
 ## The wire-change rule
 
@@ -58,16 +58,16 @@ release once a wire change is on `main`.
 
 Tag only a `main` commit whose required runs are green. Those runs are:
 
-- **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)): the full
+- **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)): the full
   `build-and-test` matrix on Ubuntu and macOS in Debug and Release, the Windows
   Release matrix, `asan + ubsan`, `fuzz smoke` and its NDEBUG variant, big-endian
   s390x, `standard conformance`, `tsan`, `pinned libsodium`, and the platform
   selftests.
 - **static analysis**
-  ([.github/workflows/static.yml](.github/workflows/static.yml)): `gcc -fanalyzer`.
-- **TLC records** ([.github/workflows/tlc.yml](.github/workflows/tlc.yml)): the
+  ([.github/workflows/static.yml](../.github/workflows/static.yml)): `gcc -fanalyzer`.
+- **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)): the
   model records are current.
-- **CBMC** ([.github/workflows/cbmc.yml](.github/workflows/cbmc.yml)) when the
+- **CBMC** ([.github/workflows/cbmc.yml](../.github/workflows/cbmc.yml)) when the
   change touches `sdk/**` or `proofs/cbmc/**`.
 - **Release Check**'s `version-consistency` job on the pull request that carries
   the release version, and on the tag push itself.
@@ -105,7 +105,7 @@ The GitHub release notes are the public record of the release. They state the
 version, summarize the user-visible changes since the previous tag, and give
 upgrade instructions where behavior changed. They call out any wire-affecting
 change explicitly and link the relevant section of
-[standard/TRANSPORT.md](standard/TRANSPORT.md) and the compatibility impact. A security release names the advisory it fixes and
+[standard/TRANSPORT.md](../standard/TRANSPORT.md) and the compatibility impact. A security release names the advisory it fixes and
 the first fixed version, and follows the disclosure terms in
-[SECURITY.md](SECURITY.md). Release notes do not contain credentials, private
+[SECURITY.md](../SECURITY.md). Release notes do not contain credentials, private
 contacts, or embargoed exploit details.

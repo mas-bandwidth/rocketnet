@@ -8,10 +8,11 @@ serialize it.
 The authority for every name, field, default and environment variable is
 [sdk/rocketnet.h](sdk/rocketnet.h). This file is the narrative: how a frame is
 ordered, how messages are sent and received, what the counters mean, and how
-the configuration system decides what happens at create.
+the configuration system decides what happens at create, connect and start.
 
 Build and platform instructions live in [BUILDING.md](BUILDING.md); the wire
-format lives in [STANDARD.md](STANDARD.md).
+and message formats live in [standard/TRANSPORT.md](standard/TRANSPORT.md) and
+[standard/MESSAGES.md](standard/MESSAGES.md).
 
 ## Start and stop
 
@@ -54,24 +55,24 @@ kernel for an ephemeral port; read the granted port with
 monotonic clock in seconds; use the same clock for every call that takes a
 time, and keep it finite and non-decreasing.
 
-The connect-token create and expire checks read the wall clock unless the
-config sets `game_clock_epoch`, the unix time at the game clock's zero. With an
-epoch, the check reads epoch plus the caller's time, floored to whole seconds,
-so a test can hold time still and a fixed token still connects. Zero, the
-default, keeps the wall clock.
+On the client, `step_driven` (`ROCKETNET_CLIENT_STEP_DRIVEN`) controls whether
+client socket I/O runs on a background thread (`0`, the default) or directly on
+the caller's thread inside `rocketnet_client_update` and
+`rocketnet_client_send_packets` (`1`).
 
 ## Configuration
 
 The client and the server each take one plain config struct. Fill it with
 `rocketnet_client_default_config` or `rocketnet_server_default_config`, set
 what the program means, and pass it to create. The server default has no keys,
-and a server create refuses it until keys are supplied, because default keys
+and `rocketnet_server_start` refuses it with `ROCKETNET_STATUS_MISSING_KEYS`
+until keys are supplied, because default keys
 are how every deployment of a protocol ends up sharing one identity. For local
 work, `rocketnet_server_dev_config` installs the published development keys and
 test filter and says so loudly. In a development build,
 `rocketnet_write_dev_connect_token` mints a matching local token.
 
-The precedence at create is **DEFAULT < STRUCT < ENV**: the defaults come
+The precedence is **DEFAULT < STRUCT < ENV**: the defaults come
 first, the struct you pass is the middle layer, and the environment overlays it
 field by field. Every override is logged with the variable and the value it
 displaced. A field with no environment form is the two callbacks. Byte fields
@@ -79,11 +80,23 @@ are base64 of exactly the field's length; integers are decimal; strings are
 taken as they are. An environment variable set to the empty string is ignored,
 with a log line.
 
-A value that does not parse, or is out of range, **refuses the create with one
-error line; nothing is ever clamped**. A secret key logs redacted, on both the
+A value that does not parse, or is out of range, **is refused with one error
+line; nothing is ever clamped**. The message fields (`num_channels` through
+`reliable_timeout_ms`), the send budget and `max_clients` take their
+environment override and are checked at create, which returns NULL on a
+refusal. Every other field is read and checked when the transport starts, in
+`rocketnet_client_connect` or `rocketnet_server_start`, which return the status
+code and leave the client `DISCONNECTED` or the server stopped. A secret key logs redacted, on both the
 old and the new value. The `_sized` create and default calls accept a struct
 size so a program built against an older header keeps working; an unknown size
 is refused before anything is read or written.
+
+Both `rocketnet_client_config_t` and `rocketnet_server_config_t` also carry four
+development-only link-simulator fields (`simulated_loss_percent`,
+`simulated_latency_ms`, `simulated_jitter_ms`, `simulated_duplicate_percent`),
+with matching `ROCKETNET_CLIENT_SIMULATED_*` and `ROCKETNET_SERVER_SIMULATED_*`
+environment variables. These apply only in `ROCKETNET_DEVELOPMENT` builds; any
+nonzero value in a production build is refused.
 
 ```c
 #include "rocketnet.h"
@@ -104,7 +117,7 @@ void configure( struct rocketnet_client_config_t * client, struct rocketnet_serv
 ```
 
 `transport` is an ordered candidate list, comma separated, tried left to right
-at create. The first candidate that starts wins, and a list that every
+at client connect and server start. The first candidate that starts wins, and a list that every
 candidate refuses fails loudly. `"auto"` (the default, also NULL or the empty
 string) is the platform's recommended order; a one-element list is a pin. A
 known name this endpoint does not have is skipped with one log line; a name
@@ -117,10 +130,10 @@ tries `xdp` first for either family. One interface takes one XDP program, so
 on a dual-stack interface `xdp` serves one family and another transport the
 other.
 
-`public_address` on the server displaces the address passed to create, so the
-address the transport binds and the address connect tokens are checked against
-are always the same one. The environment form applies to the first server
-create in the process only.
+`public_address` on the server displaces the address passed to create when the
+server starts, so the address the transport binds and the address connect
+tokens are checked against are always the same one. The environment form
+applies to the first server start in the process only.
 
 ### Environment overrides
 
@@ -130,64 +143,70 @@ row per field of both public structs.
 
 | Field | Variable | Type | Default | A bad value |
 |---|---|---|---|---|
-| filter_value | ROCKETNET_CLIENT_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
-| max_payload_bytes | ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..305408` |
-| num_reassembly_slots | ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refuses the create unless `0` or `1..256` |
-| transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
+| filter_value | ROCKETNET_CLIENT_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refused |
+| max_payload_bytes | ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES | int | `0` (16384) | refused unless `0` or `1416..305408` |
+| num_reassembly_slots | ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refused unless `0` or `1..256` |
+| transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refused |
 | state_change_callback | none | `void (*)( void *, int, int )` | `NULL` | no environment form |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | no environment form |
-| game_clock_epoch | ROCKETNET_CLIENT_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
-| send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer, or above `10000000`: refuses the create; `0` or less disables the budget in this direction (not recommended) |
-| num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
-| window_messages | ROCKETNET_CLIENT_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
-| receive_ring_bytes | ROCKETNET_CLIENT_RECEIVE_RING_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
-| max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_ring_bytes` |
-| send_buffer_bytes | ROCKETNET_CLIENT_SEND_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
-| send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
-| packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refuses the create unless `16..65536` |
-| max_packets_per_update | ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
-| unreliable_deliveries | ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES | int | `256` | refuses the create unless `1..65536` |
-| sequenced_holds | ROCKETNET_CLIENT_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
-| receipt_ring | ROCKETNET_CLIENT_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
-| rto_initial_ms | ROCKETNET_CLIENT_RTO_INITIAL_MS | int | `100` | refuses the create unless `10..60000` |
-| rto_min_ms | ROCKETNET_CLIENT_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
-| rto_max_ms | ROCKETNET_CLIENT_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
-| reliable_timeout_ms | ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
-| protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refuses the create |
-| max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refuses the create unless `1..1000` |
-| filter_value | ROCKETNET_SERVER_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create |
-| backend_public_key | ROCKETNET_SERVER_BACKEND_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create |
-| server_public_key | ROCKETNET_SERVER_SERVER_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create |
-| server_secret_key | ROCKETNET_SERVER_SERVER_SECRET_KEY | uint8_t[32], base64, secret | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create; logs redacted |
-| num_xdp_queues | ROCKETNET_SERVER_NUM_XDP_QUEUES | int | `0` (transport default) | refuses the create unless `0` or `1..1024` |
-| num_os_cpus | ROCKETNET_SERVER_NUM_OS_CPUS | int | `0` (transport default) | refuses the create unless `0` or `1..256` |
-| max_payload_bytes | ROCKETNET_SERVER_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..305408` |
-| num_reassembly_slots | ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refuses the create unless `0` or `1..256` |
-| max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
-| handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
-| game_clock_epoch | ROCKETNET_SERVER_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
-| transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
-| public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
-| per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` or less disables the budget in this direction (not recommended) |
-| num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
-| window_messages | ROCKETNET_SERVER_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
-| receive_ring_bytes | ROCKETNET_SERVER_RECEIVE_RING_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
-| max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_ring_bytes` |
-| send_buffer_bytes | ROCKETNET_SERVER_SEND_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
-| send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
-| packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refuses the create unless `16..65536` |
-| max_packets_per_update | ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
-| unreliable_deliveries | ROCKETNET_SERVER_UNRELIABLE_DELIVERIES | int | `256` (per client per update) | refuses the create unless `1..65536` |
-| sequenced_holds | ROCKETNET_SERVER_SEQUENCED_HOLDS | int | `16` | refuses the create unless `0..4096` |
-| receipt_ring | ROCKETNET_SERVER_RECEIPT_RING | int | `256` | refuses the create unless `16..65536` |
-| rto_initial_ms | ROCKETNET_SERVER_RTO_INITIAL_MS | int | `100` | refuses the create unless `10..60000` |
-| rto_min_ms | ROCKETNET_SERVER_RTO_MIN_MS | int | `10` | refuses the create unless `1..60000` |
-| rto_max_ms | ROCKETNET_SERVER_RTO_MAX_MS | int | `250` | refuses the create unless `10..60000` |
-| reliable_timeout_ms | ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` |
+| step_driven | ROCKETNET_CLIENT_STEP_DRIVEN | uint64_t | `0` (I/O thread) | refused unless `0` or `1` and a transport with a non-blocking step |
+| send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer, or above `10000000`: refused; `0` or less disables the budget in this direction (not recommended) |
+| num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refused unless `1..32` |
+| window_messages | ROCKETNET_CLIENT_WINDOW_MESSAGES | int | `1024` | refused unless `64..1048576` and a power of two |
+| receive_ring_bytes | ROCKETNET_CLIENT_RECEIVE_RING_BYTES | int | `262144` | refused unless `4096..1048576` and a multiple of 16 |
+| max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `262144` | refused unless `1415..1048576` and no larger than `receive_ring_bytes` |
+| send_buffer_bytes | ROCKETNET_CLIENT_SEND_BUFFER_BYTES | int | `800000` | refused unless `12288..268435456` |
+| send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refused unless `16..1048576` |
+| packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refused unless `16..65536` |
+| max_packets_per_update | ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE | int | `256` | refused unless `1..1024` |
+| unreliable_deliveries | ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES | int | `256` | refused unless `1..65536` |
+| sequenced_holds | ROCKETNET_CLIENT_SEQUENCED_HOLDS | int | `16` | refused unless `0..4096` |
+| receipt_ring | ROCKETNET_CLIENT_RECEIPT_RING | int | `256` | refused unless `16..65536` |
+| rto_initial_ms | ROCKETNET_CLIENT_RTO_INITIAL_MS | int | `100` | refused unless `10..60000` |
+| rto_min_ms | ROCKETNET_CLIENT_RTO_MIN_MS | int | `10` | refused unless `1..60000` |
+| rto_max_ms | ROCKETNET_CLIENT_RTO_MAX_MS | int | `250` | refused unless `10..60000` |
+| reliable_timeout_ms | ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS | int | `10000` | refused unless `1000..600000` |
+| simulated_loss_percent | ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..100` (`0` in production) |
+| simulated_latency_ms | ROCKETNET_CLIENT_SIMULATED_LATENCY_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..60000` (`0` in production) |
+| simulated_jitter_ms | ROCKETNET_CLIENT_SIMULATED_JITTER_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..60000` (`0` in production) |
+| simulated_duplicate_percent | ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..100` (`0` in production) |
+| protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refused |
+| max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refused unless `1..1000` |
+| filter_value | ROCKETNET_SERVER_FILTER_VALUE | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refused |
+| backend_public_key | ROCKETNET_SERVER_BACKEND_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refused |
+| server_public_key | ROCKETNET_SERVER_SERVER_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refused |
+| server_secret_key | ROCKETNET_SERVER_SERVER_SECRET_KEY | uint8_t[32], base64, secret | all zero (no key) | not exactly 32 bytes, or invalid base64: refused; logs redacted |
+| num_xdp_queues | ROCKETNET_SERVER_NUM_XDP_QUEUES | int | `0` (transport default) | refused unless `0` or `1..1024` |
+| num_os_cpus | ROCKETNET_SERVER_NUM_OS_CPUS | int | `0` (transport default) | refused unless `0` or `1..256` |
+| max_payload_bytes | ROCKETNET_SERVER_MAX_PAYLOAD_BYTES | int | `0` (16384) | refused unless `0` or `1416..305408` |
+| num_reassembly_slots | ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS | int | `0` (8) | refused unless `0` or `1..256` |
+| max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refused unless `1..3600` |
+| handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refused unless `1..60` |
+| transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refused |
+| public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refused |
+| per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refused; `0` or less disables the budget in this direction (not recommended) |
+| num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refused unless `1..32` |
+| window_messages | ROCKETNET_SERVER_WINDOW_MESSAGES | int | `1024` | refused unless `64..1048576` and a power of two |
+| receive_ring_bytes | ROCKETNET_SERVER_RECEIVE_RING_BYTES | int | `262144` | refused unless `4096..1048576` and a multiple of 16 |
+| max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `262144` | refused unless `1415..1048576` and no larger than `receive_ring_bytes` |
+| send_buffer_bytes | ROCKETNET_SERVER_SEND_BUFFER_BYTES | int | `800000` (per client) | refused unless `12288..268435456` |
+| send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refused unless `16..1048576` |
+| packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refused unless `16..65536` |
+| max_packets_per_update | ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE | int | `256` (per client) | refused unless `1..1024` |
+| unreliable_deliveries | ROCKETNET_SERVER_UNRELIABLE_DELIVERIES | int | `256` (per client per update) | refused unless `1..65536` |
+| sequenced_holds | ROCKETNET_SERVER_SEQUENCED_HOLDS | int | `16` | refused unless `0..4096` |
+| receipt_ring | ROCKETNET_SERVER_RECEIPT_RING | int | `256` | refused unless `16..65536` |
+| rto_initial_ms | ROCKETNET_SERVER_RTO_INITIAL_MS | int | `100` | refused unless `10..60000` |
+| rto_min_ms | ROCKETNET_SERVER_RTO_MIN_MS | int | `10` | refused unless `1..60000` |
+| rto_max_ms | ROCKETNET_SERVER_RTO_MAX_MS | int | `250` | refused unless `10..60000` |
+| reliable_timeout_ms | ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS | int | `10000` | refused unless `1000..600000` |
+| simulated_loss_percent | ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..100` (`0` in production) |
+| simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..60000` (`0` in production) |
+| simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..60000` (`0` in production) |
+| simulated_duplicate_percent | ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT | int | `0` (off) | `ROCKETNET_DEVELOPMENT` only: refused unless `0..100` (`0` in production) |
 
 The message fields marked WIRE must be identical on both ends; the connection
-verifies them. The cross rules are in [docs/CHANNELS.md](docs/CHANNELS.md)
-section 14.
+verifies them. The cross rules are in [standard/MESSAGES.md](standard/MESSAGES.md).
 
 ## Create, connect, start, stop and destroy
 
@@ -245,9 +264,9 @@ void stop( struct rocketnet_client_t * client, struct rocketnet_server_t * serve
 ```
 
 `rocketnet_client_validate_config` and `rocketnet_server_validate_config`
-report whether create would accept the struct's own values; the environment is
-not read. Destroying a client ends its connection. Destroying a server
-disconnects every client and frees the server.
+report whether the struct's own values are accepted; the environment is not
+read. Destroying a client ends its connection from any state. Destroying a
+server stops it first when it is running, which disconnects every client.
 
 ## Frame loop
 
@@ -256,10 +275,10 @@ the server:
 
 1. `rocketnet_client_update` or `rocketnet_server_update` pumps the transport
    and takes in what arrived.
-2. Receive and release every received message with the receive and release
-   calls.
+2. Receive and release every received message with the receive message and
+   release message calls.
 3. Run the game simulation for the frame.
-4. Queue this frame's outgoing messages with start and finish.
+4. Queue this frame's outgoing messages with start message and finish message.
 5. Call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
    **last**, after all of this frame's messages are queued.
 
@@ -306,23 +325,35 @@ received view from the last update was not released.
 
 ## Sending messages
 
-The send is start, write the message once in place, then finish:
-`rocketnet_client_start_message` or `rocketnet_server_start_message` returns a pointer into the
-connection's region, and finish queues the bytes written and returns the
-serial, nonzero, or `0` when the send was refused. Abort gives the room back.
-One start is pending per object at a time. To send one message to every
-connected client, loop over the slots with `rocketnet_server_client_connected`
-and start and finish for each. A destination id is a client index today
-(`uint64_t`); ids with `ROCKETNET_FLOW_ID_BIT` set are reserved for flows.
+The send is start message, write the message once in place, then finish
+message: `rocketnet_client_start_message` or `rocketnet_server_start_message`
+returns a pointer into the connection's region for the declared bytes, and
+`rocketnet_client_finish_message` or `rocketnet_server_finish_message` queues
+the bytes written and returns the receipt serial, nonzero, or `0` when the send
+was refused. `rocketnet_client_abort_message` or
+`rocketnet_server_abort_message` gives the room back instead. One start message
+is pending per object at a time. Messages flow only while the client is
+`CONNECTED`; in any other state start message returns NULL and finish message
+returns `0`, counted. To send one message to every connected client, loop over
+the slots with `rocketnet_server_client_connected` and call start message and
+finish message for each. A destination id is a client index (`uint64_t`); an
+id with `ROCKETNET_FLOW_ID_BIT` set is reserved and refused.
 
 The reliability is one of `ROCKETNET_UNRELIABLE`,
 `ROCKETNET_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABLE`,
 `ROCKETNET_RELIABLE_ORDERED`, `ROCKETNET_RELIABLE_SEQUENCED`,
 `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABLE_WITH_ACK_RECEIPT`
-or `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one
-message in one packet, up to `ROCKETNET_MESSAGE_SINGLE_BYTES`; the other types
-are bounded by the config's `max_message_bytes`. A larger payload fragments
-transparently, and a lost fragment loses the whole payload.
+or `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Unreliable messages fit in a
+single packet up to single-packet record capacity (`ROCKETNET_MESSAGE_SINGLE_BYTES`
+is 1415 bytes at the wire record boundary: 1411 payload bytes for
+`ROCKETNET_UNRELIABLE` and `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`, or 1405
+bytes on channels `0..31` for `ROCKETNET_UNRELIABLE_SEQUENCED`). An unreliable
+send (`ROCKETNET_UNRELIABLE`, `ROCKETNET_UNRELIABLE_SEQUENCED`, or
+`ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`) whose record exceeds single-packet
+capacity up to `max_message_bytes` is automatically promoted to its reliable
+twin (`ROCKETNET_RELIABLE`, `ROCKETNET_RELIABLE_SEQUENCED`, or the reliable
+receipt block path with `ROCKETNET_RECEIPT_ACKED` only) and fragmented across
+blocks; only a send above `max_message_bytes` is refused.
 
 A send the connection's region has no room for ends the connection with
 `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
@@ -365,9 +396,10 @@ Each call returns `1` with the next message, or `0` when there is none on that
 channel for that client.
 
 ```c
+#include <string.h>
 #include "rocketnet.h"
 
-void server_frame( struct rocketnet_server_t * server, int client_index, int channel, double time )
+void server_frame( struct rocketnet_server_t * server, uint64_t client_index, int channel, double time )
 {
     /* 1. pump the transport and take in what arrived */
     rocketnet_server_update( server, time );
@@ -423,7 +455,8 @@ the `receipt_ring` config field sets its size.
 
 ## Counters and stats
 
-Counters are monotonic over the object's life and start at zero at create.
+Counters are monotonic over the object's life, across connections and
+across starts and stops, and start at zero at create.
 `rocketnet_client_counter`, `rocketnet_server_counter` and
 `rocketnet_server_client_counter` read them by enum. Client and server stats
 come from `rocketnet_client_stat`, `rocketnet_server_stat` and
@@ -440,7 +473,7 @@ yet, not a zero-millisecond link.
 ```c
 #include "rocketnet.h"
 
-void report_quality( const struct rocketnet_client_t * client, const struct rocketnet_server_t * server, int client_index )
+void report_quality( const struct rocketnet_client_t * client, const struct rocketnet_server_t * server, uint64_t client_index )
 {
     uint64_t packets_sent = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_PACKETS_SENT );
     uint64_t receipts_lost = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_RECEIPTS_LOST );
@@ -459,21 +492,41 @@ void report_quality( const struct rocketnet_client_t * client, const struct rock
 }
 ```
 
+## Logging
+
+RocketNet logs process-wide across six levels: `ROCKETNET_LOG_LEVEL_NONE`,
+`ROCKETNET_LOG_LEVEL_ERROR`, `ROCKETNET_LOG_LEVEL_WARN`,
+`ROCKETNET_LOG_LEVEL_INFO`, `ROCKETNET_LOG_LEVEL_DEBUG`, and
+`ROCKETNET_LOG_LEVEL_SPAM`. `rocketnet_log_level` sets the active threshold,
+`rocketnet_get_log_level` reads it, and `rocketnet_log_level_string` returns the
+display name for a level. `rocketnet_quiet` suppresses (`true`) or resumes
+(`false`) all log output without changing the configured level.
+
+To route logs into an application or FFI sink, register a preformatted callback
+(`rocketnet_log_callback_t`) with `rocketnet_set_log_callback`, or a C
+`printf`-style function with `rocketnet_log_function`; the most recent
+registration across the two wins, and passing `NULL` restores default standard
+output logging. See [docs/ERRORS-AND-LOGGING.md](docs/ERRORS-AND-LOGGING.md) for
+the callback threading and re-entrancy contract.
+
 ## Connection lifecycle
 
 A client moves from `ROCKETNET_CLIENT_STATE_DISCONNECTED` through the handshake
-states to `ROCKETNET_CLIENT_STATE_CONNECTED`. Every negative value is a way the
-attempt or the connection ended, and the client stays in it until it is
-destroyed. Read the state with `rocketnet_client_state`, its name with
+states to `ROCKETNET_CLIENT_STATE_CONNECTED`. A negative value is how the last
+attempt or connection ended, and the client stays in it until
+`rocketnet_client_disconnect` returns it to `DISCONNECTED`. Read the state with `rocketnet_client_state`, its name with
 `rocketnet_client_state_name`, and the end reason with
 `rocketnet_client_disconnect_reason`. `rocketnet_client_index` reports the
 client's slot on the server while connected.
 
-`rocketnet_client_disconnect` ends the connection: the disconnect is sent and
-the state becomes DISCONNECTED. On the server,
+`rocketnet_client_disconnect` ends the connection: from a handshake state or
+`CONNECTED` the disconnect packets are sent first, and the state becomes
+`DISCONNECTED`; the client can connect again with a new token. On the server,
 `rocketnet_server_client_connected` and `rocketnet_server_client_id` identify a
 slot and its client, `rocketnet_server_num_connected_clients` counts them, and
-`rocketnet_server_disconnect_client` ends one deliberately.
+`rocketnet_server_disconnect_client` ends one deliberately, and
+`rocketnet_server_disconnect_all_clients` ends every one while the server keeps
+running.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
 ended. The reason is one of the `ROCKETNET_MESSAGE_ERROR_*` values.
 
@@ -486,12 +539,12 @@ void end_client( struct rocketnet_client_t * client )
     rocketnet_client_destroy( client );
 }
 
-void end_server_client( struct rocketnet_server_t * server, int client_index )
+void end_server_client( struct rocketnet_server_t * server, uint64_t client_index )
 {
     rocketnet_server_disconnect_client( server, client_index );
 }
 ```
 
 Destroy every client and server before `rocketnet_term`. A server destroy
-disconnects every client and frees the server; a client destroy ends its
-connection and frees the client.
+stops a running server, which disconnects every client, and frees it; a client
+destroy ends its connection, from any state, and frees the client.

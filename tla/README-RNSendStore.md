@@ -1,6 +1,6 @@
 # RNSendStore
 
-One class of the message layer's send store: docs/CHANNELS.md sections 4 and 15,
+One class of the message layer's send store: standard/MESSAGES.md sections 4 and 15,
 implemented by `rn_send_store_alloc` and `rn_send_store_free_checked` in
 `sdk/rocketnet_allocator.cpp`. The three classes share no state, so one class is
 the whole model.
@@ -108,16 +108,16 @@ sed -e 's/AllOrNone       = TRUE/AllOrNone       = FALSE/' MCRNSendStore.cfg > /
 
 The three rows are not in `tla/RUNS.tsv` on main (it holds only the
 `MCClientConnection` and `MCLink` rows); they are owed, and they are these, from
-the rerun on `hetzner2` (TLC 2.19, `-workers 4` for the committed run, 1 for each
-witness, 2026-10-13):
+the rerun on Linux (TLC 2.19, `-workers 4` for the committed run, 1 for each
+witness):
 
 ```
-MCRNSendStore	MCRNSendStore.cfg (GuardDoubleFree, AllOrNone TRUE; TypeOK, NoDoubleAllocate, NoLeak, RefuseOnlyWhenFull, ChainsBounded)	47407249	4941552	pass	hetzner2	2026-10-13
-MCRNSendStore	MCRNSendStore.cfg with GuardDoubleFree = FALSE (reversed witness)	113	101	fail as expected: NoDoubleAllocate violated at depth 4, chunk 1 twice on the free list	hetzner2	2026-10-13
-MCRNSendStore	MCRNSendStore.cfg with AllOrNone = FALSE (reversed witness)	36	36	fail as expected: NoLeak violated at depth 4, a refused block took the last two chunks	hetzner2	2026-10-13
+MCRNSendStore	MCRNSendStore.cfg (GuardDoubleFree, AllOrNone TRUE; TypeOK, NoDoubleAllocate, NoLeak, RefuseOnlyWhenFull, ChainsBounded)	47407249	4941552	pass
+MCRNSendStore	MCRNSendStore.cfg with GuardDoubleFree = FALSE (reversed witness)	113	101	fail as expected: NoDoubleAllocate violated at depth 4, chunk 1 twice on the free list
+MCRNSendStore	MCRNSendStore.cfg with AllOrNone = FALSE (reversed witness)	36	36	fail as expected: NoLeak violated at depth 4, a refused block took the last two chunks
 ```
 
-The committed run took 20 s at depth 28, the same counts as the run on `vision`
+The committed run took 20 s at depth 28, the same counts as the run on Linux
 recorded with `a7758f3` (47,407,249 states, 4,941,552 distinct). The witness
 counts differ from that record (149/136 and 34/34 there: how many states were on
 the queue when TLC stopped), with the same violations at the same depth.

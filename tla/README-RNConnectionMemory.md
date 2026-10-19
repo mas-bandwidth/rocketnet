@@ -1,6 +1,6 @@
 # RNConnectionMemory
 
-Per-connection message memory, and the kick on exhaustion: docs/CHANNELS.md
+Per-connection message memory, and the kick on exhaustion: standard/MESSAGES.md
 section 4 ("Who owns each region, and exhaustion kicks"), implemented in
 `sdk/rocketnet_allocator.cpp` by `rn_region_send_alloc`, `rn_region_exhaust`,
 `rn_connection_memory_decide` and `rn_region_reset`, and the arena's create

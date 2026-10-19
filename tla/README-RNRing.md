@@ -1,16 +1,18 @@
 # RNRing: the receive ring's placement rule
 
 `tla/RNRing.tla` is the sender's placement rule for the receive ring and the
-receiver's live spans: docs/CHANNELS.md section 6.2 (the byte bound), 6.3 step 3
+receiver's live spans: standard/MESSAGES.md section 6.2 (the byte bound), 6.3 step 3
 (why the receiver never runs out of room), section 8 (a block's span) and section
-15's `RNRing` row. It was written before any of the rule's code exists: the only
-ring code on main is the receiver's local check, `rn_region_ring_span_valid` in
-`sdk/rocketnet_allocator.cpp` (a placement is 16-aligned and inside `B`), which is
-what the module's `SpanInsideRing` and `Aligned` say a correct sender never trips.
+15's `RNRing` row. The sender's placement is `sdk/rocketnet_window_send.cpp`
+(`rn_window_send_admit` and the functions beside it, which cite `Len16`, `Pos`,
+`PlaceSingle` and `PlaceBlock`). The receiver's local check is
+`rn_region_ring_span_valid` in `sdk/rocketnet_allocator.cpp` (a placement is
+16-aligned and inside `B`), which is what the module's `SpanInsideRing` and
+`Aligned` say a correct sender never trips.
 
 `tla/MCRNRing.tla` and `tla/MCRNRing.cfg` are section 15's small instance. The four
 `tla/MCRNRingBroken*.cfg` files are the reversed witnesses. Every TLC run is a row
-for `tla/RUNS.tsv` (listed below; this change does not edit that file).
+in `tla/RUNS.tsv` (listed below).
 
 ## What the module covers
 
@@ -76,8 +78,8 @@ module; no safety property depends on it):
 - **Acks are abstracted, and `U'` is assumed to move only past released
   records.** 6.3 step 2 argues from P2, P6 and the scheduler's first-write order
   that when the ack that moves `U'` past `n` was built, `n` had been released.
-  That argument is `RNWindow`'s to check (the sibling card
-  `rnwindow-model-checks-every-reliable-number-delivered-once`). Here it is a
+  That argument is `RNWindow`'s to check (the sibling model, which checks
+  that every reliable number is delivered once). Here it is a
   precondition of `Ack(n)`: `n` must be opened (P2: acked means opened), and the
   ack that completes a block, or acks a single record, needs the record released.
   A fragment of an incomplete block may be acked while it is still held; that is
@@ -95,15 +97,15 @@ module; no safety property depends on it):
   time between `Open` and `Release`, which the model already allows.
 - **The send store, the sent-packet map, the RTO.**
 
-One thing the design leaves open, found while writing `Floor`: a code 2 record
-that is not a block "takes a number but no ring bytes" (6.2), so if `U'` lands on
-one, `ring_start(U')` must still be defined. The natural choice, and the one the
-code should make explicit, is the empty span `[ring_next, ring_next)` at the
-moment it was numbered. This module does not number such records.
+One case sits outside the module: a code 2 record that is not a block "takes a
+number but no ring bytes" (6.2), so if `U'` lands on one, `ring_start(U')` must
+still be defined. The code defines it as the empty span `[p, p)` at the moment
+the record is numbered (`rn_window_send_set_number` gives code 2 a zero-byte ring
+anchor at `p`). This module does not number such records.
 
 ## How to run it
 
-On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from
+On Linux with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from
 `tla/`:
 
 ```sh
@@ -130,29 +132,28 @@ temporal check):
 
 ## Runs
 
-TLC 2.19 (rev 5a47802), bench `hetzner2`, `-workers 4` for the committed run and 1
-for each witness, 2026-10-13. The rows for `tla/RUNS.tsv`, in its layout:
+TLC 2.19 (rev 5a47802) on Linux, `-workers 4` for the committed run and 1
+for each witness. The runs, in the layout of `tla/RUNS.tsv`:
 
 ```
-MCRNRing	MCRNRing.cfg (every rule on; TypeOK, LiveSpansDisjoint, SpanInsideRing, Aligned, IdleAdmitsAnyMessage; EveryAdmissibleMessagePlaced, NoRecordWaitsForever)	222691	79377	pass	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenFloorAtU.cfg (FloorAtUPrime FALSE; reversed witness)	3544	1544	fail as expected: Invariant LiveSpansDisjoint is violated at depth 10, a held fragment overwritten, see README-RNRing.md	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenNoPadding.cfg (PadAtBoundary FALSE; reversed witness)	809	456	fail as expected: Invariant SpanInsideRing is violated at depth 8, a span wraps	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenIdleFloor.cfg (IdleFloorAtP FALSE; reversed witness)	149	115	fail as expected: Invariant IdleAdmitsAnyMessage is violated at depth 6, an idle ring refuses a record that fits	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenIdleFloor.cfg without IdleAdmitsAnyMessage, -deadlock (reversed witness)	64946	20769	fail as expected: Temporal properties were violated, EveryAdmissibleMessagePlaced, stuttering lasso at depth 8, the block waits forever	hetzner2	2026-10-13
-MCRNRing	MCRNRingBrokenNoRounding.cfg (Round16 FALSE; reversed witness)	30	30	fail as expected: Invariant Aligned is violated at depth 5	hetzner2	2026-10-13
+MCRNRing	MCRNRing.cfg (every rule on; TypeOK, LiveSpansDisjoint, SpanInsideRing, Aligned, IdleAdmitsAnyMessage; EveryAdmissibleMessagePlaced, NoRecordWaitsForever)	222691	79377	pass
+MCRNRing	MCRNRingBrokenFloorAtU.cfg (FloorAtUPrime FALSE; reversed witness)	3544	1544	fail as expected: Invariant LiveSpansDisjoint is violated at depth 10, a held fragment overwritten, see README-RNRing.md
+MCRNRing	MCRNRingBrokenNoPadding.cfg (PadAtBoundary FALSE; reversed witness)	809	456	fail as expected: Invariant SpanInsideRing is violated at depth 8, a span wraps
+MCRNRing	MCRNRingBrokenIdleFloor.cfg (IdleFloorAtP FALSE; reversed witness)	149	115	fail as expected: Invariant IdleAdmitsAnyMessage is violated at depth 6, an idle ring refuses a record that fits
+MCRNRing	MCRNRingBrokenIdleFloor.cfg without IdleAdmitsAnyMessage, -deadlock (reversed witness)	64946	20769	fail as expected: Temporal properties were violated, EveryAdmissibleMessagePlaced, stuttering lasso at depth 8, the block waits forever
+MCRNRing	MCRNRingBrokenNoRounding.cfg (Round16 FALSE; reversed witness)	30	30	fail as expected: Invariant Aligned is violated at depth 5
 ```
 
-The committed run finished in 6 s at depth 31. Each witness finished in under a
-second except the temporal one, 3 s. Every witness was also run on the first
-draft of the module (before the `Done` self-loop, below) with the same result.
+The committed run finishes in 6 s at depth 31. Each witness finishes in under a
+second except the temporal one, 3 s.
 
 ## The counterexamples, replayed by hand
 
 Each trace was replayed through the module's actions and through the rule as
-section 6.2 states it. None is a defect in rocketnet code: no placement code exists
-yet, and the receiver's check on main (`rn_region_ring_span_valid`) would refuse
-the spans the second witness produces, as 6.3 says ("a violation, never memory
-corruption").
+section 6.2 states it. None is a defect in rocketnet code: the sender's placement
+keeps every rule a witness removes, and the receiver's check
+(`rn_region_ring_span_valid`) refuses the spans the second witness produces, as
+6.3 says ("a violation, never memory corruption").
 
 1. **`MCRNRingBrokenFloorAtU.cfg`: `Invariant LiveSpansDisjoint is violated`, at
    depth 10** (3,544 states generated, 1,544 distinct).
@@ -178,7 +179,7 @@ corruption").
      64`: the span wraps.
    - **Against the rule, by hand:** with padding `p = 64`, `64 + 48 - 64 = 48 <=
      64`, admitted at `[64,112)`, which is `[0,48)` modulo 64, inside the ring.
-     The receiver's check on main, `rn_region_ring_span_valid(region, 32, 48)`
+     The receiver's check, `rn_region_ring_span_valid(region, 32, 48)`
      with `ring_bytes = 64`, returns false (`48 <= 64 - 32` fails), so a sender
      without padding is refused as a violation, never a write past the ring.
      Before the ack the floor is 0 and `32 + 48 - 0 = 80 > 64` refuses the record
@@ -213,7 +214,7 @@ corruption").
      placement, being a multiple of 16, is 16-aligned", and
      `rn_region_ring_span_valid` refuses `offset % 16 != 0`.
 
-A fifth run, not a witness, found a model error on the first pass: the committed
-run reported `Deadlock reached` at the end of the numbering budget (all six
-numbers given and acked, nothing waiting). The `Done` self-loop in `Next` is the
-fix, so that TLC's deadlock check is kept for real stalls, as in witness 3.
+The `Done` self-loop in `Next` lets a behaviour end at the numbering budget (all
+six numbers given and acked, nothing waiting) without TLC reporting
+`Deadlock reached`, so TLC's deadlock check is kept for real stalls, as in
+witness 3.

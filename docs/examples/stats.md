@@ -26,12 +26,6 @@ Each frame runs the calls in the order a game does: update, receive and
 release, simulate, queue, then send last. Sending last is what makes this
 frame's messages leave this frame instead of waiting a frame.
 
-The lifecycle card that lands after this one renames start, finish, receive,
-release and send_packets to `*_start_message`, `*_finish_message`,
-`*_receive_message`, `*_release_message` and `*_send_packets`. The header at
-this base still declares the old names, so the example uses them and says so in
-the source comment.
-
 ## Run it
 
 From the repository root, after the normal build:
@@ -57,7 +51,7 @@ library and are not part of the check.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`,
+- `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_start`,
   `rocketnet_server_update`, `rocketnet_server_port`,
   `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
   `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
@@ -65,7 +59,7 @@ library and are not part of the check.
   `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
   `rocketnet_server_client_stat`, `rocketnet_server_client_counter`,
   `rocketnet_server_destroy`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
+- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_connect`,
   `rocketnet_client_state`, `rocketnet_client_state_name`,
   `rocketnet_client_index`, `rocketnet_client_update`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,

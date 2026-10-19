@@ -1,17 +1,17 @@
 # RNFlows
 
 `RNFlows.tla` models flows on the message server, the design of
-`docs/FLOWS.md`: a fixed flow table whose ids never repeat, subscriptions
+the flows design: a fixed flow table whose ids never repeat, subscriptions
 tagged with the connection id of their slot, a send that queues one copy to
 each subscriber slot's endpoint the way `rocketnet_message_server_broadcast`
 does, and the transport's slot churn between object updates. No code
 implements it yet; `tla/COVERAGE.tsv` holds the `rn-flows` row as owed to
-the first implementation card, `rocketnet-flows-table`.
+the first implementation.
 
 ## Abstraction
 
 - **Phases.** `application` is the main thread between updates: Create,
-  Destroy, Subscribe, Unsubscribe and Send run only there (FLOWS.md F6).
+  Destroy, Subscribe, Unsubscribe and Send run only there (the flows design F6).
   `BeginUpdate` hands over to `transport`, where any number of `Connect`,
   `Disconnect` and `Deliver` steps run; `Observe` ends the update. `Kick`
   runs in the application phase, as `rn_message_object_kick` does from the
@@ -37,7 +37,7 @@ the first implementation card, `rocketnet-flows-table`.
   subscriber list and has a bound endpoint, with no connection-tag check.
   The design's `FLOW_STALE_SUBSCRIPTION` check is therefore not what keeps
   the model safe: the drop at `Observe` alone does.
-- **Refusals** (FLOWS.md section 4) are taken in the design's order and
+- **Refusals** (the flows design section 4) are taken in the design's order and
   change no state, so each is a stutter step; their counters are not
   modelled.
 - **Bounds.** `MaxFlows`, `MaxSubsPerFlow` and `MaxFlowsPerClient` are the
@@ -45,7 +45,7 @@ the first implementation card, `rocketnet-flows-table`.
   design's 2^32 - 1, `FLOW_IDS_EXHAUSTED`), `MaxConn` the connections and
   `MaxMessages` the sends.
 
-| Action | Planned code (docs/FLOWS.md section 3) |
+| Action | Planned code (the flows design section 3) |
 |---|---|
 | `Create` | `rn_flows_create` under `rocketnet_message_server_flow_create` |
 | `Destroy` | `rn_flows_destroy` under `rocketnet_message_server_flow_destroy` |
@@ -103,14 +103,14 @@ measured trace: create flow 1; begin an update and connect connection 1;
 removes the pair from `wants` while the flow list keeps the slot; send to
 flow 1, which queues a copy to slot 1 with nobody entitled; begin an update
 and `Deliver` it to connection 1. `DeliveredOnlyToSubscribers` fails at
-state 10. Checked by hand against FLOWS.md: the design's unsubscribe
+state 10. Checked by hand against the flows design: the design's unsubscribe
 unlinks the node from the flow's list in the same call that frees it from
-the slot's row (sections 2 and 3), which is the step the mutant skips; card
-1's test `flows_unsubscribe_stops_later_sends` replays this trace.
+the slot's row (sections 2 and 3), which is the step the mutant skips; the test
+`flows_unsubscribe_stops_later_sends` replays this trace.
 
 ## Uncommitted checks of the reuse rule
 
-`NoSubscriptionSurvivesReuse` has no committed reversed witness (the card
+`NoSubscriptionSurvivesReuse` has no committed reversed witness (the design
 names one). In a scratch copy, `Broken = {"keepatreuse"}` (Observe skips the
 drop) with one slot, two connections, one flow, one id and one send was run
 twice with TLC and the pinned JAR:

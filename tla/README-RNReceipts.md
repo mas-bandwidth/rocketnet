@@ -4,7 +4,7 @@
 standalone module over transport packet events, with no dependency on
 `RNChannel`. The channel draft is not on origin at staging; the interface
 names are aligned with the local draft for later composition. This is a
-model of the design in `docs/CHANNELS.md` 7.4, not a claim that the message
+model of the design in `standard/MESSAGES.md` 7.4, not a claim that the message
 layer implementation exists.
 
 ## Interface and state
@@ -39,7 +39,7 @@ layer implementation exists.
   twin mapping for every source mode.
 - `outcomes` is a ghost history of generated events, separate from `ring`.
   A full ring drops its oldest event and increments `ringDropped`, as
-  CHANNELS specifies. Draining or overflowing the ring does not allow a
+  standard/MESSAGES.md m12 specifies. Draining or overflowing the ring does not allow a
   second outcome. Progress refers to generation or connection end, not a
   guarantee that an application which ignores a full ring reads every event.
 
@@ -133,7 +133,7 @@ error or a different safety violation as a substitute for its named property.
 
 ## Reference behavior and differences
 
-The reference study is `docs/RAKNET-RELIABILITY.md` 7.3, 7.4, 10 and I9-I12.
+The reference is RakNet's receipt behaviour.
 Both designs allocate a serial at API send, use packet ACKs rather than
 application-consumption reports, never retransmit an unreliable receipt
 record, and never emit reliable LOSS. Types 5/6/7 dispatch as base wire types
@@ -159,7 +159,7 @@ The deliberate receipt differences are:
    endpoint error/disconnect path.
 
 Ordering, sequencing, wire encoding, bandwidth scheduling, allocator and
-zero-copy implementation differences remain in their own design/model cards.
+zero-copy implementation differences remain in their own designs and models.
 This receipt module does not claim to validate those unrelated semantics.
 
 ## Reproduction

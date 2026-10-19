@@ -17,18 +17,17 @@ STANDARD step in _Processing Connection Requests_:
 | compares | cheap | address flags, advertised address, server key compares | address flags; advertised address; server public key |
 | cookie | cheap | cookie MAC and budget gate | recompute the cookie MAC |
 | used | cheap | used-token history lookup | token identifier in used-token history |
-| admitted | cheap | removed with the admitted-token set (`docs/SESSION.md` 1.6): the used-token history rung is now the cheap refusal of a token a connected client holds, from any other address; the model keeps the position | (none) |
+| admitted | cheap | removed with the admitted-token set (the session design 1.6): the used-token history rung is now the cheap refusal of a token a connected client holds, from any other address; the model keeps the position | (none) |
 | restart | cheap | already-connected and mapping lookups | already connected; resend stored challenge |
 | signature | crypto | crypto_sign_verify_detached in sdk/rocketnet_connect_token.cpp | verify the signature |
 | seal | crypto | crypto_box_seal_open in sdk/rocketnet_connect_token.cpp | open the sealed private block |
 | slots | cheap | rocketnet_client_slots_num_free in sdk/rocketnet_server_protocol.cpp | no client slots available |
 | keypair | crypto | crypto_box_keypair in sdk/rocketnet_server_protocol.cpp | obtain the server ephemeral keypair |
 
-The code holds the slots and keypair rungs once this card lands: the slot
+The code holds the slots and keypair rungs in this order: the slot
 check seals the denial under the handshake keys, which need no ephemeral
-pair, so it stands ahead of the keypair. The remaining rungs reach the model
-order as the token-order cards land; until then the table states the target
-order the model checks.
+pair, so it stands ahead of the keypair. Where a remaining rung of the code
+differs, the table states the target order the model checks.
 
 ## Witnesses
 

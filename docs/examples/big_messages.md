@@ -17,25 +17,17 @@ in-memory `loopback` transport, so it needs no socket and no network.
    checks every byte, and prints its size and the time it took to arrive.
 4. Send 4096 bytes as `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`. That is above
    one packet's record limit, so the library promotes the send to its reliable
-   path. A `start` that returns a buffer is that promotion; the same send
-   without a receipt is refused at this size.
+   path: the start message returns a buffer, and the finish message queues the
+   promoted send. Every unreliable type is promoted the same way, up to
+   `max_message_bytes`.
 5. Read `ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED` before and after the promoted
    send. It completes reliably with exactly one ACKED receipt, so it rises by one.
 
-The public header at this base declares no separate promotion counter: the
-standard names `MESSAGE_PROMOTED_UNRELIABLE`, but no such public enum exists.
-What is public is the one acknowledged receipt the promotion produces, so this
-example reads `RECEIPTS_ACKED`. A plain `ROCKETNET_UNRELIABLE` send above one
-packet is refused at this base.
+The public counters have no separate promotion counter, so this example reads
+the one acknowledged receipt the promotion produces, `RECEIPTS_ACKED`.
 
 Each frame runs update, receive and release, simulate, queue, then send last.
 Sending last is what makes this frame's messages leave this frame.
-
-The header also still uses the pre-rename names: `rocketnet_client_start_message`,
-`rocketnet_client_finish_message`, `rocketnet_client_receive_message`,
-`rocketnet_client_release_message` and `rocketnet_client_send_packets` (and their
-server counterparts); the lifecycle card renames them to `*_start_message`
-and so on, and this example uses the names the header at this base declares.
 
 ## Run it
 
@@ -67,11 +59,11 @@ log lines before it are not part of the check.
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_update`,
+- `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_start`, `rocketnet_server_update`,
   `rocketnet_server_port`, `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
   `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_send_packets`,
   `rocketnet_server_destroy`
-- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_state`,
+- `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_connect`, `rocketnet_client_state`,
   `rocketnet_client_update`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_receive_message`, `rocketnet_client_release_message`, `rocketnet_client_send_packets`,
   `rocketnet_client_counter`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`

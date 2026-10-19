@@ -56,7 +56,8 @@ class CheckerFixture(unittest.TestCase):
         os.makedirs(os.path.join(root, "docs"))
         os.makedirs(os.path.join(root, "tla"))
         os.makedirs(os.path.join(root, "sdk"))
-        with open(os.path.join(root, "STANDARD.md"), "w") as handle:
+        os.makedirs(os.path.join(root, "standard"))
+        with open(os.path.join(root, "standard", "TRANSPORT.md"), "w") as handle:
             handle.write(STANDARD)
         with open(os.path.join(root, "tla", "Fixture.tla"), "w") as handle:
             handle.write(TLA)
@@ -72,10 +73,10 @@ class CheckerFixture(unittest.TestCase):
 
     def test_every_anchor_resolves(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["TRANSPORT.md:4", "a receiver MUST drop a packet below its floor",
              "BelowFloorIsRefused", "sdk/code.cpp:fixture_below_floor_check",
              "sdk/tests.cpp:test_below_floor", "unit"],
-            ["5", "a sender MUST NOT exceed its budget",
+            ["TRANSPORT.md:5", "a sender MUST NOT exceed its budget",
              "SenderWithinBudget", "sdk/code.cpp:fixture_budget_check",
              "sdk/tests.cpp:test_budget", "unit"],
         ])
@@ -85,7 +86,7 @@ class CheckerFixture(unittest.TestCase):
 
     def test_gap_is_counted_not_failed(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["TRANSPORT.md:4", "a receiver MUST drop a packet below its floor",
              "-", "-", "-", "none"],
         ])
         code, report = check_witnesses.run(root)
@@ -94,7 +95,7 @@ class CheckerFixture(unittest.TestCase):
 
     def test_stale_code_anchor_fails(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["TRANSPORT.md:4", "a receiver MUST drop a packet below its floor",
              "-", "sdk/code.cpp:fixture_renamed_away", "-", "unit"],
         ])
         code, report = check_witnesses.run(root)
@@ -103,7 +104,7 @@ class CheckerFixture(unittest.TestCase):
 
     def test_stale_standard_keyword_fails(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its ceiling",
+            ["TRANSPORT.md:4", "a receiver MUST drop a packet below its ceiling",
              "-", "-", "-", "none"],
         ])
         code, report = check_witnesses.run(root)
@@ -112,7 +113,7 @@ class CheckerFixture(unittest.TestCase):
 
     def test_stale_tla_invariant_fails(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["TRANSPORT.md:4", "a receiver MUST drop a packet below its floor",
              "RemovedInvariant", "-", "-", "none"],
         ])
         code, report = check_witnesses.run(root)
@@ -121,7 +122,7 @@ class CheckerFixture(unittest.TestCase):
 
     def test_stale_test_anchor_fails(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["TRANSPORT.md:4", "a receiver MUST drop a packet below its floor",
              "-", "-", "sdk/tests.cpp:test_deleted", "unit"],
         ])
         code, report = check_witnesses.run(root)

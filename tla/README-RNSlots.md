@@ -1,6 +1,6 @@
 # RNSlots: connection tags and message views
 
-`RNSlots` extends the draft in `docs/CHANNELS.md` section 15.1. The object
+`RNSlots` extends the draft in `standard/MESSAGES.md` section 15.1. The object
 observes the transport's final slot owners, resets changed endpoints, and
 admits each payload or acknowledged packet id against its captured connection
 tag. A slot index never identifies a connection by itself.
@@ -63,9 +63,9 @@ connection; liveness makes that admissibility condition explicit.
 ## Action mapping for the objects implementation
 
 The endpoint and slots names below are the planned functions in
-`docs/CHANNELS.md` sections 10 and 11. The release and error-check rows name
+`standard/MESSAGES.md` sections 10 and 11. The release and error-check rows name
 required object responsibilities; their final C API spelling belongs to the
-objects/API cards.
+public objects and API.
 
 | Model action | Implementation responsibility |
 |---|---|
@@ -139,8 +139,7 @@ job evidence, not substituted for final completed measurements.
 All nine cases match their expected result with up to two workers, a 110-second
 per-case budget and the pinned runner/JAR from `README.md`. The measured
 totals across separate configurations are 8,913,585 generated and 2,328,289
-distinct states in 38.831 seconds; these totals are not one combined state
-space. The exact table follows.
+distinct states in 38.831 seconds; these totals are not one combined state space. The exact table follows.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|

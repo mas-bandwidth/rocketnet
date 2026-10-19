@@ -2,7 +2,7 @@
 
 The Windows Registered I/O (RIO) server driver, modelled from its design
 before its code exists. The driver is `sdk/rocketnet_server_rio_windows.cpp`
-(owed by the driver card); its region layout and request contexts are
+(owed); its region layout and request contexts are
 `sdk/rocketnet_rio_layout.h`. The driver opens one UDP socket with
 `WSA_FLAG_REGISTERED_IO`, registers one region with one
 `RIORegisterBuffer`, and polls one send completion queue and one receive
@@ -196,7 +196,7 @@ The committed instance with `FreeWaitsDrain = FALSE`: `Free` follows
 
 ## Citation owed
 
-No sdk file is edited by this change. The driver card that writes
+The driver code in
 `sdk/rocketnet_server_rio_windows.cpp` cites this model from its send
 switch and its destroy, and moves the `rio-driver` row of
 `tla/COVERAGE.tsv` from `owed` to `current`.

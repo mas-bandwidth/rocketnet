@@ -18,42 +18,26 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Per-connection keys with forward secrecy, secrets wiped on every exit | ✅ | ✅ | ✅ |
 | Sealed packets with every refusal proven | ✅ | ✅ | ✅ |
 | Used-token history and one token, one live connection | ✅ | ✅ | ✅ |
-| Admission hook drops a packet before any verify | ✅ | ✅ | ✅ |
-| Cheap refusals before crypto: a full server refuses before keypair work | ✅ | ✅ | ✅ |
-| Bounded handshake work per update | ✅ | ✅ | ✅ |
-| Configurable half-open handshake deadline | ✅ | ✅ | ✅ |
 | Replay window, cleared whole by a long sequence skip | ✅ | ✅ | ✅ |
-| Replay window advances only after the connect check | ✅ | ✅ | ✅ |
-| Hostile fragment ids cannot poison a reassembly slot | ✅ | ✅ | ✅ |
-| Oversize datagrams are dropped, never truncated | ✅ | ✅ | ✅ |
 | Release builds refuse development keys | ✅ | ✅ | ✅ |
-| Release builds do not export development token minting | ✅ | ✅ | ✅ |
+| Oversize datagrams are dropped, never truncated | ✅ | ✅ | ✅ |
 | Public API is NULL-safe at the boundary | ✅ | ✅ | ✅ |
-| Refusal decisions agree with netcode 1.02 | ✅ | ✅ | ✅ |
 | The token is bound at response open | ✅ | ✅ | ✅ |
 | Development keys are off by default and warn on every start | ✅ | ✅ | ✅ |
-| An unauthenticated reply is never larger than its request | ✅ | ✅ | ✅ |
-| A request with another salt resends the stored challenge | ✅ | ✅ | ✅ |
-| Expired-token refusals counted apart, one counter per cause | ✅ | ✅ | ✅ |
-| Connect-token create and expire checks can read the game clock | ✅ | ✅ | ✅ |
-| A backend keypair can be derived from a seed through rocketnet.h | ✅ | ✅ | ✅ |
 | Session layer: identity auth with a backend, rolling magic, keyed filter value (later) | ❌ | ❌ | ❌ |
-| complete | 96% | 96% | 96% |
+| complete | 93% | 93% | 93% |
 
 [Source data](docs/roadmap.sexp)
 
-## Connections and the connection layer
+## Connections and the transport
 
-The unreliable connection layer the message layer runs over: connection state, slots, keep-alives, fragments, acks and the server loop.
+The unreliable transport the message layer runs over: connection state, slots, keep-alives, fragments, acks and the server loop.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
 | Client connection state machine with every timeout pairing | ✅ | ✅ | ✅ |
 | Server client slots from a free-slot stack | ✅ | ✅ | ✅ |
-| Encryption mappings with handshake and idle deadlines | ✅ | ✅ | ✅ |
 | Keep-alives paced and suppressed by traffic | ✅ | ✅ | ✅ |
-| Payloads both ways from the connection response on | ✅ | ✅ | ✅ |
-| Redundant disconnect burst, from the client or the server | ✅ | ✅ | ✅ |
 | Large payloads fragmented and reassembled | ✅ | ✅ | ✅ |
 | Fragments accepted only on a connected slot | ✅ | ✅ | ✅ |
 | Server transport entries carry a connection id | ✅ | ✅ | ✅ |
@@ -61,17 +45,13 @@ The unreliable connection layer the message layer runs over: connection state, s
 | Ack history that survives a long lossy path | ✅ | ✅ | ✅ |
 | Frame sync: a fixed-rate server loop with priority and drop detection | ✅ | ✅ | ✅ |
 | Counters on every path, each classified, conserved and named by a test | ✅ | ✅ | ✅ |
-| The server drains its receive queue up to a per-update budget | ✅ | ✅ | ✅ |
-| Every piece of per-connection state is reset when a connection ends, in one function per side | ✅ | ✅ | ✅ |
-| A public client can run with no I/O thread, stepped by the game's update | ✅ | ✅ | ✅ |
-| Client socket I/O off the main thread, gated by the measured main-thread cost per frame | ✅ | ✅ | ✅ |
 | complete | 100% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
 
 ## Reliability modes
 
-The eight RakNet reliabilities, per send, over the connection layer's per-packet acks.
+The eight RakNet reliabilities, per send, over the transport's per-packet acks.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -83,7 +63,6 @@ The eight RakNet reliabilities, per send, over the connection layer's per-packet
 | UNRELIABLE_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
 | RELIABLE_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
 | RELIABLE_ORDERED_WITH_ACK_RECEIPT | ✅ | ✅ | ✅ |
-| Oversize unreliable sends are promoted to their reliable twin, as RakNet does, and said so | ✅ | ✅ | ✅ |
 | complete | 100% | 100% | 100% |
 
 [Source data](docs/roadmap.sexp)
@@ -94,325 +73,38 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Zero-copy send: start, write in place, finish or abort | ✅ | ✅ | ✅ |
-| An unreliable message that fits one packet is written in place in that packet, with no copy | ❌ | ❌ | ❌ |
+| Zero-copy send: start message, write in place, finish message or abort message | ✅ | ✅ | ✅ |
 | Receive and release messages as views | ✅ | ✅ | ✅ |
 | N channels with per-record dispatch | ✅ | ✅ | ✅ |
 | Large reliable messages split into blocks and delivered whole | ✅ | ✅ | ✅ |
-| Four send priorities, round robin across channels | ✅ | ✅ | ✅ |
 | Small messages aggregated into packets | ✅ | ✅ | ✅ |
 | Send budget in kbps per connection | ✅ | ✅ | ✅ |
-| Resend delay from the measured round trip, block chunks paced by it, no backoff | ✅ | ✅ | ✅ |
+| Resend delay from the measured round trip, block chunks paced by it | ✅ | ✅ | ✅ |
 | A 1400-byte game message fits one packet | ✅ | ✅ | ✅ |
 | One fixed region per connection, no allocation after create | ✅ | ✅ | ✅ |
 | Caller-supplied memory block | ✅ | ✅ | ✅ |
 | Memory exhaustion kicks only that connection | ✅ | ✅ | ✅ |
 | Hostile records and chunks refused | ✅ | ✅ | ✅ |
-| Endpoint and slots as pure machines | ✅ | ✅ | ✅ |
 | CONFIG announcement: both ends prove the same configuration | ✅ | ✅ | ✅ |
-| Message layer soaked at full configured load | ❌ | ❌ | ❌ |
-| Broadcast send | ✅ | ✅ | ✅ |
-| The unreleased-message refusal is a public counter on client and server | ✅ | ✅ | ✅ |
-| The channel documentation names the counter an oversize unreliable send moves | ✅ | — | — |
+| Send one message to every connected client, a start message and finish message per slot | ✅ | ✅ | ✅ |
 | Flows: server-side subscription groups (later) | ❌ | ❌ | ❌ |
-| complete | 86% | 85% | 85% |
+| complete | 93% | 93% | 93% |
 
 [Source data](docs/roadmap.sexp)
 
-## Transports
+## Server transports
 
-The server transports below the connection layer, one column each, in the order the automatic ladder ranks them: xdp, gso, io_uring and portable on Linux, msgx and portable on macOS, portable, iocp and rio on Windows. The per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT select one at runtime; loopback is pin-only.
-
-AF_XDP serves IPv4 and IPv6 end to end (8a35a14): a server serves the family of its public address, and the ladder offers xdp for either. Its IPv6 cell is ❌ because no CI step runs AF_XDP end to end (it needs root and a VM guest); the msgx and iocp IPv6 cells are ❌ until the CI transport family matrix runs green on them.
-
-— is a transport the feature does not apply to: xdp bypasses the kernel's UDP stack, loopback is in-process, and a row that names one transport's own mechanism is — for the others.
+The server socket transports, selected at runtime by the per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT. Loopback is pin-only.
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Server transport | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Server transport available | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Selectable by pin at runtime | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | IPv6 and dual-stack binds | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| Receive coalescing by the kernel (UDP_GRO on Linux, URO on Windows), split by stride | — | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | — |
-| Send segmentation by the kernel (UDP GSO on Linux, USO on Windows), probed with fallback | — | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | — |
+| Receive coalescing by the kernel, split by stride | — | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | — |
 | Registered I/O (RIO) on Windows | — | — | — | — | — | — | ✅ | — |
-| The loopback transport holds max clients plus the server | — | — | — | — | — | — | — | ✅ |
-| complete | 67% | 40% | 100% | 60% | 60% | 60% | 67% | 75% |
-
-[Source data](docs/roadmap.sexp)
-
-## XDP (later)
-
-The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes later, separately, by the owner's call; RocketNet already runs with XDP in the game, tested to 10 Gbps.
-
-| feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Kernel prefilter with AF_XDP rings and counted verdicts | ✅ | — | — | — | — | — | — | — |
-| Native attach on a production NIC with internet handshakes | ✅ | — | — | — | — | — | — | — |
-| Kernel filter decisions run as host C in the unit suite | ✅ | — | — | — | — | — | — | — |
 | Kernel filter counters through the transport counter surface | ✅ | — | — | — | — | — | — | — |
-| Kernel replay protection with a read-only high-water map | ✅ | — | — | — | — | — | — | — |
-| The standard sizes the kernel replay map apart from the userspace replay window | ✅ | — | — | — | — | — | — | — |
-| AF_XDP bind requests zero-copy | ✅ | — | — | — | — | — | — | — |
-| Replies go to the peer's own MAC address on link, to the gateway otherwise | ✅ | — | — | — | — | — | — | — |
-| AF_XDP on AWS GameLift fleets: the research | ✅ | — | — | — | — | — | — | — |
-| The live stress runner: the client stress mode and the merge | ✅ | — | — | — | — | — | — | — |
-| The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
-| Packet blaster and simulated-client harnesses at line rate | ❌ | — | — | — | — | — | — | — |
-| Ownership and retry paths regression-validated against the 10 Gbps baseline | ❌ | — | — | — | — | — | — | — |
-| Privileged syscall-failure coverage in its own lab | ❌ | — | — | — | — | — | — | — |
-| The live stress run: the XDP server against one client from every fleet machine (later) | ❌ | — | — | — | — | — | — | — |
-| complete | 73% | — | — | — | — | — | — | — |
-
-[Source data](docs/roadmap.sexp)
-
-## Throughput and load per transport (later)
-
-One server per transport on a LAN, measured: a row per server platform, a cell per transport that platform runs; — is a transport the platform does not run, and loopback is in-process.
-
-| feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| LAN throughput, a Linux server (later) | ❌ | — | ❌ | ❌ | ❌ | — | — | — |
-| LAN throughput, a macOS server (later) | — | ❌ | — | — | ❌ | — | — | — |
-| LAN throughput, a Windows server (later) | — | — | — | — | ❌ | ❌ | ❌ | — |
-| 1000 clients over a LAN, a Linux server (later) | ❌ | — | ❌ | ❌ | ❌ | — | — | — |
-| 1000 clients over a LAN, a macOS server (later) | — | ❌ | — | — | ❌ | — | — | — |
-| 1000 clients over a LAN, a Windows server (later) | — | — | — | — | ❌ | ❌ | ❌ | — |
-| complete | 0% | 0% | 0% | 0% | 0% | 0% | 0% | — |
-
-[Source data](docs/roadmap.sexp)
-
-## Further clients
-
-Clients beyond the desktop and server platforms; the client on Linux, macOS and Windows is in Connections and the connection layer.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| Console clients (PS4, PS5, Switch, Xbox GDK) | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
-
-[Source data](docs/roadmap.sexp)
-
-## Browser clients (later)
-
-Browsers cannot open raw UDP, so a browser client reaches a RocketNet server through a WebTransport or WebRTC data channel front-end, either a relay or a second front-end in the server.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| WebTransport (HTTP/3 datagrams) client and front-end | ❌ | ❌ | ❌ |
-| WebRTC data channel client and front-end | ❌ | ❌ | ❌ |
-| Relay or second front-end that bridges either into the UDP transport | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
-
-[Source data](docs/roadmap.sexp)
-
-## Dedicated-NIC transports (later)
-
-These transports are only for a deployment where a second NIC is exclusively the game server's and the main NIC carries admin traffic; RocketNet never takes over a shared NIC, which is why AF_XDP (the kernel stack keeps the NIC, the server steers only its own packets) is the transport for shared NICs.
-
-FreeBSD has no column of its own; its row is counted under Linux, the other server platform netmap serves.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| netmap transport on FreeBSD (netmap is in the FreeBSD kernel) | ❌ | — | — |
-| netmap transport on Linux, only if netmap enters the mainline kernel (today it needs an out-of-tree module and a patched NIC kernel module) | ❌ | — | — |
-| DPDK transport | ❌ | — | ❌ |
-| complete | 0% | — | 0% |
-
-[Source data](docs/roadmap.sexp)
-
-## Scaling and load (next milestone)
-
-Many channels and many connections, measured.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| 1000-client in-process swarm with churn and garbage traffic | ✅ | ✅ | ✅ |
-| Channel count a build bound from 1 to 65536 | ✅ | ✅ | ✅ |
-| Nightly bounded soak | ✅ | ❌ | ❌ |
-| Message layer stressed at 1024 channels | ❌ | ❌ | ❌ |
-| Message layer stressed at 10k channels | ❌ | ❌ | ❌ |
-| About 1000 real connections with channels on, at game-like load | ❌ | ❌ | ❌ |
-| Socket-level swarm with Go orchestration against real transports | ❌ | ❌ | ❌ |
-| Multi-day soaks past 2^32 packets on one connection | ❌ | ❌ | ❌ |
-| The load harness runs nightly on Linux, macOS and Windows (later) | ❌ | ❌ | ❌ |
-| LAN throughput and 1000 clients, one server per transport: the design (later) | ❌ | — | — |
-| LAN bench runner: the client load modes and the merge (later) | ❌ | ❌ | ❌ |
-| LAN bench runner: the server pinned-transport mode (later) | ❌ | ❌ | ❌ |
-| LAN bench runner: the orchestration (later) | ❌ | ❌ | ❌ |
-| Profile pass 1, measurement: soak across the matrix, the raw numbers committed (later) | ❌ | ❌ | ❌ |
-| Profile pass 1, report: where the time goes, and what to cut first (later) | ❌ | ❌ | ❌ |
-| complete | 20% | 14% | 14% |
-
-[Source data](docs/roadmap.sexp)
-
-## Verification
-
-How RocketNet is checked: unit tests without sockets or real time, functional tests, fuzzing, deterministic simulation, proofs and models. A proof or a model is platform-free: it is checked on Linux, where its job runs, and is — on macOS and Windows.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| Unit suite with no sockets or real time | ✅ | ✅ | ✅ |
-| Functional suite over simulated lossy links | ✅ | ✅ | ✅ |
-| Seeded network simulator | ✅ | ✅ | ✅ |
-| The development library can simulate a bad link, through config alone | ✅ | ✅ | ✅ |
-| Every size, every type, every channel, both directions, every message verified: the loopback matrix | ✅ | ✅ | ✅ |
-| Fuzz targets for packets, tokens and messages | ✅ | ✅ | ✅ |
-| Captured pcapng corpus replayed per commit and seeding the fuzzers | ✅ | ✅ | ✅ |
-| Wycheproof vectors for ChaCha20-Poly1305, Ed25519 and X25519 | ✅ | ✅ | ✅ |
-| Happy-path end to end: the real server and client binaries as separate processes | ✅ | ✅ | ✅ |
-| Sanitizers: ASan, UBSan, TSan, MSan, LSan | ✅ | ❌ | ❌ |
-| The MSan gate fails on crashed tests | ✅ | — | — |
-| The staged-finish wire totals case and the MemorySanitizer check pass | ✅ | ❌ | ❌ |
-| Big-endian (s390x) runs | ❌ | — | — |
-| An instruction-count gate for the client frame and the server tick, on every push | ✅ | — | — |
-| A clang-format configuration derived from the netcode style, with a format check | ✅ | — | — |
-| The per-push workflows run on the self-hosted runners, held there by a lint | ✅ | ✅ | ✅ |
-| The nightly workflows run on the self-hosted runners | ✅ | ❌ | ❌ |
-| Deterministic simulation testing: the design | ✅ | — | — |
-| Deterministic simulation: the fault injector, as a TLA+ model first | ✅ | — | — |
-| Deterministic simulation, layer 1: the seeded core, N clients and a server, one seed, exact replay | ✅ | ❌ | ❌ |
-| Deterministic simulation, layer 3: the TLA+ properties as runtime checks | ✅ | ❌ | ❌ |
-| Deterministic simulation, layer 2: the fault injectors (reorder, delay, clock skew, crash and restart), built from their model (later) | ❌ | ❌ | ❌ |
-| Deterministic simulation, layer 4: per-push shards, the nightly campaign, and the planted-bug proof (later) | ❌ | ❌ | ❌ |
-| The simulator and reset tests catch the bugs they exist to catch (later) | ❌ | ❌ | ❌ |
-| CBMC proofs of bounded readers and fragment bounds | ✅ | — | — |
-| TLA+ models: connection, security, replay, channels, window, scheduler, slots, receipts | ✅ | — | — |
-| TLA+ model of transport fragments and acks | ✅ | — | — |
-| TLA+ models of blocks and the endpoint | ✅ | — | — |
-| Every modelled transition cites its module and action | ❌ | — | — |
-| Connection and security machines as pure modules | ❌ | ❌ | ❌ |
-| CBMC proves the ack-block reader free of out-of-bounds access up to the full packet size (later) | ❌ | — | — |
-| CBMC proves the server packet readers free of out-of-bounds access up to the full packet size (later) | ❌ | — | — |
-| CBMC proves the client packet readers free of out-of-bounds access up to the full packet size (later) | ❌ | — | — |
-| CBMC proves the sequence buffers and replay window free of out-of-bounds access (later) | ❌ | — | — |
-| ESBMC proofs: every rocketnet_assert on the proved paths is a checked property (later) | ❌ | — | — |
-| The proof tools and Frama-Clang prerequisites in place before the Frama-Clang trial (later) | ❌ | — | — |
-| Frama-Clang trial: can WP prove rocketnet_ack_block_read from the C++ source? (later) | ❌ | — | — |
-| The MSan known-findings list matches every toolchain the runners use (later) | ❌ | — | — |
-| complete | 63% | 53% | 53% |
-
-[Source data](docs/roadmap.sexp)
-
-## Platforms
-
-Where RocketNet builds and passes. Every push runs the unit and functional suites on Linux, macOS and Windows; the nightly jobs run on Linux, and their macOS and Windows jobs are disabled.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| Per-commit CI, Debug and Release | ✅ | ❌ | ❌ |
-| Shared export list compared | ✅ | ✅ | ✅ |
-| Nightly soak | ✅ | ❌ | ❌ |
-| The library is callable from a shared library and a static library, from C and C++ | ✅ | ✅ | ✅ |
-| complete | 100% | 50% | 50% |
-
-[Source data](docs/roadmap.sexp)
-
-## Public API
-
-The C surface in sdk/rocketnet.h and what a consumer needs to use it.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| Connection layer C surface: rocketnet_client_transport_* and rocketnet_server_transport_* | ✅ | ✅ | ✅ |
-| Root header pure C: the client and server with their functions, the address type, nothing else | ✅ | ✅ | ✅ |
-| Message objects in C: rocketnet_message_client_* and rocketnet_message_server_* | ✅ | ✅ | ✅ |
-| ABI revision and layout queries | ✅ | ✅ | ✅ |
-| Installable CMake package with C and C++ consumers | ✅ | ✅ | ✅ |
-| Vendored sodium, no system libsodium | ✅ | ✅ | ✅ |
-| Structured create errors and FFI-safe logging | ✅ | ✅ | ✅ |
-| Sized APIs for compatible struct evolution | ✅ | ✅ | ✅ |
-| Whole-transport memory estimates and operator budgets (#155) | ✅ | ✅ | ✅ |
-| C++ ClientTransport and ServerTransport interfaces | ✅ | ✅ | ✅ |
-| Shared library build, checked exports, callable from C and C++ | ✅ | ✅ | ✅ |
-| API reference generated by MrDocs | ✅ | — | — |
-| API reference comments: platform | ✅ | — | — |
-| API reference comments: reliability | ✅ | — | — |
-| USAGE.md: the client and server API, with worked usage | ✅ | — | — |
-| The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 94% | 100% | 100% |
-
-[Source data](docs/roadmap.sexp)
-
-## Examples
-
-The example series in examples/, each a small program that builds against the installed library; nightly-examples.yml runs them on Linux, and its macOS and Windows jobs are disabled.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| The example server runs out of the box | ✅ | ✅ | ✅ |
-| hello: the least RocketNet program that works, and the home of the example series | ✅ | ❌ | ❌ |
-| client + server: two programs over real UDP, with keys, a matchmaker stub and connect tokens | ✅ | ❌ | ❌ |
-| big_messages: a 200 KB reliable message, and an oversize unreliable send promoted | ✅ | ❌ | ❌ |
-| stats: state and counters through the public queries | ✅ | ❌ | ❌ |
-| budgets: send budgets and over-budget behaviour | ✅ | ❌ | ❌ |
-| config_env: default, struct, environment, and a refused bad value | ✅ | ❌ | ❌ |
-| transports: auto, a pin, and a list, chosen and said out loud | ✅ | ❌ | ❌ |
-| channels: a stalled chat channel does not block positions | ✅ | ❌ | ❌ |
-| ack receipts: did my unreliable update arrive? | ✅ | ❌ | ❌ |
-| game_loop: a 60 Hz server and N clients, against the 100 microsecond client budget | ✅ | ❌ | ❌ |
-| complete | 100% | 9% | 9% |
-
-[Source data](docs/roadmap.sexp)
-
-## The standard
-
-The normative standard in standard/: standard/TRANSPORT.md (the t sections) and standard/MESSAGES.md (the m sections), each section with its conformance vectors, checked by the unit suite and the conformance job.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| The normative standard in standard/, a conformance vector per section | ✅ | ✅ | ✅ |
-| Section t6: connect token | ✅ | ✅ | ✅ |
-| Section t7: key schedule | ✅ | ✅ | ✅ |
-| Section t8: packet formats | ✅ | ✅ | ✅ |
-| Section t9: packet protection | ✅ | ✅ | ✅ |
-| Section t11: handshake, the client | ✅ | ✅ | ✅ |
-| Section t12: handshake, the server | ✅ | ✅ | ✅ |
-| Section t13: session: keep-alive, timeout, disconnect, slot reset | ✅ | ✅ | ✅ |
-| Section t14: replay protection | ✅ | ✅ | ✅ |
-| Section m4: receiver checks | ✅ | ✅ | ✅ |
-| Section m8: blocks | ✅ | ✅ | ✅ |
-| Section m11: the CONFIG control record | ✅ | ✅ | ✅ |
-| The standard's vector index printed on demand, never committed | ✅ | — | — |
-| One standard: the old single-file standard retired into standard/ | ✅ | — | — |
-| complete | 100% | 100% | 100% |
-
-[Source data](docs/roadmap.sexp)
-
-## Second deliverable: keys and backends (later)
-
-What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. After v1.0.0, by the owner's call.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production | ❌ | ❌ | ❌ |
-| Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token | ❌ | — | — |
-| Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
-
-[Source data](docs/roadmap.sexp)
-
-## Correctness after v1.0.0 (later)
-
-Correctness work that follows the v1.0.0 milestone, by the owner's call.
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
-
-[Source data](docs/roadmap.sexp)
-
-## Release and process
-
-| feature | Linux | macOS | Windows |
-|---|:---:|:---:|:---:|
-| Release hardening flags | ❌ | ❌ | ❌ |
-| Reproducible vendored sources | ✅ | ❌ | ❌ |
-| First integrating game vendors the SDK and proves it (release gate) | ❌ | ❌ | ❌ |
-| Supported-platform policy | ❌ | — | — |
-| Security disclosure and release process | ✅ | — | — |
-| Independent review of the connection layer repair diff, received | ❌ | — | — |
-| The old to-do and readiness files retired into this roadmap | ✅ | — | — |
-| complete | 43% | 0% | 0% |
+| Kernel replay and host replay map | ✅ | — | — | — | — | — | — | — |
+| complete | 80% | 50% | 100% | 75% | 75% | 75% | 80% | 67% |
 
 [Source data](docs/roadmap.sexp)

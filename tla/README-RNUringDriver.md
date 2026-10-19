@@ -2,8 +2,8 @@
 
 `RNUringDriver.tla` models the io_uring server driver
 (`sdk/rocketnet_server_uring_linux.cpp`) **before the code exists**. It
-follows THE DESIGN of card `rocketnet-io-uring-driver-core`. Once that card
-lands, the driver cites this module, and the `io-uring-driver` row in
+follows the driver's design. Once the driver
+lands, it cites this module, and the `io-uring-driver` row in
 `COVERAGE.tsv` moves from `owed` to `current`.
 
 ## The abstraction
@@ -119,8 +119,7 @@ done
   --out "$job/RUNS.tsv" "$job"/rnuringdriver-*/RUNS.tsv
 ```
 
-Outcomes measured on hulk (linux-amd64, Java 21.0.12.1, the pinned JAR,
-2026-10-17):
+Outcomes measured on Linux (linux-amd64, Java 21.0.12.1, the pinned JAR):
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
