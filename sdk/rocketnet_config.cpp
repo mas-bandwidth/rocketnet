@@ -69,6 +69,7 @@ void rocketnet_message_default_config( struct rocketnet_message_config_t * confi
 static const struct rocketnet_config_field_t rocketnet_client_config_fields[] =
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
+    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 0, 0 },
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
@@ -103,6 +104,7 @@ static const struct rocketnet_config_field_t rocketnet_message_config_field_tabl
 struct rocketnet_client_transport_config_table_t
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    uint64_t step_driven;
 };
 
 #undef ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64
@@ -131,6 +133,7 @@ struct rocketnet_message_config_table_t
 ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
 ROCKETNET_CONFIG_LAYOUT_FIELD( state_change_callback )
 ROCKETNET_CONFIG_LAYOUT_FIELD( time_callback )
+ROCKETNET_CONFIG_LAYOUT_FIELD( step_driven )
 static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h client transport config matches its table" );
 #undef ROCKETNET_CONFIG_LAYOUT_PUBLIC
 #undef ROCKETNET_CONFIG_LAYOUT_TABLE

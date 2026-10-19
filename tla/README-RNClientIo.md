@@ -275,6 +275,45 @@ generated, 672 distinct).
 
 ## Runs
 
-The six rows are in `tla/RUNS.tsv` from `tlacheck run` on a Linux bench
+The eight rows are in `tla/RUNS.tsv` from `tlacheck run` on a Linux bench
 (TLC 2.19, the pinned JAR): the control passes with exit 0, and each witness
 exits 12 naming its declared invariant.
+
+## Step-driven mode
+
+`StepDriven = TRUE` is the step-driven mode. Create starts no I/O thread
+(`ThreadStarted` is false), and the I/O core actions run only as
+`CallerStep`, inside a call: `StepBegin` is `update` or `send_packets` (or
+`destroy`, while it waits for the other ring to be Sent and after `Stop`)
+entering `rocketnet_client_io_step` on the caller's thread with `block` false.
+The step is one pass that never blocks: `StepEnd` returns once the ring it
+took is finished, the exit is taken when stopped, and its drain has ended in
+a publish or an owe; it may return with datagrams still in the socket, and
+`IoWait` is never taken. While `inCall` holds, the main thread's own
+actions (`HandOff`, `Defer`, `Reopen`, `Expose`, `Return`, `Stop`, `Join`,
+`Free`) are disabled; game threads still write and commit. `lastExec`
+records which executor took the last core action.
+
+`NoIoThreadActionInStepMode` requires, in step mode, that no I/O-thread
+action is enabled and that no core action has been taken by a thread
+(`lastExec # "thread"`); the existing invariants hold in the mode too.
+`MCRNClientIoStepDriven.cfg` (one slot, two datagrams) checks every invariant
+and the five liveness properties under `SpecStepFair`: `SpecFair` with the
+core actions fair on their executor, `StepBegin` and `StepEnd` weakly fair
+(the game calls `update` every frame), and the main thread's reopen,
+hand-off, expose, return and join and the receive strongly fair, since a
+caller step disables them intermittently. The committed instance is one slot
+and two datagrams, which fits the runner's 110 s budget. At two slots and
+three datagrams, the size of `MCRNClientIo.cfg`, the same check passes when
+run by hand with TLC 2.19 (exit 0, about six minutes on a 16-core bench),
+outside the budget, so it has no row in `RUNS.tsv`.
+
+The reversed witness, `MCRNClientIoBrokenStepStartsThread.cfg`, sets
+`StepModeStartsThread = TRUE`: create starts the thread in step mode too, and
+TLC names `NoIoThreadActionInStepMode` once a datagram arrives and the thread
+can receive it. With the invariant cut to its `lastExec` conjunct alone it
+still fails (exit 12), so the witness is caught by a step the thread takes,
+not by the flag. Two planted defects confirm that the step-mode liveness
+checks are not vacuous: a receive that is only weakly fair, a `StepEnd` that
+may return with the ring it took unsent, and an unfair `StepBegin` (no update
+calls) each fail the temporal properties (exit 13).
