@@ -47,6 +47,30 @@ ACK behavior already has protocol tests in the unit suite. The keyless-config
 create is functional; `test_server_keyless_config_has_no_keys` checks the
 config the gate reads, without creating a transport.
 
+### macOS universal and Xcode builds
+
+The macOS build carries both slices, arm64 and x86_64, in the static library
+and the dylib:
+
+    cmake -B build-universal -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-universal --parallel 4
+    lipo -info bin/librocketnet.a bin/librocketnet.dylib
+
+The deployment target defaults to 11.0, the first macOS release on Apple
+silicon: the arm64 slice cannot load below it, and one floor serves both
+slices. `otool -l` shows it on each slice. Run the x86_64 slice under Rosetta 2
+with `arch -x86_64`:
+
+    arch -x86_64 ./bin/test
+    arch -x86_64 ./bin/test_lifecycle
+    arch -x86_64 ./bin/functional
+
+The Xcode project generator builds the same libraries and suites:
+
+    cmake -G Xcode -B build-xcode -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-xcode --config Release --parallel 4
+    ./bin/Release/test
+
 Dependencies, per platform, as CI installs them:
 
     # Linux -- the build links the XDP dataplane, and liburing is the bench
