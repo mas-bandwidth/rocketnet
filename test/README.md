@@ -28,8 +28,13 @@ first. `./bin/functional` prints one line a case:
 `./bin/test` prints its ten largest as `test_timing_rss_NN [SKIPPED <case>
 peak_rss_mb=<n> bound_mb=<b>]`, the names-only spelling its checker accepts.
 A case whose peak is over the bound fails the suite with the same
-`<case> peak_rss_mb=<n> bound_mb=<b>` text on its `FAIL:` line. The bound is
+`<case> peak_rss_mb=<n> bound_mb=<b>` text on its `FAIL:` line, and CI's
+functional runs fail the job with it. The bound is 698 MiB,
 `ROCKETNET_TEST_MAX_CASE_RSS_MB` in `test/suite_runner.h`; the environment
 variable of the same name overrides it with a positive value. A sanitizer build
 prints the peaks and enforces no bound unless that variable sets one, because
 sanitizer shadow memory is not the case's own footprint.
+
+Read the lines as the case's own peak against the bound: `peak_rss_mb` is
+the largest resident set the case process reached, `bound_mb` the limit it ran
+under. A case near the bound is a case to shrink, never a bound to raise.
