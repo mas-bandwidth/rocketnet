@@ -1587,6 +1587,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             }
         }
     }
+
+    }
     else
     {
 

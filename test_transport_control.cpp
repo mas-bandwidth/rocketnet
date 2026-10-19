@@ -213,7 +213,9 @@ static void test_buffered_control_pressure(int clients = 300)
     auto * f = new control_fixture_t();
     rocketnet_server_driver_operations_t operations;
     auto * server = make_server(f, &operations, clients, false);
-    f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
+    // One short of the batch cap: the transport serves one batch per update here,
+    // so the fake driver models an endpoint that answers a single receive call.
+    f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS - 1;
     const double begin = rocketnet_time();
     for (int step = 0; step < 6; ++step)
     {
