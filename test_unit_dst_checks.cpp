@@ -15,21 +15,22 @@
 
 static void rec_send( struct rocketnet_dst_check_state_t * st, int stream, uint32_t seq )
 {
-    struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( s->reliable_sent < ROCKETNET_DST_CHECK_MAX_SENT )
-        s->sent_seqs[s->reliable_sent++] = seq;
+    const int session = stream / 72;
+    const int channel = ( stream % 72 ) / 8;
+    const int type = stream % 8;
+    rocketnet_dst_check_sent( st, 1000.0, session, channel, type, seq, 1, 1, 0, 64 );
 }
 
 static void rec_deliver( struct rocketnet_dst_check_state_t * st, int stream, uint32_t seq )
 {
-    struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( s->reliable_delivered < ROCKETNET_DST_CHECK_MAX_SENT )
-        s->delivered_seqs[s->reliable_delivered++] = seq;
+    (void) st;
+    (void) stream;
+    (void) seq;
 }
 
 static void dst_check_ordered_out_of_order_fails()
 {
-    struct rocketnet_dst_check_state_t st;
+    static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 42 );
     double time = 1000.0;
     rocketnet_dst_check_ordered( &st, time, 3, 0 );
@@ -41,9 +42,10 @@ static void dst_check_ordered_out_of_order_fails()
 
 static void dst_check_reliable_duplicate_fails()
 {
-    struct rocketnet_dst_check_state_t st;
+    static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 43 );
     double time = 1000.0;
+    rec_send( &st, 2, 5 );
     rocketnet_dst_check_reliable_once( &st, time, 2, 5 );
     rocketnet_unit_check( st.failed == 0 );
     rocketnet_dst_check_reliable_once( &st, time, 2, 5 );
@@ -53,14 +55,14 @@ static void dst_check_reliable_duplicate_fails()
 
 static void dst_check_reliable_missing_fails()
 {
-    struct rocketnet_dst_check_state_t st;
+    static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 44 );
     double time = 1000.0;
     rec_send( &st, 2, 0 );
     rec_send( &st, 2, 1 );
     rec_send( &st, 2, 2 );
-    rec_deliver( &st, 2, 0 );
-    rec_deliver( &st, 2, 1 );
+    rocketnet_dst_check_reliable_once( &st, time, 2, 0 );
+    rocketnet_dst_check_reliable_once( &st, time, 2, 1 );
     rocketnet_dst_check_liveness_delivered( &st, time, 2 );
     rocketnet_unit_check( st.failed == 1 );
     rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
@@ -68,7 +70,7 @@ static void dst_check_reliable_missing_fails()
 
 static void dst_check_sequenced_backwards_fails()
 {
-    struct rocketnet_dst_check_state_t st;
+    static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 45 );
     double time = 1000.0;
     rocketnet_dst_check_sequenced( &st, time, 4, 10 );
@@ -80,7 +82,7 @@ static void dst_check_sequenced_backwards_fails()
 
 static void dst_check_unreliable_duplicate_fails()
 {
-    struct rocketnet_dst_check_state_t st;
+    static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 46 );
     double time = 1000.0;
     rocketnet_dst_check_unreliable_once( &st, time, 0, 7 );
@@ -92,7 +94,7 @@ static void dst_check_unreliable_duplicate_fails()
 
 static void dst_check_ack_undelivered_fails()
 {
-    struct rocketnet_dst_check_state_t st;
+    static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 47 );
     double time = 1000.0;
     rocketnet_dst_check_opened( &st, 2, 0 );
@@ -107,7 +109,7 @@ static void dst_check_ack_undelivered_fails()
 
 static void dst_check_stale_session_payload_fails()
 {
-    struct rocketnet_dst_check_state_t st;
+    static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 48 );
     double time = 1000.0;
     rocketnet_dst_check_stale_session( &st, time, 5, 3, 1 );
@@ -120,7 +122,7 @@ static void dst_check_stale_session_payload_fails()
 
 static void dst_check_clean_sequence_passes()
 {
-    struct rocketnet_dst_check_state_t st;
+    static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 49 );
     double time = 1000.0;
 
@@ -131,6 +133,8 @@ static void dst_check_clean_sequence_passes()
     rocketnet_dst_check_sequenced( &st, time, 1, 10 );
     rocketnet_dst_check_sequenced( &st, time, 1, 11 );
 
+    rec_send( &st, 2, 5 );
+    rec_send( &st, 2, 6 );
     rocketnet_dst_check_reliable_once( &st, time, 2, 5 );
     rocketnet_dst_check_reliable_once( &st, time, 2, 6 );
 
@@ -143,10 +147,6 @@ static void dst_check_clean_sequence_passes()
     rocketnet_dst_check_stale_session( &st, time, 5, 3, 1 );
     rocketnet_dst_check_stale_session_payload( &st, time, 5, 3, 1 );
 
-    rec_send( &st, 2, 5 );
-    rec_send( &st, 2, 6 );
-    rec_deliver( &st, 2, 5 );
-    rec_deliver( &st, 2, 6 );
     rocketnet_dst_check_liveness_delivered( &st, time, 2 );
 
     rocketnet_unit_check( st.failed == 0 );
