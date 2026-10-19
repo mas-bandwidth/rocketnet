@@ -1,18 +1,25 @@
 # RNClientIoDecrypt
 
-Decrypt on the client I/O thread, as the design for moving decrypt there
-describes it. The I/O thread opens each session datagram in the receive
-buffer it fills, before `IoPublish`, with its own copy of the open key and its
-own replay window; `update` consumes the records in arrival order and keeps
-every counter, the integrity limit, the session state and `replay_session`.
-The code the design changes is in `sdk/rocketnet_client_protocol.cpp`:
+Decrypt on the client I/O thread. When the client's transport driver has wait
+and wake, the I/O thread opens each session datagram in the receive buffer it
+fills, before `IoPublish`, with its own copy of the open key and its own replay
+window; `update` consumes the records in arrival order and keeps every counter,
+the integrity limit, the session state and `replay_session`.
+
+The I/O thread's side is `sdk/rocketnet_client_io.h`: the open block,
+`rocketnet_client_io_publish_keys` (`PublishKeys`),
+`rocketnet_client_io_retire_keys` (`RetireKeys`),
+`rocketnet_client_io_take_keys` (`IoTakeKeys`, `IoDropKeys`, `IoKeepKeys`) and
+`rocketnet_client_io_decrypt_datagram` (`IoCheck` then `IoOpen`). The main
+thread's side is `sdk/rocketnet_client_protocol.cpp`:
 `rocketnet_client_open_session_packet` (the state check, the sequence
 reconstruction, `rocketnet_replay_already_received` on `replay_session`, the
 open with `rocketnet_open_sealed_packet`, `rocketnet_replay_advance` right
-after it), `rocketnet_client_integrity_failure` (the limit, the state change
-and the zeroing of `client->keys`) and `rocketnet_client_process_challenge`
-(where the session keys are derived). the implementation implements
-the design, and `tla/COVERAGE.tsv` marks the client-io-decrypt row current.
+after it), `rocketnet_client_consume_session_record` (`UpdateConsume`),
+`rocketnet_client_integrity_failure` (the limit, the state change and the
+zeroing of `client->keys`) and `rocketnet_client_process_challenge` (where the
+session keys are derived and published). `tla/COVERAGE.tsv` marks the
+client-io-decrypt row current.
 
 ## What is modelled
 
@@ -54,15 +61,15 @@ the design, and `tla/COVERAGE.tsv` marks the client-io-decrypt row current.
   is worked at a time: the next `IoReceive`, `IoPublish` and epoch read wait
   until the last record has a final verdict.
 - **update's consumption** (`UpdateConsume`), one record in arrival order,
-  every verdict counted with today's counter (`nCounted`): an opened record
+  every verdict counted with its own counter (`nCounted`): an opened record
   passes the state check, `update`'s own replay check on `mainWin` and
   `rocketnet_replay_advance` on `mainWin`, and its sequence is accepted; a
   replay record is counted as already received; a forged record runs
   `rocketnet_client_integrity_failure` in its position while connected, and
   at the limit retires the keys and ends the session; a raw record is
-  processed as at BASE (a handshake record outside the handshake is wrong
-  state; a session record gets the state check, the replay check on
-  `mainWin` and the AEAD on the main thread).
+  processed on the main thread alone (a handshake record outside the
+  handshake is wrong state; a session record gets the state check, the replay
+  check on `mainWin` and the AEAD on the main thread).
 - **The fill threads** (`FillAckBuild`) read `mainWin`, as
   `rocketnet_ack_block_build` does under the phase contract; `ackMark` is the
   mark read.
@@ -88,9 +95,9 @@ the design, and `tla/COVERAGE.tsv` marks the client-io-decrypt row current.
 - The counters are one count of verdicts counted; integrity failures are
   `integrity`. Handshake integrity failures are not modelled (the challenge is
   genuine).
-- `update` holds no key variable, so the design's order inside a retire
-  (the epoch stored retired, seq_cst, before `update` zeroes its own keys) is
-  not checked; the retire is one atomic step.
+- `update` holds no key variable, so the code's order inside a retire (the
+  epoch stored retired, seq_cst, before `update` zeroes its own keys) is not
+  checked; the retire is one atomic step.
 
 ## Invariants
 
@@ -113,8 +120,8 @@ the design, and `tla/COVERAGE.tsv` marks the client-io-decrypt row current.
   windows refuse every accepted sequence (`ReceivedIsRefused` for each).
 - **`SingleWriter`**: `mainWin`, the counters and the session change only in
   `update`'s steps, `ioWin` only in the I/O thread's.
-- **`ExposedStable`** and **`NoReceiveStall`**, from RNClientIo. A stall now
-  also counts the new steps that move records toward `update`: `IoCheck`,
+- **`ExposedStable`** and **`NoReceiveStall`**, from RNClientIo. Here a stall
+  also counts the steps this model adds that move records toward `update`: `IoCheck`,
   `IoOpen`, `UpdateConsume` and `PublishKeys`.
 - **`TypeOK`**.
 
@@ -136,7 +143,7 @@ which `Next` sets after the step.
 
 ## How to run it
 
-On a Linux bench, from `tla/`:
+On Linux, from `tla/`:
 
 ```sh
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNClientIoDecrypt.cfg MCRNClientIoDecrypt
@@ -214,15 +221,14 @@ runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violate
      replay check, opens it (it is genuine bytes, so the AEAD succeeds), and
      only then refuses it as already received: datagram 3 is in both
      `crypto` and `cheapRefused`.
-- **Against the design, by hand:** the design's table row for
-  `replay_session` says the I/O thread's own window refuses "a duplicate or
-  too-old sequence ... before the AEAD", and The replay window and the
-  receive order says an I/O thread that opened first would spend an AEAD on
-  every replayed datagram. Today's order is the same:
-  `rocketnet_client_open_session_packet` calls
-  `rocketnet_replay_already_received` before `rocketnet_open_sealed_packet`.
-  With the rule, step 4's `IoCheck` gives the verdict replay and the copy
-  never reaches `IoOpen`.
+- **Against the code, by hand:** `rocketnet_client_io_decrypt_datagram`
+  runs the I/O thread's own window's `rocketnet_replay_already_received` as
+  the last cheap rung, before `rocketnet_open_sealed_packet`, so a duplicate
+  or too-old sequence is refused before the AEAD; an I/O thread that opened
+  first would spend an AEAD on every replayed datagram. The main thread's
+  `rocketnet_client_open_session_packet` keeps the same order. With the rule,
+  step 4's `IoCheck` gives the verdict replay and the copy never reaches
+  `IoOpen`.
 
 ### `MCRNClientIoDecryptBrokenSharedWindow.cfg`
 
@@ -236,13 +242,13 @@ runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violate
   2. Genuine sequence 1 arrives; the I/O thread checks and opens it and
      advances both `ioWin` and `mainWin` to mark 1: the last writer of
      `mainWin` is the I/O thread.
-- **Against the design, by hand:** the design's table row for
-  `replay_session` says "update is its only writer", read by the fill
-  threads through `rocketnet_ack_block_build` under the phase contract; the
-  I/O thread is outside that contract, so its write races the fill threads'
+- **Against the code, by hand:** `update` is the only writer of
+  `replay_session`, which the fill threads read through
+  `rocketnet_ack_block_build` under the phase contract; the I/O thread is
+  outside that contract, so a write from it would race the fill threads'
   reads, and the ack block would name sequence 1 before `update` has
-  processed it. In the design the I/O thread advances only its own window of
-  the same struct; `update` advances `replay_session` when it consumes the
+  processed it. In the code the I/O thread advances only its own window in
+  the open block; `update` advances `replay_session` when it consumes the
   record.
 
 ### `MCRNClientIoDecryptBrokenNoRetire.cfg`
@@ -257,11 +263,11 @@ generated, 480 distinct).
      ended, the wake set.
   3. The I/O thread wakes, reads retired at the top of the drain, and keeps
      its copy.
-- **Against the design, by hand:** the design's table row for the open key
-  says "the I/O thread zeroes its copy when it reads retired and opens
-  nothing after", and `rocketnet_client_integrity_failure` zeroes
-  `client->keys` at the limit today; a copy that outlives the retire keeps
-  the key in memory after the attempt has ended and lets the I/O thread keep
+- **Against the code, by hand:** `rocketnet_client_io_take_keys` zeroes the
+  copy through `rocketnet_client_io_drop_keys` when it reads retired, and
+  nothing opens after; `rocketnet_client_integrity_failure` zeroes
+  `client->keys` at the limit. A copy that outlived the retire would keep the
+  key in memory after the attempt has ended and let the I/O thread keep
   opening with it. With the rule, step 3 zeroes the copy and every later
   session datagram passes raw to `update`, which refuses it by the state
   check.
@@ -278,36 +284,36 @@ generated, 3,090 distinct).
   3. A copy of sequence 1 arrives; `IoCheck` refuses it as already received
      before the AEAD and counts it: the last writer of the counters is the
      I/O thread.
-- **Against the design, by hand:** the design's row for counters and the
-  integrity limit says "the I/O thread writes no counter": the record
-  carries the verdict and `update` counts it with today's counter in its
-  arrival position. A counter written by both threads is a data race on the
-  counter block, and a count that runs ahead of `update`'s processing order.
+- **Against the code, by hand:** the I/O thread writes no counter
+  (`rocketnet_client_io_decrypt_datagram`): the record carries the verdict,
+  and `update` counts it with its own counter in its arrival position. A
+  counter written by both threads would be a data race on the counter block,
+  and a count that runs ahead of `update`'s processing order.
 
-## Findings for the implementation
+## Findings
 
-- **The retire must reach a blocked I/O thread.** The design reads the epoch
-  at the top of each drain, and the wait has no timeout while running except
-  a guard; without a wake at the retire a blocked I/O thread keeps its copy
-  until traffic arrives (the scratch run above). The model sets the wake in
-  the retire; the implementation wakes the I/O thread after storing retired,
-  or relies on the guard timeout, which bounds the delay only by that
-  timeout.
+- **The retire must reach a blocked I/O thread.** The I/O thread reads the
+  epoch at the top of each drain, and its wait has no timeout while running
+  except a guard; without a wake at the retire a blocked I/O thread keeps its
+  copy until traffic arrives (the scratch run above). The model sets the wake
+  in the retire, and so does the code: `rocketnet_client_io_retire_keys`
+  stores retired and then calls the driver's `wake`.
 - **Opens after the retire, within one drain.** Because the epoch is read once
   per drain, the I/O thread can open up to a buffer of datagrams with its copy
   after `update` has stored retired and before its next drain (the reachable
   state above). `update` refuses every such record by the state check, so
-  nothing is accepted and `NoOpenWithoutKeys` holds as the design states it,
-  but those opens are AEAD work on the key past the integrity limit. One
-  acquire load of the epoch before each open removes them, at the cost of one
-  load per datagram.
+  nothing is accepted and `NoOpenWithoutKeys` holds as stated, but those
+  opens are AEAD work on the key past the integrity limit. One acquire load of
+  the epoch before each open would remove them, at the cost of one load per
+  datagram; the code reads the epoch once per drain.
 - **Genuine traffic never reaches the main thread's AEAD while connected**,
   given that the keys are published before the connection response is handed
   off and the I/O thread reads the epoch at the top of the drain that sends
-  it. The implementation keeps that order: publish, then commit the response.
+  it. The code keeps that order: `rocketnet_client_process_challenge`
+  publishes the keys, then the connection response is committed.
 
 ## Runs
 
-The five rows are in `tla/RUNS.tsv` from `tlacheck run` on a Linux bench
+The five rows are in `tla/RUNS.tsv` from `tlacheck run` on Linux
 (TLC 2.19, the pinned JAR): the control passes with exit 0, and each witness
 exits 12 naming its declared invariant.
