@@ -485,11 +485,10 @@ void rocketnet_platform_socket_send_packets_mmsg( struct rocketnet_platform_sock
 /**
  * @brief Receives a batch with Linux recvmmsg on the caller's I/O thread.
  *
- * This internal Linux entry point follows socket_receive_packets layout,
- * except that recvmmsg-truncated datagrams are skipped and produce no output
- * entry. The generic socket_receive_packets path may instead report an
- * oversized datagram with packet_bytes greater than packet_stride and store
- * only its prefix.
+ * This internal Linux entry point follows socket_receive_packets layout: an
+ * oversized datagram is reported with its true size in packet_bytes, greater
+ * than packet_stride, and only its prefix is stored. Zero-length datagrams
+ * produce no output entry.
  * @param socket Live socket.
  * @param from Output source-address array.
  * @param packet_data Output storage with packet_stride bytes per slot.

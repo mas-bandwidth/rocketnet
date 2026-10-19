@@ -1097,7 +1097,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         }
 
         errno = 0;
-        int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT, NULL );
+        // MSG_TRUNC: each msg_len is the datagram's true size, as the
+        // per-packet path reports it
+        int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT | MSG_TRUNC, NULL );
         if ( result < 0 )
         {
             if ( errno == EINTR )
@@ -1114,27 +1116,28 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         if ( result == 0 )
             return total;
 
-        // walk the chunk in place. a truncated datagram or a family the
+        // walk the chunk in place. a zero-length datagram or a family the
         // transport does not speak (the per-packet path delivers neither)
         // is compacted out: the next kept message's bytes move down to the
-        // gap. rare by nature and bounded by the chunk.
+        // gap. rare by nature and bounded by the chunk. an oversize
+        // datagram is kept with its true size and the prefix the kernel
+        // wrote, so the transport's prefilter counts it PREFILTER_TOO_LARGE.
 
         int kept = 0;
         for ( int i = 0; i < result; i++ )
         {
-            if ( msg[i].msg_hdr.msg_flags & MSG_TRUNC )
-                continue;
             rocketnet_address_t parsed;
             if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
                 continue;
             const int bytes = (int) msg[i].msg_len;
             if ( bytes <= 0 )
                 continue;
+            const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
             const uint8_t * source = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) ( chunk_base + kept ) * (size_t) packet_stride;
             if ( target != source )
             {
-                memmove( target, source, (size_t) bytes );
+                memmove( target, source, (size_t) copy_bytes );
             }
             from[chunk_base + kept] = parsed;
             packet_bytes[chunk_base + kept] = bytes;
