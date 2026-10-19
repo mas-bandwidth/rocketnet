@@ -62,8 +62,9 @@ harness corpus and names why in the pull request.
 
 This policy covers the rocketnet library and its wire protocol. The threat model,
 the guarantees, and the explicit non-goals are normative in
-[STANDARD.md](STANDARD.md), under **Security considerations specific to this
-design** and **What this layer defends against, and what it does not**. In that
+[standard/TRANSPORT.md](standard/TRANSPORT.md) and
+[standard/MESSAGES.md](standard/MESSAGES.md), each under **Security
+considerations**. In that
 document's terms, session traffic has forward secrecy while the handshake does
 not; a sealed box proves nothing about its sender; connection-request replay is a
 denial of service against one client rather than an authentication break; no

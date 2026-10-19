@@ -1,5 +1,7 @@
 # ServerSession: the server object's life, its slots across clients, and the per-slot reset
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 `tla/ServerSession.tla` models the server object over its life: create (STOPPED, no transport
 bound), start, clients connecting into free slots, sending and receiving, leaving by their own
 disconnect, a timeout, a denial during the handshake, `disconnect_client` or

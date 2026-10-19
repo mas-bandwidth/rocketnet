@@ -373,6 +373,7 @@ normative section it argues for.
 | 2026-10-18 | Every packet size limit is derived from a 1500-byte MTU and the default packet budget is 1452 bytes. |
 | 2026-10-18 | The handshake server budgets are documented and pinned, and development keys are off by default with a warning when used. |
 | 2026-10-18 | The replay window is bounded at 32768 sequences and the kernel replay prefilter is sized apart. |
+| 2026-10-18 | The single draft STANDARD.md is retired to a pointer at RN-1 TRANSPORT.md, RN-2 MESSAGES.md and this rationale. Every comparison the old tools/conformance/check_standard.py made is carried by a pinned row of RN-1 or RN-2; the per-check ledger is in the retiring commit. |
 | 2026-10-17 | A lost run or a late fragment never stales a reassembly slot. |
 | 2026-10-16 | A connect token is bound at connection response open, not at connection request. |
 | 2026-10-15 | The send history holds a lossy long path and splits an evicted unacknowledged record into lost and overflow. |

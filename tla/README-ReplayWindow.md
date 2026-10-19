@@ -1,5 +1,7 @@
 # ReplayWindow: the replay window of one encryption mapping
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 `tla/ReplayWindow.tla` is `struct rocketnet_replay_protection_t`
 (`sdk/rocketnet_encryption_map.h:31-35`) and the two operations in
 `sdk/rocketnet_replay.cpp` that own it, `rocketnet_replay_already_received` and

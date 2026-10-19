@@ -129,7 +129,7 @@ all three pass:
 1. **Unit and functional tests** prove correctness. Every layer exhaustively,
    simplest to most complex; negative tests assert the specific reason counter
    AND the packet type's arrival counter, so "rejected" always means "rejected
-   here"; known-answer vectors (STANDARD.md Appendix A) prove interop.
+   here"; known-answer vectors (standard/TRANSPORT.md Appendix A) prove interop.
    On success a test prints its name and nothing else — measurements and
    diagnostics belong to failures and to the profiling instruments, never to
    a passing run's output.
@@ -198,7 +198,7 @@ create log line. The config system is one X-macro table per transport in
 `rocketnet.h` deriving struct, defaults, env names (`ROCKETNET_` +
 uppercased field), parse and validation; precedence default < struct < env,
 overrides logged with the displaced value, validation refuses and never
-clamps. STANDARD.md "Driver selection and transport configuration" is the
+clamps. standard/TRANSPORT.md "Driver selection and transport configuration" is the
 ruling form.
 
 The shape is the one this section always planned, confirmed by the #81
