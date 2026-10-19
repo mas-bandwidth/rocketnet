@@ -853,11 +853,11 @@
     /* RakNet's ReliabilityLayer does. EXPECTED: promotion is the normal path */ \
     /* for a large unreliable send, one count per send. appended: indices are */ \
     /* the contract. */ \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE: Counts UNRELIABLE sends too big for one packet's record, promoted to their reliable twin. Unit: sends. Class: expected; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE: Counts UNRELIABLE sends too big for one packet's record, promoted to their reliable twin; one count per promoted send. Unit: occurrences. Class: expected; family: none. */ \
     X( MESSAGE_PROMOTED_UNRELIABLE, EXPECTED, NONE ) \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED: Counts UNRELIABLE_SEQUENCED sends too big for one packet's record, promoted to their reliable twin. Unit: sends. Class: expected; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED: Counts UNRELIABLE_SEQUENCED sends too big for one packet's record, promoted to their reliable twin; one count per promoted send. Unit: occurrences. Class: expected; family: none. */ \
     X( MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED, EXPECTED, NONE ) \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT: Counts UNRELIABLE_WITH_ACK_RECEIPT sends too big for one packet's record, promoted to their reliable twin. Unit: sends. Class: expected; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT: Counts UNRELIABLE_WITH_ACK_RECEIPT sends too big for one packet's record, promoted to their reliable twin; one count per promoted send. Unit: occurrences. Class: expected; family: none. */ \
     X( MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT, EXPECTED, NONE )
 
 /**
