@@ -114,6 +114,11 @@ known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
 end reports the transport that won.
 
+The AF_XDP server transport (`xdp`) serves IPv4. IPv6 runs on `gso`,
+`io_uring` and `portable`. A server created with an IPv6 address takes `xdp`
+out of its list: `"auto"` falls to the next transport, and a list that names
+only `xdp` refuses the create with `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`.
+
 `public_address` on the server displaces the address passed to create, so the
 address the transport binds and the address connect tokens are checked against
 are always the same one. The environment form applies to the first server

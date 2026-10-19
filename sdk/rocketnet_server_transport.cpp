@@ -645,18 +645,6 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport
 // rocketnet_server_transport_default_config lives in rocketnet_config.cpp,
 // written from the config table so every default is declared exactly once
 
-void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config )
-{
-    if ( !rocketnet_api_null_guard( config ) )
-        return;
-    rocketnet_assert( config );
-    rocketnet_server_transport_default_config_current( config );
-    config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
-}
-
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
@@ -1100,6 +1088,22 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         memset( bind_address.data.ipv4, 0, sizeof(bind_address.data.ipv4) );
     else
         memset( bind_address.data.ipv6, 0, sizeof(bind_address.data.ipv6) );
+
+    // the AF_XDP transport serves IPv4 (DRIVERS.md): for an IPv6 address the
+    // xdp rung leaves the list before anything allocates, so "auto" falls to
+    // the next transport, and a list that named only xdp is refused here
+
+    if ( rocketnet_driver_ladder_drop_ipv4_only( &ladder, public_address.type ) > 0 )
+    {
+        if ( ladder.num_candidates == 0 )
+        {
+            if ( status )
+                *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
+            rocketnet_error( "server transport xdp refused for IPv6 address %s: the AF_XDP transport serves IPv4. use the gso, io_uring or portable transport for IPv6", public_address_string );
+            return NULL;
+        }
+        rocketnet_warn( "server transport xdp skipped for IPv6 address %s: the AF_XDP transport serves IPv4. trying the next candidate", public_address_string );
+    }
 
     // the operator memory budget (#155): each candidate's pre-allocation plan
     // is compared to the budget before any allocation, and a candidate whose

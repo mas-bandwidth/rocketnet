@@ -948,3 +948,23 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
     return true;
 }
+
+int rocketnet_driver_ladder_drop_ipv4_only( struct rocketnet_driver_ladder_t * ladder, int address_type )
+{
+    rocketnet_assert( ladder );
+
+    if ( address_type != ROCKETNET_ADDRESS_IPV6 )
+        return 0;
+
+    int kept = 0;
+    int dropped = 0;
+    for ( int i = 0; i < ladder->num_candidates; i++ )
+    {
+        if ( ladder->candidates[i] == ROCKETNET_DRIVER_XDP )
+            dropped++;
+        else
+            ladder->candidates[kept++] = ladder->candidates[i];
+    }
+    ladder->num_candidates = kept;
+    return dropped;
+}
