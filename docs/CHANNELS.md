@@ -1245,7 +1245,7 @@ It owns:
 
 After update returns, the application reads deliveries, receipts and events.
 They stay valid until the next update, the same lifetime as the transport's
-batch (U:68-81). It then sends with `rocketnet_server_send` or `rocketnet_server_start`. On the
+batch (U:68-81). It then sends with `rocketnet_server_start`, writes, and finishes. On the
 main thread, after every message for the frame is queued,
 `rocketnet_server_send_packets( server )` sends them all, last in the frame.
 
@@ -1268,7 +1268,7 @@ rocketnet_server_abort( server, client_index );
   is not touched; only atomic counters are. So any number of threads may call
   it for any clients during the fill phase, exactly like the transport's start.
 - A zero-copy message gets no receipt and no ordering. UNRELIABLE needs
-  neither. Every other type goes through `rocketnet_server_send`.
+  neither. Every other type goes through the message layer's internal copying send.
 
 ### 11.3 The client: `rocketnet_client_t`
 
@@ -1389,8 +1389,13 @@ for ( ;; )                                                /* 2. receive and rele
     rocketnet_client_release( client, view );
 }
 /* 3. run the game simulation for this frame */
-uint32_t serial = rocketnet_client_send( client, channel, ROCKETNET_UNRELIABLE, data, bytes ); /* 4. queue */
-(void) serial;
+uint8_t * out = rocketnet_client_start( client, channel, ROCKETNET_UNRELIABLE, (int) bytes ); /* 4. queue */
+if ( out )
+{
+    memcpy( out, data, bytes );
+    uint32_t serial = rocketnet_client_finish( client, (int) bytes ); /* the receipt serial */
+    (void) serial;
+}
 rocketnet_client_send_packets( client );                  /* 5. last: this frame's messages leave this frame */
 ```
 
@@ -1420,7 +1425,7 @@ counter for each violation in section 13.3.
 study's §13 is outside RocketNet's library deliverable. The native C API
 covers the following protocol needs:
 
-- RakNet's `Send` maps to `rocketnet_client_send` or `rocketnet_server_send`, which returns a nonzero serial.
+- RakNet's `Send` maps to `rocketnet_client_start`/`rocketnet_client_finish`, or the server forms, which return a nonzero serial.
 - `Receive` and `DeallocatePacket` become `rocketnet_client_receive` and
   `rocketnet_client_release`, or the server forms with a `client_index`.
 - Receipts and connection notices are lists. A consumer adapter can merge them into

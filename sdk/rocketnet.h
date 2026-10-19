@@ -65,7 +65,7 @@
  * calling-contract change; append-only additions that preserve old layouts
  * keep the revision unchanged.
  */
-#define ROCKETNET_ABI_VERSION 1
+#define ROCKETNET_ABI_VERSION 2
 
 // -----------------------------------------
 //                       export macro
@@ -771,12 +771,13 @@ struct rocketnet_server_config_t
 // send_packets (each connection's packets, under its send budget, out to the
 // wire).
 //
-// Sending: send copies the message in and returns its receipt serial,
-// nonzero, or 0 when it was refused. start, write in place, finish is the
-// zero-copy form of the same: start returns a pointer into the connection's
-// region, write the message there once, and finish(bytes_written) queues it
-// and returns its serial; abort gives the room back. One start is pending
-// per object at a time. reliability is one of ROCKETNET_UNRELIABLE,
+// Sending: start, write in place, finish is the only send path. start returns
+// a pointer into the connection's region for the message, write the message
+// there once (copy it in when the caller already holds a buffer), and
+// finish(bytes_written) queues it and returns its receipt serial, nonzero; a
+// NULL start is a refused send, 0. The pointer is valid until finish or abort;
+// abort gives the room back. One start is pending per object at a time.
+// reliability is one of ROCKETNET_UNRELIABLE,
 // ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE,
 // ROCKETNET_RELIABLE_ORDERED, ROCKETNET_RELIABLE_SEQUENCED,
 // ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT
@@ -873,17 +874,26 @@ ROCKETNET_EXPORT int rocketnet_client_index( const struct rocketnet_client_t * c
 // the transport that won the candidate list at create ("portable", "msgx"). a NULL client is a counted no-op that returns NULL.
 ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client );
 
-// a NULL client is a counted no-op that returns NULL.
+// the first step of the send: a pointer into the connection's region for a
+// message of bytes, or NULL when refused. Write the message there once, or
+// copy it in when the caller already holds a buffer:
+//
+//     uint8_t * out = rocketnet_client_start( client, channel, reliability, bytes );
+//     if ( out )
+//     {
+//         memcpy( out, data, bytes );
+//         serial = rocketnet_client_finish( client, bytes );
+//     }
+//
+// The pointer is valid until finish or abort; one start is pending per object
+// at a time. a NULL client is a counted no-op that returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_client_start( struct rocketnet_client_t * client, int channel, int reliability, int bytes );
 
-// the receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. a NULL client is a counted no-op that returns 0.
+// the queued message's receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. a NULL client is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint32_t rocketnet_client_finish( struct rocketnet_client_t * client, int bytes_written );
 
 // a NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_abort( struct rocketnet_client_t * client );
-
-// a NULL client or data is a counted no-op that returns 0.
-ROCKETNET_EXPORT uint32_t rocketnet_client_send( struct rocketnet_client_t * client, int channel, int reliability, const uint8_t * data, int bytes );
 
 // 1 with the next message on channel, 0 when there is none. a NULL client, data or bytes is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_client_receive( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes );
@@ -977,22 +987,31 @@ ROCKETNET_EXPORT void rocketnet_server_disconnect_client( struct rocketnet_serve
 // ROCKETNET_MESSAGE_ERROR_* the slot's last connection ended with, until the slot's next connection. a NULL server is a counted no-op that returns NONE.
 ROCKETNET_EXPORT int rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, int client_index );
 
-// a NULL server is a counted no-op that returns NULL.
+// the first step of the send: a pointer into the connection's region for a
+// message of bytes, or NULL when refused. Write the message there once, or
+// copy it in when the caller already holds a buffer:
+//
+//     uint8_t * out = rocketnet_server_start( server, client_index, channel, reliability, bytes );
+//     if ( out )
+//     {
+//         memcpy( out, data, bytes );
+//         serial = rocketnet_server_finish( server, client_index, bytes );
+//     }
+//
+// The pointer is valid until finish or abort; one start is pending per object
+// at a time. a NULL server is a counted no-op that returns NULL.
 ROCKETNET_EXPORT uint8_t * rocketnet_server_start( struct rocketnet_server_t * server, int client_index, int channel, int reliability, int bytes );
 
-// a NULL server is a counted no-op that returns 0.
+// the queued message's receipt serial, nonzero; 0 when no start is pending, bytes_written is outside 1 to the bytes started, or client_index is not a connected client. a NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint32_t rocketnet_server_finish( struct rocketnet_server_t * server, int client_index, int bytes_written );
 
 // a NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_abort( struct rocketnet_server_t * server, int client_index );
 
-// a NULL server or data is a counted no-op that returns 0.
-ROCKETNET_EXPORT uint32_t rocketnet_server_send( struct rocketnet_server_t * server, int client_index, int channel, int reliability, const uint8_t * data, int bytes );
-
-// Sends data to every connected client exactly as rocketnet_server_send
-// would, one copy per connection. Returns the number of clients it was queued
-// for; a client that refuses is skipped. a NULL server or data is a counted
-// no-op that returns 0.
+// Takes the caller's data and copies it to every connected client, one copy
+// per connection. Returns the number of clients it was queued for; a client
+// that refuses is skipped. a NULL server or data is a counted no-op that
+// returns 0.
 ROCKETNET_EXPORT int rocketnet_server_broadcast( struct rocketnet_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );
 
 // 1 with the next message on channel, 0 when there is none. a NULL server, data or bytes is a counted no-op that returns 0.
