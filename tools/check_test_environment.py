@@ -23,7 +23,8 @@ import sys
 REPO = Path(__file__).resolve().parent.parent
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"(test_[a-z0-9_]+)"\s*,')
+# Registry rows name every functional test, including harness and client_io cases.
+TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,')
 REGISTER_RE = re.compile(r"REGISTER_UNIT_TEST(?:_EXPECTED_FAIL)?\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)")
 EXEC_TEST_NAME_RE = re.compile(r'"(test_[a-z0-9_]+)(?:\\n)?"')
 IF_RE = re.compile(r"^\s*#\s*if(?:def|ndef)?\b")
@@ -181,7 +182,8 @@ def main():
     if functional:
         # the functional suite opens loopback sockets and walks the driver
         # ladder; its CI job invokes it with the ambient environment (and any
-        # ROCKETNET_DRIVER pin) rather than the unit suite's hostile config.
+        # ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin) rather than the
+        # unit suite's hostile config.
         result = run_binary(binary, env, timeout=1200)
         lines = result.stdout.splitlines()
         printed = printed_names(lines)
@@ -207,7 +209,8 @@ def main():
                 sys.exit("functional suite failed: %s" % result.returncode)
         return
 
-    # Preserve any caller's explicit ROCKETNET_DRIVER pin. Other values exercise
+    # Preserve any caller's explicit ROCKETNET_SERVER_TRANSPORT and
+    # ROCKETNET_CLIENT_TRANSPORT pins. Other values exercise
     # exact names, legacy aliases, an invalid key and a long value without ever
     # printing their contents. The suite derives its cleanup list from the tables.
     env.update({

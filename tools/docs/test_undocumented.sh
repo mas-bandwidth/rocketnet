@@ -20,7 +20,7 @@ sdk/rocketnet.h	1366	rocketnet_frame_sync_stats_t::dropped_frames	variable	count
 sdk/rocketnet.h	1476	ROCKETNET_UNRELIABLE	macro	reliability
 sdk/rocketnet.h	1770	rocketnet_message_client_required_memory	function	configuration
 sdk/rocketnet.h	1814	rocketnet_message_client_send	function	messages
-sdk/rocketnet.hpp	29	rocketnet::ClientTransport::update	function	cpp
+sdk/rocketnet.hpp	34	rocketnet::ClientTransport::update	function	cpp
 sdk/rocketnet_address.h	25	rocketnet_address_t	record	connection
 sdk/rocketnet_connect_token.h	150	rocketnet_generate_connect_token	function	connection
 sdk/rocketnet_counters.h	575	ROCKETNET_COUNTER_PACKETS_SENT	enum-value	counters
@@ -57,3 +57,37 @@ if sh "$SCRIPT" "$ROOT/tools/docs/testdata/does_not_exist.log" "$AREAS" >/dev/nu
 fi
 
 echo "ok: undocumented.sh fixture checks passed"
+
+# MrDocs cannot attach a block comment to each X-macro expansion. Keep a
+# source-level pin so a newly appended counter cannot silently lack its public
+# name, meaning, unit, class, and family documentation.
+python3 - "$ROOT/sdk/rocketnet_counters.h" <<'PY'
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+def undocumented(text):
+    block = text.split("#define ROCKETNET_COUNTER_ROWS( X )", 1)[1].split("\nenum\n{", 1)[0]
+    missing = []
+    previous = ""
+    for line in block.splitlines():
+        row = re.match(r"\s*X\(\s*([A-Z0-9_]+)\s*,", line)
+        if row:
+            name = row.group(1)
+            expected = "@brief ROCKETNET_COUNTER_" + name + ":"
+            if not (expected in previous and "Unit: occurrences." in previous
+                    and "Class:" in previous and "family:" in previous
+                    and previous.strip().endswith("*/ \\")):
+                missing.append(name)
+        if line.strip():
+            previous = line
+    return missing
+
+assert not undocumented(source), "undocumented counter rows: " + ", ".join(undocumented(source))
+needle = "    X( PACKETS_RECEIVED, ARRIVAL, NONE ) \\\n"
+assert needle in source, "counter-row mutation anchor changed"
+mutated = source.replace(needle, needle + "    X( NEW_UNDOCUMENTED_ROW, REFUSAL, NONE ) \\\n", 1)
+assert undocumented(mutated) == ["NEW_UNDOCUMENTED_ROW"], "new undocumented row stayed green"
+print("ok: every counter row has a named meaning/unit comment and a planted row is rejected")
+PY

@@ -295,6 +295,7 @@ section, and this table exists so an implementer never hunts for a number.
 | CONFIG control body | 28 bytes | _Messages_ |
 | Packet size | 1500-byte link MTU; 1472 bytes of UDP payload over the smaller IP header, 1452 over the larger | _Packet sizes_ |
 | Send budget | 1452 default, 1472 maximum | _Packet sizes_ |
+| Send bandwidth budget | 1000 kbps client, 10000 kbps server per client | _Send bandwidth budget_ |
 | Receive ceiling | 1472, fixed | _Packet sizes_ |
 | Payload capacity | 1416 sent, 1439 received | _Packet sizes_ |
 | SINGLE message | 1415 bytes | _Messages_ |
@@ -303,6 +304,8 @@ section, and this table exists so an implementer never hunts for a number.
 | Sequence | 4 bytes wire, 64-bit value, starts at 1, zero invalid | _Sequence numbers_ |
 | Send rate | 10 Hz default | _Timing_ |
 | Handshake deadline | 5 s default | _Timing_ |
+| Handshake work budget | 1024 post-cookie requests per update, default | _Processing Connection Requests_ |
+| Failed-signature budget | 90 failures per 10 s window, default | _Processing Connection Requests_ |
 | Cookie lifetime / key rotation | 3 s / 60 s defaults | _Timing_ |
 | Redundant disconnects | 10 | _Timing_ |
 | Cookie key | 32 bytes | _Keys_ |
@@ -1898,7 +1901,9 @@ inbound outruns outbound, which is what removes the coupling between ack
 capacity and return-traffic cadence. **There is no structural
 packets-per-second cap anywhere in this design**: the block widens with loss,
 not with rate, and the standalone ack supplies return capacity whenever the
-traffic itself does not.
+traffic itself does not. The only bound on how fast a connection sends is the
+configured send bandwidth budget (_Send bandwidth budget_), which is
+configuration and may be disabled.
 
 ### Processing
 
@@ -2094,7 +2099,8 @@ The payload's **last** byte, the _form byte_, says how the bytes before it are
 laid out. Putting it last is what makes the zero-copy form possible: a SINGLE
 message starts at payload offset 0, which is the transport's 16-aligned
 payload root, so an application writes it in place in the frame and a
-receiver reads it in place in the delivered batch.
+receiver reads it in place in the delivered batch. The public send is
+zero-copy only: start, finish and abort, with no copying send form.
 
 ```
 payload := body form            L = len(payload) >= 2
@@ -2307,6 +2313,7 @@ application update.
 |---|---|---|
 | Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection (traffic suppresses them only once one has been acknowledged — _Keep-alive generation_) |
 | Handshake deadline | 5 s | server: mapping created but connection not established |
+| Half-open idle deadline | 10 s | server: half-open mapping with no request from its address since the last one (refreshed by traffic) |
 | Total connect deadline | token lifetime | client: whole handshake, from the start of the attempt |
 | Connection timeout | token `timeout seconds` | either end: no traffic received on an established connection |
 | Cookie lifetime | 3 s | server: how long an issued cookie is accepted |
@@ -2339,6 +2346,29 @@ client's next scheduled request, the server reissues one and the client uses it
 on the request after that. A cookie lifetime shorter than two send intervals
 makes that race likely and wastes a round trip; a few seconds against a 10 Hz
 send rate leaves ample margin.
+
+### Send bandwidth budget
+
+Every connection has a send bandwidth budget, in kbps (1 kbps = 1000 bit/s)
+of the transport's wire bytes: **1000 kbps for the client's one connection,
+10000 kbps for each server client slot**, per direction. It is configuration,
+not a wire constant: the message config fields `client_send_kbps` and
+`server_send_kbps` carry those defaults, a positive value is at most
+10000000 kbps (10 Gbit/s) and a larger one is refused, and an application changes one
+connection with `rocketnet_message_client_set_send_kbps` or
+`rocketnet_message_server_set_send_kbps`. An operator overrides either field
+with the environment variable `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` or
+`ROCKETNET_MESSAGE_SERVER_SEND_KBPS`, read at create over the config field and
+the create argument (default < struct < environment) and logged with the value
+it displaces; a value that does not parse, or one above the maximum, refuses
+the create.
+
+An unreliable send over the budget is dropped and counted as
+`MESSAGE_UNRELIABLE_OVER_BUDGET`; a reliable send over the budget waits and is
+never dropped. **A value of 0 or lower in either config field, or passed to
+either setter, disables that direction's budget.** Disabling it is NOT
+RECOMMENDED (RFC 2119): without a budget there is no defined behaviour when a
+sender outruns its path or its peer.
 
 ## Client State Machine
 
@@ -2703,13 +2733,23 @@ In this exact order, on a _connection request packet_:
   exactly the key-recurrence hazard the nonce exists to prevent. A mapping is
   created once, answered identically for as long as it lives, and replaced
   never — a different token from the same address waits until the mapping
-  expires. The resend costs no crypto and is smaller than the request that
+  expires. **The request's connection salt is not consulted:** a request from
+  that address with a new salt is answered with the same stored challenge,
+  under the mapping's original salt and nonce. A client that retried with a new
+  salt therefore receives a challenge it cannot open; it gives up at its
+  deadline, and only a request from that address after the mapping expires can
+  create a new one. The resend costs no crypto and is smaller than the request
+  that
   provoked it, so it is safe this early; it is placed after the
   already-connected check so an established client's address cannot be made to
   emit anything.
 * If the version is not 0x4E7C1A93, ignore it.
 * If the protocol id does not match the server's, ignore it.
 * If the expire timestamp is <= the current time, ignore it.
+* If `max_token_lifetime_seconds` is above 0 and the create timestamp is more
+  than five seconds ahead of the current time, ignore it.
+* If `max_token_lifetime_seconds` is above 0 and the token's lifetime
+  (`expire - create`) exceeds that maximum, ignore it.
 * If the timeout seconds field is zero, ignore it; if it is negative and the
   server is not explicitly configured to accept negative timeouts, ignore it.
   A positive value above the server's configured maximum is clamped, not
@@ -2734,6 +2774,14 @@ In this exact order, on a _connection request packet_:
   and a system call on every piece of it. Everything below it is expensive — the
   used-token lookup hashes 576 bytes, and the three asymmetric operations follow —
   so nothing below may run for an address that has not answered.
+* **A server SHOULD bound the post-cookie handshake work it performs in one
+  update: at most 1024 connection requests whose cookie validated, per server,
+  per update by default.** This check sits after the cookie validates and before
+  the used-token lookup and the signature verify, so a request past the budget
+  spends no asymmetric work. A refused request sees no answer, and the server
+  increments `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`. The budget is local
+  policy, reset at the start of each update; an implementation MAY choose
+  another value.
 * If the token identifier already appears in the used-token history bound to a
   different source address and port, ignore it. This is also the cheap
   refusal of a token a connected client holds, before any signature verify or
@@ -2748,6 +2796,12 @@ In this exact order, on a _connection request packet_:
   new one, and an attacker could mint unbounded distinct identifiers from one
   captured request. Hashing the signed data has no such freedom, and is smaller
   per entry.)* Comparisons MUST be constant time.
+* **A server SHOULD apply a failed-signature budget before the verify: at most
+  90 failed signature verifications per 10-second window by default.** Once the
+  budget is spent, a request from a source that has already failed this window
+  is refused before the verify. A refused request sees no answer, and the
+  server increments `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. The budget and
+  its window are local policy; an implementation MAY choose other values.
 * **Verify the signature over the 576-byte signed connect data against the
   backend public key (`crypto_sign_verify_detached`). If it fails, ignore the
   packet.** This is the authenticity check and it comes before the seal is
@@ -3376,6 +3430,8 @@ order:
 | `..._WRONG_VERSION` | version mismatch |
 | `..._WRONG_PROTOCOL_ID` | protocol id mismatch |
 | `..._TOKEN_EXPIRED` | expire timestamp has passed |
+| `..._TOKEN_CREATED_IN_FUTURE` | create timestamp more than five seconds ahead, while `max_token_lifetime_seconds` is above 0 |
+| `..._TOKEN_LIFETIME_TOO_LONG` | `expire - create` exceeds `max_token_lifetime_seconds`, while that maximum is above 0 |
 | `..._TIMEOUT_INVALID` | timeout seconds zero, or negative and not accepted |
 | `..._BAD_ADDRESS_FLAGS` | reserved bits set, or no family named |
 | `..._ADDRESS_NOT_ADVERTISED` | names no address this server answers at |

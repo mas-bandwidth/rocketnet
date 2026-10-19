@@ -94,13 +94,14 @@ jobs:
       - name: Full transport suite with IOCP selected
         timeout-minutes: 10
         env:
-          ROCKETNET_SERVER_DRIVER: iocp
+          ROCKETNET_SERVER_TRANSPORT: iocp
         run: ./bin/Debug/test.exe
 
       - name: Run serialization surface (portable)
         shell: bash
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/Debug/test_serialize.exe
           ./bin/Debug/test_lifecycle.exe

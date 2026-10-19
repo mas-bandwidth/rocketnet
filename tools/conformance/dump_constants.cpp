@@ -16,7 +16,7 @@
 // verifies drifts, and a drifted specification is worse than none,
 // because independent implementations are built on it.
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_connect_token.h"
@@ -24,6 +24,7 @@
 #include "rocketnet_history.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_server_protocol.h"
+#include "rocketnet_encryption_map.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_xdp_limits.h"
 
@@ -111,7 +112,7 @@ int main()
 {
     const uint8_t test_filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
-    printf( "ROCKETNET_VERSION 0x%08X\n", (unsigned int) ROCKETNET_VERSION );
+    printf( "ROCKETNET_WIRE_VERSION 0x%08X\n", (unsigned int) ROCKETNET_WIRE_VERSION );
 
     printf( "ROCKETNET_TEST_FILTER_VALUE" );
     for ( int i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; i++ )
@@ -211,8 +212,15 @@ int main()
     // Timing defaults and sizing ratios: the macros rocketnet_server_transport_create
     // assigns.
 
+    // The two server handshake budgets: local policy STANDARD.md states with
+    // these defaults and the implementation applies.
+    print_int( "ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE", ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
+    print_int( "ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET", ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
+    print_int( "ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS", ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS );
+
     print_real( "DEFAULT_SEND_RATE", ROCKETNET_DEFAULT_SEND_RATE );
     print_real( "DEFAULT_HANDSHAKE_DEADLINE_SECONDS", ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS );
+    print_real( "HALF_OPEN_IDLE_TIMEOUT_SECONDS", ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS );
     print_int( "DEFAULT_COOKIE_LIFETIME_SECONDS", ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS );
     print_int( "DEFAULT_COOKIE_ROTATION_SECONDS", ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS );
     print_int( "DEFAULT_MAX_TOKEN_LIFETIME_SECONDS", ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS );

@@ -7,7 +7,7 @@
     test_lifecycle.cpp, which is part of the unit suite.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_fragment.h"

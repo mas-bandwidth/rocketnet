@@ -1,0 +1,11 @@
+# The rows of RN-1 t13 (TRANSPORT.md) that state a constant.
+# Format and rules: standard/STYLE.md section 10.
+#
+# t13 states no constant of its own. It names these rows of t3:
+#   send rate
+#   server redundant disconnect packets
+#   client redundant disconnect packets
+# and this row of t2.3:
+#   server max_timeout_seconds
+# It also names the keep-alive's type data as eight bytes in a field table,
+# whose Size column is not a pinned Value.

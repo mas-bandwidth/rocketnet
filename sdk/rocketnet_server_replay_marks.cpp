@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet_server_replay_marks.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <string.h>
 

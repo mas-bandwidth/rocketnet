@@ -21,7 +21,10 @@ def run(*arguments):
                             capture_output=True, text=True, timeout=120)
     print(result.stdout, end='')
     print(result.stderr, end='', file=sys.stderr)
-    result.check_returncode()
+    if result.returncode != 0:
+        raise AssertionError(
+            f"{binary.name} {' '.join(map(str, arguments))} exited {result.returncode}; "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}")
     return [json.loads(line) for line in result.stdout.splitlines()]
 
 
@@ -29,9 +32,13 @@ for driver in drivers:
     for profile in profiles if driver == 'portable' else [profiles[0]]:
         plan, observed = run(*profile, driver, 1)
         assert plan['umem_bytes'] == 0
-        assert observed['peak_allocator_bytes'] <= plan['planned_bytes']
+        assert observed['peak_allocator_bytes'] <= plan['planned_bytes'], (
+            driver, profile, 'planned_bytes', plan['planned_bytes'],
+            'peak_allocator_bytes', observed['peak_allocator_bytes'])
         if plan['worker_threads'] == 0:
-            assert observed['live_allocator_bytes'] == plan['planned_bytes']
+            assert observed['live_allocator_bytes'] == plan['planned_bytes'], (
+                driver, profile, 'planned_bytes', plan['planned_bytes'],
+                'live_allocator_bytes', observed['live_allocator_bytes'])
         assert plan['os_and_application_bytes'] is None
 # This legal field combination is deliberately too large for the default
 # reassembly budget. The plan-only path must not try to create it.

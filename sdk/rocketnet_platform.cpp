@@ -3903,7 +3903,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
         const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
         if ( pump_override && strcmp( pump_override, "portable" ) == 0 )
         {
-            rocketnet_warn( "msgx pump refused: ROCKETNET_PUMP=portable (the pre-#106 override; ROCKETNET_DRIVER=portable is the successor)" );
+            rocketnet_warn( "msgx pump refused: ROCKETNET_PUMP=portable (the pre-#106 override; ROCKETNET_SERVER_TRANSPORT=portable and ROCKETNET_CLIENT_TRANSPORT=portable are the successors)" );
             return NULL;
         }
     }
