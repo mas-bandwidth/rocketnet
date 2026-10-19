@@ -24,6 +24,7 @@ rocketnet_client_receipts
 rocketnet_client_receive
 rocketnet_client_release
 rocketnet_client_required_memory
+rocketnet_client_required_memory_sized
 rocketnet_client_send_packets
 rocketnet_client_set_send_kbps
 rocketnet_client_start
@@ -33,6 +34,7 @@ rocketnet_client_state_name
 rocketnet_client_transport_name
 rocketnet_client_update
 rocketnet_client_validate_config
+rocketnet_client_validate_config_sized
 rocketnet_generate_backend_keypair
 rocketnet_generate_backend_keypair_from_seed
 rocketnet_generate_server_keypair
@@ -58,6 +60,7 @@ rocketnet_server_default_config
 rocketnet_server_default_config_sized
 rocketnet_server_destroy
 rocketnet_server_dev_config
+rocketnet_server_dev_config_sized
 rocketnet_server_disconnect_client
 rocketnet_server_disconnect_reason
 rocketnet_server_finish
@@ -68,6 +71,7 @@ rocketnet_server_receipts
 rocketnet_server_receive
 rocketnet_server_release
 rocketnet_server_required_memory
+rocketnet_server_required_memory_sized
 rocketnet_server_send_packets
 rocketnet_server_set_send_kbps
 rocketnet_server_start
@@ -75,6 +79,7 @@ rocketnet_server_stat
 rocketnet_server_transport_name
 rocketnet_server_update
 rocketnet_server_validate_config
+rocketnet_server_validate_config_sized
 rocketnet_set_log_callback
 rocketnet_sleep
 rocketnet_status_string
