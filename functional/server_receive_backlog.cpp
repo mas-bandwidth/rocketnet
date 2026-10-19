@@ -153,6 +153,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
 
     uint64_t sent_total = 0;
     uint64_t received_total = 0;
+    uint64_t payload_total = 0;
     uint64_t dropped = 0;
     uint64_t queue_depth = 0;
     uint64_t read_sum = 0;
@@ -180,6 +181,8 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
         read_sum += (uint64_t) packets_read;
 
         const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        server_receive_backlog_require( num_payloads == ROCKETNET_MAX_CLIENTS );
+        payload_total += (uint64_t) num_payloads;
         for ( int payload_index = 0; payload_index < num_payloads; ++payload_index )
         {
             int client_index = -1;
@@ -209,11 +212,16 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
         for ( size_t i = 0; i < clients.size(); ++i )
             rocketnet_client_transport_send_packets( clients[i] );
 
-        // Each client sends exactly one application packet per simulated frame; final transport stats verify this accounting and expose any extra control sends.
-        sent_total = (uint64_t) ( frame + 1 ) * (uint64_t) clients.size();
+        // The public cumulative counters include application and protocol-control packets.
+        const uint64_t actual_sent = server_receive_backlog_client_packets_sent( clients );
+        if ( actual_sent < starting_sent )
+            accounting_mismatch = true;
+        else
+            sent_total = actual_sent - starting_sent;
         if ( received_total > sent_total )
             accounting_mismatch = true;
-        // The public cumulative counters leave queued plus dropped packets; the loopback capacity splits that exact remainder.
+        // All post-settle client packets target the server loopback endpoint, so the exact
+        // sent-minus-received remainder is queued or dropped; capacity splits those counts.
         const uint64_t outstanding = sent_total >= received_total ? sent_total - received_total : 0;
         queue_depth = outstanding < ROCKETNET_LOOPBACK_QUEUE_PACKETS ? outstanding : ROCKETNET_LOOPBACK_QUEUE_PACKETS;
         dropped = outstanding - queue_depth;
@@ -223,8 +231,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
         time += frame_step;
     }
 
-    const uint64_t actual_sent_total = server_receive_backlog_client_packets_sent( clients ) - starting_sent;
-    if ( actual_sent_total != sent_total )
+    if ( payload_total != (uint64_t) ROCKETNET_MAX_CLIENTS * 300 )
         accounting_mismatch = true;
     const double read_mean = (double) read_sum / 300.0;
     const bool failed = growing || dropped != 0 || accounting_mismatch;
