@@ -25,6 +25,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if !defined(_WIN32)
+#include <fcntl.h>
+#endif
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <libproc.h>
+#include <unistd.h>
+#endif
 
 #if !defined(_WIN32)
 #include <sys/resource.h>
@@ -35,6 +44,7 @@
 #endif
 #include <windows.h>
 #include <psapi.h>
+#include <tlhelp32.h>
 #endif
 
 #define LOAD_NUM_COMBOS         8
@@ -52,23 +62,171 @@ static void interrupt_handler( int sig )
     quit = 1;
 }
 
-static void raise_fd_limit( void )
+#define LOAD_FD_MARGIN 64
+
+static long count_open_fds( void )
 {
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    DWORD handles = 0;
+    if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
+        return (long) handles;
+    return -1;
+#elif defined(__APPLE__)
+    /* One proc_pidinfo call lists the open descriptors; a per-fd probe over a
+       65536-wide table every sample would itself load the run being measured. */
+    const int bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
+    if ( bytes <= 0 )
+        return -1;
+    struct proc_fdinfo * fds = (struct proc_fdinfo *) malloc( (size_t) bytes );
+    if ( !fds )
+        return -1;
+    const int used = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, fds, bytes );
+    free( fds );
+    if ( used < 0 )
+        return -1;
+    return (long) ( used / (int) PROC_PIDLISTFD_SIZE );
+#else
+    long cap = 65536;
     struct rlimit rl;
-    if ( getrlimit( RLIMIT_NOFILE, &rl ) == 0 )
+    if ( getrlimit( RLIMIT_NOFILE, &rl ) == 0 && rl.rlim_cur != RLIM_INFINITY &&
+         rl.rlim_cur < (rlim_t) cap )
+        cap = (long) rl.rlim_cur;
+    long count = 0;
+    for ( long fd = 0; fd < cap; fd++ )
     {
-        rlim_t target = 65536;
-        if ( rl.rlim_max != RLIM_INFINITY && rl.rlim_max < target )
-            target = rl.rlim_max;
-        if ( rl.rlim_cur < target )
-        {
-            rl.rlim_cur = target;
-            (void) setrlimit( RLIMIT_NOFILE, &rl );
-        }
+        errno = 0;
+        if ( fcntl( (int) fd, F_GETFD ) != -1 || errno != EBADF )
+            count++;
     }
+    return count;
 #endif
 }
+
+static long count_threads( void )
+{
+#if defined(__APPLE__)
+    thread_act_array_t threads = NULL;
+    mach_msg_type_number_t count = 0;
+    if ( task_threads( mach_task_self(), &threads, &count ) != KERN_SUCCESS )
+        return -1;
+    for ( mach_msg_type_number_t i = 0; i < count; i++ )
+        (void) mach_port_deallocate( mach_task_self(), threads[i] );
+    (void) vm_deallocate( mach_task_self(), (vm_address_t) threads,
+                          (vm_size_t) ( count * sizeof( thread_act_t ) ) );
+    return (long) count;
+#elif defined(__linux__)
+    FILE * f = fopen( "/proc/self/status", "r" );
+    if ( f )
+    {
+        char line[256];
+        long threads = -1;
+        while ( fgets( line, sizeof( line ), f ) )
+        {
+            if ( strncmp( line, "Threads:", 8 ) == 0 )
+            {
+                threads = strtol( line + 8, NULL, 10 );
+                break;
+            }
+        }
+        fclose( f );
+        return threads;
+    }
+    return -1;
+#elif defined(_WIN32)
+    HANDLE snapshot = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
+    if ( snapshot == INVALID_HANDLE_VALUE )
+        return -1;
+    THREADENTRY32 entry;
+    entry.dwSize = sizeof( entry );
+    const DWORD self_pid = GetCurrentProcessId();
+    long count = 0;
+    if ( Thread32First( snapshot, &entry ) )
+    {
+        do
+        {
+            if ( entry.th32OwnerProcessID == self_pid )
+                count++;
+        } while ( Thread32Next( snapshot, &entry ) );
+    }
+    CloseHandle( snapshot );
+    return count;
+#else
+    return -1;
+#endif
+}
+
+static void sample_resources( long * peak_fds, long * peak_threads )
+{
+    const long fds = count_open_fds();
+    const long threads = count_threads();
+    if ( fds > *peak_fds )
+        *peak_fds = fds;
+    if ( threads > *peak_threads )
+        *peak_threads = threads;
+}
+
+#if !defined(_WIN32)
+struct load_fd_limit_t
+{
+    rlim_t soft;
+    rlim_t hard;
+};
+
+static void format_rlim( rlim_t value, char * out, size_t out_size )
+{
+    if ( value == RLIM_INFINITY )
+        snprintf( out, out_size, "infinity" );
+    else
+        snprintf( out, out_size, "%llu", (unsigned long long) value );
+}
+
+static int ensure_fd_limit( int num_clients, struct load_fd_limit_t * limit )
+{
+    const rlim_t required = (rlim_t) num_clients * 2 + (rlim_t) LOAD_FD_MARGIN;
+    struct rlimit rl;
+    if ( getrlimit( RLIMIT_NOFILE, &rl ) != 0 )
+    {
+        fprintf( stderr, "load: getrlimit(RLIMIT_NOFILE) failed: %s\n", strerror( errno ) );
+        return 0;
+    }
+
+    rlim_t target = 65536;
+    if ( target < required )
+        target = required;
+    if ( rl.rlim_max != RLIM_INFINITY && rl.rlim_max < target )
+        target = rl.rlim_max;
+    if ( rl.rlim_cur == RLIM_INFINITY || rl.rlim_cur < target )
+    {
+        rl.rlim_cur = target;
+        (void) setrlimit( RLIMIT_NOFILE, &rl );
+    }
+
+    if ( getrlimit( RLIMIT_NOFILE, &rl ) != 0 )
+    {
+        fprintf( stderr, "load: getrlimit(RLIMIT_NOFILE) failed after raise: %s\n", strerror( errno ) );
+        return 0;
+    }
+    limit->soft = rl.rlim_cur;
+    limit->hard = rl.rlim_max;
+
+    if ( rl.rlim_cur == RLIM_INFINITY || rl.rlim_cur >= required )
+        return 1;
+
+    char soft_text[32];
+    char hard_text[32];
+    format_rlim( rl.rlim_cur, soft_text, sizeof( soft_text ) );
+    format_rlim( rl.rlim_max, hard_text, sizeof( hard_text ) );
+    fprintf( stderr,
+             "load: RLIMIT_NOFILE soft=%s hard=%s cannot cover clients=%d (2 fds per client) "
+             "plus margin=%d (need soft >= %llu)\n",
+             soft_text, hard_text, num_clients, LOAD_FD_MARGIN, (unsigned long long) required );
+    fprintf( stderr, "load: raise it with: ulimit -n %llu\n", (unsigned long long) required );
+    fprintf( stderr,
+             "load: if the hard limit blocks that, raise the hard limit in a new shell "
+             "(macOS: sudo launchctl limit maxfiles 65536 65536)\n" );
+    return 0;
+}
+#endif
 
 static uint64_t query_rss_bytes( void )
 {
@@ -215,6 +373,13 @@ static int cmp_u64( const void * a, const void * b )
     return ( ua > ub ) - ( ua < ub );
 }
 
+static int cmp_double( const void * a, const void * b )
+{
+    const double da = *(const double *) a;
+    const double db = *(const double *) b;
+    return ( da > db ) - ( da < db );
+}
+
 int main( int argc, char ** argv )
 {
     if ( argc < 3 || argc > 4 )
@@ -264,7 +429,18 @@ int main( int argc, char ** argv )
     const int num_clients = (int) parsed_clients;
     const double duration_seconds = (double) parsed_seconds;
 
-    raise_fd_limit();
+#if !defined(_WIN32)
+    struct load_fd_limit_t fd_limit;
+    if ( !ensure_fd_limit( num_clients, &fd_limit ) )
+        return 1;
+    char fd_limit_soft_text[32];
+    char fd_limit_hard_text[32];
+    format_rlim( fd_limit.soft, fd_limit_soft_text, sizeof( fd_limit_soft_text ) );
+    format_rlim( fd_limit.hard, fd_limit_hard_text, sizeof( fd_limit_hard_text ) );
+#else
+    const char * fd_limit_soft_text = "n/a";
+    const char * fd_limit_hard_text = "n/a";
+#endif
     signal( SIGINT, interrupt_handler );
 
     if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
@@ -272,6 +448,13 @@ int main( int argc, char ** argv )
         fprintf( stderr, "load: rocketnet_init failed\n" );
         return 1;
     }
+    /* Start is sampled after rocketnet_init: init opens the process-wide random
+       source once and keeps it for the life of the process, so the baseline
+       holds it and start, peak and end measure what servers and clients add. */
+    const long fds_start = count_open_fds();
+    const long threads_start = count_threads();
+    long fds_peak = fds_start;
+    long threads_peak = threads_start;
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     struct rocketnet_server_transport_config_t server_tcfg;
@@ -318,6 +501,7 @@ int main( int argc, char ** argv )
     struct rocketnet_message_client_t ** clients =
         (struct rocketnet_message_client_t **) calloc( (size_t) num_clients, sizeof( *clients ) );
     int * client_ever_connected = (int *) calloc( (size_t) num_clients, sizeof( int ) );
+    double * client_connect_seconds = (double *) malloc( (size_t) num_clients * sizeof( double ) );
     uint32_t * client_next_combo = (uint32_t *) calloc( (size_t) num_clients, sizeof( uint32_t ) );
     struct load_stream_state_t * c2s_streams = (struct load_stream_state_t *) calloc(
         (size_t) num_clients * LOAD_NUM_COMBOS, sizeof( struct load_stream_state_t ) );
@@ -328,12 +512,14 @@ int main( int argc, char ** argv )
     size_t update_count = 0;
     uint64_t * update_us = (uint64_t *) malloc( update_cap * sizeof( uint64_t ) );
 
-    if ( !clients || !client_ever_connected || !client_next_combo ||
+    if ( !clients || !client_ever_connected || !client_connect_seconds || !client_next_combo ||
          !c2s_streams || !s2c_streams || !update_us )
     {
         fprintf( stderr, "load: allocation failed\n" );
         return 1;
     }
+    for ( int i = 0; i < num_clients; i++ )
+        client_connect_seconds[i] = -1.0;
 
     const uint64_t token_now = (uint64_t) time( NULL );
 
@@ -354,6 +540,7 @@ int main( int argc, char ** argv )
         }
         client_next_combo[i] = (uint32_t) ( i % LOAD_NUM_COMBOS );
     }
+    sample_resources( &fds_peak, &threads_peak );
 
     int connected_count = 0;
     int all_connected = 0;
@@ -364,6 +551,7 @@ int main( int argc, char ** argv )
 
     uint64_t c2s_sent_total = 0;
     uint64_t c2s_received_total = 0;
+    double next_resource_sample = rocketnet_time();
 
     /* Step 1: Connect all clients within 10s */
     const double start_time = rocketnet_time();
@@ -378,6 +566,8 @@ int main( int argc, char ** argv )
             const int st = rocketnet_message_client_state( clients[i] );
             if ( st == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
+                if ( client_connect_seconds[i] < 0.0 )
+                    client_connect_seconds[i] = now - start_time;
                 client_ever_connected[i] = 1;
                 connected_count++;
             }
@@ -409,6 +599,12 @@ int main( int argc, char ** argv )
         {
             connect_elapsed = rocketnet_time() - start_time;
             break;
+        }
+        const double sample_now = rocketnet_time();
+        if ( sample_now >= next_resource_sample )
+        {
+            sample_resources( &fds_peak, &threads_peak );
+            next_resource_sample = sample_now + 0.25;
         }
         rocketnet_sleep( 0.001 );
     }
@@ -609,6 +805,11 @@ int main( int argc, char ** argv )
             }
         }
 
+        if ( now >= next_resource_sample )
+        {
+            sample_resources( &fds_peak, &threads_peak );
+            next_resource_sample = now + 0.25;
+        }
         rocketnet_sleep( 0.001 );
     }
 
@@ -679,6 +880,23 @@ int main( int argc, char ** argv )
         p50_us = update_us[( update_count * 50 ) / 100];
         p99_us = update_us[( update_count * 99 ) / 100];
     }
+    int connected_samples = 0;
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        if ( client_connect_seconds[i] >= 0.0 )
+            connected_samples++;
+    }
+    double connect_p50_s = 0.0;
+    double connect_max_s = 0.0;
+    if ( connected_samples > 0 )
+    {
+        qsort( client_connect_seconds, (size_t) num_clients, sizeof( double ), cmp_double );
+        const int first = num_clients - connected_samples;
+        const int median = ( connected_samples * 50 ) / 100;
+        connect_p50_s = client_connect_seconds[first + ( median < connected_samples ? median : connected_samples - 1 )];
+        connect_max_s = client_connect_seconds[num_clients - 1];
+    }
+
     const uint64_t rss_bytes = query_rss_bytes();
     const double rss_mb = (double) rss_bytes / ( 1024.0 * 1024.0 );
 
@@ -701,32 +919,13 @@ int main( int argc, char ** argv )
                      crit5_counters_agree &&
                      !quit;
 
-    if ( pass )
+    char server_driver[32];
+    char client_driver[32];
     {
-        printf( "load: connected=%d connect_s=%.3f connect_within_10s=PASS no_unexpected_disconnect=PASS "
-                "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS "
-                "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
-                "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f verdict=PASS\n",
-                connected_count, connect_elapsed,
-                c2s_sent_total, c2s_received_total, total_counted_drops,
-                p50_us, p99_us, rss_mb );
-    }
-    else
-    {
-        printf( "load: connected=%d connect_s=%.3f connect_within_10s=%s no_unexpected_disconnect=%s "
-                "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s "
-                "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
-                "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
-                "failed_criterion=%s verdict=FAIL\n",
-                connected_count, connect_elapsed,
-                crit1_connect_within_10s ? "PASS" : "FAIL",
-                crit2_no_unexpected_disconnect ? "PASS" : "FAIL",
-                crit3_reliable_delivery ? "PASS" : "FAIL",
-                crit4_unreliable_integrity ? "PASS" : "FAIL",
-                crit5_counters_agree ? "PASS" : "FAIL",
-                c2s_sent_total, c2s_received_total, total_counted_drops,
-                p50_us, p99_us, rss_mb,
-                failed_criterion );
+        const char * sd = rocketnet_server_transport_driver( server_transport );
+        const char * cd = clients[0] ? rocketnet_client_transport_driver( rocketnet_message_client_transport( clients[0] ) ) : NULL;
+        snprintf( server_driver, sizeof( server_driver ), "%s", sd ? sd : "none" );
+        snprintf( client_driver, sizeof( client_driver ), "%s", cd ? cd : "none" );
     }
 
     for ( int i = 0; i < num_clients; i++ )
@@ -737,11 +936,59 @@ int main( int argc, char ** argv )
     rocketnet_message_server_destroy( server );
     free( clients );
     free( client_ever_connected );
+    free( client_connect_seconds );
     free( client_next_combo );
     free( c2s_streams );
     free( s2c_streams );
     free( update_us );
     rocketnet_term();
+
+    const long fds_end = count_open_fds();
+    const long threads_end = count_threads();
+
+    if ( pass )
+    {
+        printf( "load: connected=%d connect_s=%.3f connect_p50_s=%.3f connect_max_s=%.3f "
+                "connect_within_10s=PASS no_unexpected_disconnect=PASS "
+                "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS "
+                "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
+                "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
+                "server_driver=%s client_driver=%s "
+                "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
+                "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS\n",
+                connected_count, connect_elapsed, connect_p50_s, connect_max_s,
+                c2s_sent_total, c2s_received_total, total_counted_drops,
+                p50_us, p99_us, rss_mb,
+                server_driver, client_driver,
+                fd_limit_soft_text, fd_limit_hard_text,
+                fds_start, fds_peak, fds_end,
+                threads_start, threads_peak, threads_end );
+    }
+    else
+    {
+        printf( "load: connected=%d connect_s=%.3f connect_p50_s=%.3f connect_max_s=%.3f "
+                "connect_within_10s=%s no_unexpected_disconnect=%s "
+                "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s "
+                "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
+                "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
+                "server_driver=%s client_driver=%s "
+                "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
+                "threads_start=%ld threads_peak=%ld threads_end=%ld "
+                "failed_criterion=%s verdict=FAIL\n",
+                connected_count, connect_elapsed, connect_p50_s, connect_max_s,
+                crit1_connect_within_10s ? "PASS" : "FAIL",
+                crit2_no_unexpected_disconnect ? "PASS" : "FAIL",
+                crit3_reliable_delivery ? "PASS" : "FAIL",
+                crit4_unreliable_integrity ? "PASS" : "FAIL",
+                crit5_counters_agree ? "PASS" : "FAIL",
+                c2s_sent_total, c2s_received_total, total_counted_drops,
+                p50_us, p99_us, rss_mb,
+                server_driver, client_driver,
+                fd_limit_soft_text, fd_limit_hard_text,
+                fds_start, fds_peak, fds_end,
+                threads_start, threads_peak, threads_end,
+                failed_criterion );
+    }
 
     return pass ? 0 : 1;
 }
