@@ -34,7 +34,12 @@
 (* it and only then frees the transport; destroy makes the last hand-off  *)
 (* first, so no committed slot is dropped.                                *)
 (*                                                                         *)
-(* Seven switches restore the defects the reversed witnesses must catch:   *)
+(* StepDriven is the step-driven mode: no I/O thread is started, and the  *)
+(* caller's update and send_packets run the I/O step on their own thread  *)
+(* (StepBegin, CallerStep, StepEnd), never concurrently with the rest of   *)
+(* the main thread and never blocking.                                     *)
+(*                                                                         *)
+(* Six switches restore the defects the reversed witnesses must catch:    *)
 (* ReopenBeforeSent lets the main thread reopen a ring the I/O thread is  *)
 (* still sending; ReceiveIntoExposed lets the I/O thread write a          *)
 (* datagram into the buffer update has exposed; SwapNeedsReady restores   *)
@@ -42,7 +47,8 @@
 (* the same step that exposes a Ready one; HandOffWaits restores the      *)
 (* hand-off that waits for the other ring to be Sent; FullWaitReadable    *)
 (* restores the wait on readable with a full buffer, which returns at     *)
-(* once while datagrams sit in the socket.                                *)
+(* once while datagrams sit in the socket; StepModeStartsThread starts    *)
+(* the I/O thread at create in the step-driven mode as well.              *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -92,14 +98,16 @@ VARIABLES ring,      \* each send ring's state
           owed,      \* the I/O thread holds a batch it cannot publish yet
           delivered, \* datagrams update has been exposed so far
           phase,     \* the transport's life
-          ioAlive    \* the I/O thread has not exited
+          ioAlive,   \* the I/O thread has not exited (the I/O core, in step mode)
+          inCall,    \* step mode: update or send_packets is running the I/O step
+          lastExec   \* who ran the last I/O core action: none, thread or caller
 
 sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait>>
 recvVars == <<pending, arrived, buf, count, snap, owed, delivered>>
 
 vars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake, waiting,
           waitReadable, pending, arrived, buf, count, snap, owed, delivered,
-          phase, ioAlive>>
+          phase, ioAlive, inCall, lastExec>>
 
 TypeOK ==
     /\ ring \in [Rings -> RingStates]
@@ -117,6 +125,8 @@ TypeOK ==
     /\ delivered \in 0..MaxDatagrams
     /\ phase \in Phases
     /\ ioAlive \in BOOLEAN
+    /\ inCall \in BOOLEAN
+    /\ lastExec \in {"none", "thread", "caller"}
 
 Init ==
     /\ ring = [r \in Rings |-> "Filling"]
@@ -134,6 +144,8 @@ Init ==
     /\ delivered = 0
     /\ phase = "Running"
     /\ ioAlive = TRUE
+    /\ inCall = FALSE
+    /\ lastExec = "none"
 
 FillBuffer    == CHOOSE b \in Buffers : buf[b] = "Fill"
 HasExposed    == \E b \in Buffers : buf[b] = "Exposed"
@@ -295,15 +307,15 @@ Arrive ==
     /\ UNCHANGED <<wake, waiting, waitReadable, buf, count, snap, owed,
                    delivered, phase, ioAlive>>
 
-(* ---- the I/O executor ---- *)
+(* ---- the I/O core ---- *)
 
-\* In threaded mode these actions run on the I/O thread. In step-driven
-\* mode CallerStep executes the same non-blocking send, receive, publish and
-\* exit actions from update/send_packets; IoWait is disabled.
-\* IoThreadActionEnabled distinguishes the executor of the core actions.
-\* Under StepDriven they are CallerStep actions unless the witness defect
-\* incorrectly leaves the I/O-thread executor enabled.
-IoThreadActionEnabled == ~StepDriven \/ StepModeStartsThread
+\* The core actions below are the body of rocketnet_client_io_step.  In
+\* threaded mode the I/O thread runs them (IoThreadNext); in step-driven
+\* mode the caller runs them inside update and send_packets (CallerStep),
+\* and IoWait, the blocking wait, is never taken.  Create starts the I/O
+\* thread unless the mode is step-driven; StepModeStartsThread is the
+\* defect that starts it in both modes.
+ThreadStarted == ~StepDriven \/ StepModeStartsThread
 
 IoReady == ioAlive /\ ~waiting
 
@@ -426,11 +438,45 @@ Done ==
     /\ phase = "Freed"
     /\ UNCHANGED vars
 
+\* step mode: update or send_packets (or destroy, after Stop) begins the
+\* I/O step on the caller's thread; the main thread runs nothing else
+\* until the step ends
+StepBegin ==
+    /\ StepDriven
+    /\ ~inCall
+    /\ ioAlive
+    /\ ~mainWait
+    /\ phase \in {"Running", "Stopping"}
+    /\ inCall' = TRUE
+    /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
+                   waiting, waitReadable, phase, ioAlive, lastExec>>
+    /\ UNCHANGED recvVars
+
+\* the step never blocks: it returns once no core action has work
+StepWork ==
+    \/ \E r \in Rings, s \in Slots : IoSend(r, s)
+    \/ \E r \in Rings : IoFinishRing(r)
+    \/ IoReceive \/ IoPublish \/ IoOwe \/ IoClearWake \/ IoExit
+
+StepEnd ==
+    /\ inCall
+    /\ ~ENABLED StepWork
+    /\ inCall' = FALSE
+    /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
+                   waiting, waitReadable, phase, ioAlive, lastExec>>
+    /\ UNCHANGED recvVars
+
+\* game threads write and commit at any time; the main thread's own
+\* actions never overlap a caller step
+OnGame(A) == A /\ UNCHANGED <<inCall, lastExec>>
+OnMain(A) == ~inCall /\ A /\ UNCHANGED <<inCall, lastExec>>
+
 MainNext ==
-    \/ \E s \in Slots : Write(s) \/ Commit(s)
-    \/ HandOff \/ Defer \/ WaitDone
-    \/ \E r \in Rings : Reopen(r)
-    \/ Expose \/ Return \/ Stop \/ Join \/ Free
+    \/ OnGame(\E s \in Slots : Write(s) \/ Commit(s))
+    \/ OnMain(HandOff \/ Defer \/ WaitDone)
+    \/ OnMain(\E r \in Rings : Reopen(r))
+    \/ OnMain(Expose \/ Return \/ Stop \/ Join \/ Free)
+    \/ StepBegin \/ StepEnd
 
 IoCoreNext ==
     \/ \E r \in Rings, s \in Slots : IoSend(r, s)
@@ -438,13 +484,21 @@ IoCoreNext ==
     \/ IoReceive \/ IoPublish \/ IoOwe \/ IoWait \/ IoWake \/ IoClearWake
     \/ IoExit
 
-\* The core has exactly one executor in the passing designs. The witness
-\* enables the I/O-thread executor as well as CallerStep in step mode.
-CallerStep == StepDriven /\ IoCoreNext
-IoThreadNext == IoThreadActionEnabled /\ IoCoreNext
-IoNext == CallerStep \/ IoThreadNext
+\* the two executors of a core action A: the I/O thread, when create
+\* started one, and the caller inside update or send_packets in step mode
+\* (lastExec is recorded only in step mode, where the invariant reads it)
+OnThread(A) == ThreadStarted /\ A /\ UNCHANGED inCall
+               /\ lastExec' = IF StepDriven THEN "thread" ELSE lastExec
+OnCaller(A) == StepDriven /\ inCall /\ A /\ lastExec' = "caller" /\ UNCHANGED inCall
+Exec(A) == OnThread(A) \/ OnCaller(A)
 
-Next == MainNext \/ IoNext \/ Arrive \/ Done
+IoThreadNext == OnThread(IoCoreNext)
+CallerStep == OnCaller(IoCoreNext)
+IoNext == IoThreadNext \/ CallerStep
+
+Next == MainNext \/ IoNext
+        \/ (Arrive /\ UNCHANGED <<inCall, lastExec>>)
+        \/ (Done /\ UNCHANGED <<inCall, lastExec>>)
 
 Spec == Init /\ [][Next]_vars
 
@@ -454,22 +508,39 @@ Spec == Init /\ [][Next]_vars
 \* transport runs, and update ends with a hand-off, so a deferred hand-off
 \* is retried every frame.  A game thread mid-write disables the hand-off
 \* only until it commits, and a ring has NumSlots slots, so weak fairness
-\* is enough.
+\* is enough.  In step mode the I/O core runs only inside a caller step:
+\* the game calls update every frame (StepBegin), and a step runs until no
+\* core action has work (StepEnd), so the caller also consumes the wake.
 SpecFair ==
     /\ Spec
-    /\ WF_vars(\E r \in Rings, s \in Slots : IoSend(r, s))
-    /\ WF_vars(\E r \in Rings : IoFinishRing(r))
-    /\ WF_vars(IoReceive)
-    /\ WF_vars(IoPublish)
-    /\ WF_vars(IoOwe)
-    /\ WF_vars(IoWake)
-    /\ WF_vars(IoExit)
-    /\ WF_vars(Join)
-    /\ WF_vars(\E s \in Slots : Commit(s))
-    /\ WF_vars(\E r \in Rings : Reopen(r))
-    /\ WF_vars(HandOff)
-    /\ WF_vars(Expose)
-    /\ WF_vars(Return)
+    /\ WF_vars(Exec(\E r \in Rings, s \in Slots : IoSend(r, s)))
+    /\ WF_vars(Exec(\E r \in Rings : IoFinishRing(r)))
+    /\ WF_vars(Exec(IoReceive))
+    /\ WF_vars(Exec(IoPublish))
+    /\ WF_vars(Exec(IoOwe))
+    /\ WF_vars(Exec(IoWake))
+    /\ WF_vars(Exec(IoExit))
+    /\ WF_vars(OnCaller(IoClearWake))
+    /\ WF_vars(StepBegin)
+    /\ WF_vars(StepEnd)
+    /\ WF_vars(OnMain(Join))
+    /\ WF_vars(OnGame(\E s \in Slots : Commit(s)))
+    /\ WF_vars(OnMain(\E r \in Rings : Reopen(r)))
+    /\ WF_vars(OnMain(HandOff))
+    /\ WF_vars(OnMain(Expose))
+    /\ WF_vars(OnMain(Return))
+
+\* Step mode: the main thread's own actions are disabled while it runs a
+\* step, so they are enabled only intermittently.  update makes its two
+\* receive steps and a hand-off every frame and send_packets hands off
+\* before its step, so they are strongly fair here.
+SpecStepFair ==
+    /\ SpecFair
+    /\ SF_vars(OnMain(\E r \in Rings : Reopen(r)))
+    /\ SF_vars(OnMain(HandOff))
+    /\ SF_vars(OnMain(Expose))
+    /\ SF_vars(OnMain(Return))
+    /\ SF_vars(OnMain(Join))
 
 (* ---- what the design must keep ---- *)
 
@@ -497,10 +568,11 @@ HandOffNeverWaits == ~mainWait
 FullWaitsOnWake ==
     (waiting /\ count[FillBuffer] = BufferCap) => ~waitReadable
 
-\* Step-driven mode has no I/O-thread executor; the same core actions are
-\* performed only by CallerStep. StepModeStartsThread is the witness defect.
+\* step mode: no I/O-thread action is enabled, and every I/O core action
+\* taken so far was taken by the caller, inside update or send_packets
 NoIoThreadActionInStepMode ==
-    ~StepDriven \/ ~ENABLED IoThreadNext
+    StepDriven => /\ ~ENABLED IoThreadNext
+                  /\ lastExec # "thread"
 
 \* while the transport runs, received datagrams in the I/O thread's buffer
 \* always have a next step toward update: a publish, an expose, a return,

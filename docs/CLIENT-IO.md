@@ -470,6 +470,14 @@ loopback driver included. A driver without a non-blocking I/O step is refused
 at create with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` and one log line naming
 `step_driven`.
 
+The model's `StepDriven` mode is this one: create starts no I/O thread, and
+the I/O core actions run only inside `update` and `send_packets`
+(`StepBegin`, `CallerStep`, `StepEnd`), never overlapping the main thread's
+own actions and never blocking. `NoIoThreadActionInStepMode` holds there with
+every other invariant, `MCRNClientIoStepDriven.cfg` checks it and the
+liveness properties, and `MCRNClientIoBrokenStepStartsThread.cfg` is its
+reversed witness.
+
 ## The model
 
 `tla/RNClientIo.tla` (wrapper `tla/MCRNClientIo.tla`, document
