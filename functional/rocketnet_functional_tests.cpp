@@ -8180,6 +8180,14 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void windows_init_term_cycles();
+void windows_server_create_destroy_cycles();
+void windows_server_restart_same_port();
+void windows_client_connect_disconnect_cycles();
+void windows_destroy_while_traffic();
+#endif
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
@@ -8374,6 +8382,13 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family },
     { "live_message_matrix_loopback", live_message_matrix_loopback },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "windows_init_term_cycles", windows_init_term_cycles },
+    { "windows_server_create_destroy_cycles", windows_server_create_destroy_cycles },
+    { "windows_server_restart_same_port", windows_server_restart_same_port },
+    { "windows_client_connect_disconnect_cycles", windows_client_connect_disconnect_cycles },
+    { "windows_destroy_while_traffic", windows_destroy_while_traffic },
+#endif
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
