@@ -140,13 +140,29 @@ jobs:
       - name: UDP loopback soak
         run: ./bin/soak 200000
 
+      # One 1000-client run per server cell: portable and msgx are pins; msgx-degraded
+      # is the auto ladder under ROCKETNET_PUMP=portable, where the msgx rung refuses
+      # and the ladder falls to portable (a pinned msgx under that override refuses
+      # to create, by design). Each run must pass, name the expected granted driver,
+      # and end with the fd and thread counts it started with.
       - name: Many-client load (1000 clients, every server cell)
         timeout-minutes: 20
         run: |
           set -euo pipefail
-          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/load 1000 60
-          ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/load 1000 60
-          ROCKETNET_PUMP=portable ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/load 1000 60
+          ulimit -n 65536 || ulimit -n "$(ulimit -Hn)"
+          run_cell() {
+            cell=$1; want=$2; shift 2
+            line=$(env "$@" ./bin/load 1000 60 | tail -n 1) || true
+            echo "LOAD cell=$cell $line"
+            case "$line" in *verdict=PASS*) ;; *) echo "LOAD cell=$cell FAIL"; return 1 ;; esac
+            case "$line" in *"server_driver=$want "*) ;; *) echo "LOAD cell=$cell wrong server driver (want $want)"; return 1 ;; esac
+            fs=$(echo "$line" | sed -E "s/.*fds_start=([0-9]+).*/\\1/"); fe=$(echo "$line" | sed -E "s/.*fds_end=([0-9]+).*/\\1/")
+            ts=$(echo "$line" | sed -E "s/.*threads_start=([0-9]+).*/\\1/"); te=$(echo "$line" | sed -E "s/.*threads_end=([0-9]+).*/\\1/")
+            [ "$fs" = "$fe" ] && [ "$ts" = "$te" ] || { echo "LOAD cell=$cell fd or thread growth"; return 1; }
+          }
+          run_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable
+          run_cell msgx msgx ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx
+          run_cell msgx-degraded portable ROCKETNET_PUMP=portable
 
   soak-windows:
     name: soak (${{ matrix.ref }} / windows-2025)

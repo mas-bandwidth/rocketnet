@@ -31,6 +31,8 @@
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <libproc.h>
+#include <unistd.h>
 #endif
 
 #if !defined(_WIN32)
@@ -69,6 +71,20 @@ static long count_open_fds( void )
     if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
         return (long) handles;
     return -1;
+#elif defined(__APPLE__)
+    /* One proc_pidinfo call lists the open descriptors; a per-fd probe over a
+       65536-wide table every sample would itself load the run being measured. */
+    const int bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
+    if ( bytes <= 0 )
+        return -1;
+    struct proc_fdinfo * fds = (struct proc_fdinfo *) malloc( (size_t) bytes );
+    if ( !fds )
+        return -1;
+    const int used = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, fds, bytes );
+    free( fds );
+    if ( used < 0 )
+        return -1;
+    return (long) ( used / (int) PROC_PIDLISTFD_SIZE );
 #else
     long cap = 65536;
     struct rlimit rl;
@@ -420,16 +436,19 @@ int main( int argc, char ** argv )
 #endif
     signal( SIGINT, interrupt_handler );
 
-    const long fds_start = count_open_fds();
-    const long threads_start = count_threads();
-    long fds_peak = fds_start;
-    long threads_peak = threads_start;
-
     if ( !rocketnet_init( NULL ) )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
         return 1;
     }
+
+    /* Start is sampled after rocketnet_init: init opens the process-wide random
+       source once and keeps it for the life of the process, so the baseline
+       holds it and start, peak and end measure what servers and clients add. */
+    const long fds_start = count_open_fds();
+    const long threads_start = count_threads();
+    long fds_peak = fds_start;
+    long threads_peak = threads_start;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     struct rocketnet_server_transport_config_t server_tcfg;
@@ -872,6 +891,15 @@ int main( int argc, char ** argv )
                      crit5_counters_agree &&
                      !quit;
 
+    char server_driver[32];
+    char client_driver[32];
+    {
+        const char * sd = rocketnet_server_transport_driver( server_transport );
+        const char * cd = clients[0] ? rocketnet_client_transport_driver( rocketnet_message_client_transport( clients[0] ) ) : NULL;
+        snprintf( server_driver, sizeof( server_driver ), "%s", sd ? sd : "none" );
+        snprintf( client_driver, sizeof( client_driver ), "%s", cd ? cd : "none" );
+    }
+
     for ( int i = 0; i < num_clients; i++ )
     {
         if ( clients[i] )
@@ -895,11 +923,13 @@ int main( int argc, char ** argv )
                 "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
+                "server_driver=%s client_driver=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS\n",
                 connected_count, connect_elapsed,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
+                server_driver, client_driver,
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end );
@@ -910,6 +940,7 @@ int main( int argc, char ** argv )
                 "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
+                "server_driver=%s client_driver=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
                 "failed_criterion=%s verdict=FAIL\n",
@@ -921,6 +952,7 @@ int main( int argc, char ** argv )
                 crit5_counters_agree ? "PASS" : "FAIL",
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
+                server_driver, client_driver,
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end,
