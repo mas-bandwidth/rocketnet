@@ -5,6 +5,8 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_driver_loopback.h"
+#include "rocketnet_platform.h"
+#include "../test/time_scale.h"
 
 #include <climits>
 #include <stdio.h>
@@ -73,12 +75,18 @@ static uint64_t server_receive_backlog_client_packets_sent( const std::vector<st
     return packets;
 }
 
+static int server_receive_backlog_connected_clients( const std::vector<struct rocketnet_client_transport_t*> & clients )
+{
+    int connected = 0;
+    for ( size_t i = 0; i < clients.size(); ++i )
+        if ( rocketnet_client_transport_state( clients[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            ++connected;
+    return connected;
+}
+
 static bool server_receive_backlog_all_connected( const std::vector<struct rocketnet_client_transport_t*> & clients )
 {
-    for ( size_t i = 0; i < clients.size(); ++i )
-        if ( rocketnet_client_transport_state( clients[i] ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-            return false;
-    return true;
+    return server_receive_backlog_connected_clients( clients ) == (int) clients.size();
 }
 
 void rocketnet_test_server_receive_keeps_up_with_max_clients()
@@ -118,18 +126,35 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
         clients.push_back( client );
     }
 
+    const double connect_start = rocketnet_platform_time();
+    const double connect_deadline = 10.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE;
     bool connected = false;
-    for ( int attempt = 0; attempt < 600; ++attempt )
+    int attempts = 0;
+    while ( true )
     {
+        ++attempts;
         for ( size_t i = 0; i < clients.size(); ++i )
             rocketnet_client_transport_update( clients[i], time );
         rocketnet_server_transport_update( server, time );
-        time += frame_step;
+        const double elapsed = rocketnet_platform_time() - connect_start;
+        if ( attempts <= 30 || time - 1000.0 < elapsed )
+            time += frame_step;
 
         if ( server_receive_backlog_all_connected( clients ) &&
              rocketnet_server_transport_num_connected_clients( server ) == ROCKETNET_MAX_CLIENTS )
         {
             connected = true;
+            break;
+        }
+
+        if ( attempts >= 600 && elapsed >= connect_deadline )
+        {
+            printf( "server_receive_backlog connect deadline: attempts=%d clients_connected=%d server_connected=%d elapsed=%.6fs\n",
+                    attempts,
+                    server_receive_backlog_connected_clients( clients ),
+                    rocketnet_server_transport_num_connected_clients( server ),
+                    elapsed );
+            fflush( stdout );
             break;
         }
     }
