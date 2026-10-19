@@ -539,14 +539,19 @@ a row marked server or client applies only at that end.
    connection request and connection response types as `WRONG_DIRECTION`.
    These types travel in one direction only.
 5. A server MUST pass a connection request to
-   [t12 Handshake: server](#t12) and a client MUST pass a connection cookie
-   to [t11 Handshake: client](#t11). Those types carry no sealed data.
-6. A receiver MUST apply the type's size check before that type's state
-   gate and before any decryption. A packet that fails the size check MUST
-   increment the type's `WRONG_SIZE` counter and MUST NOT increment the
-   integrity-failure count or a `DID_NOT_OPEN` counter.
-7. A receiver MUST apply the type's state gate. A packet the current state
-   does not process is dropped with the type's `WRONG_STATE` counter.
+   [t12 Handshake: server](#t12). A client MUST apply the connection cookie
+   state gate before checking its exact wire size, then pass an accepted cookie
+   to [t11 Handshake: client](#t11). A cookie in any other client state is
+   `CLIENT_COOKIE_WRONG_STATE`; a cookie in an accepted state with the wrong
+   exact size is `CLIENT_COOKIE_WRONG_SIZE`. Connection requests and cookies
+   carry no sealed data.
+6. For every other type with both checks, a receiver MUST apply the type's
+   size check before its state gate and before any decryption. A packet that
+   fails the size check MUST increment the type's `WRONG_SIZE` counter and
+   MUST NOT increment the integrity-failure count or a `DID_NOT_OPEN` counter.
+7. A receiver MUST apply each remaining type's state gate. A packet the
+   current state does not process is dropped with that type's `WRONG_STATE`
+   counter.
 8. A server MUST look up the connection mapping for the source address. A
    packet with no mapping is `NO_MAPPING`. A client MUST drop a datagram
    whose source is not the server it dialed, before the list above.
@@ -576,8 +581,9 @@ a row marked server or client applies only at that end.
 16. For session types, a receiver MUST check the opened size less the ack
     block against the type. A mismatch is `WRONG_OPENED_SIZE`.
 17. Before applying the ack block, a client MUST validate the index and
-    slot count in a keep-alive. An invalid value is
-    `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+    slot count in a keep-alive. The slot count MUST be from 1 through the
+    maximum client slot count, and the index MUST be less than the slot count.
+    An invalid value is `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
 18. After the session checks pass, a receiver MUST apply the ack block's
     delivery information and refresh the connection's receive time, then
     perform the type-specific processing. A type-specific refusal increments
@@ -592,8 +598,10 @@ a row marked server or client applies only at that end.
 | 2 | prefilter length, epoch, value | before decryption | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE`, `PREFILTER_WRONG_EPOCH`, `PREFILTER_WRONG_VALUE` |
 | 3 | reserved type | before decryption | `RESERVED_TYPE` |
 | 4 | direction | before decryption | `WRONG_DIRECTION` |
-| 6 | wire size for the type | before the state gate and before decryption | the type's `WRONG_SIZE` |
-| 7 | state gate | before decryption | the type's `WRONG_STATE` |
+| 5 | client cookie state gate | before exact cookie size | `CLIENT_COOKIE_WRONG_STATE` |
+| 5a | client cookie exact size | after cookie state gate | `CLIENT_COOKIE_WRONG_SIZE` |
+| 6 | wire size for each other type | before its state gate and before decryption | the type's `WRONG_SIZE` |
+| 7 | remaining state gates | before decryption | the type's `WRONG_STATE` |
 | 8 | server mapping | before decryption | `NO_MAPPING` |
 | 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
 | 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
@@ -620,6 +628,7 @@ types, and the response padding are:
 | connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
 | connection payload fragment minimum wire size | `40` | bytes | size | [t8 Packet formats](#t8) |
 | connection response padding | `24` | bytes | size | [t8 Packet formats](#t8) |
+| maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
 
 A session packet's total wire size is its minimum or larger, up to the
 receive ceiling. The payload's opened data holds at least one payload byte
@@ -769,6 +778,12 @@ counter: WRONG_DIRECTION
 00 00 b7 59 01 00
 ```
 
+```vector t10.client-cookie-state-before-size
+input: an undersized connection cookie at a client in a state that rejects cookies
+counter: CLIENT_COOKIE_WRONG_STATE
+07 00 b7 59 01 00
+```
+
 ```vector t10.client-wrong-state
 input: a connection keep-alive packet at a client not in a session state
 counter: CLIENT_KEEP_ALIVE_WRONG_STATE
@@ -831,6 +846,13 @@ counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
 04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
 a0 8f 69 ab 93 03 a5 3c d6 c6 2e 2c 88 af c2 45
 4f 6f 62 77 03 4b 30 f3 49 2a
+```
+
+```vector t10.keep-alive-invalid-index
+input: a validly opened keep-alive whose client index equals its slot count
+counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 00 00 00 04 00 00 00 04
 ```
 
 ```vector t10.fragment-zero-payload-id
