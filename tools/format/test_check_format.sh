@@ -9,7 +9,8 @@ SCRIPT="$ROOT/tools/format/check_format.sh"
 CLEAN="$ROOT/tools/format/testdata/clean.c"
 DIRTY="$ROOT/tools/format/testdata/dirty.c"
 
-tmp="$(mktemp -d)"
+mkdir -p "$ROOT/build"
+tmp="$(mktemp -d "$ROOT/build/format-test.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
 if ! sh "$SCRIPT" "$CLEAN" >"$tmp/clean.out" 2>&1; then
