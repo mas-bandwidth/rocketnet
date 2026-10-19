@@ -2732,7 +2732,13 @@ In this exact order, on a _connection request packet_:
   exactly the key-recurrence hazard the nonce exists to prevent. A mapping is
   created once, answered identically for as long as it lives, and replaced
   never — a different token from the same address waits until the mapping
-  expires. The resend costs no crypto and is smaller than the request that
+  expires. **The request's connection salt is not consulted:** a request from
+  that address with a new salt is answered with the same stored challenge,
+  under the mapping's original salt and nonce. A client that retried with a new
+  salt therefore receives a challenge it cannot open; it gives up at its
+  deadline, and only a request from that address after the mapping expires can
+  create a new one. The resend costs no crypto and is smaller than the request
+  that
   provoked it, so it is safe this early; it is placed after the
   already-connected check so an established client's address cannot be made to
   emit anything.
