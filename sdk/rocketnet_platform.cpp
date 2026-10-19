@@ -985,7 +985,12 @@ struct thread_shim_data_t
     void * context;
     void * real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function;
+    rocketnet_platform_thread_t * thread;
 };
+
+// the platform thread the calling thread runs as, for thread_wait; NULL on a
+// thread that thread_create did not start
+static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
 
 static void* thread_function_shim( void * data )
 {
@@ -994,9 +999,30 @@ static void* thread_function_shim( void * data )
     void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
+    rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return NULL;
+}
+
+static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * thread )
+{
+    // thread_wait's deadline is on CLOCK_MONOTONIC, so the wait is immune to
+    // wall-clock steps
+    pthread_condattr_t attr;
+    if ( pthread_condattr_init( &attr ) != 0 )
+        return false;
+    pthread_condattr_setclock( &attr, CLOCK_MONOTONIC );
+    const int cond_result = pthread_cond_init( &thread->wake_cond, &attr );
+    pthread_condattr_destroy( &attr );
+    if ( cond_result != 0 )
+        return false;
+    if ( pthread_mutex_init( &thread->wake_mutex, NULL ) != 0 )
+    {
+        pthread_cond_destroy( &thread->wake_cond );
+        return false;
+    }
+    return true;
 }
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
@@ -1017,9 +1043,20 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
+    shim_data->thread = thread;
+
+    thread->woken = false;
+    if ( !rocketnet_platform_thread_wake_init( thread ) )
+    {
+        rocketnet_free( context, thread );
+        rocketnet_free( context, shim_data );
+        return NULL;
+    }
 
     if ( pthread_create( &thread->handle, NULL, thread_function_shim, shim_data ) != 0 )
     {
+        pthread_cond_destroy( &thread->wake_cond );
+        pthread_mutex_destroy( &thread->wake_mutex );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
         return NULL;
@@ -1037,7 +1074,46 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
+    pthread_cond_destroy( &thread->wake_cond );
+    pthread_mutex_destroy( &thread->wake_mutex );
     rocketnet_free( thread->context, thread );
+}
+
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
+    if ( !thread )
+    {
+        rocketnet_platform_sleep( time );
+        return;
+    }
+    // the condition variable runs on CLOCK_MONOTONIC (thread_wake_init)
+    struct timespec deadline;
+    clock_gettime( CLOCK_MONOTONIC, &deadline );
+    const long nanoseconds = (long) ( time * 1000000000.0 );
+    deadline.tv_sec += nanoseconds / 1000000000L;
+    deadline.tv_nsec += nanoseconds % 1000000000L;
+    if ( deadline.tv_nsec >= 1000000000L )
+    {
+        deadline.tv_sec += 1;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    pthread_mutex_lock( &thread->wake_mutex );
+    while ( !thread->woken )
+    {
+        if ( pthread_cond_timedwait( &thread->wake_cond, &thread->wake_mutex, &deadline ) != 0 )
+            break;
+    }
+    pthread_mutex_unlock( &thread->wake_mutex );
+}
+
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    pthread_mutex_lock( &thread->wake_mutex );
+    thread->woken = true;
+    pthread_cond_broadcast( &thread->wake_cond );
+    pthread_mutex_unlock( &thread->wake_mutex );
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
@@ -2584,7 +2660,12 @@ struct thread_shim_data_t
     void * context;
     void * real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function;
+    rocketnet_platform_thread_t * thread;
 };
+
+// the platform thread the calling thread runs as, for thread_wait; NULL on a
+// thread that thread_create did not start
+static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
 
 static void * thread_function_shim( void * data )
 {
@@ -2593,9 +2674,22 @@ static void * thread_function_shim( void * data )
     void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
+    rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return NULL;
+}
+
+static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * thread )
+{
+    if ( pthread_cond_init( &thread->wake_cond, NULL ) != 0 )
+        return false;
+    if ( pthread_mutex_init( &thread->wake_mutex, NULL ) != 0 )
+    {
+        pthread_cond_destroy( &thread->wake_cond );
+        return false;
+    }
+    return true;
 }
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
@@ -2616,9 +2710,20 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
+    shim_data->thread = thread;
+
+    thread->woken = false;
+    if ( !rocketnet_platform_thread_wake_init( thread ) )
+    {
+        rocketnet_free( context, thread );
+        rocketnet_free( context, shim_data );
+        return NULL;
+    }
 
     if ( pthread_create( &thread->handle, NULL, thread_function_shim, shim_data ) != 0 )
     {
+        pthread_cond_destroy( &thread->wake_cond );
+        pthread_mutex_destroy( &thread->wake_mutex );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
         return NULL;
@@ -2636,7 +2741,36 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
+    pthread_cond_destroy( &thread->wake_cond );
+    pthread_mutex_destroy( &thread->wake_mutex );
     rocketnet_free( thread->context, thread );
+}
+
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
+    if ( !thread )
+    {
+        rocketnet_platform_sleep( time );
+        return;
+    }
+    const long nanoseconds = (long) ( time * 1000000000.0 );
+    struct timespec relative;
+    relative.tv_sec = nanoseconds / 1000000000L;
+    relative.tv_nsec = nanoseconds % 1000000000L;
+    pthread_mutex_lock( &thread->wake_mutex );
+    if ( !thread->woken )
+        pthread_cond_timedwait_relative_np( &thread->wake_cond, &thread->wake_mutex, &relative );
+    pthread_mutex_unlock( &thread->wake_mutex );
+}
+
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    pthread_mutex_lock( &thread->wake_mutex );
+    thread->woken = true;
+    pthread_cond_broadcast( &thread->wake_cond );
+    pthread_mutex_unlock( &thread->wake_mutex );
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
@@ -2913,7 +3047,12 @@ struct thread_shim_data_t
     void * context;
     void * real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function;
+    rocketnet_platform_thread_t * thread;
 };
+
+// the platform thread the calling thread runs as, for thread_wait; NULL on a
+// thread that thread_create did not start
+static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
 
 static DWORD WINAPI thread_function_shim( void * data )
 {
@@ -2922,6 +3061,7 @@ static DWORD WINAPI thread_function_shim( void * data )
     void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
+    rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return 0;
@@ -2945,11 +3085,21 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
+    shim_data->thread = thread;
+
+    thread->wake_event = CreateEventW( NULL, TRUE, FALSE, NULL );
+    if ( thread->wake_event == NULL )
+    {
+        rocketnet_free( context, thread );
+        rocketnet_free( context, shim_data );
+        return NULL;
+    }
 
     thread->handle = CreateThread(NULL, 0, thread_function_shim, shim_data, 0, NULL);
 
     if ( thread->handle == NULL )
     {
+        CloseHandle( thread->wake_event );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
         return NULL;
@@ -2968,7 +3118,28 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
     CloseHandle( thread->handle );
+    CloseHandle( thread->wake_event );
     rocketnet_free( thread->context, thread );
+}
+
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
+    if ( !thread )
+    {
+        rocketnet_platform_sleep( time );
+        return;
+    }
+    DWORD milliseconds = (DWORD) ( time * 1000.0 );
+    if ( milliseconds == 0 )
+        milliseconds = 1;
+    WaitForSingleObject( thread->wake_event, milliseconds );
+}
+
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    SetEvent( thread->wake_event );
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )

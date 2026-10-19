@@ -528,6 +528,30 @@ void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread
 void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thread );
 
 /**
+ * @brief Waits on the calling thread's wake for at most the given duration.
+ *
+ * Returns when the duration passes or when rocketnet_platform_thread_wake has
+ * been called for the calling thread; once woken, every later wait returns at
+ * once. The wake is an explicit signal, so a woken thread does not depend on
+ * its wait's timeout firing. Called on a thread that thread_create did not
+ * start, it sleeps for the duration.
+ * @param time Requested seconds; must be positive.
+ * @return None.
+ */
+void rocketnet_platform_thread_wait( double time );
+
+/**
+ * @brief Wakes a live thread's current thread_wait and every later one.
+ *
+ * Any thread may call it, before or during the target's wait. A thread that
+ * polls a quit flag between waits stores the flag first, then wakes, then
+ * joins.
+ * @param thread Live thread handle; must be non-NULL.
+ * @return None.
+ */
+void rocketnet_platform_thread_wake( struct rocketnet_platform_thread_t * thread );
+
+/**
  * @brief Requests the platform's client-thread scheduling priority.
  *
  * Call on a live thread. Operating-system permissions can prevent the request;
@@ -693,6 +717,12 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         void * context;
         /** @brief Native thread handle. */
         pthread_t handle;
+        /** @brief Guards woken for thread_wait and thread_wake. */
+        pthread_mutex_t wake_mutex;
+        /** @brief Signalled by thread_wake; waited on by thread_wait. */
+        pthread_cond_t wake_cond;
+        /** @brief Set once by thread_wake; never cleared. */
+        bool woken;
     };
 
     /** @brief Stores a POSIX mutex and whether its initialization succeeded. */
@@ -726,6 +756,9 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         void * context;
         pthread_t handle;
+        pthread_mutex_t wake_mutex;     // guards woken for thread_wait and thread_wake
+        pthread_cond_t wake_cond;       // signalled by thread_wake
+        bool woken;                     // set once by thread_wake; never cleared
     };
 
     struct rocketnet_platform_mutex_t
@@ -770,6 +803,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         void * context;
         HANDLE handle;
+        HANDLE wake_event;              // manual-reset: set once by thread_wake, never reset
     };
 
     struct rocketnet_platform_mutex_t
