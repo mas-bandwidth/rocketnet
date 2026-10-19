@@ -6921,7 +6921,9 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 // the transport's polling receive thread (loopback_client_operations has no
 // wait/wake hooks and rocketnet_client_transport_config_t has no calling-thread
 // receive mode), these two cases belong in the functional tier where pumping
-// yields to the receive thread.
+// yields to the receive thread. Both ends use [::1]: a dual-stack client binds
+// as IPv6 even for an IPv4 server and the loopback driver reports that bind as
+// the source, so one family keeps the cross-side totals comparable.
 
 struct wire_totals_t
 {
@@ -7086,12 +7088,12 @@ void wire_totals_count_every_packet_and_byte()
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
-    struct rocketnet_server_transport_t * server = wire_totals_server_create( "127.0.0.1:0", 1000.0 );
+    struct rocketnet_server_transport_t * server = wire_totals_server_create( "[::1]:0", 1000.0 );
     rocketnet_check( server != NULL );
 
     char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     const int server_port = rocketnet_server_transport_port( server );
-    snprintf( address, sizeof( address ), "127.0.0.1:%d", server_port );
+    snprintf( address, sizeof( address ), "[::1]:%d", server_port );
 
     double time = 1000.0;
     struct rocketnet_client_transport_t * client = wire_totals_client_create( address, 0x5701ULL, time );
@@ -7152,12 +7154,12 @@ void wire_totals_reset_per_connection_not_per_server()
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
-    struct rocketnet_server_transport_t * server = wire_totals_server_create( "127.0.0.1:0", 1000.0 );
+    struct rocketnet_server_transport_t * server = wire_totals_server_create( "[::1]:0", 1000.0 );
     rocketnet_check( server != NULL );
 
     char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     const int server_port = rocketnet_server_transport_port( server );
-    snprintf( address, sizeof( address ), "127.0.0.1:%d", server_port );
+    snprintf( address, sizeof( address ), "[::1]:%d", server_port );
 
     double time = 1000.0;
     struct rocketnet_client_transport_t * first = wire_totals_client_create( address, 0x5702ULL, time );
@@ -7208,6 +7210,116 @@ void wire_totals_reset_per_connection_not_per_server()
     rocketnet_test_env_restore( &client_guard );
     rocketnet_test_env_restore( &server_guard );
     rocketnet_test_env_restore( &process_guard );
+}
+
+// The wire totals count the peer's own IP header: an IPv4 peer adds 28 bytes
+// (20 + 8) and an IPv6 peer adds 48 (40 + 8). One exchange per family, with a
+// settled baseline, then N packets each way whose sealed UDP payload sizes are
+// known from finish_packet, so each counter delta is exact.
+
+static void wire_bytes_per_family_exchange( const char * public_address, const char * peer_address,
+                                            uint64_t client_id, int ip_udp_header_bytes )
+{
+    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
+    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 1;
+    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "portable" );
+
+    int server_status = -1;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &server_config, 1000.0, &server_status );
+    rocketnet_check( server != NULL );
+    rocketnet_check( server_status == ROCKETNET_STATUS_OK );
+
+    char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    const int server_port = rocketnet_server_transport_port( server );
+    snprintf( address, sizeof( address ), "%s:%d", peer_address, server_port );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( address, client_id, (uint64_t) ::time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "portable" );
+
+    double time = 1000.0;
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, time );
+    rocketnet_check( client != NULL );
+    rocketnet_check( wire_totals_connect( client, server, &time ) );
+    rocketnet_check( wire_totals_drain( client, server, &time ) );
+
+    wire_totals_t client_before, server_before;
+    wire_totals_client( client, &client_before );
+    wire_totals_server( server, &server_before );
+
+    const int payload_count = 4;
+    const int payload_bytes = 64;
+    uint8_t payload[64];
+    uint64_t client_wire = 0;
+    uint64_t server_wire = 0;
+
+    for ( int i = 0; i < payload_count; i++ )
+    {
+        memset( payload, i + 1, sizeof( payload ) );
+        struct rocketnet_packet_context_t context;
+        uint8_t * data = rocketnet_client_transport_start_packet( client, payload_bytes, &context );
+        rocketnet_check( data != NULL );
+        memcpy( data, payload, payload_bytes );
+        const int wire_bytes = rocketnet_client_transport_finish_packet( client, &context, payload_bytes );
+        rocketnet_check( wire_bytes > 0 );
+        client_wire += (uint64_t) wire_bytes;
+    }
+    rocketnet_client_transport_send_packets( client );
+
+    for ( int i = 0; i < payload_count; i++ )
+    {
+        memset( payload, 0x80 + i, sizeof( payload ) );
+        struct rocketnet_packet_context_t context;
+        uint8_t * data = rocketnet_server_transport_start_packet( server, 0, payload_bytes, &context );
+        rocketnet_check( data != NULL );
+        memcpy( data, payload, payload_bytes );
+        const int wire_bytes = rocketnet_server_transport_finish_packet( server, &context, payload_bytes );
+        rocketnet_check( wire_bytes > 0 );
+        server_wire += (uint64_t) wire_bytes;
+    }
+    rocketnet_server_transport_send_packets( server );
+
+    rocketnet_check( wire_totals_drain( client, server, &time ) );
+
+    wire_totals_t client_after, server_after;
+    wire_totals_client( client, &client_after );
+    wire_totals_server( server, &server_after );
+
+    const uint64_t headers = (uint64_t) payload_count * (uint64_t) ip_udp_header_bytes;
+    rocketnet_check( client_after.packets_sent - client_before.packets_sent == (uint64_t) payload_count );
+    rocketnet_check( client_after.packets_received - client_before.packets_received == (uint64_t) payload_count );
+    rocketnet_check( server_after.packets_sent - server_before.packets_sent == (uint64_t) payload_count );
+    rocketnet_check( server_after.packets_received - server_before.packets_received == (uint64_t) payload_count );
+    rocketnet_check( client_after.bytes_sent - client_before.bytes_sent == client_wire + headers );
+    rocketnet_check( server_after.bytes_received - server_before.bytes_received == client_wire + headers );
+    rocketnet_check( server_after.bytes_sent - server_before.bytes_sent == server_wire + headers );
+    rocketnet_check( client_after.bytes_received - client_before.bytes_received == server_wire + headers );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, time );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+    rocketnet_test_env_restore( &process_guard );
+}
+
+void test_transport_wire_bytes_per_family()
+{
+    wire_bytes_per_family_exchange( "127.0.0.1:0", "127.0.0.1", 0x5704ULL,
+                                    ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    wire_bytes_per_family_exchange( "[::1]:0", "[::1]", 0x5705ULL,
+                                    ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 }
 
 struct rocketnet_functional_test_t
@@ -7548,6 +7660,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "block_resend_cost_over_long_path", block_resend_cost_over_long_path },
     { "wire_totals_count_every_packet_and_byte", wire_totals_count_every_packet_and_byte },
     { "wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server },
+    { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family },
     { "live_message_matrix_loopback", live_message_matrix_loopback },
 };
 

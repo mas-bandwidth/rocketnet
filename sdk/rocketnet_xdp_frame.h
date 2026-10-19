@@ -261,6 +261,28 @@ static inline bool rocketnet_xdp_frame_parse(
     return true;
 }
 
+// RECEIVE CHECK: the AF_XDP transport serves IPv4, and its receive loop
+// reads a frame at the fixed IPv4 offsets. A frame is taken only when its
+// ethertype is IPv4 and it holds the Ethernet, IPv4 and UDP headers and the
+// smallest server-inbound packet. A frame whose ethertype is not IPv4 (IPv6
+// above all) is dropped and counted in *dropped_not_ipv4, never parsed; an
+// IPv4 frame too short to hold a packet is dropped uncounted.
+
+static inline bool rocketnet_xdp_frame_receive_ipv4( const void * frame, size_t frame_bytes, uint64_t * dropped_not_ipv4 )
+{
+    const uint8_t * f = (const uint8_t*) frame;
+
+    if ( !frame || frame_bytes < (size_t) ROCKETNET_ETHERNET_HEADER_BYTES ||
+         ( ( (uint16_t) f[12] << 8 ) | f[13] ) != ROCKETNET_ETHERTYPE_IP )
+    {
+        if ( dropped_not_ipv4 )
+            ( *dropped_not_ipv4 )++;
+        return false;
+    }
+
+    return frame_bytes >= (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+}
+
 // REPLY MAC: the destination MAC address of a reply frame. A peer is learned
 // from the source MAC of a packet the transport accepted for a connection
 // (it opened under the connection's keys), never from a packet it dropped or

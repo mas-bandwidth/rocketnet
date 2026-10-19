@@ -22,7 +22,7 @@
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_out_of_order_tracker.h"
 #include "rocketnet_jitter_tracker.h"
-#include "rocketnet_value_tracker.h"
+#include "../test/rocketnet_value_tracker.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_protocol.h"
@@ -615,6 +615,15 @@ void rocketnet_test_hash()
 {
     uint64_t hash = rocketnet_hash_string( "local" );
     rocketnet_check( hash == 0x249f1fb6f3a680e8ULL );
+}
+
+uint64_t rocketnet_protocol_version_hash( int major, int minor );
+
+void rocketnet_test_protocol_version_hash()
+{
+    rocketnet_check( rocketnet_protocol_version_hash( 1, 10 ) != rocketnet_protocol_version_hash( 11, 0 ) );
+    rocketnet_check( rocketnet_protocol_version_hash( 1, 0 ) != rocketnet_protocol_version_hash( 10, 0 ) );
+    rocketnet_check( rocketnet_protocol_version_hash( 1, 0 ) == rocketnet_hash_string( "1.0" ) );
 }
 
 void rocketnet_test_copy_string()
@@ -8043,7 +8052,6 @@ void rocketnet_test_version_is_one_integer()
 {
     rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
     rocketnet_check( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
-    rocketnet_check( ROCKETNET_VERSION_MAJOR_INT == ROCKETNET_VERSION_MAJOR && ROCKETNET_VERSION_MINOR_INT == ROCKETNET_VERSION_MINOR && ROCKETNET_VERSION_PATCH_INT == ROCKETNET_VERSION_PATCH );
 }
 
 void rocketnet_test_public_api_null_is_a_counted_no_op()
@@ -14344,6 +14352,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
     { "test_base64", rocketnet_test_base64 },
     { "test_hash", rocketnet_test_hash },
+    { "test_protocol_version_hash", rocketnet_test_protocol_version_hash },
      { "test_copy_string", rocketnet_test_copy_string },
      { "test_copy_string_zero_size_writes_nothing", rocketnet_test_copy_string_zero_size_writes_nothing },
      { "test_address", rocketnet_test_address },

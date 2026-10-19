@@ -3376,21 +3376,6 @@ int rocketnet_platform_id()
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
-int rocketnet_set_socket_codepoint( SOCKET socket, QOS_TRAFFIC_TYPE trafficType, QOS_FLOWID flowId, PSOCKADDR addr ) 
-{
-    QOS_VERSION QosVersion = { 1 , 0 };
-    HANDLE qosHandle;
-    if ( QOSCreateHandle( &QosVersion, &qosHandle ) == FALSE )
-    {
-        return GetLastError();
-    }
-    if ( QOSAddSocketToFlow( qosHandle, socket, addr, trafficType, QOS_NON_ADAPTIVE_FLOW, &flowId ) == FALSE )
-    {
-        return GetLastError();
-    }
-    return 0;
-}
-
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );

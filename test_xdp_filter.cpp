@@ -403,9 +403,22 @@ static const char * verdict_name( int verdict )
 
 // Run one frame. counter < 0: no counter moves. Otherwise exactly that
 // counter goes up by one and every other counter stays where it was.
+//
+// The AF_XDP transport serves IPv4 (DRIVERS.md): an IPv6 frame passes to the
+// kernel stack, never redirected and never dropped, and moves no counter but
+// PASSED_IPV6_EXTENSION, which counts an extension header behind a whole
+// fixed header. The cases are written once for both families; this is the
+// verdict every IPv6 frame is held to.
 
 static bool run_frame( filter_t * filter, const char * label, const spec_t & spec, int want_verdict, int want_counter )
 {
+    if ( spec.ipv6 )
+    {
+        want_verdict = XDP_PASS;
+        if ( want_counter != ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION )
+            want_counter = -1;      // no counter moves
+    }
+
     frame_t frame;
     build_frame( &frame, spec );
 
@@ -462,26 +475,26 @@ static bool ipv4_rocketnet_packet_redirects( filter_t * filter )
     return run_frame( filter, "ipv4 max-size packet", spec_default( false ), XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
 }
 
-static bool ipv6_rocketnet_packet_redirects( filter_t * filter )
+static bool ipv6_rocketnet_packet_passes( filter_t * filter )
 {
     bool ok = true;
 
     // the configured destination
 
     ok &= write_config( filter, NULL, server_ipv6 );
-    ok &= run_frame( filter, "ipv6 max-size packet to the configured address", spec_default( true ), XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+    ok &= run_frame( filter, "ipv6 max-size packet to the configured address", spec_default( true ), XDP_PASS, NO_COUNTER );
 
-    // an all-zero IPv6 destination accepts any destination, as IPv4 does
+    // an all-zero IPv6 destination in the config changes nothing
 
     ok &= write_config( filter, NULL, NULL );
-    ok &= run_frame( filter, "ipv6 max-size packet, any destination", spec_default( true ), XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+    ok &= run_frame( filter, "ipv6 max-size packet, any destination", spec_default( true ), XDP_PASS, NO_COUNTER );
 
-    // the smallest packet a server accepts, and the same frame from IPv4
+    // the smallest packet a server accepts
 
     spec_t smallest = spec_default( true );
     smallest.packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
     smallest.packet_type = ROCKETNET_CONNECTION_DISCONNECT_PACKET;
-    ok &= run_frame( filter, "ipv6 smallest packet", smallest, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+    ok &= run_frame( filter, "ipv6 smallest packet", smallest, XDP_PASS, NO_COUNTER );
     return ok;
 }
 
@@ -559,23 +572,23 @@ static bool ipv6_wrong_address_passes( filter_t * filter )
     return ok;
 }
 
-static bool ipv6_short_header_drops( filter_t * filter )
+static bool ipv6_short_header_passes( filter_t * filter )
 {
     bool ok = write_config( filter, NULL, server_ipv6 );
     spec_t spec = spec_default( true );
     spec.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES - 1;
-    ok &= run_frame( filter, "ipv6 header cut one byte short", spec, XDP_DROP, NO_COUNTER );
+    ok &= run_frame( filter, "ipv6 header cut one byte short", spec, XDP_PASS, NO_COUNTER );
     spec.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + 1;
-    ok &= run_frame( filter, "ipv6 header cut to one byte", spec, XDP_DROP, NO_COUNTER );
+    ok &= run_frame( filter, "ipv6 header cut to one byte", spec, XDP_PASS, NO_COUNTER );
     return ok;
 }
 
-static bool ipv6_too_large_drops( filter_t * filter )
+static bool ipv6_too_large_passes( filter_t * filter )
 {
     bool ok = write_config( filter, NULL, server_ipv6 );
     spec_t spec = spec_default( true );
     spec.packet_bytes = ROCKETNET_RECEIVE_CEILING + 1;
-    ok &= run_frame( filter, "ipv6 packet one byte over the ceiling", spec, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
+    ok &= run_frame( filter, "ipv6 packet one byte over the ceiling", spec, XDP_PASS, NO_COUNTER );
     return ok;
 }
 
@@ -598,7 +611,7 @@ static bool ipv6_icmpv6_passes( filter_t * filter )
 // The post-UDP checks are one function for both families; each drop reason
 // has the same verdict and the same counter on IPv6 as on IPv4.
 
-static bool ipv6_same_drops_as_ipv4( filter_t * filter )
+static bool ipv4_drops_and_ipv6_passes( filter_t * filter )
 {
     bool ok = true;
     for ( int family = 0; family < 2; family++ )
@@ -1445,14 +1458,14 @@ struct case_t
 static const case_t cases[] =
 {
     { "ipv4_rocketnet_packet_redirects", ipv4_rocketnet_packet_redirects },
-    { "ipv6_rocketnet_packet_redirects", ipv6_rocketnet_packet_redirects },
+    { "ipv6_rocketnet_packet_passes", ipv6_rocketnet_packet_passes },
     { "ipv6_extension_header_passes", ipv6_extension_header_passes },
     { "ipv6_fragment_passes", ipv6_fragment_passes },
     { "ipv6_wrong_address_passes", ipv6_wrong_address_passes },
-    { "ipv6_short_header_drops", ipv6_short_header_drops },
-    { "ipv6_too_large_drops", ipv6_too_large_drops },
+    { "ipv6_short_header_passes", ipv6_short_header_passes },
+    { "ipv6_too_large_passes", ipv6_too_large_passes },
     { "ipv6_icmpv6_passes", ipv6_icmpv6_passes },
-    { "ipv6_same_drops_as_ipv4", ipv6_same_drops_as_ipv4 },
+    { "ipv4_drops_and_ipv6_passes", ipv4_drops_and_ipv6_passes },
     { "config_layout_matches_header", config_layout_matches_header },
     { "replay_drops_behind_the_window", replay_drops_behind_the_window },
     { "replay_never_writes_the_map", replay_never_writes_the_map },

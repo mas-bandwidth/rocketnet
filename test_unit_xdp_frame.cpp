@@ -16,6 +16,9 @@
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_address.h"
 #include "sdk/rocketnet_xdp_frame.h"
+#include "sdk/rocketnet_config.h"
+
+#include <stdlib.h>
 
 static const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
@@ -368,6 +371,168 @@ static void xdp_reply_mac_follows_the_peer()
     rocketnet_unit_check( memcmp( frame + 6, server_mac, 6 ) == 0 );
 }
 
+// The AF_XDP transport serves IPv4. The receive loop's check takes an IPv4
+// frame and drops, counted, any frame whose ethertype is not IPv4, so an IPv6
+// frame is never read at the IPv4 offsets and never delivered.
+
+static void xdp_receive_drops_non_ipv4_counted()
+{
+    rocketnet_address_t src4, dst4, src6, dst6;
+    rocketnet_unit_check( rocketnet_address_parse( &src4, "192.168.1.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &dst4, "192.168.1.20:40001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &src6, "[2001:db8::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &dst6, "[2001:db8::2]:40001" ) );
+
+    const int payload = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 16;
+    uint64_t dropped = 0;
+
+    // an IPv6 frame carrying a packet of a size the server takes: dropped, counted
+
+    uint8_t frame6[256];
+    memset( frame6, 0, sizeof(frame6) );
+    const int len6 = rocketnet_xdp_frame_build( frame6, sizeof(frame6), server_mac, gateway_mac, &src6, &dst6, payload );
+    rocketnet_unit_check( len6 == 62 + payload );
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive_ipv4( frame6, (size_t) len6, &dropped ) );
+    rocketnet_unit_check( dropped == 1 );
+
+    // the same packet over IPv4: taken, the count does not move
+
+    uint8_t frame4[256];
+    memset( frame4, 0, sizeof(frame4) );
+    const int len4 = rocketnet_xdp_frame_build( frame4, sizeof(frame4), server_mac, gateway_mac, &src4, &dst4, payload );
+    rocketnet_unit_check( len4 == 42 + payload );
+    rocketnet_unit_check( rocketnet_xdp_frame_receive_ipv4( frame4, (size_t) len4, &dropped ) );
+    rocketnet_unit_check( dropped == 1 );
+
+    // an IPv4 frame too short for the smallest packet: dropped, uncounted
+
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive_ipv4( frame4, (size_t) ( 42 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1 ), &dropped ) );
+    rocketnet_unit_check( dropped == 1 );
+    rocketnet_unit_check( rocketnet_xdp_frame_receive_ipv4( frame4, (size_t) ( 42 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES ), &dropped ) );
+
+    // another ethertype (ARP), and a frame too short to name one: dropped, counted
+
+    frame4[12] = 0x08;
+    frame4[13] = 0x06;
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive_ipv4( frame4, (size_t) len4, &dropped ) );
+    rocketnet_unit_check( dropped == 2 );
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive_ipv4( frame6, 13, &dropped ) );
+    rocketnet_unit_check( dropped == 3 );
+}
+
+// The server ladder: for an IPv6 address the xdp rung leaves the candidate
+// list, so auto falls to the next transport; IPv4 keeps the list as parsed.
+
+static void xdp_ladder_skips_xdp_for_ipv6()
+{
+    const int linux_server[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
+    struct rocketnet_driver_ladder_t ladder;
+
+    rocketnet_unit_check( rocketnet_driver_ladder_parse( "auto", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( rocketnet_driver_ladder_drop_ipv4_only( &ladder, ROCKETNET_ADDRESS_IPV4 ) == 0 );
+    rocketnet_unit_check( ladder.num_candidates == 3 && ladder.candidates[0] == ROCKETNET_DRIVER_XDP );
+
+    rocketnet_unit_check( rocketnet_driver_ladder_parse( "auto", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( rocketnet_driver_ladder_drop_ipv4_only( &ladder, ROCKETNET_ADDRESS_IPV6 ) == 1 );
+    rocketnet_unit_check( ladder.num_candidates == 2 );
+    rocketnet_unit_check( ladder.candidates[0] == ROCKETNET_DRIVER_GSO && ladder.candidates[1] == ROCKETNET_DRIVER_PORTABLE );
+
+    // an explicit list keeps its order without xdp
+
+    rocketnet_unit_check( rocketnet_driver_ladder_parse( "gso,xdp,portable", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( rocketnet_driver_ladder_drop_ipv4_only( &ladder, ROCKETNET_ADDRESS_IPV6 ) == 1 );
+    rocketnet_unit_check( ladder.num_candidates == 2 );
+    rocketnet_unit_check( ladder.candidates[0] == ROCKETNET_DRIVER_GSO && ladder.candidates[1] == ROCKETNET_DRIVER_PORTABLE );
+
+    // a pin of xdp leaves nothing for IPv6, and stays a pin for IPv4
+
+    rocketnet_unit_check( rocketnet_driver_ladder_parse( "xdp", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( rocketnet_driver_ladder_drop_ipv4_only( &ladder, ROCKETNET_ADDRESS_IPV6 ) == 1 );
+    rocketnet_unit_check( ladder.num_candidates == 0 );
+
+    rocketnet_unit_check( rocketnet_driver_ladder_parse( "xdp", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( rocketnet_driver_ladder_drop_ipv4_only( &ladder, ROCKETNET_ADDRESS_IPV4 ) == 0 );
+    rocketnet_unit_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_DRIVER_XDP );
+}
+
+// A server create that pins xdp with an IPv6 address is refused with
+// INVALID_TRANSPORT_LIST and one error line, before anything opens. The xdp
+// row exists only on Linux: elsewhere a pin of it falls to the auto order,
+// whose drivers open a real socket, so off Linux the case is a named skip.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+static int xdp_ipv6_error_lines = 0;
+static bool xdp_ipv6_error_names_the_rule = false;
+
+static void xdp_ipv6_capture( void *, int level, const char * message, size_t )
+{
+    if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+        return;
+    xdp_ipv6_error_lines++;
+    xdp_ipv6_error_names_the_rule = strstr( message, "AF_XDP transport serves IPv4" ) != NULL &&
+                                    strstr( message, "gso" ) != NULL;
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+static void xdp_ipv6_pin_is_refused_at_create()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    // a Linux build without the xdp row falls to the auto order, which opens
+    // a real socket: the case is a named skip there
+
+    int num_available = 0;
+    const int * available = rocketnet_server_driver_availability( &num_available );
+    bool xdp_available = false;
+    for ( int i = 0; i < num_available; i++ )
+        xdp_available = xdp_available || available[i] == ROCKETNET_DRIVER_XDP;
+    if ( !xdp_available )
+    {
+        printf( "xdp_ipv6_pin_is_refused_at_create [SKIPPED: this build has no xdp row]\n" );
+        return;
+    }
+
+    // the env pin wins over the struct's list: set it aside for the case
+
+    const char * pinned = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    char saved[256];
+    saved[0] = '\0';
+    if ( pinned )
+        snprintf( saved, sizeof(saved), "%s", pinned );
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    memset( config.backend_public_key, 0x42, 32 );
+    memset( config.server_public_key, 0x43, 32 );
+    memset( config.server_secret_key, 0x44, 32 );
+    config.protocol_id = 1;
+    strcpy( config.driver, "xdp" );
+
+    const int level = rocketnet_get_log_level();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_callback( xdp_ipv6_capture, NULL );
+    xdp_ipv6_error_lines = 0;
+    xdp_ipv6_error_names_the_rule = false;
+
+    int status = -1;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "[::1]:40000", &config, 1000.0, &status );
+
+    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_log_level( level );
+    if ( pinned )
+        setenv( "ROCKETNET_SERVER_TRANSPORT", saved, 1 );
+
+    rocketnet_unit_check( server == NULL );
+    rocketnet_unit_check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
+    rocketnet_unit_check( xdp_ipv6_error_lines == 1 );
+    rocketnet_unit_check( xdp_ipv6_error_names_the_rule );
+#else
+    printf( "xdp_ipv6_pin_is_refused_at_create [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
+#endif
+}
+
 REGISTER_UNIT_TEST( ipv4_frame_matches_golden );
 REGISTER_UNIT_TEST( ipv6_frame_matches_golden );
 REGISTER_UNIT_TEST( ipv6_udp_checksum_verifies );
@@ -377,3 +542,6 @@ REGISTER_UNIT_TEST( ipv6_payload_over_budget_is_refused );
 REGISTER_UNIT_TEST( parse_round_trips_both_families );
 REGISTER_UNIT_TEST( parse_refuses_extension_headers );
 REGISTER_UNIT_TEST( xdp_reply_mac_follows_the_peer );
+REGISTER_UNIT_TEST( xdp_receive_drops_non_ipv4_counted );
+REGISTER_UNIT_TEST( xdp_ladder_skips_xdp_for_ipv6 );
+REGISTER_UNIT_TEST( xdp_ipv6_pin_is_refused_at_create );
