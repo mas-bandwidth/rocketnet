@@ -734,10 +734,358 @@ packet type, which key seals which type; sealed vectors.
 <a id="t10"></a>
 ## t10. Receive processing
 
-Status: pending
+A client MUST drop a datagram whose source is not the server it dialed
+before applying this list. A client protocol call with insufficient output
+capacity MUST be refused before this list and MUST increment
+`RECEIVE_CURSOR_TOO_SMALL`; it does not increment `PACKETS_RECEIVED`.
+A receiver MUST process every datagram that reaches this list through the
+ordered checks below. Each check MUST reject exactly the packets named for
+it and MUST increment exactly the counter named for it in
+[t18 Error handling and counters](#t18). A receiver MUST NOT examine a packet
+beyond the first check that rejects it. The list is the same for both ends;
+a row marked server or client applies only at that end.
 
-Scope: the receiver's ordered checks for every packet, from prefilter to
-dispatch, with the counter each refusal increments.
+1. A receiver MUST count the datagram as `PACKETS_RECEIVED` on entry to this
+   list, before any check.
+2. A receiver MUST apply the prefilter of [t5 Prefilter header](#t5). A
+   datagram shorter than the prefilter header is `PREFILTER_TOO_SHORT`; a
+   datagram longer than the receive ceiling is `PREFILTER_TOO_LARGE`; an
+   epoch this receiver does not hold is `PREFILTER_WRONG_EPOCH`; a filter
+   value that does not compare is `PREFILTER_WRONG_VALUE`. The comparison is
+   constant time when the epoch is nonzero.
+3. A receiver MUST reject a packet type at or above the first reserved
+   packet type as `RESERVED_TYPE`.
+4. A server MUST reject the connection denied, connection challenge and
+   connection cookie types as `WRONG_DIRECTION`. A client MUST reject the
+   connection request and connection response types as `WRONG_DIRECTION`.
+   These types travel in one direction only.
+5. A server MUST pass a connection request to
+   [t12 Handshake: server](#t12). A client MUST apply the connection cookie
+   state gate before checking its exact wire size, then pass an accepted cookie
+   to [t11 Handshake: client](#t11). A cookie in any other client state is
+   `CLIENT_COOKIE_WRONG_STATE`; a cookie in an accepted state with the wrong
+   exact size is `CLIENT_COOKIE_WRONG_SIZE`. Connection requests and cookies
+   carry no sealed data.
+6. For every other type with both checks, a receiver MUST apply the type's
+   size check before its state gate and before any decryption. A packet that
+   fails the size check MUST increment the type's `WRONG_SIZE` counter and
+   MUST NOT increment the integrity-failure count or a `DID_NOT_OPEN` counter.
+7. A receiver MUST apply each remaining type's state gate. A packet the
+   current state does not process is dropped with that type's `WRONG_STATE`
+   counter.
+8. A server MUST look up the connection mapping for the source address. A
+   packet with no mapping is `NO_MAPPING`. A client MUST drop a datagram
+   whose source is not the server it dialed, before the list above.
+9. A receiver MUST reconstruct the 64-bit sequence from the 32-bit wire
+   field and the highest sequence already opened. A reconstructed sequence
+   of zero is `ZERO_SEQUENCE`.
+10. For the session types, a receiver MUST reject a sequence already marked
+    received as `ALREADY_RECEIVED`, before decryption. The handshake types
+    have no replay test.
+11. For the connection denied and connection challenge types, the clear
+    session nonce sits between the sequence and the sealed data; a client
+    MUST derive handshake keys into temporary storage and MUST commit them
+    only after the open succeeds.
+12. A receiver MUST open the sealed data with the key for the type and the
+    associated data of [t9 Packet protection](#t9). A packet that does not
+    open, or whose expected handshake plaintext size is not exact, is
+    `DID_NOT_OPEN`; this check alone increments the integrity-failure count
+    that [t14 Replay protection](#t14) bounds.
+13. A server MUST reject a session packet whose mapping has no assigned
+    slot as `NOT_CONNECTED`, after the open and before marking the sequence.
+14. For the session types, a receiver MUST mark the sequence received and
+    then advance the most recent sequence.
+15. For session types, a receiver MUST read and validate the ack block at
+    the front of the opened data as [t15 Acknowledgement](#t15) specifies. A
+    malformed block is `BAD_ACK_BLOCK`; the type data behind it is not
+    examined. Handshake types have no ack block.
+16. For session types, a receiver MUST check the opened size less the ack
+    block against the type. A mismatch is `WRONG_OPENED_SIZE`.
+17. Before applying the ack block, a client MUST validate the index and
+    slot count in a keep-alive. The slot count MUST be from 1 through the
+    maximum client slot count, and the index MUST be less than the slot count.
+    An invalid value is `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+18. After the session checks pass, a receiver MUST apply the ack block's
+    delivery information and refresh the connection's receive time, then
+    perform the type-specific processing. A type-specific refusal increments
+    its counter; a fragment refusal does not undo the ack information or
+    receive-time refresh, as [t16 Fragmentation and reassembly](#t16)
+    specifies. Handshake types follow their type-specific processing after
+    their checks pass.
+
+| Step | Check | Position | Refusal counter |
+|---|---|---|---|
+| 1 | packet counted | entry | |
+| 2 | prefilter length, epoch, value | before decryption | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE`, `PREFILTER_WRONG_EPOCH`, `PREFILTER_WRONG_VALUE` |
+| 3 | reserved type | before decryption | `RESERVED_TYPE` |
+| 4 | direction | before decryption | `WRONG_DIRECTION` |
+| 5 | client cookie state gate | before exact cookie size | `CLIENT_COOKIE_WRONG_STATE` |
+| 5a | client cookie exact size | after cookie state gate | `CLIENT_COOKIE_WRONG_SIZE` |
+| 6 | wire size for each other type | before its state gate and before decryption | the type's `WRONG_SIZE` |
+| 7 | remaining state gates | before decryption | the type's `WRONG_STATE` |
+| 8 | server mapping | before decryption | `NO_MAPPING` |
+| 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
+| 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
+| 12 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
+| 13 | server slot gate | after decryption, before the replay mark | `NOT_CONNECTED` |
+| 15 | session ack block | after decryption | `BAD_ACK_BLOCK` |
+| 16 | session opened size less the ack block | after decryption | `WRONG_OPENED_SIZE` |
+| 17 | client keep-alive index and slot count | after decryption, before ack application | `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE` |
+| 18 | type-specific processing | after session ack application, or after handshake checks | the type's own counters |
+
+The fixed sizes of the handshake types, the minimum wire sizes of the session
+types, and the response padding are:
+
+| Name | Value | Unit | Kind | Defined in |
+|---|---|---|---|---|
+| receive connection request wire size | `710` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection denied wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection challenge wire size | `66` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection response wire size | `50` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection cookie wire size | `38` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection keep-alive minimum wire size | `41` | bytes | size | [t8 Packet formats](#t8) |
+| connection payload minimum wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| connection disconnect minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
+| connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
+| connection payload fragment minimum wire size | `40` | bytes | size | [t8 Packet formats](#t8) |
+| connection response padding | `24` | bytes | size | [t8 Packet formats](#t8) |
+| maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
+
+A session packet's total wire size is its minimum or larger, up to the
+receive ceiling. The payload's opened data holds at least one payload byte
+after the ack block.
+
+The vectors below name one malformed packet per refusal and the counter it
+fires. Each packet begins with the prefilter header of type, epoch and the
+test filter value, and each is truncated or altered at the step it tests.
+
+```vector t10.prefilter-too-short
+input: a connection payload packet truncated one byte below the prefilter header
+counter: PREFILTER_TOO_SHORT
+05 00 b7 59 01
+```
+
+```vector t10.prefilter-wrong-epoch
+input: a connection payload packet whose epoch is not a held generation
+counter: PREFILTER_WRONG_EPOCH
+05 01 b7 59 01 00
+```
+
+```vector t10.prefilter-wrong-value
+input: a connection payload packet whose filter value is not the receiver's
+counter: PREFILTER_WRONG_VALUE
+05 00 00 00 00 00
+```
+
+```vector t10.reserved-type
+input: a packet whose type is the first reserved packet type
+counter: RESERVED_TYPE
+0a 00 b7 59 01 00
+```
+
+```vector t10.server-wrong-direction
+input: a connection denied packet arriving at a server
+counter: WRONG_DIRECTION
+01 00 b7 59 01 00
+```
+
+```vector t10.client-session-wrong-size
+input: a connection keep-alive packet one byte below its minimum wire size
+counter: CLIENT_KEEP_ALIVE_WRONG_SIZE
+04 00 b7 59 01 00
+```
+
+```vector t10.prefilter-too-large
+input: a connection payload packet one byte above the receive ceiling
+counter: PREFILTER_TOO_LARGE
+05 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00
+```
+
+```vector t10.client-wrong-direction
+input: a connection request packet arriving at a client
+counter: WRONG_DIRECTION
+00 00 b7 59 01 00
+```
+
+```vector t10.client-cookie-state-before-size
+input: an undersized connection cookie at a client in a state that rejects cookies
+counter: CLIENT_COOKIE_WRONG_STATE
+07 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00
+```
+
+```vector t10.client-wrong-state
+input: a connection keep-alive packet at a client not in a session state
+counter: CLIENT_KEEP_ALIVE_WRONG_STATE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.server-no-mapping
+input: a connection keep-alive packet from an address with no mapping
+counter: KEEP_ALIVE_NO_MAPPING
+04 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00
+```
+
+```vector t10.server-not-connected
+input: a connection keep-alive packet for a mapping with no assigned slot
+counter: KEEP_ALIVE_NOT_CONNECTED
+04 00 b7 59 01 00 e8 03 00 00 2e 73 ac 3a 5d df
+e7 a5 8a f0 4a f3 97 9d f3 b7 56 9c a5 e6 86 63
+30 2e d1 bf d8 4e f9 ac 23
+```
+
+```vector t10.zero-sequence
+input: a connection keep-alive packet whose reconstructed sequence is zero
+counter: CLIENT_KEEP_ALIVE_ZERO_SEQUENCE
+04 00 b7 59 01 00 00 00 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.already-received
+input: a connection keep-alive packet whose sequence is already marked received
+counter: CLIENT_KEEP_ALIVE_ALREADY_RECEIVED
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.did-not-open
+input: a connection keep-alive packet sealed under a key the receiver does not hold
+counter: CLIENT_KEEP_ALIVE_DID_NOT_OPEN
+04 00 b7 59 01 00 e8 03 00 00 f8 c3 ad 9b 05 4e
+a2 d3 b5 79 df 29 48 34 2f ad 2d ca b4 05 1d 60
+e7 be f3 17 65 04 cf 34 2a
+```
+
+```vector t10.bad-ack-block
+input: a connection keep-alive packet whose ack block is malformed
+counter: CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK
+04 00 b7 59 01 00 e8 03 00 00 1b 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 c1 26 ae 3c ae 1b d1
+78 c4 a3 c6 ca 6f 48 a0 17
+```
+
+```vector t10.wrong-opened-size
+input: a connection keep-alive packet with nine type bytes after the ack block
+counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 c6 2e 2c 88 af c2 45
+4f 6f 62 77 03 4b 30 f3 49 2a
+```
+
+```vector t10.keep-alive-invalid-index
+input: a validly opened keep-alive whose client index equals its slot count
+counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8b 69 ab 93 07 a5 3c d6 11 13 7c 3d 36 90 4e
+d3 30 e5 ec f7 45 2e 8e 62
+```
+
+```vector t10.fragment-zero-payload-id
+input: a connection payload fragment packet naming payload id zero
+counter: FRAGMENT_ZERO_PAYLOAD_ID
+09 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a4 d2 ec a3 b0 d7 eb 0e af 4b
+9b b6 e3 94 bd 3b 5d 2c
+```
 
 <a id="t11"></a>
 ## t11. Handshake: client
@@ -1782,45 +2130,9 @@ the counter list and the test list MUST be the same list.
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
 
-This appendix indexes every vector of RN-1 by the section that defines it.
-It is generated; the bytes are in the sections.
-
-<!-- vector-index:begin -->
-| Section | Vector |
-|---|---|
-| [t3 Constants and registries](#t3) | `t3.token-identifier` |
-| [t4 Wire encoding primitives](#t4) | `t4.address-ipv4` |
-| [t4 Wire encoding primitives](#t4) | `t4.address-ipv6` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-start` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-steady` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
-| [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
-| [t5 Prefilter header](#t5) | `t5.reject-epoch` |
-| [t5 Prefilter header](#t5) | `t5.reject-long` |
-| [t5 Prefilter header](#t5) | `t5.reject-short` |
-| [t5 Prefilter header](#t5) | `t5.reject-value` |
-| [t5 Prefilter header](#t5) | `t5.unkeyed-accept` |
-| [t15 Acknowledgement](#t15) | `t15.fresh` |
-| [t15 Acknowledgement](#t15) | `t15.fully-received` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-first-too-long` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-first` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-fresh-range` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-geometry` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-short` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-walk` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-first` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-gap` |
-| [t15 Acknowledgement](#t15) | `t15.invalid-zero-length` |
-| [t15 Acknowledgement](#t15) | `t15.one-loss` |
-| [t15 Acknowledgement](#t15) | `t15.sequence-wrap` |
-| [t15 Acknowledgement](#t15) | `t15.truncated-oldest` |
-| [t15 Acknowledgement](#t15) | `t15.two-losses` |
-| [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
-| [t17 Timing and defaults](#t17) | `t17.timing-defaults` |
-| [t18 Error handling and counters](#t18) | `t18.counter-registry` |
-| [t19 Security considerations](#t19) | `t19.amplification` |
-<!-- vector-index:end -->
+The index of the vectors of RN-1 by section is printed by
+`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
+in the sections.
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02

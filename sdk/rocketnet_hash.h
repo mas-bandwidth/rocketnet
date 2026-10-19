@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_HASH_H
 #define ROCKETNET_HASH_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 uint64_t rocketnet_hash_string( const char * string );
 

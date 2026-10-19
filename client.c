@@ -9,6 +9,7 @@
 */
 
 #include "rocketnet.h"
+#include "rocketnet_layers.h"
 #include <stdio.h>
 #include <signal.h>
 #include <stdlib.h>

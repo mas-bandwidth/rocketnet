@@ -10,7 +10,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_wire.h"
 
@@ -165,7 +165,7 @@ static void pcapng_allocator_install()
 {
     rocketnet_term();
     check( rocketnet_allocator( pcapng_malloc, pcapng_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
     pcapng_live_bytes = 0;
     pcapng_peak_bytes = 0;
 }
@@ -174,7 +174,7 @@ static void pcapng_allocator_restore()
 {
     rocketnet_term();
     check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 }
 
 static std::string pcapng_directory()
@@ -275,7 +275,7 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
     const uint8_t * signature = signed_connect_data + ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_VERSION;
-        if ( rocketnet_read_uint32( &p ) != ROCKETNET_VERSION )
+        if ( rocketnet_read_uint32( &p ) != ROCKETNET_WIRE_VERSION )
             return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION );
     }
     {

@@ -505,7 +505,7 @@ static void endpoint_never_allocates_or_reads_a_clock()
 {
     rocketnet_term();
     check( rocketnet_allocator( ep_malloc, ep_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 
     rocketnet_message_config_t config;
     ep_config( &config );
@@ -567,7 +567,7 @@ static void endpoint_never_allocates_or_reads_a_clock()
 
     rocketnet_term();
     check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 }
 
 // R6 (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla UncappedNeverDropsOrWaits):

@@ -1560,7 +1560,7 @@ static void message_objects_no_allocation_after_create()
 {
     rocketnet_term();
     check( rocketnet_allocator( mo_malloc, mo_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 
     {
         rocketnet_message_config_t config;
@@ -1628,7 +1628,7 @@ static void message_objects_no_allocation_after_create()
 
     rocketnet_term();
     check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init() );
+    check( rocketnet_init( NULL ) );
 }
 
 // ---------------------------------------------------------------------------

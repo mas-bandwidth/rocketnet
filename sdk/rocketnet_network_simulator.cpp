@@ -5,7 +5,7 @@
 
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_protocol.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <string.h>
 #include <stdio.h>

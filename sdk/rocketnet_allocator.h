@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_ALLOCATOR_H
 #define ROCKETNET_ALLOCATOR_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
 
 #include <stdint.h>

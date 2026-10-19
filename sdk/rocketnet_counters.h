@@ -496,12 +496,11 @@
     /* own counter now. appended: indices are the contract. */ \
     X( CONNECTION_RESPONSE_INTERNAL_ERROR, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     \
-    /* A connection request from an address that holds a handshake in */ \
-    /* flight, carrying a different salt than the mapping's: ignored, and */ \
-    /* until now not counted, so the request family lost the packet. It is */ \
-    /* a new attempt from the same address while the old one lives; the */ \
-    /* old mapping answers only its own salt. appended: indices are the */ \
-    /* contract. */ \
+    /* A request from an address that holds a handshake in flight, carrying */ \
+    /* a different salt than the mapping's, is answered with the mapping's */ \
+    /* stored challenge, so nothing increments this counter now. It stays */ \
+    /* declared because the indices are the contract. appended: indices are */ \
+    /* the contract. */ \
     X( CONNECTION_REQUEST_MAPPING_SALT_MISMATCH, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
     /* History was overwritten before its ACK, and the peer had acknowledged */ \
@@ -607,6 +606,6 @@ struct rocketnet_counters_t
 // totals are cumulative) to its transport counter; nothing else moves.
 void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters, const uint64_t * prefilter );
 
-#include "rocketnet.h"                  // rocketnet_counter_name lives in the forest header
+#include "rocketnet_internal.h"                  // rocketnet_counter_name lives in the forest header
 
 #endif // #ifndef ROCKETNET_COUNTERS_H

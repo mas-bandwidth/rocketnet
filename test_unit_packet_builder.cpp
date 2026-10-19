@@ -224,7 +224,7 @@ static void builder_obeys_budget_and_class_order()
 static void no_allocation_after_create()
 {
     rocketnet_unit_check( rocketnet_allocator( builder_malloc, builder_free ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_init( NULL ) );
 
     builder_allocs = 0;
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );

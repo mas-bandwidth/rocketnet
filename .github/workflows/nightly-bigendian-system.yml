@@ -189,7 +189,7 @@ jobs:
           a=$?
           echo FUNC_AUTO_EXIT:$a
           [ "$a" -eq 0 ] || rc=$a
-          ROCKETNET_DRIVER=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional
+          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional
           p=$?
           echo FUNC_PORT_EXIT:$p
           [ "$p" -eq 0 ] || rc=$p
