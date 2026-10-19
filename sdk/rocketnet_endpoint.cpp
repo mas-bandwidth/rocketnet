@@ -37,9 +37,11 @@ static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t a
 static bool rn_endpoint_unreliable_over_record_capacity( int reliability, int channel, int bytes, int capacity )
 {
     // Every unreliable mode uses the same record-size rule, including its wire header and form byte.
-    const int header = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES +
-        ( reliability == ROCKETNET_UNRELIABLE_SEQUENCED ? 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 ) : 0 );
-    return (uint64_t) (uint32_t) bytes + (uint64_t) header + 1u > (uint64_t) capacity;
+    const int header = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
+        3 + 3 + 3 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+    const int one_packet_capacity = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ? capacity :
+        ( capacity < ROCKETNET_MESSAGE_SINGLE_BYTES ? capacity : ROCKETNET_MESSAGE_SINGLE_BYTES );
+    return (uint64_t) (uint32_t) bytes + (uint64_t) header + 1u > (uint64_t) one_packet_capacity;
 }
 
 // ---------------------------------------------------------------

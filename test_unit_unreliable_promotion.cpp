@@ -208,8 +208,10 @@ static void unreliable_promotion_every_mode()
             boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
             const int transport_max=pair.client->object.max_payload_bytes>0 ? pair.client->object.max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
             const int record_capacity=transport_max<ROCKETNET_MAX_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PAYLOAD_BYTES;
-            const int header=ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + (reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? 3+3+3+(channel>=256?2:1) : 0);
-            const int edge=record_capacity-header-1;
+            const int header=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? 3+3+3+(channel>=256?2:1) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+            const int one_packet_capacity=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? record_capacity :
+                (record_capacity<ROCKETNET_MESSAGE_SINGLE_BYTES ? record_capacity : ROCKETNET_MESSAGE_SINGLE_BYTES);
+            const int edge=one_packet_capacity-header-1;
             int sizes[10]={1404,1405,1406,edge-1,edge,edge+1,edge*2,edge*4,16384,16385};
             int size_count=10;
             for(int a=0;a<size_count;++a) for(int b=a+1;b<size_count;++b) if(sizes[b]==sizes[a]) {
