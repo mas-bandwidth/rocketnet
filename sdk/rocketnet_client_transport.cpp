@@ -18,6 +18,7 @@
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_jitter_tracker.h"
 #include "rocketnet_config.h"
+#include "rocketnet_network_simulator.h"
 
 #include <memory.h>
 #include <stdlib.h>
@@ -140,6 +141,7 @@ struct rocketnet_client_transport_t
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
     int last_state;
     struct rocketnet_client_transport_config_t config;
+    struct rocketnet_network_simulator_t * link_simulator;     // dev-only outgoing link model; NULL when off
 
     // the packet id counter behind the acquire/commit surface: unique and
     // monotonic, the join key the acked-packet batch surfaces. the ring
@@ -180,6 +182,40 @@ struct rocketnet_client_transport_t
 };
 
 static void rocketnet_client_thread_function( void * data );
+
+// The public link simulator, development only: outgoing datagrams enter an
+// in-memory wire and due ones leave it for the driver on the caller's update
+// clock. The wire's destination field carries the real destination and its
+// source field is a private sink, so one simulator serves every peer a
+// transport talks to; the drain reads the real destination back out.
+static const rocketnet_address_t rocketnet_link_simulator_sink = { { { 0 } }, 0, ROCKETNET_ADDRESS_IPV4 };
+
+static void rocketnet_client_link_flush( rocketnet_client_transport_t * client_transport )
+{
+    if ( !client_transport->link_simulator )
+        return;
+    for (;;)
+    {
+        rocketnet_address_t to;
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        const int bytes = rocketnet_network_simulator_receive( client_transport->link_simulator, &rocketnet_link_simulator_sink, client_transport->time, &to, packet );
+        if ( bytes <= 0 )
+            break;
+        client_transport->io.operations->send( client_transport->io.instance, &to, packet, bytes );
+    }
+}
+
+static void rocketnet_client_link_send( rocketnet_client_transport_t * client_transport, const rocketnet_address_t * to, const uint8_t * packet_data, int packet_bytes )
+{
+    if ( !client_transport->link_simulator )
+    {
+        client_transport->io.operations->send( client_transport->io.instance, to, packet_data, packet_bytes );
+        return;
+    }
+    rocketnet_network_simulator_send( client_transport->link_simulator, to, &rocketnet_link_simulator_sink, packet_data, packet_bytes, client_transport->time );
+    rocketnet_client_link_flush( client_transport );
+}
+
 
 // the ring game threads fill: the one rings.fill names (always ring 0 on the
 // BASE path, which never hands off)
@@ -371,6 +407,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         return NULL;
     }
 
+    if ( !rocketnet_config_validate_public_link_simulator( "client", &effective_config, config_fields, num_config_fields, rocketnet_public_link_simulator_development() ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return NULL;
+    }
+
     config = &effective_config;
 
     // Refuse large cross-field allocations before sockets, drivers or arenas
@@ -513,6 +556,25 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->config = *config;
     client_transport->time = time;
     client_transport->last_state = client_transport->protocol.state;
+
+    if ( config->simulated_loss_percent != 0 || config->simulated_latency_ms != 0 ||
+         config->simulated_jitter_ms != 0 || config->simulated_duplicate_percent != 0 )
+    {
+        client_transport->link_simulator = rocketnet_network_simulator_create( context, 4096, 1 );
+        if ( !client_transport->link_simulator )
+        {
+            rocketnet_error( "client could not allocate the public link simulator" );
+            rocketnet_client_transport_destroy( client_transport );
+            if ( status )
+                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+            return NULL;
+        }
+        rocketnet_network_simulator_config( client_transport->link_simulator,
+                                            (double) config->simulated_latency_ms / 1000.0,
+                                            (double) config->simulated_jitter_ms / 1000.0,
+                                            (float) config->simulated_loss_percent,
+                                            (float) config->simulated_duplicate_percent );
+    }
 
     if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, (uint64_t) ::time( NULL ) ) )
     {
@@ -764,6 +826,9 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     }
 
     rocketnet_client_driver_close( &client_transport->io );
+
+    if ( client_transport->link_simulator )
+        rocketnet_network_simulator_destroy( client_transport->link_simulator );
 
     rocketnet_platform_mutex_destroy( &client_transport->mutex );
 
@@ -1023,6 +1088,8 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     const double current_time = time;
     client_transport->time = time;
 
+    rocketnet_client_link_flush( client_transport );
+
     rocketnet_client_update_stats( client_transport, time );
 
     const int state_before = client_transport->protocol.state;
@@ -1101,7 +1168,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         client_transport->client_stats.packets_sent++;
         client_transport->client_stats.bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-        client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address, packet, packet_bytes );
+        rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address, packet, packet_bytes );
     }
 
     // one callback per update crossing: enough to observe every terminal,
@@ -1474,9 +1541,9 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
             client_transport->client_stats.packets_sent++;
             client_transport->client_stats.bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-            client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address,
-                                                   ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
-                                                   ring->info[i].wire_bytes );
+            rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address,
+                                        ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
+                                        ring->info[i].wire_bytes );
         }
     }
 
@@ -1655,9 +1722,9 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
         client_transport->client_stats.packets_sent++;
         client_transport->client_stats.bytes_sent += (uint64_t) ( burst_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-        client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address,
-                                               burst + i * ROCKETNET_SEND_BUDGET,
-                                               burst_bytes );
+        rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address,
+                                    burst + i * ROCKETNET_SEND_BUDGET,
+                                    burst_bytes );
     }
 }
 
