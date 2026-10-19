@@ -56,7 +56,7 @@ static const struct
     { ROCKETNET_STATUS_FLOW_ID_RESERVED, "FLOW_ID_RESERVED" },
 };
 
-static void status_strings_cover_every_code()
+static void status_names_cover_every_code()
 {
     check( ROCKETNET_STATUS_OK == 0 );
     check( ROCKETNET_NUM_STATUS_CODES == 26 );
@@ -67,7 +67,7 @@ static void status_strings_cover_every_code()
     {
         check( status_expected[i].code == i );
 
-        const char * name = rocketnet_status_string( status_expected[i].code );
+        const char * name = rocketnet_status_name( (enum rocketnet_status_t) status_expected[i].code );
         check( name != NULL );
         check( name[0] != '\0' );
         check( strcmp( name, status_expected[i].name ) == 0 );
@@ -78,18 +78,18 @@ static void status_strings_cover_every_code()
     }
 }
 
-REGISTER_UNIT_TEST( status_strings_cover_every_code );
+REGISTER_UNIT_TEST( status_names_cover_every_code );
 
-static void status_string_out_of_range_is_null()
+static void status_name_out_of_range_is_unknown()
 {
-    check( rocketnet_status_string( -1 ) == NULL );
-    check( rocketnet_status_string( ROCKETNET_NUM_STATUS_CODES ) == NULL );
-    check( rocketnet_status_string( ROCKETNET_NUM_STATUS_CODES + 1 ) == NULL );
-    check( rocketnet_status_string( INT_MIN ) == NULL );
-    check( rocketnet_status_string( INT_MAX ) == NULL );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -1 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( ROCKETNET_NUM_STATUS_CODES ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) ( ROCKETNET_NUM_STATUS_CODES + 1 ) ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "unknown" ) == 0 );
 }
 
-REGISTER_UNIT_TEST( status_string_out_of_range_is_null );
+REGISTER_UNIT_TEST( status_name_out_of_range_is_unknown );
 
 // An env override is parsed as a 32-bit integer, refused past INT32 range
 // or on ERANGE, leaving the output untouched on refusal

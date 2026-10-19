@@ -45,7 +45,7 @@ int main( void )
     uint64_t promotion_before = 0, promotion_after = 0;
     for ( int i = 0; i < BIG_BYTES; i++ )
         expected[i] = (uint8_t) ( i * 31 + 13 );
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 1;
     server_config.transport = "loopback";
@@ -67,7 +67,7 @@ int main( void )
     client_config.receive_ring_bytes = LIMIT_BYTES;
     // the token names the server and carries the keys; this development token
     // expires thirty seconds after its timestamp, so it uses one far ahead
-    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
+    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
@@ -81,9 +81,9 @@ int main( void )
     {
         const double now = 1000.0 + ( rocketnet_time() - start );
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             return -1;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
             return -1;
         // (2) receive and release every received message, checking each byte
         const uint8_t * data = NULL;
@@ -112,7 +112,7 @@ int main( void )
         {
             if ( !big_sent )
             {
-                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE, BIG_BYTES );
+                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE, BIG_BYTES );
                 CHECK( out != NULL );
                 memcpy( out, expected, BIG_BYTES );
                 CHECK( rocketnet_client_finish_message( client, BIG_BYTES ) != 0 );
@@ -126,7 +126,7 @@ int main( void )
                 // 4096 bytes is above one packet's record limit. A start that
                 // returns a buffer here is the promotion: an oversize
                 // unreliable send without a receipt is refused instead.
-                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, OVERSIZE_BYTES );
+                uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, OVERSIZE_BYTES );
                 CHECK( out != NULL );
                 memset( out, 0x5a, OVERSIZE_BYTES );
                 CHECK( rocketnet_client_finish_message( client, OVERSIZE_BYTES ) != 0 );

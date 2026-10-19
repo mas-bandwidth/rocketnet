@@ -458,7 +458,7 @@ void rn_region_carve( rn_region_t * region )
     memset( region->receipts, 0, sizeof(rn_receipt_t) * region->receipt_entries );
 
     region->exhausted = 0;
-    region->exhausted_reason = ROCKETNET_MESSAGE_ERROR_NONE;
+    region->exhausted_reason = ROCKETNET_DISCONNECT_REASON_NONE;
     region->send_room_armed = 1;
 
     region->carves++;
@@ -480,7 +480,7 @@ void rn_region_exhaust( rn_region_t * region )
     if ( region->exhausted )
         return;
     region->exhausted = 1;
-    region->exhausted_reason = ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED;
+    region->exhausted_reason = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
     rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
 }
 
@@ -493,7 +493,7 @@ bool rn_region_exhausted( const rn_region_t * region )
 int rn_region_exhausted_reason( const rn_region_t * region )
 {
     rocketnet_assert( region );
-    return region->exhausted ? region->exhausted_reason : ROCKETNET_MESSAGE_ERROR_NONE;
+    return region->exhausted ? region->exhausted_reason : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 int rn_connection_memory_decide( const rn_region_t * region )
@@ -502,7 +502,7 @@ int rn_connection_memory_decide( const rn_region_t * region )
     // step is the disconnect (ExhaustionOnlyLeadsToDisconnect), and the
     // decision is this region's alone (NoCrossSlotEffect)
     rocketnet_assert( region );
-    return region->exhausted ? ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_MESSAGE_ERROR_NONE;
+    return region->exhausted ? ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )

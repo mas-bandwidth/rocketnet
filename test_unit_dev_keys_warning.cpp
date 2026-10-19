@@ -36,7 +36,7 @@ static int g_dev_warn_lines = 0;
 static int g_dev_warn_level = -1;
 static char g_dev_warn_buf[4096];
 
-static void capture_callback( void * context, int level, const char * message, size_t length )
+static void capture_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
     (void) context;
     g_total_lines++;
@@ -59,14 +59,14 @@ static void start_capture()
     g_dev_warn_level = -1;
     g_dev_warn_buf[0] = '\0';
     g_level = -1;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     rocketnet_set_log_callback( capture_callback, NULL );
 }
 
 static void stop_capture()
 {
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
 }
 
 // A connect token whose signed server key is the given 32 bytes. The client

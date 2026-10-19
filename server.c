@@ -474,7 +474,7 @@ static void matrix_send_progress( struct rocketnet_message_server_t * server, in
     if ( n <= 1 )
         return;
     if ( g_progress_send( server, client_index, ROCKETNET_SERVER_PROGRESS_CHANNEL,
-                          ROCKETNET_UNRELIABLE_SEQUENCED, report, n ) )
+                          ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, report, n ) )
         c->progress_sent++;
 }
 
@@ -834,7 +834,7 @@ static int run_self_test( const char * path, const char * label, uint32_t seed )
     if ( silent_calls != 0 || calls != 2 ||
          g_progress_record.client_index != 4 ||
          g_progress_record.channel != ROCKETNET_SERVER_PROGRESS_CHANNEL ||
-         g_progress_record.reliability != ROCKETNET_UNRELIABLE_SEQUENCED ||
+         g_progress_record.reliability != ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
          g_progress_record.bytes != 11 ||
          g_progress_record.data[0] != ROCKETNET_SERVER_PROGRESS_NIBBLE ||
          emitted.progress_sent != 2 )
@@ -914,7 +914,7 @@ int main( int argc, char ** argv )
     if ( self_test )
         return run_self_test( self_test_path, label, seed );
 
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
