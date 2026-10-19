@@ -217,3 +217,30 @@ The rule is the enum form of section 1's append-only rule:
 A counter member is wired to the internal counter of the same meaning in
 `sdk/rocketnet_counters.h`; the query is the public face of that internal
 count, and a member with no internal counter and no code path is not admitted.
+
+## 9. The Lifecycle API: ABI 1 at v1.0.0
+
+`ROCKETNET_ABI_VERSION` is 1 at v1.0.0 (soname `librocketnet.so.1`), the
+first released ABI. The lifecycle API changed the calling contract once
+before 1.0.0; no earlier ABI was released, so the release starts at 1:
+
+- `rocketnet_client_create` and `rocketnet_client_create_sized` take no
+  connect token; the token moves to the new `rocketnet_client_connect`.
+- `rocketnet_server_create` and `_sized` bind nothing; the new
+  `rocketnet_server_start`, `rocketnet_server_stop` and
+  `rocketnet_server_running` run the transport, and
+  `rocketnet_server_disconnect_all_clients` is new.
+- Every public client index is `uint64_t` (`rocketnet_client_index` returns
+  one; every server call taking a client index or destination id takes one).
+- The message calls are renamed verb first, noun last (`_start_message`,
+  `_finish_message`, `_abort_message`, `_receive_message`,
+  `_release_message`, `_send_packets`); the public broadcast call is
+  removed; `rocketnet_init_ex`, `rocketnet_term_ex` and
+  `rocketnet_allocator_ex` leave the public header and `tools/exports.txt`.
+- `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `SERVER_NOT_STOPPED` and
+  `FLOW_ID_RESERVED` append before `ROCKETNET_NUM_STATUS_CODES` (section 1's
+  append-only rule).
+
+No public struct's layout changes, so every config revision and known-size
+list above is unchanged.
+

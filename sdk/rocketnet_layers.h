@@ -611,7 +611,6 @@ int rocketnet_server_transport_default_config_sized( struct rocketnet_server_tra
 
 // a NULL config is a counted no-op.
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
-void rocketnet_server_transport_dev_config_current( struct rocketnet_server_transport_config_t * config );
 
 // Allocation-free constructor memory plan for one built-in driver name.
 // Includes SDK allocator requests (alignment/ownership overhead and transient
@@ -1178,7 +1177,7 @@ struct rocketnet_message_config_t
     int send_buffer_bytes;              // 12288 .. 1 << 28; default 800000
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
     int packets_in_flight;              // 16 .. 1 << 16; default 256
-    int max_packets_per_update;         // 1 .. 256; default 4
+    int max_packets_per_update;         // 1 .. 1024; default 256
     int unreliable_deliveries;          // per connection per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                // 0 .. 4096; default 16
     int receipt_ring;                   // 16 .. 1 << 16; default 256
@@ -1280,6 +1279,16 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
                                                                                     const struct rocketnet_message_config_t * message_config,
                                                                                     void * memory, uint64_t memory_bytes, uint32_t send_kbps );
 
+// As rocketnet_message_client_create, with the section-2.1 code written to
+// *status on every return path when status is not NULL: the transport's own
+// code (INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, a socket or thread
+// failure), CONFIG_OUT_OF_RANGE for a refused message config or budget,
+// OUT_OF_MEMORY when the object's block is refused.
+struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
+                                                                        const struct rocketnet_client_transport_config_t * transport_config,
+                                                                        const struct rocketnet_message_config_t * message_config,
+                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status );
+
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is
 // refused with a log line and returns NULL before any other check. a NULL config
@@ -1352,6 +1361,16 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
                                                                                     const struct rocketnet_server_transport_config_t * transport_config,
                                                                                     const struct rocketnet_message_config_t * message_config,
                                                                                     void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
+
+// As rocketnet_message_server_create, with the section-2.1 code written to
+// *status on every return path when status is not NULL: the transport's own
+// code for a transport that does not start (rocketnet_server_transport_create_ex),
+// CONFIG_OUT_OF_RANGE for a refused message config or budget, OUT_OF_MEMORY
+// when the object's block is refused.
+struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
+                                                                        const struct rocketnet_server_transport_config_t * transport_config,
+                                                                        const struct rocketnet_message_config_t * message_config,
+                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is

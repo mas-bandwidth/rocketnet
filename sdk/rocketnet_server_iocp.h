@@ -13,7 +13,10 @@
 // Receive workers dequeue completions in batches and publish private double
 // buffers, following the existing GSO/XDP receive ownership contract.
 
-#define ROCKETNET_IOCP_DEFAULT_WORKERS 4
+// One worker by default: workers race on the one completion port and each
+// publishes its own buffer, so more than one reorders a client's datagrams
+// at the drain, which the reliable layer answers with resends.
+#define ROCKETNET_IOCP_DEFAULT_WORKERS 1
 #define ROCKETNET_IOCP_MAX_WORKERS 32
 #define ROCKETNET_IOCP_SEND_QUEUE_SIZE 16384
 #define ROCKETNET_IOCP_RECEIVES_PER_WORKER 128

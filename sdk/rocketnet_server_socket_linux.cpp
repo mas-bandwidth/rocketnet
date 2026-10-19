@@ -134,6 +134,15 @@ struct rocketnet_server_xdp_socket_t
 
     uint64_t receive_counter;
 
+    // frames the receive loop dropped, by reason (rocketnet_xdp_frame_receive);
+    // written by this queue's xdp thread under receive_mutex
+    struct rocketnet_xdp_receive_drops_t receive_drops;
+
+    // frames the flush did not send because the codec refused to build them
+    // (a destination of the family this server does not serve); written by
+    // this queue's xdp thread under send_mutex
+    uint64_t send_refused_build;
+
     uint8_t padding_5[4096];
 
     rocketnet_send_handoff_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
@@ -154,8 +163,7 @@ struct rocketnet_server_xdp_socket_t
 
     uint8_t server_ethernet_address[ETH_ALEN];
     uint8_t gateway_ethernet_address[ETH_ALEN];
-    uint32_t server_address_big_endian;
-    uint16_t server_port_big_endian;
+    rocketnet_address_t server_address;     // the public address and port (host-order port): its family is the family this socket serves
 
     struct rocketnet_server_socket_receive_buffer_t receive_buffer[ROCKETNET_XDP_NUM_BUFFERS];
 
@@ -175,9 +183,6 @@ struct rocketnet_server_socket_t
     uint8_t server_ethernet_address[ETH_ALEN];
     uint8_t gateway_ethernet_address[ETH_ALEN];
     bool gateway_known;
-
-    uint32_t server_address_big_endian;
-    uint16_t server_port_big_endian;
 
     // the reply-MAC rule (rocketnet_xdp_frame.h): learned from the source MAC
     // of each packet the transport accepts for a connection (peer_accepted),
@@ -251,11 +256,121 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
     return true;
 }
 
+// an interface name goes into an ip(8) command line below, so it is held to
+// the characters interface names use; anything else refuses
+
+static bool rocketnet_server_socket_interface_name_is_plain( const char * interface_name )
+{
+    if ( !interface_name || interface_name[0] == '\0' || strlen( interface_name ) >= IFNAMSIZ )
+        return false;
+    for ( const char * c = interface_name; *c; c++ )
+    {
+        const bool plain = ( *c >= 'a' && *c <= 'z' ) || ( *c >= 'A' && *c <= 'Z' ) || ( *c >= '0' && *c <= '9' ) ||
+                           *c == '-' || *c == '_' || *c == '.' || *c == '@';
+        if ( !plain )
+            return false;
+    }
+    return true;
+}
+
+// the IPv6 gateway, the twin of the IPv4 discovery below: the default route's
+// next hop on this interface from `ip -6 route show default dev <if>`, then
+// its link-layer address from `ip -6 neigh show dev <if>`, matched on the
+// whole first token (one IPv6 address is a substring of others). No default
+// route on the interface returns true with *found_route false, as IPv4 does;
+// an unparseable next hop or no neighbor entry with an lladdr refuses.
+
+static bool get_gateway_mac_address_ipv6( const char * interface_name, char * mac_address_string, bool * found_route )
+{
+    *found_route = false;
+
+    if ( !rocketnet_server_socket_interface_name_is_plain( interface_name ) )
+    {
+        rocketnet_error( "ipv6 gateway discovery: interface name is not plain" );
+        return false;
+    }
+
+    char command[256];
+    snprintf( command, sizeof(command), "ip -6 route show default dev %s 2>/dev/null", interface_name );
+
+    char gateway_ip_string[INET6_ADDRSTRLEN + 1];
+    gateway_ip_string[0] = '\0';
+
+    FILE * file = popen( command, "r" );
+    if ( !file )
+        return false;
+    char route_buffer[1024];
+    while ( fgets( route_buffer, sizeof(route_buffer), file ) != NULL )
+    {
+        if ( strncmp( route_buffer, "default ", 8 ) != 0 )
+            continue;
+        const char * via = strstr( route_buffer, " via " );
+        if ( !via )
+            continue;
+        via += 5;
+        const size_t length = strcspn( via, " \t\r\n" );
+        if ( length == 0 || length > INET6_ADDRSTRLEN )
+            continue;
+        memcpy( gateway_ip_string, via, length );
+        gateway_ip_string[length] = '\0';
+        break;
+    }
+    pclose( file );
+
+    if ( gateway_ip_string[0] == '\0' )
+        return true;
+
+    struct in6_addr gateway_address;
+    if ( inet_pton( AF_INET6, gateway_ip_string, &gateway_address ) != 1 )
+    {
+        rocketnet_error( "ipv6 gateway discovery: next hop %s is not an ipv6 address", gateway_ip_string );
+        return false;
+    }
+
+    *found_route = true;
+
+    snprintf( command, sizeof(command), "ip -6 neigh show dev %s 2>/dev/null", interface_name );
+
+    bool found_mac_address = false;
+
+    file = popen( command, "r" );
+    if ( !file )
+        return false;
+    char neigh_buffer[1024];
+    while ( fgets( neigh_buffer, sizeof(neigh_buffer), file ) != NULL )
+    {
+        const size_t length = strcspn( neigh_buffer, " \t\r\n" );
+        if ( length != strlen( gateway_ip_string ) || memcmp( neigh_buffer, gateway_ip_string, length ) != 0 )
+            continue;
+        const char * lladdr = strstr( neigh_buffer, " lladdr " );
+        if ( !lladdr )
+            continue;
+        lladdr += 8;
+        if ( strcspn( lladdr, " \t\r\n" ) != 17 )
+            continue;
+        memcpy( mac_address_string, lladdr, 17 );
+        mac_address_string[17] = 0;
+        found_mac_address = true;
+        break;
+    }
+    pclose( file );
+
+    if ( !found_mac_address )
+    {
+        rocketnet_error( "ipv6 gateway discovery: no neighbor entry with a link-layer address for %s on %s", gateway_ip_string, interface_name );
+        return false;
+    }
+
+    return true;
+}
+
 // false refuses create (a malformed, zero or multicast MAC, or a discovery
 // that could not complete). true with *found false: this interface has no
-// default route, the one case the server starts without a gateway.
+// default route for the server's family, the one case the server starts
+// without a gateway. address_type picks the discovery: the IPv4 routing
+// table and neighbors, or the IPv6 ones.
 
-static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_address, bool * found )
+static bool get_gateway_mac_address( const char * interface_name, int address_type, uint8_t * mac_address, bool * found )
 {
     memset( mac_address, 0, 6 );
     *found = false;
@@ -293,6 +408,14 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
 
         strncpy( mac_address_string, gateway_ethernet_address_env, 17 );
         mac_address_string[17] = 0;
+    }
+    else if ( address_type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        bool found_route = false;
+        if ( !get_gateway_mac_address_ipv6( interface_name, mac_address_string, &found_route ) )
+            return false;
+        if ( !found_route )
+            return true;
     }
     else
     {
@@ -463,14 +586,47 @@ static void rocketnet_server_socket_remove_workdir( const char * workdir )
     }
 }
 
+// the public address as the 16 network-order bytes the XDP config carries
+// (the rocketnet address stores IPv6 as host-order 16-bit groups)
+
+static void rocketnet_server_socket_ipv6_bytes( const rocketnet_address_t * address, uint8_t * bytes )
+{
+    for ( int i = 0; i < 8; i++ )
+    {
+        bytes[i * 2] = (uint8_t) ( address->data.ipv6[i] >> 8 );
+        bytes[i * 2 + 1] = (uint8_t) ( address->data.ipv6[i] & 0xFF );
+    }
+}
+
+// a server's public address is global: an IPv6 link-local address
+// (fe80::/10) names no route off the link, so the pre-flight and create
+// refuse it by name
+
+static bool rocketnet_server_socket_ipv6_link_local( const rocketnet_address_t * address )
+{
+    return address->type == ROCKETNET_ADDRESS_IPV6 && ( address->data.ipv6[0] & 0xFFC0 ) == 0xFE80;
+}
+
 // the network interface carrying the public address, read-only -- shared by
 // the pre-flight and create so they cannot disagree about which interface
-// the driver would use
+// the driver would use. IPv4 matches an AF_INET address, IPv6 an AF_INET6
+// address, each on an UP interface.
 
-static bool rocketnet_server_socket_find_interface( uint32_t public_address_ipv4, char * interface_name, size_t interface_name_size, unsigned int * interface_index )
+static bool rocketnet_server_socket_find_interface( const rocketnet_address_t * public_address, char * interface_name, size_t interface_name_size, unsigned int * interface_index )
 {
     interface_name[0] = '\0';
     *interface_index = 0;
+
+    if ( public_address->type != ROCKETNET_ADDRESS_IPV4 && public_address->type != ROCKETNET_ADDRESS_IPV6 )
+        return false;
+
+    uint32_t public_address_ipv4 = 0;
+    uint8_t public_address_ipv6[16];
+    memset( public_address_ipv6, 0, sizeof(public_address_ipv6) );
+    if ( public_address->type == ROCKETNET_ADDRESS_IPV4 )
+        memcpy( &public_address_ipv4, public_address->data.ipv4, 4 );     // network order, as sin_addr holds it
+    else
+        rocketnet_server_socket_ipv6_bytes( public_address, public_address_ipv6 );
 
     struct ifaddrs * addrs;
     if ( getifaddrs( &addrs ) != 0 )
@@ -480,17 +636,29 @@ static bool rocketnet_server_socket_find_interface( uint32_t public_address_ipv4
 
     for ( struct ifaddrs * iap = addrs; iap != NULL; iap = iap->ifa_next )
     {
-        if ( iap->ifa_addr && ( iap->ifa_flags & IFF_UP ) && iap->ifa_addr->sa_family == AF_INET )
+        if ( !iap->ifa_addr || !( iap->ifa_flags & IFF_UP ) )
+            continue;
+
+        bool match = false;
+
+        if ( public_address->type == ROCKETNET_ADDRESS_IPV4 && iap->ifa_addr->sa_family == AF_INET )
         {
-            struct sockaddr_in * sa = (struct sockaddr_in*) iap->ifa_addr;
-            if ( sa->sin_addr.s_addr == public_address_ipv4 )
-            {
-                strncpy( interface_name, iap->ifa_name, interface_name_size - 1 );
-                interface_name[interface_name_size - 1] = '\0';
-                *interface_index = if_nametoindex( iap->ifa_name );
-                found = *interface_index != 0;
-                break;
-            }
+            const struct sockaddr_in * sa = (const struct sockaddr_in*) iap->ifa_addr;
+            match = sa->sin_addr.s_addr == public_address_ipv4;
+        }
+        else if ( public_address->type == ROCKETNET_ADDRESS_IPV6 && iap->ifa_addr->sa_family == AF_INET6 )
+        {
+            const struct sockaddr_in6 * sa = (const struct sockaddr_in6*) iap->ifa_addr;
+            match = memcmp( sa->sin6_addr.s6_addr, public_address_ipv6, 16 ) == 0;
+        }
+
+        if ( match )
+        {
+            strncpy( interface_name, iap->ifa_name, interface_name_size - 1 );
+            interface_name[interface_name_size - 1] = '\0';
+            *interface_index = if_nametoindex( iap->ifa_name );
+            found = *interface_index != 0;
+            break;
         }
     }
 
@@ -749,15 +917,22 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     // R2: an UP interface carries the public address
 
     rocketnet_address_t public_address;
-    if ( !rocketnet_address_parse( &public_address, public_address_string ) || public_address.type != ROCKETNET_ADDRESS_IPV4 )
+    if ( !rocketnet_address_parse( &public_address, public_address_string ) ||
+         ( public_address.type != ROCKETNET_ADDRESS_IPV4 && public_address.type != ROCKETNET_ADDRESS_IPV6 ) )
     {
-        rocketnet_warn( "xdp pre-flight: public address %s is not a parseable ipv4 address (R2 of scripts/rocketnet-provision)", public_address_string );
+        rocketnet_warn( "xdp pre-flight: public address %s is not a parseable ipv4 or ipv6 address (R2 of scripts/rocketnet-provision)", public_address_string );
+        return false;
+    }
+
+    if ( rocketnet_server_socket_ipv6_link_local( &public_address ) )
+    {
+        rocketnet_warn( "xdp pre-flight: public address %s is ipv6 link-local (fe80::/10); a server's public address is global (R2 of scripts/rocketnet-provision)", public_address_string );
         return false;
     }
 
     char interface_name[1024];
     unsigned int interface_index = 0;
-    if ( !rocketnet_server_socket_find_interface( rocketnet_address_ipv4( &public_address ), interface_name, sizeof(interface_name), &interface_index ) )
+    if ( !rocketnet_server_socket_find_interface( &public_address, interface_name, sizeof(interface_name), &interface_index ) )
     {
         rocketnet_warn( "xdp pre-flight: no UP interface carries the public address (R2 of scripts/rocketnet-provision)" );
         return false;
@@ -1115,9 +1290,18 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    if ( public_address.type != ROCKETNET_ADDRESS_IPV4 )
+    // one server, one public address, one family: IPv4 or IPv6, the family
+    // of the address it is created with (DRIVERS.md, AF_XDP)
+
+    if ( public_address.type != ROCKETNET_ADDRESS_IPV4 && public_address.type != ROCKETNET_ADDRESS_IPV6 )
     {
-        rocketnet_error( "we only support ipv4 servers at the moment" );
+        rocketnet_error( "server public address is neither ipv4 nor ipv6" );
+        return NULL;
+    }
+
+    if ( rocketnet_server_socket_ipv6_link_local( &public_address ) )
+    {
+        rocketnet_error( "server public address is ipv6 link-local (fe80::/10); a server's public address is global" );
         return NULL;
     }
 
@@ -1154,11 +1338,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // find the network interface that matches the public address -- the
     // same read-only lookup the pre-flight just passed
 
-    const uint32_t public_address_ipv4 = rocketnet_address_ipv4( &public_address );
-
     char interface_name[1024];
     unsigned int interface_index = 0;
-    if ( !rocketnet_server_socket_find_interface( public_address_ipv4, interface_name, sizeof(interface_name), &interface_index ) )
+    if ( !rocketnet_server_socket_find_interface( &public_address, interface_name, sizeof(interface_name), &interface_index ) )
     {
         rocketnet_error( "server could not find any network interface matching public address" );
         rocketnet_server_socket_destroy( server_socket );
@@ -1191,7 +1373,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     // look up the gateway ethernet address for the network interface
 
-    if ( !get_gateway_mac_address( interface_name, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
+    if ( !get_gateway_mac_address( interface_name, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
     {
         rocketnet_error( "server could not get gateway mac address" );
         rocketnet_server_socket_destroy( server_socket );
@@ -1469,11 +1651,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    // save the server public address and port in network order (big endian)
-
-    server_socket->server_address_big_endian = public_address_ipv4;
-    server_socket->server_port_big_endian = rocketnet_platform_htons( public_address.port );
-
     // configure the kernel prefilter: the destination it accepts and the
     // per-title filter value and epoch. until this write the program passes
     // untouched, so a server that fails before this point never black-holed
@@ -1482,8 +1659,24 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     {
         struct rocketnet_server_xdp_config_t config;
         memset( &config, 0, sizeof(config) );
-        config.public_address = server_socket->server_address_big_endian;
-        config.public_port = server_socket->server_port_big_endian;
+        // the server's own family gets its public address. the other
+        // family's slot gets that family's loopback address (127.0.0.1, ::1)
+        // rather than zero, because zero accepts any destination: a NIC never
+        // delivers a loopback destination (the stack drops it as martian), so
+        // the program redirects only this server's family and passes the
+        // other family's traffic to the kernel untouched
+
+        if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
+        {
+            memcpy( &config.public_address, public_address.data.ipv4, 4 );     // network order
+            config.public_address_ipv6[15] = 1;
+        }
+        else
+        {
+            config.public_address = htonl( INADDR_LOOPBACK );
+            rocketnet_server_socket_ipv6_bytes( &public_address, config.public_address_ipv6 );
+        }
+        config.public_port = rocketnet_platform_htons( public_address.port );
         memcpy( config.filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
         config.filter_epoch = ROCKETNET_FILTER_EPOCH_UNKEYED;
 
@@ -1603,8 +1796,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         memcpy( socket->server_ethernet_address, server_socket->server_ethernet_address, ETH_ALEN );
         memcpy( socket->gateway_ethernet_address, server_socket->gateway_ethernet_address, ETH_ALEN );
-        socket->server_address_big_endian = server_socket->server_address_big_endian;
-        socket->server_port_big_endian = server_socket->server_port_big_endian;
+        socket->server_address = public_address;
 
         // initialize send frame allocator
 
@@ -2450,25 +2642,25 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 uint8_t * __restrict__ packet_data = (uint8_t*)socket->buffer + desc->addr;
 
-                const int header_bytes = sizeof(ethhdr) + sizeof(iphdr) + sizeof(udphdr);
+                // the codec dispatches on the ethertype: IPv4 at its
+                // offsets, IPv6 at the 40-byte fixed header, the from-address
+                // in the family it read. a frame it does not take (another
+                // ethertype, an IPv6 extension header, the family this server
+                // does not serve, a frame too short for any server packet) is
+                // counted by reason in receive_drops, never parsed at the
+                // wrong offsets
 
-                const int packet_bytes = desc->len;
+                rocketnet_address_t from;
+                const uint8_t * payload_data = NULL;
+                int payload_bytes = 0;
 
-                if ( packet_bytes >= header_bytes + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+                if ( rocketnet_xdp_frame_receive( packet_data, (size_t) desc->len, socket->server_address.type, &from, &payload_data, &payload_bytes, &socket->receive_drops ) )
                 {
                     const int index = receive_buffer->num_packets;
 
-                    struct ethhdr * __restrict__ eth = (ethhdr*) packet_data;
-                    struct iphdr  * __restrict__ ip  = (iphdr*) ( (uint8_t*)packet_data + sizeof( struct ethhdr ) );
-                    struct udphdr * __restrict__ udp = (udphdr*) ( (uint8_t*)ip + sizeof( struct iphdr ) );
+                    receive_buffer->from[index] = from;
 
-                    uint8_t * __restrict__ payload_data = packet_data + header_bytes;
-
-                    const int payload_bytes = packet_bytes - header_bytes;
-
-                    rocketnet_address_load_ipv4( &receive_buffer->from[index], (uint32_t) ip->saddr, udp->source );
-
-                    memcpy( receive_buffer->eth[index], eth->h_source, ETH_ALEN );
+                    memcpy( receive_buffer->eth[index], packet_data + ETH_ALEN, ETH_ALEN );      // the ethernet source
 
                     memcpy( receive_buffer->packet_data[index], payload_data, payload_bytes );
 
@@ -2568,18 +2760,27 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                         const int payload_bytes = send_buffer->packet_info[i].packet_bytes;
 
-                        // The server's own source address is IPv4 until the
-                        // integration card wires IPv6 receive; the codec
-                        // writes the family the destination addresses.
-                        rocketnet_address_t server_address;
-                        rocketnet_address_load_ipv4( &server_address, socket->server_address_big_endian, socket->server_port_big_endian );
+                        // the server's own address is the source, in the
+                        // family it serves; the codec builds IPv4 or IPv6
+                        // (with the mandatory UDP checksum) and refuses a
+                        // destination of the other family, which is counted
+                        // and never sent as a malformed frame
 
                         const int header_bytes = rocketnet_xdp_frame_header_bytes( send_buffer->packet_info[i].to.type );
                         memcpy( packet_data + header_bytes, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, payload_bytes );
 
-                        batch_frames[num_batch_packets] = frame;
-                        batch_packet_bytes[num_batch_packets] = rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, &server_address, &send_buffer->packet_info[i].to, payload_bytes );
-                        num_batch_packets++;
+                        const int frame_bytes = rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, &socket->server_address, &send_buffer->packet_info[i].to, payload_bytes );
+                        if ( frame_bytes <= 0 )
+                        {
+                            free_send_frame( socket, frame );
+                            socket->send_refused_build++;
+                        }
+                        else
+                        {
+                            batch_frames[num_batch_packets] = frame;
+                            batch_packet_bytes[num_batch_packets] = frame_bytes;
+                            num_batch_packets++;
+                        }
                     }
 
                     send_buffer->packet_start_index++;
