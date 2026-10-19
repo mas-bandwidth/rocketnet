@@ -224,6 +224,12 @@
     (:feature "Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token" :cells (n) :note "covers where each key lives (backend, server, and never shipped in the client), rotation, and development keys versus production keys. References: netcode's and yojimbo's key documentation")
     (:feature "Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect" :cells (n) :note "each comes with a connect token format test vector shared with the C SDK, so tokens minted in Go and C# are accepted by the server. References: the netcode connect token, the yojimbo matcher backend (Go) and the space game backend")))
 
+  (:id "correctness-post-v1" :title "Correctness after v1.0.0 (later)"
+   :text "Correctness work that follows the v1.0.0 milestone, by the owner's call."
+   :columns ("done")
+   :rows
+   ((:id "server-running-invariants" :feature "TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client" :cells (n) :note "The query itself shipped as rocketnet_server_running in v1.0.0. From card rocketnet-public-server-stopped-query, never started.")))
+
   (:id "landed-2026-10-19" :title "Landed in the sprint since the 2026-10-18 roadmap record"
    :text "Cards landed on sprint/rocketnet-proof after the 2026-10-18 roadmap record (782b0ba), one row per card, its id the card id, with the landing merge commit as evidence. They reach main when v1.0.0 promotes the sprint branch."
    :columns ("done")

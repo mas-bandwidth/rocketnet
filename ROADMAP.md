@@ -291,6 +291,17 @@ What customers need to run their own connect-token backend: their own keypairs, 
 
 [Source data](docs/roadmap.sexp)
 
+## Correctness after v1.0.0 (later)
+
+Correctness work that follows the v1.0.0 milestone, by the owner's call.
+
+| feature | done |
+|---|:---:|
+| TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client | ❌ |
+| complete | 0% |
+
+[Source data](docs/roadmap.sexp)
+
 ## Landed in the sprint since the 2026-10-18 roadmap record
 
 Cards landed on sprint/rocketnet-proof after the 2026-10-18 roadmap record (782b0ba), one row per card, its id the card id, with the landing merge commit as evidence. They reach main when v1.0.0 promotes the sprint branch.
