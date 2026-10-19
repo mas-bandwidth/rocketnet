@@ -351,7 +351,7 @@ normative section it argues for.
 <a id="m12"></a>
 ## m12. Receipts
 
-[RN-2 m12 Receipts](MESSAGES.md#m12) A receipt tells the sender that the application has seen a message, which is a different fact from the transport's acknowledgement that a packet arrived. It therefore travels as an ordinary reliable record with its own type, so it obeys the same ordering, window and resend rules as application data and needs no separate state machine.
+[RN-2 m12 Receipts](MESSAGES.md#m12) A receipt is an API outcome, not a wire record: it distinguishes a send result from the transport acknowledgement for a packet while the message uses its base wire code. A large type-5 send keeps its receipt while using reliable delivery.
 
 <a id="m13"></a>
 ## m13. Security considerations

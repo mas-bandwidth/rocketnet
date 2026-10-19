@@ -471,11 +471,232 @@ input: address 2001:db8::7, port 56789
 <a id="t5"></a>
 ## t5. Prefilter header
 
-Status: pending
+Every packet a sender emits carries this header, and a receiver reads it
+before any other field. Its size is the row named prefilter header in
+[t3 Constants and registries](#t3).
 
-Scope: the 6-byte header on every packet (type, epoch, filter value); the
-unkeyed value at epoch 0; the keyed value at epochs 1 to 255 and the magic
-generation wrap; structural checks; vectors.
+1. A sender MUST begin every packet with the prefilter header.
+2. A receiver MUST read the packet type from byte offset 0, the filter epoch
+   from byte offset 1, and the filter value from byte offsets 2 through 5. A
+   receiver MUST NOT read a prefilter field at any other offset.
+3. A receiver MUST apply the checks of this section in the order given, before
+   any per-type check and before any cryptographic operation.
+4. A receiver MUST refuse a packet shorter than the prefilter header as too
+   short.
+5. A receiver MUST refuse a packet longer than the receive ceiling, the row
+   named receive ceiling in [t3 Constants and registries](#t3), as too large.
+6. A receiver MUST refuse a packet whose filter epoch is not the unkeyed
+   filter epoch, the row named unkeyed filter epoch in
+   [t3 Constants and registries](#t3), as a wrong epoch.
+7. A receiver MUST refuse a packet whose filter value does not equal the
+   receiver's unkeyed filter value as a wrong value.
+8. A receiver MUST return the packet type byte of a packet that passes every
+   check to the next processing step.
+9. A refusal MUST be silent: the receiver MUST NOT send a response.
+10. The unkeyed filter value MUST be a 32-bit per-title constant agreed by
+    value. A receiver MUST NOT derive it from the packet, from an address or
+    from a port.
+11. An implementation MUST take the unkeyed filter value from the field of
+    [t2.3 Configuration surface](#t2.3).
+12. The unkeyed filter value of the embedded test title is the value carried
+    by the accept vector below.
+
+Fields:
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |  packet type  |  filter epoch |      filter value [0..1]      |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |      filter value [2..3]      |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| packet type | 0 | 1 | u8 | the type of the packet that follows | 0 to 9; the per-type checks are later |
+| filter epoch | 1 | 1 | u8 | the rule that produced the filter value | 0, or 1 to 255 under [t5.1 Keyed epochs (optional extension)](#t5.1) |
+| filter value | 2 | 4 | bytes[4] | the unkeyed tag or a keyed MAC | any 4 bytes |
+
+Every constant this section states is a row of the table below.
+
+| Name | Value | Unit | Kind |
+|---|---|---|---|
+| packet type field width | `1` | bytes | size |
+| filter epoch field width | `1` | bytes | size |
+| filter value field width | `4` | bytes | size |
+| prefilter header width | `6` | bytes | size |
+| first keyed filter epoch | `1` | | registry |
+| last keyed filter epoch | `255` | | registry |
+| keyed filter input width | `7` | bytes | size |
+
+### t5.1. Keyed epochs (optional extension)
+
+This subsection is an optional extension. It is not part of conformance: an
+implementation that omits it conforms to this standard.
+
+An implementation MAY accept filter epochs from the row named first keyed
+filter epoch through the row named last keyed filter epoch in the table above.
+A receiver that accepts them MUST hold a prefilter magic for each epoch it
+accepts, and MUST compute the expected filter value as the low 4 bytes,
+little-endian, of SipHash-2-4 under that magic over the keyed filter input:
+the packet type, the packet length as a little-endian 16-bit value, then the
+first 4 bytes after the prefilter header. The packet length is the length of
+the whole packet in bytes. The 4 bytes after the prefilter header are read at
+the same offset for every packet type.
+
+A receiver that accepts keyed epochs MUST refuse a packet whose filter epoch
+names no magic it holds, before computing any MAC, and MUST refuse a packet
+shorter than the prefilter header plus the 4 bytes the keyed filter input
+covers, before computing any MAC. It MUST compare the computed value with the
+packet's filter value in constant time. It MUST NOT accept the unkeyed filter
+epoch.
+
+A sender that uses keyed epochs MUST use the generation most recently
+distributed to it. Generations MUST advance by one from the first keyed filter
+epoch and MUST wrap from the last keyed filter epoch back to the first; the
+unkeyed filter epoch MUST NOT name a generation.
+
+An implementation MUST NOT ship a default prefilter magic.
+
+Vectors:
+
+Each vector states the packet a receiver is given and the packet's bytes. The
+accept vector is the header a sender writes, and a receiver returns packet
+type 5 for it. The reject vector `t5.reject-short` is refused as too short,
+`t5.reject-long` as too large, `t5.reject-epoch` as a wrong epoch and
+`t5.reject-value` as a wrong value.
+
+```vector t5.unkeyed-accept
+packet type: 5
+filter epoch: 0
+filter value: the embedded test filter value
+packet length: 6
+05 00 b7 59 01 00
+```
+
+```vector t5.reject-short
+packet type: 5
+filter epoch: 0
+filter value: the embedded test filter value
+packet length: 5
+05 00 b7 59 01
+```
+
+```vector t5.reject-long
+packet type: 5
+filter epoch: 0
+filter value: the embedded test filter value
+packet length: 1473
+05 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00
+```
+
+```vector t5.reject-epoch
+packet type: 5
+filter epoch: 1
+filter value: the embedded test filter value
+packet length: 6
+05 01 b7 59 01 00
+```
+
+```vector t5.reject-value
+packet type: 5
+filter epoch: 0
+filter value: 00 00 00 00
+packet length: 6
+05 00 00 00 00 00
+```
 
 <a id="t6"></a>
 ## t6. Connect token
@@ -1418,18 +1639,146 @@ fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
 <a id="t19"></a>
 ## t19. Security considerations
 
-Status: pending
+An implementation MUST provide the defences the table below names, each by the
+mechanism its row names. A change to any mechanism MUST be re-checked against
+the property the row it carries.
 
-Scope: what RN-1 defends against and what it does not; the provisioning
-trust anchor; amplification; disclosure of the prefilter magic.
+| Property | Mechanism |
+|---|---|
+| Only backend-authorized clients connect | Ed25519 signature, verified before the sealed block is opened |
+| Session keys confidential in transit | sealed to the server's public key |
+| Client identity hidden from observers | client id inside the sealed block |
+| Token fields unmodifiable | signature over the whole signed buffer |
+| No asymmetric work for a spoofed source | MAC cookie before any signature verification |
+| No slot for a client that is not there | challenge answered from the claimed address before any slot |
+| Packet type and salt unmodifiable | AEAD associated data |
+| Packet replay refused | per-phase, per-direction sequence window; the sequence is the nonce |
+| Token reuse from another address refused | used-token history keyed on a hash of the signed data |
+| A key or nonce never outlives one connection | keys derived per connection from a fresh salt and a fresh session nonce |
+| No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
+| Recorded traffic stays closed after any later compromise | ephemeral X25519 exchange; secrets erased at derivation |
+| A compromised server mints nothing | servers hold no signing key |
+
+<a id="t19.1"></a>
+### t19.1. Amplification
+
+A server MUST NOT send a response larger than the packet that provoked it. Each
+row of the table below names a provoking packet and the response it can elicit,
+at most; a change to any packet size MUST be re-checked against every row.
+
+| Provoking packet | Response |
+|---|---|
+| connection request | connection cookie |
+| connection request | connection challenge, fresh or resent |
+| connection request | connection denied |
+| connection challenge | connection response |
+| connection response | connection keep-alive, minimum |
+| connection response | connection denied |
+| connection cookie | nothing |
+
+The sizes that keep every row true are the pinned rows below. The keep-alive row
+uses its minimum fresh-block size; a keep-alive grows only when the peer's own
+session packets added ranges for it to report, so a larger keep-alive is always
+answered traffic, never an amplifier.
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| connection request wire size | `710` | bytes | the whole connection request packet |
+| connection cookie wire size | `38` | bytes | the only answer to a rejected request |
+| connection challenge wire size | `66` | bytes | a fresh or resent connection challenge |
+| connection response wire size | `50` | bytes | the whole connection response packet |
+| connection keep-alive minimum wire size | `41` | bytes | a first keep-alive with a fresh block |
+| connection denied wire size | `34` | bytes | the whole connection denied packet |
+
+Two rules keep the table true rather than merely accurate. Padding used to
+satisfy a row MUST be checked on read, for length and content. A server MUST NOT
+answer a request it has rejected; the connection cookie is the single exception
+and is smaller than the request.
+
+```vector t19.amplification
+input: each row's packet type (u8) and wire size (u16), in the rows' order
+00 c6 02 07 26 00 02 42 00 03 32 00 04 29 00 01
+22 00
+```
+
+<a id="t19.2"></a>
+### t19.2. Development keys
+
+The published development keys are a fixed backend signing key, a fixed server
+public key and its secret half, and a fixed development protocol id. They are
+public: anyone who holds them can forge a token a server accepts and open every
+session. They exist so a first wiring works without a backend, and they MUST NOT
+be load-bearing in production.
+
+1. A development key MUST NOT be used unless a deployment configured it
+   explicitly. An endpoint whose configuration supplies no key MUST NOT inherit
+   a development credential.
+2. An implementation MUST refuse to create an endpoint that would use a
+   development key when it is compiled without the development flag, and MUST
+   NOT allow configuration alone to override that refusal.
+3. Every start that uses a development key MUST log a warning, at warn level or
+   louder, saying the keys are public and not for production. A server logs it
+   from its own keys; a client logs it when its token's server key is a
+   development key.
+4. An implementation MUST NOT accept the development backend public key when a
+   deployment supplies its own backend public key.
+5. Nothing else is relaxed. A development connection runs the same handshake,
+   cookie exchange, address validation, sealing, key derivation, replay
+   protection and erasure as a production connection.
+
+<a id="t19.3"></a>
+### t19.3. What this section does not defend
+
+RN-1 does not defend against a volumetric flood large enough to fill a link:
+once the link is saturated, nothing a server does with a packet matters, and
+that is answered by capacity and by upstream scrubbing. Nor does RN-1 defend
+against an attacker holding many genuinely issued connect tokens; such an
+attacker is past every bar this protocol has by definition. Both are the
+backend's to answer, and a deployment's denial-of-service posture lives in how
+its backend issues tokens, not in how its servers parse packets.
 
 <a id="t20"></a>
 ## t20. Conformance
 
-Status: pending
+An implementation conforms to RN-1 when it produces and accepts the exact binary
+formats the sections specify, performs the processing steps in the order given,
+and holds the key inventory of [t2 Architecture and key inventory](#t2); in
+particular, no secret shared between a backend and a server beyond the keyed
+prefilter magic of [t5 Prefilter header](#t5), and signature verification before
+the sealed block is trusted.
 
-Scope: what an implementation claims, the conformance classes (client,
-server, backend), and the vectors each class reproduces.
+<a id="t20.1"></a>
+### t20.1. Conformance classes
+
+Conformance is claimed per role: client, server, or backend. A claim names the
+role and the revision of RN-1 it meets.
+
+* A client implementation MUST reproduce the client handshake, the sealed
+  packets, replay protection, acknowledgement and fragmentation, and the
+  client's receive checks.
+* A server implementation MUST reproduce the server handshake, cookie issue and
+  validation, slot assignment, session teardown, and the server's receive
+  checks.
+* A backend implementation MUST mint connect tokens whose bytes match
+  [t6 Connect token](#t6), signed so that signature verification precedes trust
+  in the sealed block.
+
+<a id="t20.2"></a>
+### t20.2. Demonstrating conformance
+
+A conforming implementation MUST publish, and check itself against, fixed
+known-answer vectors covering: a connect token built from fixed keys, the four
+derived per-connection keys, one sealed packet of each type with its exact
+associated data bytes, and one cookie MAC. Self-consistency proves an
+implementation agrees with itself; only known-answer vectors prove that two
+implementations agree with each other.
+
+A negative test of a receive check MUST assert two counters: the reason counter,
+and the packet type's received counter. The reason alone does not show that a
+packet reached the check. A positive test MUST assert the success counter and
+independently observe the result: the bytes on the wire, the state transition, or
+the slot assigned. A counter with no test that names it is an untested branch;
+the counter list and the test list MUST be the same list.
 
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
@@ -1448,6 +1797,11 @@ It is generated; the bytes are in the sections.
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
+| [t5 Prefilter header](#t5) | `t5.reject-epoch` |
+| [t5 Prefilter header](#t5) | `t5.reject-long` |
+| [t5 Prefilter header](#t5) | `t5.reject-short` |
+| [t5 Prefilter header](#t5) | `t5.reject-value` |
+| [t5 Prefilter header](#t5) | `t5.unkeyed-accept` |
 | [t15 Acknowledgement](#t15) | `t15.fresh` |
 | [t15 Acknowledgement](#t15) | `t15.fully-received` |
 | [t15 Acknowledgement](#t15) | `t15.invalid-first-too-long` |
@@ -1466,6 +1820,7 @@ It is generated; the bytes are in the sections.
 | [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
 | [t17 Timing and defaults](#t17) | `t17.timing-defaults` |
 | [t18 Error handling and counters](#t18) | `t18.counter-registry` |
+| [t19 Security considerations](#t19) | `t19.amplification` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
