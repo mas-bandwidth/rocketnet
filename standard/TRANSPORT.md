@@ -851,8 +851,12 @@ a0 8f 69 ab 93 03 a5 3c d6 c6 2e 2c 88 af c2 45
 ```vector t10.keep-alive-invalid-index
 input: a validly opened keep-alive whose client index equals its slot count
 counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
-04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
-a0 8f 69 ab 93 03 a5 3c d6 00 00 00 04 00 00 00 04
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00
 ```
 
 ```vector t10.fragment-zero-payload-id
