@@ -113,6 +113,26 @@ class RenderTest( unittest.TestCase ):
         self.assertIn( "wide", message )
         self.assertIn( "macOS", message )
 
+    def test_evidence_counts_labels_only( self ):
+        labelled = '(:feature "f" :cells (y y y) :evidence "Linux: t1; macOS and Windows: t2")'
+        self.assertEqual( cells_of( table( page( [ area( "platforms", [ labelled ] ) ] ) )[1] ), [ "✅", "✅", "✅" ] )
+        passing = '(:feature "f" :cells (y y n) :evidence "Linux: t1; the macOS job is disabled")'
+        self.assertIn( "macOS", self.refusal( page( [ area( "platforms", [ passing ] ) ] ) ) )
+        lower = '(:feature "f" :cells (y n n) :evidence "linux: t1")'
+        self.assertIn( "Linux", self.refusal( page( [ area( "platforms", [ lower ] ) ] ) ) )
+        inside = '(:feature "f" :cells (n n y n n n n n) :evidence "test_server_gso_wire")'
+        self.assertIn( "gso", self.refusal( page( [ area( "transports", [ inside ] ) ] ) ) )
+
+    def test_complete_row_rounds_half_to_even( self ):
+        # round() as the complete row's rule: 1 of 8 is 12.5 -> 12%, 3 of 8 is 37.5 -> 38%
+        rows = [ '(:feature "r%d" :cells (%s %s n) :evidence "Linux, macOS: t")' % ( i, "y" if i < 1 else "n", "y" if i < 3 else "n" ) for i in range( 8 ) ]
+        self.assertEqual( cells_of( table( page( [ area( "platforms", rows ) ] ) )[-1] ), [ "12%", "38%", "0%" ] )
+
+    def test_missing_key_names_area_and_row( self ):
+        message = self.refusal( page( [ area( "platforms", [ '(:feature "nocells")' ], aid="conn" ) ] ) )
+        self.assertIn( "area conn", message )
+        self.assertIn( "nocells", message )
+
     def test_evidence_per_cell( self ):
         ok = '(:feature "f" :cells (n n y y n n n n) :evidence ((gso "t1") (io_uring "t2")))'
         self.assertEqual( cells_of( table( page( [ area( "transports", [ ok ] ) ] ) )[1] ), [ "❌", "❌", "✅", "✅", "❌", "❌", "❌", "❌" ] )

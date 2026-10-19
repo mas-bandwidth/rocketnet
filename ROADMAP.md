@@ -207,11 +207,11 @@ Browsers cannot open raw UDP, so a browser client reaches a RocketNet server thr
 
 These transports are only for a deployment where a second NIC is exclusively the game server's and the main NIC carries admin traffic; RocketNet never takes over a shared NIC, which is why AF_XDP (the kernel stack keeps the NIC, the server steers only its own packets) is the transport for shared NICs.
 
-FreeBSD is outside the three platform columns, so its row is — in each.
+FreeBSD has no column of its own; its row is counted under Linux, the other server platform netmap serves.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| netmap transport on FreeBSD (netmap is in the FreeBSD kernel) | — | — | — |
+| netmap transport on FreeBSD (netmap is in the FreeBSD kernel) | ❌ | — | — |
 | netmap transport on Linux, only if netmap enters the mainline kernel (today it needs an out-of-tree module and a patched NIC kernel module) | ❌ | — | — |
 | DPDK transport | ❌ | — | ❌ |
 | complete | 0% | — | 0% |
@@ -260,7 +260,7 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | Happy-path end to end: the real server and client binaries as separate processes | ✅ | ✅ | ✅ |
 | Sanitizers: ASan, UBSan, TSan, MSan, LSan | ✅ | ❌ | ❌ |
 | The MSan gate fails on crashed tests | ✅ | — | — |
-| The staged-finish wire totals case and the MemorySanitizer check pass | ✅ | ✅ | ✅ |
+| The staged-finish wire totals case and the MemorySanitizer check pass | ✅ | ❌ | ❌ |
 | Big-endian (s390x) runs | ✅ | — | — |
 | An instruction-count gate for the client frame and the server tick, on every push | ✅ | — | — |
 | A clang-format configuration derived from the netcode style, with a format check | ✅ | — | — |
@@ -286,7 +286,7 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | The proof tools and Frama-Clang prerequisites in place before the Frama-Clang trial (later) | ❌ | — | — |
 | Frama-Clang trial: can WP prove rocketnet_ack_block_read from the C++ source? (later) | ❌ | — | — |
 | The MSan known-findings list matches every toolchain the runners use (later) | ❌ | — | — |
-| complete | 68% | 61% | 61% |
+| complete | 68% | 56% | 56% |
 
 [Source data](docs/roadmap.sexp)
 

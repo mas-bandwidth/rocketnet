@@ -14,8 +14,10 @@
 #
 # An area may carry :milestone "next": its heading is marked (next milestone).
 # A cell is y (done and tested), n (not yet) or - (does not apply). Every y
-# cell needs evidence: :evidence is one string that names each column it
-# covers, or a list of (column "evidence") pairs. The renderer refuses the
+# cell needs evidence: :evidence is one string whose labels name each column
+# it covers ("Linux, macOS and Windows: ..." at the start or after "; "), or a
+# list of (column "evidence") pairs. A column named only in passing is not
+# covered. The renderer refuses the
 # data otherwise, naming the area and the row. Evidence stays in the data,
 # not on the page.
 #
@@ -119,15 +121,21 @@ def columns_of( area, aid ):
             return full
     raise ValueError( "area %s: columns %r are not the whole transport set or the whole platform set" % ( aid, names ) )
 
-def names_column( text, column ):
-    return re.search( r"(?<![A-Za-z0-9])" + re.escape( column ) + r"(?![A-Za-z0-9])", text, re.IGNORECASE ) is not None
+def labelled_columns( text ):
+    # The columns a string names in its labels: "Linux, macOS and Windows: ..."
+    # at the start, or after a "; ", each label ending at its colon.
+    named = set()
+    for m in re.finditer( r"(?:^|;)\s*([A-Za-z_]+(?:(?:,\s*|\s+and\s+)[A-Za-z_]+)*):", text ):
+        named.update( re.split( r",\s*|\s+and\s+", m.group( 1 ) ) )
+    return named
 
 def evidence_by_column( row, columns, where ):
     evidence = row.get( "evidence" )
     if evidence is None:
         return {}
     if isinstance( evidence, str ):
-        return { c: evidence for c in columns if evidence.strip() and names_column( evidence, c ) }
+        named = labelled_columns( evidence )
+        return { c: evidence for c in columns if c in named }
     out = {}
     for pair in evidence:
         if not isinstance( pair, list ) or len( pair ) != 2 or not isinstance( pair[1], str ):
@@ -169,6 +177,9 @@ def render( data ):
             raise ValueError( "area %s: no rows" % aid )
         for r in rows:
             row = plist( r, "area %s row" % aid )
+            for key in ( "feature", "cells" ):
+                if key not in row:
+                    raise ValueError( "area %s row %r: no :%s" % ( aid, row.get( "feature" ), key ) )
             feature = row["feature"]
             cells = [ sym( c ) for c in row["cells"] ]
             if len( cells ) != len( columns ):
