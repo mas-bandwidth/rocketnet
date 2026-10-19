@@ -9,11 +9,13 @@
 #include "sdk/rocketnet_client_io.h"
 #include "sdk/rocketnet_counters.h"
 #include "sdk/rocketnet_driver.h"
+#include "sdk/rocketnet_driver_loopback.h"
 #include "sdk/rocketnet_layers.h"
 #include "sdk/rocketnet_message_object.h"
 #include "sdk/rocketnet_protocol.h"
 #include "sdk/rocketnet_client_protocol.h"
 #include "sdk/rocketnet_server_protocol.h"
+#include "sdk/rocketnet_wire.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -134,6 +136,72 @@ static const uint64_t * destroy_disconnect_client_counters( rocketnet_client_t *
 {
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( (rocketnet_message_client_t *) client );
     return rocketnet_client_transport_counters( transport )->values;
+}
+
+// An observed client runs on the loopback client operations, with create
+// wrapped to hand the test the client's loopback endpoint. Draining that
+// endpoint directly counts every datagram any sender handed the loopback
+// transport for the client's address, whatever state the client is in.
+static void * destroy_disconnect_observed_endpoint = NULL;
+
+static void * destroy_disconnect_observed_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
+{
+    void * instance = rocketnet_loopback_driver.client->create( context, config, bind );
+    destroy_disconnect_observed_endpoint = instance;
+    return instance;
+}
+
+static rocketnet_client_driver_operations_t destroy_disconnect_observed_operations()
+{
+    rocketnet_client_driver_operations_t operations = *rocketnet_loopback_driver.client;
+    operations.create = destroy_disconnect_observed_create;
+    return operations;
+}
+
+static rocketnet_client_t * destroy_disconnect_observed_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id,
+                                                                       const rocketnet_client_driver_operations_t * operations, void ** endpoint )
+{
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    destroy_disconnect_mint_token( keys, port, client_id, token );
+
+    rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    config.step_driven = 1;
+
+    destroy_disconnect_observed_endpoint = NULL;
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
+        NULL, token, &config, 0.0, 1000, operations, NULL );
+    check( transport != NULL );
+    check( destroy_disconnect_observed_endpoint != NULL );
+    *endpoint = destroy_disconnect_observed_endpoint;
+
+    rn_message_link_t link;
+    rn_message_client_link( &link, transport );
+    rocketnet_client_t * client = (rocketnet_client_t *) rn_message_object_create(
+        NULL, &link, 0, 1, NULL, NULL, 0,
+        ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+    check( client != NULL );
+    return client;
+}
+
+// Drains the observed endpoint and returns the number of datagrams it held,
+// including any the endpoint dropped since the last drain.
+static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
+{
+    uint64_t count = 0;
+    for ( ;; )
+    {
+        rocketnet_address_t from;
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        if ( rocketnet_loopback_driver.client->receive( endpoint, &from, packet, (int) sizeof( packet ) ) <= 0 )
+            break;
+        count++;
+    }
+    const uint64_t dropped_now = rocketnet_loopback_endpoint_dropped( endpoint );
+    count += dropped_now - *dropped;
+    *dropped = dropped_now;
+    return count;
 }
 
 // DONE-WHEN (2): destroying a connected client sends the same redundant
@@ -326,15 +394,107 @@ static void destroy_without_live_connection_sends_nothing()
         check( fake.send_batch_calls == 0 );
     }
 
-    // Server with no live connection: destroyed with zero connected clients,
-    // and after all clients already disconnected.
+    // The server cases count datagrams across rocketnet_server_destroy at
+    // the loopback endpoint of every client the server has heard from: each
+    // endpoint is drained just before the destroy and again just after it,
+    // and the second drain must be empty.
+    const rocketnet_client_driver_operations_t observed = destroy_disconnect_observed_operations();
+
+    // Server with zero clients: a server that never heard from a client,
+    // beside a client endpoint that never sent, sends nothing on destroy.
     {
         double time = 1000.0;
         rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
+        void * endpoint = NULL;
+        uint64_t dropped = 0;
+        rocketnet_client_t * bystander = destroy_disconnect_observed_client_create( &keys, rocketnet_server_port( server ), 0xE302ULL, &observed, &endpoint );
         check( rocketnet_server_num_connected_clients( server ) == 0 );
         check( rocketnet_server_update( server, time ) == ROCKETNET_MESSAGE_OK );
         check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_SENT ) == 0 );
+        check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
+
         rocketnet_server_destroy( server );
+        check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
+        rocketnet_client_destroy( bystander );
+    }
+
+    // Server with zero connected clients and one client mid-handshake: the
+    // server has answered the client's connection request, and the client
+    // has not yet sent its connection response. Destroy sends nothing.
+    {
+        double time = 1000.0;
+        rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
+        void * endpoint = NULL;
+        uint64_t dropped = 0;
+        rocketnet_client_t * client = destroy_disconnect_observed_client_create( &keys, rocketnet_server_port( server ), 0xE303ULL, &observed, &endpoint );
+
+        bool pending = false;
+        for ( int i = 0; i < 200 && !pending; i++ )
+        {
+            time += 0.01;
+            check( rocketnet_client_update( client, time ) == ROCKETNET_MESSAGE_OK );
+            if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+            {
+                pending = true;
+                break;
+            }
+            rocketnet_client_send_packets( client );
+            check( rocketnet_server_update( server, time ) == ROCKETNET_MESSAGE_OK );
+            rocketnet_server_send_packets( server );
+        }
+        check( pending );
+        check( rocketnet_server_num_connected_clients( server ) == 0 );
+        check( rocketnet_server_counter( server, ROCKETNET_SERVER_COUNTER_PACKETS_SENT ) > 0 );
+        destroy_disconnect_drain( endpoint, &dropped );
+
+        rocketnet_server_destroy( server );
+        check( destroy_disconnect_drain( endpoint, &dropped ) == 0 );
+        rocketnet_client_destroy( client );
+    }
+
+    // Server after all clients disconnected: one client disconnects itself
+    // and the server disconnects the other, so both slots are free before
+    // the destroy. Destroy sends nothing to either client.
+    {
+        double time = 1000.0;
+        rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
+        const uint16_t port = rocketnet_server_port( server );
+
+        enum { NUM_CLIENTS = 2 };
+        rocketnet_client_t * clients[NUM_CLIENTS] = {};
+        void * endpoints[NUM_CLIENTS] = {};
+        uint64_t dropped[NUM_CLIENTS] = {};
+        int slots[NUM_CLIENTS] = {};
+        for ( int i = 0; i < NUM_CLIENTS; i++ )
+        {
+            clients[i] = destroy_disconnect_observed_client_create( &keys, port, 0xE310ULL + (uint64_t) i, &observed, &endpoints[i] );
+            slots[i] = destroy_disconnect_connect_client( server, clients[i], &time );
+        }
+        check( rocketnet_server_num_connected_clients( server ) == NUM_CLIENTS );
+
+        rocketnet_client_disconnect( clients[0] );
+        rocketnet_server_disconnect_client( server, slots[1] );
+        rocketnet_server_send_packets( server );
+        time += 0.01;
+        check( rocketnet_server_update( server, time ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_server_send_packets( server );
+        check( rocketnet_client_update( clients[1], time ) == ROCKETNET_MESSAGE_OK );
+
+        check( !rocketnet_server_client_connected( server, slots[0] ) );
+        check( !rocketnet_server_client_connected( server, slots[1] ) );
+        check( rocketnet_server_num_connected_clients( server ) == 0 );
+        for ( int i = 0; i < NUM_CLIENTS; i++ )
+        {
+            check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+            destroy_disconnect_drain( endpoints[i], &dropped[i] );
+        }
+
+        rocketnet_server_destroy( server );
+        for ( int i = 0; i < NUM_CLIENTS; i++ )
+        {
+            check( destroy_disconnect_drain( endpoints[i], &dropped[i] ) == 0 );
+            rocketnet_client_destroy( clients[i] );
+        }
     }
 }
 
