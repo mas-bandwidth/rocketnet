@@ -155,8 +155,14 @@ static void boundary_config(rocketnet_message_config_t * c) {
     c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->max_packets_per_update=8; c->unreliable_deliveries=64;
     c->rto_initial_ms=100; c->rto_min_ms=20; c->rto_max_ms=400; c->reliable_timeout_ms=120000;
 }
-static void boundary_setup(boundary_pair_t * pair) {
-    rocketnet_message_config_t config; boundary_config(&config); pair->net=new boundary_net_t(); pair->net->slot_connection=100; pair->net->next_packet_id=1000; pair->net->next_payload_id=1; memset(pair->net->fragment_counters,0,sizeof(pair->net->fragment_counters));
+// The default configuration's maximum message is above the u16 record length (65535),
+// so a record-length refusal cannot hide below the configured maximum.
+static void boundary_default_max_config(rocketnet_message_config_t * c) {
+    rocketnet_message_default_config(c); c->num_channels=BOUNDARY_TEST_NUM_CHANNELS;
+    c->receive_ring_bytes=c->max_message_bytes; c->window_messages=1024;
+}
+static void boundary_setup(boundary_pair_t * pair, bool default_max=false) {
+    rocketnet_message_config_t config; if(default_max) boundary_default_max_config(&config); else boundary_config(&config); pair->net=new boundary_net_t(); pair->net->slot_connection=100; pair->net->next_packet_id=1000; pair->net->next_payload_id=1; memset(pair->net->fragment_counters,0,sizeof(pair->net->fragment_counters));
     pair->net->reassembly=rocketnet_reassembly_set_create(NULL,1,8,16384,64); check(pair->net->reassembly);
     pair->net->server=new boundary_endpoint_t(); pair->net->client=new boundary_endpoint_t();
     memset(pair->net->server->frame_used,0,sizeof(pair->net->server->frame_used)); memset(pair->net->client->frame_used,0,sizeof(pair->net->client->frame_used));
@@ -320,6 +326,57 @@ static void unreliable_promotion_every_mode()
         check(rocketnet_counter_value(server_counters,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==0);
         check(rocketnet_counter_value(server_counters,promotion_counter)==0);
         boundary_teardown(&pair);
+    }
+
+    // One size rule above the u16 record length: with the default maximum
+    // (above 65535) every unreliable mode, narrow and WIDE, promotes 65535,
+    // 65536 and the maximum, and refuses only the maximum plus one.
+    {
+        rocketnet_message_config_t max_config; boundary_default_max_config(&max_config);
+        const int max_bytes=max_config.max_message_bytes;
+        check(max_bytes>65536);
+        static const int promotion_counters[3]={ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE,
+            ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT};
+        static const int channels[]=BOUNDARY_TEST_CHANNELS;
+        for(int m=0;m<3;++m) for(int c=0;c<BOUNDARY_TEST_CHANNEL_COUNT;++c) {
+            const int reliability=modes[m];
+            const int channel=channels[c];
+            const int expected_channel=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? channel : 0;
+            boundary_pair_t pair; boundary_setup(&pair,true); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
+            const rocketnet_counters_t * cc=rocketnet_message_client_counters(pair.client);
+            const int sizes[4]={65535,65536,max_bytes,max_bytes+1};
+            uint32_t promotions=0;
+            for(int i=0;i<4;++i) {
+                const int bytes=sizes[i];
+                std::vector<uint8_t> message=boundary_data((uint32_t)(400+m*64+c*8+i),bytes);
+                const uint32_t failed_before=rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED);
+                const uint32_t serial=rocketnet_message_client_send(pair.client,channel,reliability,message.data(),bytes);
+                if(bytes>max_bytes) {
+                    check(serial==0);
+                    check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==failed_before+1);
+                    check(rocketnet_counter_value(cc,promotion_counters[m])==promotions);
+                    continue;
+                }
+                check(serial!=0);
+                promotions++;
+                check(rocketnet_counter_value(cc,promotion_counters[m])==promotions);
+                check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==failed_before);
+                got.clear();
+                int found=0;
+                for(int step=0;step<20000 && found==0;++step) {
+                    boundary_step(&pair,&got);
+                    for(size_t k=0;k<got.size();++k) if(got[k].data==message) found++;
+                }
+                check(found==1 && got.size()==1 && got[0].channel==expected_channel);
+            }
+            check(rocketnet_counter_value(cc,promotion_counters[m])==3);
+            for(int other=0;other<3;++other) if(other!=m) check(rocketnet_counter_value(cc,promotion_counters[other])==0);
+            check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==1);
+            check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED)==0);
+            check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==0);
+            check(rocketnet_message_client_state(pair.client)==ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED);
+            boundary_teardown(&pair);
+        }
     }
 
     // A huge code-1 size is refused before record-overhead arithmetic can overflow.
