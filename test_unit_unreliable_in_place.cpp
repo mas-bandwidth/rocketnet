@@ -557,33 +557,90 @@ static void unreliable_over_fit_takes_the_message_buffer()
     ip_pair_teardown( &pair );
 }
 
-static void unreliable_packet_budget_is_shared_per_update()
+static void mixed_in_place_and_queued_respect_packet_cap()
 {
+    const int cap = 2;
     ip_pair_t pair;
-    ip_pair_setup( &pair, 1 );
+    ip_pair_setup( &pair, cap );
     ip_step( &pair, NULL, NULL );
     ip_step( &pair, NULL, NULL );                         // settle the initial CONFIG exchange
 
     ip_end_t * client = &pair.net->client;
     const size_t finished_before = client->finished.size();
+
+    // 1 in-place unreliable packet + 2 queued reliable packets in one update:
+    // at most max_packets_per_update (2) packets reach the fake transport.
     ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE, 1, 100, 90 );
-    check( client->finished.size() == finished_before + 1 ); // the in-place packet uses this update's one slot
-
-    rn_message_connection_t * connection = rn_message_object_connection( &pair.client->object, 0 );
-    uint8_t queued_bytes[100];
-    ip_fill( queued_bytes, 91, (int) sizeof( queued_bytes ) );
-    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_UNRELIABLE, queued_bytes, (int) sizeof( queued_bytes ) ) != 0 );
-    check( connection->unreliable_count == 1 );  // shared cap routes the next fitting send to the queue
-
-    rocketnet_message_client_send_packets( pair.client );
-    rocketnet_message_client_send_packets( pair.client ); // another flush does not reset the update allowance
     check( client->finished.size() == finished_before + 1 );
 
+    uint8_t reliable_a[1400], reliable_b[1400];
+    ip_fill( reliable_a, 91, (int) sizeof( reliable_a ) );
+    ip_fill( reliable_b, 92, (int) sizeof( reliable_b ) );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, reliable_a, (int) sizeof( reliable_a ) ) != 0 );
+    check( rocketnet_message_client_send( pair.client, 2, ROCKETNET_RELIABLE_ORDERED, reliable_b, (int) sizeof( reliable_b ) ) != 0 );
+
+    rocketnet_message_client_send_packets( pair.client );
+    check( client->finished.size() - finished_before <= (size_t) cap );
+    check( client->finished.size() == finished_before + (size_t) cap );
+
+    // another fitting unreliable send in the same update is also capped and queued
+    rn_message_connection_t * connection = rn_message_object_connection( &pair.client->object, 0 );
+    uint8_t queued_unr[100];
+    ip_fill( queued_unr, 93, (int) sizeof( queued_unr ) );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_UNRELIABLE, queued_unr, (int) sizeof( queued_unr ) ) != 0 );
+    check( connection->unreliable_count == 1 );
+    rocketnet_message_client_send_packets( pair.client );
+    check( client->finished.size() - finished_before <= (size_t) cap );
+
+    // the next update resets the allowance and flushes the remaining queued packets
     std::vector<ip_received_t> server_got;
-    ip_step( &pair, &server_got, NULL );                    // begin_update resets the shared allowance
-    check( client->finished.size() == finished_before + 2 );
+    ip_step( &pair, &server_got, NULL );
+    ip_step( &pair, &server_got, NULL );
     check( ip_got( server_got, 0, 90, 100 ) );
-    check( ip_got( server_got, 0, 91, 100 ) );
+    check( ip_got( server_got, 1, 91, 1400 ) );
+    check( ip_got( server_got, 2, 92, 1400 ) );
+    check( ip_got( server_got, 0, 93, 100 ) );
+    ip_pair_teardown( &pair );
+}
+
+static void repeated_fill_flush_respects_packet_cap()
+{
+    const int cap = 2;
+    ip_pair_t pair;
+    ip_pair_setup( &pair, cap );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                         // settle the initial CONFIG exchange
+
+    ip_end_t * client = &pair.net->client;
+    const size_t finished_before = client->finished.size();
+
+    // Repeatedly filling and calling send_packets within one update (without
+    // calling update) must not exceed max_packets_per_update packets.
+    for ( int cycle = 0; cycle < 4; cycle++ )
+    {
+        uint8_t msg[1400];
+        ip_fill( msg, (uint32_t) ( 190 + cycle ), (int) sizeof( msg ) );
+        check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, msg, (int) sizeof( msg ) ) != 0 );
+        rocketnet_message_client_send_packets( pair.client );
+        check( client->finished.size() - finished_before <= (size_t) cap );
+    }
+    check( client->finished.size() == finished_before + (size_t) cap );
+
+    // In-place start/finish after the cap is exhausted in the same update must
+    // also fall back to the queue instead of finishing another packet.
+    uint8_t unr[100];
+    ip_fill( unr, 199, (int) sizeof( unr ) );
+    check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_UNRELIABLE, unr, (int) sizeof( unr ) ) != 0 );
+    rocketnet_message_client_send_packets( pair.client );
+    check( client->finished.size() - finished_before <= (size_t) cap );
+
+    // After subsequent updates, all queued messages drain under the per-update cap.
+    std::vector<ip_received_t> server_got;
+    for ( int step = 0; step < 4; step++ )
+        ip_step( &pair, &server_got, NULL );
+    for ( int cycle = 0; cycle < 4; cycle++ )
+        check( ip_got( server_got, 1, (uint32_t) ( 190 + cycle ), 1400 ) );
+    check( ip_got( server_got, 0, 199, 100 ) );
     ip_pair_teardown( &pair );
 }
 
@@ -720,7 +777,7 @@ static int ip_write_connect_token( const char * server_address_string, uint64_t 
         return 0;
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = current_timestamp;
     signed_fields.expire_timestamp = current_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;
@@ -798,4 +855,5 @@ REGISTER_UNIT_TEST( unreliable_fit_in_place_every_transport );
 REGISTER_UNIT_TEST( unreliable_fit_has_no_message_copy );
 REGISTER_UNIT_TEST( unreliable_over_fit_takes_the_message_buffer );
 REGISTER_UNIT_TEST( in_place_unreliable_keeps_acks_and_order );
-REGISTER_UNIT_TEST( unreliable_packet_budget_is_shared_per_update );
+REGISTER_UNIT_TEST( mixed_in_place_and_queued_respect_packet_cap );
+REGISTER_UNIT_TEST( repeated_fill_flush_respects_packet_cap );

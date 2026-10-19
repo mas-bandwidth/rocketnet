@@ -84,7 +84,6 @@ struct rn_endpoint_t
     uint32_t in_place_serial;                   // the finished in-place packet: its serial
     int in_place_receipt;                       // 1 when it carries a receipt (UNRELIABLE_WITH_ACK_RECEIPT)
     int in_place_admitted;                      // the wire bytes admitted to the budget (0: uncapped)
-    int packets_this_update;                    // queued and in-place packet attempts since begin_update
 
     // the queued UNRELIABLE sends: send descriptors linked through their `next`
     uint32_t unreliable_head, unreliable_tail;
@@ -93,7 +92,7 @@ struct rn_endpoint_t
     // the write pass (9.3): next_packet_bytes plans a packet, write_packet
     // writes it, packet_sent or packet_failed ends it
     int write_phase;                            // RN_ENDPOINT_WRITE_*
-    int written;                                // packets attempted in this write pass, including planner drops
+    int written;                                // packets this update (in-place and queued), reset at begin_update
     int packet_kind;                            // RN_ENDPOINT_PACKET_* of the planned packet
     int packet_written;                         // 1 between write_packet and packet_sent or packet_failed
     int large_bytes;                            // SEQUENCED_LARGE: the payload bytes
