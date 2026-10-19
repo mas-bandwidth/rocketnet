@@ -183,9 +183,14 @@ at step k, computed from k and never accumulated.
   that client_id while the slot is connected and 0 otherwise; the client's answers its generation
   while CONNECTED. A server incarnation (section 3) is a separate counter, starting at 1, carried
   in byte 9, never merged into the generation word: the two fields are compared separately (the
-  `stale_session_payload` row of section 4). The harness asserts at allocation that the generation
-  is below 2^24 and the incarnation below 256 (a seed's session and server-crash counts are bounded
-  far below both by section 3's crash caps and the schedule's churn bound); a violation is
+  `stale_session_payload` row of section 4). Generation 0 never occurs (the counter starts at 1; the message object's `connection(i)` answers 0
+  for "not connected"). The harness holds both counters, so a client stamps byte 9 with the
+  incarnation current when its connect completed, and sends nothing before it is connected. A
+  server crash destroys every session, so a live session's incarnation is always the server's
+  current one. The harness asserts at allocation that `client_id >> 8` (the generation, in the
+  token's 64-bit client_id) is below 2^24 and the incarnation below 256 (a seed's session count is
+  bounded by the clients' connects, churn and crashes, and the server crashes at most once a seed,
+  section 3, so the incarnation is at most 2); a violation is
   `FAIL check=dst_bound`, never a silent wrap. Both links set `clock_from_first_update = 0`, so each message object
   reads its peer's skewed clock exactly as it is passed (section 3).
 - The seam: the full `rn_message_link_t` (`update`, `payloads`, `acked`, `max_payload_bytes`,
@@ -461,15 +466,16 @@ runs in one process.
 runner label (`[self-hosted, Linux, X64, fleet]`, as the other Linux jobs). Each shard builds only
 the `dst` target, then `scripts/dst-sweep --shape push --seeds <a>-<b> --jobs 16` splits its 1,024
 seeds into 16 processes of 64 seeds each, in parallel, never more processes than the runner's
-cores. At the 0.24 s estimate a process runs 64 x 0.24 = 15 s, so a shard is the build plus about
-15 s, and the job is 4,096 seeds a push: shard k (0..3) runs seeds `k*1024+1` to `(k+1)*1024`. The
+cores. At the 0.24 s idle estimate a process runs 64 x 0.24 = 15 s, so an idle shard is the build plus
+about 15 s, and the job is 4,096 seeds a push: shard k (0..3) runs seeds `k*1024+1` to `(k+1)*1024`. The
 per-push seeds are fixed, so a push red is a regression at a known seed, never a lucky draw. The
 shard's run leg is measured on a proxy: the message-layer pair program (above) run as 16 processes
 in parallel on a 64-core Linux member under other load (load average 57), each 64 seeds of 6,000
 pair-steps (3 clients x 2,000 steps), three repeats: 27.5, 27.6 and 29.5 s wall, a pair-step costing
-66-69 µs under that contention against 30 µs idle. Adding the 30% for the checks and the trace, a
-shard's run leg is about 36 s under contention, leaving about 24 s of the 60 s for the build of the
-`dst` target. The `dst` binary itself and that build are not measured here; `rocketnet-dst-ci-wiring`
+66-69 µs under that contention against 30 µs idle. Adding the estimated 30% for the checks and the trace (an estimate, not a measurement), the run
+leg is 36-38 s under that contention, which leaves a budget of 22-24 s of the 60 s for the build of
+the `dst` target. The proxy's 3 clients x 2,000 steps is the `push` shape's mean; the load level is
+the member's, not a measured CI runner's. The `dst` binary itself and that build are not measured here; `rocketnet-dst-ci-wiring`
 measures each shard's wall time and records it in this section, and if a shard is over 60 s it
 lowers the seeds per shard and raises the shard count (the job is split, never shortened), keeping
 at least 4,096 seeds a push. The selftest (section 5) is a fifth job beside the shards, not a step
