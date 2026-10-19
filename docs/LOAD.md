@@ -49,7 +49,7 @@ macOS ships a low per-process file-descriptor limit: on the fleet's Apple-silico
 
 ```
 load: RLIMIT_NOFILE soft=256 hard=256 cannot cover clients=1000 (2 fds per client) plus margin=64 (need soft >= 2064)
-load: raise it with: ulimit -n 1064
+load: raise it with: ulimit -n 2064
 load: if the hard limit blocks that, raise the hard limit in a new shell (macOS: sudo launchctl limit maxfiles 65536 65536)
 ```
 
