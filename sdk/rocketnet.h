@@ -54,11 +54,6 @@
 // rocketnet_version returns the value the library was built with.
 #define ROCKETNET_VERSION   ( ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH )
 
-// the earlier names of the three parts
-#define ROCKETNET_VERSION_MAJOR_INT                 ROCKETNET_VERSION_MAJOR
-#define ROCKETNET_VERSION_MINOR_INT                 ROCKETNET_VERSION_MINOR
-#define ROCKETNET_VERSION_PATCH_INT                 ROCKETNET_VERSION_PATCH
-
 /**
  * @brief Identifies the public C struct and calling-convention revision.
  *

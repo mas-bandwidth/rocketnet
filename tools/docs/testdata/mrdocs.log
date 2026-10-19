@@ -36,11 +36,6 @@ Finalizing corpus
   20 | ROCKETNET_EXPORT_FUNC bool rocketnet_platform_init();
      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-/workspace/rocketnet/sdk/rocketnet.hpp:34:18:
-    1) update: function is undocumented
-  29 |     virtual void update( double time ) = 0;
-     |                  ^~~~~~~~~~~~~~~~~~~~~~~~~~
-
 /workspace/rocketnet/sdk/rocketnet_counters.h:575:5:
     1) <unnamed enum>::ROCKETNET_COUNTER_PACKETS_SENT: Missing documentation for enum value
   575 |     ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_ENUM_ROW )

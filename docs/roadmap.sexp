@@ -219,4 +219,19 @@
     (:feature "Security disclosure and release process" :cells (y) :evidence "6795ac1 SECURITY.md, docs/RELEASING.md; tools/check_release_doc.py")
     (:feature "The example server runs out of the box" :cells (y) :evidence "14557ab")
     (:feature "The normative standard in standard/, a conformance vector per section" :cells (y) :evidence "61c0e67 skeleton and tools/conformance/check_rn_standard.py; one card per section, each with its vectors (standard_wire_primitives_vectors 062e2cb through standard_channels_receipts_security_vectors 263a088); standard/RATIONALE.md 3ba4ff2")
-    (:feature "The old to-do and readiness files retired into this roadmap" :cells (y) :evidence "rocketnet-retire-todo-and-readiness" :note "TODO.md and TRANSPORT_READINESS.md deleted; every open item is a row here")))))
+    (:feature "The old to-do and readiness files retired into this roadmap" :cells (y) :evidence "rocketnet-retire-todo-and-readiness" :note "TODO.md and TRANSPORT_READINESS.md deleted; every open item is a row here")))
+
+  (:id "second-deliverable" :title "Second deliverable: keys and backends (later)"
+   :text "What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. After v1.0.0, by the owner's call."
+   :columns ("done")
+   :rows
+   ((:feature "Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production" :cells (n) :note "the server takes the public key; the private key stays on the backend; it replaces the published development keys. References: netcode's keygen and yojimbo's (keygen.cpp at the repository root is the starting point)")
+    (:feature "Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token" :cells (n) :note "covers where each key lives (backend, server, and never shipped in the client), rotation, and development keys versus production keys. References: netcode's and yojimbo's key documentation")
+    (:feature "Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect" :cells (n) :note "each comes with a connect token format test vector shared with the C SDK, so tokens minted in Go and C# are accepted by the server. References: the netcode connect token and the yojimbo matcher backend (Go)")))
+
+  (:id "correctness-post-v1" :title "Correctness after v1.0.0 (later)"
+   :text "Correctness work that follows the v1.0.0 milestone, by the owner's call."
+   :columns ("done")
+   :rows
+   ((:feature "TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client" :cells (n) :note "the query itself ships as rocketnet_server_running in v1.0.0")
+    (:feature "Deterministic simulation fault injectors: reorder, delay, clock skew, and crash and restart of a client and of the server, drawn from the seed" :cells (n) :note "built from tla/RNSimFaults.tla; after v1.0.0, by the owner's call")))))

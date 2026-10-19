@@ -9,8 +9,8 @@ The version lives in one file, `sdk/rocketnet.h`, in two branches selected by
 `ROCKETNET_DEVELOPMENT`:
 
 - the shipping branch (`#if !ROCKETNET_DEVELOPMENT`) carries
-  `ROCKETNET_VERSION_FULL` and the integer macros `ROCKETNET_VERSION_MAJOR_INT`,
-  `ROCKETNET_VERSION_MINOR_INT`, and `ROCKETNET_VERSION_PATCH_INT`;
+  `ROCKETNET_VERSION_FULL` and the integer macros `ROCKETNET_VERSION_MAJOR`,
+  `ROCKETNET_VERSION_MINOR`, and `ROCKETNET_VERSION_PATCH`;
 - the development branch (`#else // !ROCKETNET_DEVELOPMENT`) carries
   `ROCKETNET_VERSION_FULL "dev"` and the `255.255.255` integer sentinel.
 
