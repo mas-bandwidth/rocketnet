@@ -9,7 +9,7 @@
 - CBMC 6.6.0, with the shared `CBMC_FLAGS` (`--bounds-check --pointer-check
   --signed-overflow-check --unsigned-overflow-check --div-by-zero-check
   --unwinding-assertions`). This proof adds `--unwind 64 --object-bits 12
-  --arrays-uf-always --slice-formula`. The harnesses do not pass
+  --arrays-uf-always --slice-formula`, with CBMC's built-in SAT back end. The harnesses do not pass
   `-DNDEBUG`, so `rocketnet_assert` stays live and every assert on these
   paths is a property.
 - The bound is the full one. `packet_bytes` is symbolic in
@@ -38,7 +38,27 @@
   (`ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES`), which means the full packet size
   is actually reached.
 
-## Results (amd-1, 2026-10-18)
+## Solver
+
+CBMC's built-in SAT back end is faster here than CaDiCaL as an external
+solver. Both runs proved all eleven harnesses, on the same bench, at the
+same head, on 2026-10-19:
+
+| solver | whole target, both passes, all eleven harnesses | harness_process_record |
+|---|---|---|
+| built-in (default) | 438 s | 279 s |
+| `--external-sat-solver cadical` (CaDiCaL 2.1.3) | 2027 s | about 1040 s |
+
+So `proof.mk` keeps the default.
+
+## Results (2026-10-18; re-run 2026-10-19)
+
+The times below are from the first run, on 2026-10-18. On 2026-10-19 the
+target ran again on the current base, which reorders the challenge and
+denied readers: the size check now runs before the state check, and a
+wrong-size packet no longer counts as an integrity failure. Every harness
+proved again, both passes, in 438 s for the whole target (the cumulative
+times are below the table).
 
 CBMC reports "0 of 4891 failed" for each harness. 4891 is every property
 instrumented in the translation unit, and that total includes code the
@@ -75,6 +95,26 @@ packet_bytes - 33.
 
 No property failed and none timed out. Every harness proved at the full
 bound, so no smaller bound is recorded.
+
+Cumulative time at which each harness's line was printed in the
+2026-10-19 run (proof and witness pass): cookie 6 s, challenge 14 s, denied
+21 s, open_session_packet 36 s, keep_alive 57 s, payload 76 s, ack 91 s,
+fragment 103 s, disconnect 116 s, packet 159 s, record 438 s.
+
+## Planted-bug check
+
+A proof is trusted only if it fails on a broken reader. In a scratch copy
+of the head, never committed, the cookie reader's copy was made one byte
+too long:
+
+    memcpy( client->return_cookie, packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES + 1 );
+
+`make -C proofs/cbmc proofs-client_packets CLIENT_PACKETS_HARNESSES=harness_process_cookie`
+then fails:
+`[rocketnet_client_process_cookie.precondition_instance.2] line 427 memcpy
+source region readable: FAILURE`, `** 1 of 4891 failed`, and the line
+`harness_process_cookie VERIFICATION FAILED`. This happens with the default
+solver and with CaDiCaL. With the change reverted, the harness proves.
 
 ## Client state
 
@@ -165,11 +205,24 @@ model passed.
 
 ## ESBMC
 
-ESBMC 8.5.0 was also tried on the same harness, through a C++17 wrapper
-(it parses C++ only from a .cpp file). It cannot run the create path:
-`rocketnet_client_protocol_init` memsets the 307,000-byte client struct,
-and ESBMC's memset is a byte loop. At `--unwind 64` it fails that loop's
-unwinding assertion. With the loop's own bound (`--unwindset 8:307001`) and
-`--z3`, Z3 ran out of memory under a 16 GB limit after 245 s on
-harness_process_cookie. CBMC models memset natively, so these proofs use
-CBMC.
+ESBMC 8.5.0 was also tried, through a C++17 copy of the harness. It
+proves none of these harnesses.
+
+- The client struct is about 307,000 bytes, because it holds one ack
+  record per history packet (4096). With `--z3`, ESBMC encodes the struct
+  as one tuple, and every field write rebuilds the whole tuple. The cookie
+  harness stopped with "SMT solver failed" after 885 s. The challenge,
+  payload, fragment, disconnect and dispatcher harnesses each ran Z3 out
+  of memory between 10 and 12 GB, under a 12 GiB cap. This happened with
+  byte-wise memset and memcpy models in place.
+- With the init memset left to ESBMC's own byte loop (`--unwindset
+  8:307001`), Z3 ran out of memory under a 16 GB limit after 245 s on the
+  cookie harness.
+- `--bitwuzla` (the default) and `--boolector` crash ESBMC with a
+  segmentation fault while it encodes the cookie harness. The crash comes
+  6 to 7 s in, right after "Generated 942 VCC(s), 207 remaining". `--yices`
+  is not built into the installed ESBMC.
+- `--tuple-node-flattener` and `--array-flattener` crash ESBMC with
+  signal 11. `--tuple-sym-flattener` stops with a Z3 sort error.
+
+CBMC handles the large struct without trouble, so these proofs use CBMC.
