@@ -408,6 +408,38 @@ static void rocketnet_posix_seam_one( const char * pump, int error, int expect_s
     rocketnet_platform_socket_destroy( socket );
 }
 
+// an errno outside the receive-weather set is a real refusal: msgx pauses
+// (the pump reports portable) and the same call still finishes per packet, so
+// the datagrams already queued are delivered rather than lost.
+static void rocketnet_posix_seam_unknown()
+{
+    const int port = rocketnet_posix_free_port();
+    rocketnet_address_t address;
+    rocketnet_address_parse( &address, "127.0.0.1" );
+    address.port = port;
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024, "msgx" );
+    rocketnet_check( socket );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
+
+    rocketnet_posix_send_to( socket, "127.0.0.1", address.port, 0x31 );
+    rocketnet_posix_send_to( socket, "127.0.0.1", address.port, 0x32 );
+    rocketnet_check( rocketnet_posix_wait_readable( socket, 2.0 ) );
+    rocketnet_platform_sleep( 0.05 );
+
+    rocketnet_platform_set_recvmsg_x_error_for_testing( EPROTO );
+
+    static rocketnet_address_t from[4];
+    static int packet_bytes[4];
+    static uint8_t packet_data[4 * 64];
+    const int got = rocketnet_platform_socket_receive_packets( socket, from, packet_data, 64, packet_bytes, 4 );
+
+    rocketnet_check( got == 2 );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), "portable" ) == 0 );
+    printf( "seam pump=msgx errno=EPROTO paused\n" );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
 void rocketnet_test_posix_hard_killed_receive_errno_seam()
 {
     const int errors[] = { ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS, EINTR };
@@ -423,6 +455,8 @@ void rocketnet_test_posix_hard_killed_receive_errno_seam()
         // EAGAIN ends the drain: it is not weather to skip
         rocketnet_posix_seam_one( pumps[p], EAGAIN, 0 );
     }
+    // only msgx has a pump to pause
+    rocketnet_posix_seam_unknown();
 }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
