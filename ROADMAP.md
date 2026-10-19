@@ -379,6 +379,11 @@ Cards moved out of the sprint on 2026-10-19, when Glenn moved everything not for
 | LAN throughput: the Windows rio server | ❌ |
 | The live stress run: the XDP server on the test server, one client from every fleet bench | ❌ |
 | The load harness runs nightly on Linux, macOS and Windows | ❌ |
+| CBMC proves the ack-block reader free of out-of-bounds access up to the full packet size | ❌ |
+| CBMC proves the server packet readers free of out-of-bounds access up to the full packet size | ❌ |
+| CBMC proves the sequence buffers and replay window free of out-of-bounds access | ❌ |
+| CBMC proves the client packet readers free of out-of-bounds access up to the full packet size | ❌ |
+| The MSan known-findings list matches every fleet toolchain | ❌ |
 | complete | 0% |
 
 [Source data](docs/roadmap.sexp)
