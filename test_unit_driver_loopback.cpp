@@ -226,7 +226,10 @@ void sodium_memzero( void * const pnt, const size_t len ) { rocketnet_sodium_sod
 struct wire_totals_staged_fixture_t
 {
     rocketnet_address_t reserved_to;
-    uint8_t frame[ROCKETNET_FRAME_STRIDE];
+    // start_packet hands back a FRAME_STRIDE root, and the transport asserts
+    // it is 16-byte aligned (rocketnet_server_transport_start_packet). Placed
+    // after the address with no alignas, the frame is not.
+    alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
     int used;
     int capacity;
 };
