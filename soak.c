@@ -7,6 +7,29 @@
     converts probability into certainty, and this is what finds the
     difficult problems. Run ./bin/soak and leave it; pass --seconds S or a
     number of iterations to bound it: ./bin/soak --seconds 60 or ./bin/soak 10000
+
+    usage: soak [--seconds S] [positive iteration count]
+
+    --seconds S ends the run after S seconds of wall clock (S a positive
+    integer); beside an iteration count the run ends at whichever bound comes
+    first. A zero, negative, non-numeric or missing S, an unknown flag and a
+    second positional argument are each refused with a one-line reason on
+    stderr and exit 2, before any run starts.
+
+    At the end of every run, an interrupted (SIGINT) one included, soak prints
+    its "soak finished:" line and then one "soak summary: <name> <value>" line
+    each for: sent, client_sent, server_sent; received, client_received,
+    server_received; verified, client_verified, server_verified; reconnects
+    (the planned reconnect cycles); one line per disconnect reason seen, named
+    by its ROCKETNET_CLIENT_STATE_* value from rocketnet.h; and
+    client_<COUNTER> and server_<COUNTER> for every non-zero client and server
+    transport counter, named by rocketnet_counter_name.
+
+    soak exits 1 on any payload verify failure, any counter conservation
+    failure and any disconnect that is not its own planned reconnect, naming
+    which. ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
+    received payload: the planted verify failure scripts/soak-args-selftest
+    uses as its negative control.
 */
 
 #include "rocketnet.h"
