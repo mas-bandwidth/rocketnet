@@ -820,10 +820,10 @@ struct rocketnet_server_config_t
 // clock to every call that takes one. The library reads no clock of its own
 // on these paths, so a game owns time and a test can hold it still.
 //
-// The update order, on the main thread: update (packets in, acks into the
+// The update order, on the main thread: update (messages in, acks into the
 // channels, received messages into deliveries, then the checks that
 // disconnect), receive and release, send (or start, write, finish), then
-// send_packets (each connection's packets, the queued messages included in
+// send_packets (each connection's messages, the queued messages included in
 // them, under its send budget, out to the wire).
 //
 // Sending: start, write in place, finish is the only send path. start returns
