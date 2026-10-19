@@ -12,7 +12,6 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
-#include "rocketnet_config.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_connect_token.h"
@@ -158,16 +157,16 @@ static void token_time_game_clock_admits_a_fixed_token()
     const uint64_t expire = create + TOKEN_LIFETIME;
 
     check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY == offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ) );
-    check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_transport_config_t ) );
+    check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 == sizeof( struct rocketnet_client_transport_config_t ) );
     {
         static const size_t known[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };
         struct rocketnet_client_transport_config_t defaults, old_caller, read;
-        rocketnet_client_transport_default_config_current( &defaults );
+        rocketnet_client_transport_default_config( &defaults );
         memset( &old_caller, 0xEE, sizeof( old_caller ) );
         memcpy( &old_caller, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY );
         old_caller.num_reassembly_slots = 5;
         memset( &read, 0xAB, sizeof( read ) );
-        check( rocketnet_config_read_sized( "rocketnet_client_transport_config_t", &read, &defaults, sizeof( defaults ), &old_caller, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY, known, 3 ) == 1 );
+        check( rocketnet_config_read_sized( "rocketnet_client_transport_config_t", &read, &defaults, sizeof( defaults ), &old_caller, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY, known, 2 ) == 1 );
         check( read.num_reassembly_slots == 5 );
         check( read.state_change_callback == NULL );
         check( read.time_callback == NULL );

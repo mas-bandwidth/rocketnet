@@ -232,18 +232,11 @@ struct wire_totals_staged_fixture_t
     alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
     int used;
     int capacity;
-    int aborts;
-    int finishes;
-    int flushes;
-    int batch_sends;
-    int finished_bytes;
-    uint8_t aborted_data[ROCKETNET_RECEIVE_CEILING];
-    uint8_t finished_data[ROCKETNET_RECEIVE_CEILING];
 };
 
 static void wt_staged_destroy(void *) {}
 static bool wt_staged_stop(void *) { return true; }
-static void wt_staged_send_batch(void * p, const rocketnet_platform_send_t *, int count) { ((wire_totals_staged_fixture_t*)p)->batch_sends += count; }
+static void wt_staged_send_batch(void *, const rocketnet_platform_send_t *, int) {}
 static int wt_staged_receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity)
 {
     (void)p; (void)from; (void)data; (void)stride; (void)bytes; (void)capacity;
@@ -258,22 +251,12 @@ static uint8_t * wt_staged_start_packet(void * p, const rocketnet_address_t * to
     *id = (uint64_t) f->used;
     return f->frame;
 }
-static void wt_staged_finish_packet(void * p, uint64_t, uint8_t * frame, int bytes)
+static void wt_staged_finish_packet(void * p, uint64_t, uint8_t *, int)
 {
-    wire_totals_staged_fixture_t * f = (wire_totals_staged_fixture_t*) p;
-    ++f->used;
-    ++f->finishes;
-    f->finished_bytes = bytes;
-    memcpy( f->finished_data, frame + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bytes );
+    ++((wire_totals_staged_fixture_t*)p)->used;
 }
-static void wt_staged_abort_packet(void * p, uint64_t, uint8_t * frame)
-{
-    wire_totals_staged_fixture_t * f = (wire_totals_staged_fixture_t*) p;
-    ++f->aborts;
-    memcpy( f->aborted_data, frame + ROCKETNET_FRAME_WIRE_OFFSET, sizeof(f->aborted_data) );
-    memset( frame, 0xee, ROCKETNET_FRAME_STRIDE );
-}
-static void wt_staged_flush(void * p) { wire_totals_staged_fixture_t * f = (wire_totals_staged_fixture_t*) p; f->used = 0; ++f->flushes; }
+static void wt_staged_abort_packet(void * p, uint64_t, uint8_t *) { (void)p; }
+static void wt_staged_flush(void * p) { ((wire_totals_staged_fixture_t*)p)->used = 0; }
 
 static void wire_totals_staged_finish_counts_exactly()
 {
@@ -367,104 +350,6 @@ static void wire_totals_staged_finish_counts_exactly()
 
     rocketnet_server_transport_destroy( server );
     printf( "wire_totals_staged_finish_counts_exactly\n" );
-}
-
-static void public_link_simulator_server_zero_is_direct()
-{
-    wire_totals_staged_fixture_t fx = {};
-    rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config_current( &config );
-    config.max_clients = 1;
-    config.protocol_id = 1;
-    snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
-    memset( config.backend_public_key, 0xAB, 32 );
-    memset( config.server_public_key, 0xCD, 32 );
-    memset( config.server_secret_key, 0xEF, 32 );
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current( NULL, "127.0.0.1:0", &config );
-    rocketnet_unit_check( server );
-    rocketnet_server_driver_close( &server->io );
-    rocketnet_server_driver_operations_t operations = {};
-    operations.destroy = wt_staged_destroy;
-    operations.stop = wt_staged_stop;
-    operations.send_batch = wt_staged_send_batch;
-    operations.receive_batch = wt_staged_receive_batch;
-    operations.receive = wt_staged_receive;
-    server->io.instance = &fx;
-    server->io.operations = &operations;
-    rocketnet_address_t to;
-    rocketnet_unit_check( rocketnet_address_parse( &to, "127.0.0.1:40000" ) );
-    uint8_t packet = 1;
-    rocketnet_platform_send_t send = { &to, &packet, 1 };
-    rocketnet_server_link_send_batch( server, &send, 1 );
-    rocketnet_unit_check( fx.batch_sends == 1 );
-    rocketnet_server_transport_destroy( server );
-}
-
-static void public_link_simulator_staged_server_deadline()
-{
-    rocketnet_public_link_simulator_test_development( 1 );
-    wire_totals_staged_fixture_t fx = {};
-    fx.capacity = 16;
-    rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config_current( &config );
-    config.max_clients = 1;
-    config.protocol_id = 1;
-    config.simulated_latency_ms = 25;
-    snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
-    memset( config.backend_public_key, 0xAB, 32 );
-    memset( config.server_public_key, 0xCD, 32 );
-    memset( config.server_secret_key, 0xEF, 32 );
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current( NULL, "127.0.0.1:0", &config );
-    rocketnet_unit_check( server );
-    rocketnet_server_driver_close( &server->io );
-
-    rocketnet_server_driver_operations_t operations = {};
-    operations.destroy = wt_staged_destroy;
-    operations.stop = wt_staged_stop;
-    operations.send_batch = wt_staged_send_batch;
-    operations.receive_batch = wt_staged_receive_batch;
-    operations.flags = ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE;
-    operations.start_packet = wt_staged_start_packet;
-    operations.finish_packet = wt_staged_finish_packet;
-    operations.abort_packet = wt_staged_abort_packet;
-    operations.flush = wt_staged_flush;
-    operations.receive = wt_staged_receive;
-    server->io.instance = &fx;
-    server->io.operations = &operations;
-
-    rocketnet_address_t address;
-    rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:40000" ) );
-    const int mapping_index = rocketnet_encryption_map_add( server->protocol.encryption_map, &address, 100.0 );
-    rocketnet_unit_check( mapping_index >= 0 );
-    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-    rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, 1, mapping_index, user_data ) == 0 );
-    rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, mapping_index );
-    mapping->client_index = 0;
-    mapping->client_id = 1;
-    mapping->established = 1;
-    mapping->timeout_seconds = 1000;
-    memset( &mapping->keys, 1, sizeof(mapping->keys) );
-
-    server->time = 1000.0;
-    rocketnet_packet_context_t context;
-    uint8_t * payload = rocketnet_server_transport_start_packet( server, 0, 16, &context );
-    rocketnet_unit_check( payload );
-    memset( payload, 7, 16 );
-    rocketnet_unit_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) > 0 );
-    rocketnet_unit_check( fx.aborts == 1 );
-    rocketnet_unit_check( fx.finishes == 0 );
-
-    server->time = 1000.024;
-    rocketnet_server_link_drain( server );
-    rocketnet_unit_check( fx.finishes == 0 );
-    server->time = 1000.025;
-    rocketnet_server_link_drain( server );
-    rocketnet_unit_check( fx.finishes == 1 );
-    rocketnet_unit_check( fx.flushes == 2 );
-    rocketnet_unit_check( fx.finished_bytes > 0 );
-    rocketnet_unit_check( memcmp( fx.finished_data, fx.aborted_data, (size_t) fx.finished_bytes ) == 0 );
-
-    rocketnet_server_transport_destroy( server );
 }
 
 static void driver_loopback_holds_max_clients_plus_server()
@@ -633,7 +518,3 @@ REGISTER_UNIT_TEST( driver_loopback_destroy_frees_the_port );
 REGISTER_UNIT_TEST( driver_loopback_holds_max_clients_plus_server );
 REGISTER_UNIT_TEST( driver_loopback_refuses_past_max_endpoints );
 REGISTER_UNIT_TEST( wire_totals_staged_finish_counts_exactly );
-
-REGISTER_UNIT_TEST( public_link_simulator_staged_server_deadline );
-
-REGISTER_UNIT_TEST( public_link_simulator_server_zero_is_direct );

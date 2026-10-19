@@ -41,6 +41,7 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
         return;
     struct rocketnet_client_transport_config_t defaults;
     rocketnet_client_transport_default_config_current( &defaults );
+    memset( config, 0, sizeof(*config) );
     memcpy( config, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 );
 }
 
@@ -56,6 +57,7 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
         return;
     struct rocketnet_server_transport_config_t defaults;
     rocketnet_server_transport_default_config_current( &defaults );
+    memset( config, 0, sizeof(*config) );
     memcpy( config, &defaults, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
 }
 

@@ -7,7 +7,6 @@
     test_lifecycle.cpp, which is part of the unit suite.
 */
 
-#include "rocketnet_config.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -77,7 +76,7 @@ void rocketnet_test_lifecycle_driver()
     if (large_geometry_bytes > (uint64_t)ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024)
     {
         rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_dev_config_current(&config);
+        rocketnet_server_transport_dev_config(&config);
         config.max_clients = 1000;
         config.num_reassembly_slots = 256;
         config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
@@ -102,7 +101,7 @@ void rocketnet_test_lifecycle_driver()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time(NULL), token ) );
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config_current( &client_config );
+    rocketnet_client_transport_default_config( &client_config );
     strcpy( client_config.driver, "portable" );
     int client_success = 0;
     for ( int failure = 1; failure <= 64; ++failure )
@@ -123,7 +122,7 @@ void rocketnet_test_lifecycle_driver()
     check( client_success );
 
     rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config_current( &server_config );
+    rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
     strcpy( server_config.driver, "portable" );
     int server_success = 0;

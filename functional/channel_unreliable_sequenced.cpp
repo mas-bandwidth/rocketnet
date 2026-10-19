@@ -4,7 +4,6 @@
 */
 
 // RNChannelTypes!Dispatch and !Drain over the deterministic simulated link.
-#include "rocketnet_config.h"
 #include "channel_harness.h"
 #include "rocketnet_platform.h"
 
@@ -84,7 +83,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
     // models only unfragmented frames. One code-1 RECORDS payload must travel
     // through type-9 transport fragments and reassemble before channel dispatch.
     rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config_current( &server_config );
+    rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 2;
     rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, "127.0.0.1", &server_config, NULL, NULL, 0, 0 );
     sequenced_functional_check( server != NULL, "large server create" );

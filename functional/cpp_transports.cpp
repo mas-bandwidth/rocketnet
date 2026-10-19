@@ -9,7 +9,6 @@
     disconnect. The checks mirror test_transport_udp_loopback.
 */
 
-#include "rocketnet_config.h"
 #include "rocketnet.hpp"
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
@@ -43,7 +42,7 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
     using namespace rocketnet;
 
     struct rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config_current( &server_config );
+    rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
     PortableServerTransport * portable_server = PortableServerTransport::create( NULL, "127.0.0.1", &server_config );
