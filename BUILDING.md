@@ -515,7 +515,8 @@ Apple clang ships no libFuzzer runtime, so `-fsanitize=fuzzer` fails there with
 carries it: an official LLVM release tree such as `$HOME/sdk/llvm`, or
 Homebrew's `llvm` formula. Name that compiler once in `ROCKETNET_FUZZ_CC` and
 `ROCKETNET_FUZZ_CXX` and both the library build and `fuzz/Makefile` pick it up.
-The runtime sits beside the compiler at
+`ROCKETNET_FUZZ_LLVM_HOME` names the tree the nightly leg searches first; it
+defaults to `$HOME/sdk/llvm`. The runtime sits beside the compiler at
 `<prefix>/lib/clang/<version>/lib/darwin/libclang_rt.fuzzer_osx.a`.
 Apple silicon (arm64) is the supported macOS host.
 

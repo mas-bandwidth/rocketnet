@@ -224,7 +224,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel 4
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
         run: |
