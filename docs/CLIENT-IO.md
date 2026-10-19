@@ -426,6 +426,19 @@ What the numbers show:
   connection timed out in any run: the I/O thread kept the session alive. The
   process activity above is what keeps the game's own frame loop on time.
 
+**What the case asserts.** In every condition the client stays connected for
+the whole 60 s with zero timeouts, and the receive thread reports a class
+above background. At the default class, receive-to-update p99 must stay under
+two update intervals plus 10 ms (43.3 ms at 60 Hz): the receive handoff's
+structural floor, measured above at 38.2 ms p99, not a tolerance fitted to a
+run. Under `taskpolicy -b` and with a background game thread the game loop's
+own sleep is coalesced, so end-to-end latency there measures the game thread;
+the case asserts the library's own contract instead, the I/O thread's wake
+p99 under 10 ms (measured 1.4 ms p99 at head, 6.7 ms p99 under suite load).
+The class check is the red proof: a scratch build that plants
+`QOS_CLASS_BACKGROUND` on the I/O thread reports `io_qos=background` and
+fails the assertion under `taskpolicy -b`.
+
 ## Per-platform cards
 
 **rocketnet-client-io-transport (lands first, platform-generic).** PATHS:
