@@ -1142,19 +1142,23 @@ group `rnsimfaults`; the design is `docs/DST.md` sections 3 and 7.
   `Scale = 200` (clock units per step), `Offset` and `Rate` per peer at the design's extremes
   (one client 50 units ahead at 201 per step, one 50 behind at 199, the server on time),
   `OffsetBound = 50`, `DriftBound = 1`; rule switches `FreshOnRestart` and `CrashSilences`
-  select a witness.
+  select a witness, and `CompareGeneration` and `CompareIncarnation` drop one receiver
+  compare for a probe.
 - VARIABLES: `phase` per peer (up, crashed, restarting); per client `cst` (idle,
   connecting, connected), `gen` (the session generation, from the global counter
-  `nextGen`), `cinc` (the incarnation its session was admitted under) and the ghost tag
-  `sid`; `genFirst` (the first session to take each generation); `incarnation` (the server
-  incarnation, a separate counter); `srv` (the server's session records); `net` (packets
-  stamped with generation and incarnation); `t` and `clock` per peer; `faults`; the fault
-  counts; the ghosts `lastAct` and `lastDel`.
+  `nextGen`), `cinc` (the incarnation its session was admitted under), `restarted` (rebuilt
+  and not connected since) and the ghost tag `sid` (from the counter `nextSid`); `genFirst`
+  (the first session to take each generation); `incarnation` (the server incarnation, a
+  separate counter); `srv` (the server's session records); `net` (packets stamped with
+  generation and incarnation); `t`; `clock` per peer; `faults`; `clientCrashes`,
+  `serverCrashes`, `disconnects`; the ghosts `lastAct` and `lastDel`.
 - Actions: `Crash(p)`, `Restart(p)`, `Rejoin(p)`, `Tick`, `EndFaults`, `Lose(m)`, and the
   outside events `Connect(c)`, `Establish(c)`, `Disconnect(c)`, `ClientTimeout(c)`,
   `ServerTimeout(r)`, `ClientSend(c)`, `ServerSend(r)`, `Deliver(m)`, `Refuse(m)`. A receiver
   takes a packet only when its generation and, separately, its incarnation equal the
-  receiving session's.
+  receiving session's. With the global generation counter the generation compare alone
+  keeps deliveries on their own session; the incarnation compare is a second, independent
+  check.
 - Properties: `TypeOK`, `CrashedPeerSilent`, `RestartIsFresh`,
   `DeliverOnlyToLiveGeneration`, `LiveSessionOnCurrentIncarnation`, `SkewBounded`; ACTION
   `ClockMonotone`; LIVE `EveryLiveClientConnects` (weak fairness on restarts, the

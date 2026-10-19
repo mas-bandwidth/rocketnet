@@ -44,6 +44,14 @@
 (*   CrashSilences (design TRUE): a crash destroys the peer's objects at   *)
 (*     once, so it sends and receives nothing until it is rebuilt; FALSE   *)
 (*     flips the phase but leaves the peer running.                        *)
+(* The receiver's two compares, each a switch (design TRUE) so a probe     *)
+(* can drop one: CompareGeneration and CompareIncarnation.  With one       *)
+(* global generation counter that a server restart does not reset, the     *)
+(* generation compare alone keeps every delivery on its own session        *)
+(* (dropping it fails DeliverOnlyToLiveGeneration); the incarnation        *)
+(* compare is a second, independent check that no reachable delivery       *)
+(* depends on (dropping it leaves every property holding).  Its own        *)
+(* invariant is LiveSessionOnCurrentIncarnation.                           *)
 (***************************************************************************)
 EXTENDS Naturals, Integers, FiniteSets
 
@@ -79,8 +87,10 @@ ASSUME /\ Clients # {}
        /\ MaxSessions >= Cardinality(Clients) * (1 + MaxServerCrashes)
                          + MaxClientCrashes + MaxDisconnects
 
-FreshOnRestart == TRUE
-CrashSilences  == TRUE
+FreshOnRestart     == TRUE
+CrashSilences      == TRUE
+CompareGeneration  == TRUE
+CompareIncarnation == TRUE
 
 Phases   == {"up", "crashed", "restarting"}
 CStates  == {"idle", "connecting", "connected"}
@@ -112,7 +122,7 @@ VARIABLES
     clientCrashes, serverCrashes, disconnects,
     lastAct,      \* the phase of the peer at the latest send or receive (ghost)
     lastDel       \* the latest delivery: did the packet's ghost tag equal the
-                  \* receiving session's, and its incarnation the session's (ghost)
+                  \* receiving session's (ghost)
 
 vars == <<phase, cst, gen, sid, cinc, restarted, nextGen, nextSid, genFirst,
           incarnation, srv, net, t, clock, faults, clientCrashes, serverCrashes,
@@ -139,7 +149,7 @@ Init ==
     /\ faults = TRUE
     /\ clientCrashes = 0 /\ serverCrashes = 0 /\ disconnects = 0
     /\ lastAct = "none"
-    /\ lastDel = [session |-> TRUE, inc |-> TRUE]
+    /\ lastDel = TRUE
 
 -----------------------------------------------------------------------------
 (* The injector's own actions.                                             *)
@@ -311,9 +321,13 @@ ServerSend(r) ==
 \* compares: the generation against the session's generation, and the
 \* incarnation against the session's incarnation.
 ServerMatch(m) ==
-    {r \in srv : r.c = m.c /\ r.gen = m.gen /\ m.inc = incarnation}
+    {r \in srv : /\ r.c = m.c
+                 /\ (CompareGeneration => r.gen = m.gen)
+                 /\ (CompareIncarnation => m.inc = incarnation)}
 ClientMatches(m) ==
-    cst[m.c] = "connected" /\ m.gen = gen[m.c] /\ m.inc = cinc[m.c]
+    /\ cst[m.c] = "connected"
+    /\ (CompareGeneration => m.gen = gen[m.c])
+    /\ (CompareIncarnation => m.inc = cinc[m.c])
 
 Receiver(m) == IF m.dir = "up" THEN Server ELSE m.c
 
@@ -325,9 +339,9 @@ Deliver(m) ==
     /\ net' = net \ {m}
     /\ IF m.dir = "up"
          THEN \E r \in ServerMatch(m) :
-                lastDel' = [session |-> m.sid = r.sid, inc |-> m.inc = r.inc]
+                lastDel' = (m.sid = r.sid)
          ELSE /\ ClientMatches(m)
-              /\ lastDel' = [session |-> m.sid = sid[m.c], inc |-> m.inc = cinc[m.c]]
+              /\ lastDel' = (m.sid = sid[m.c])
     /\ lastAct' = phase[Receiver(m)]
     /\ UNCHANGED <<phase, cst, gen, sid, cinc, restarted, nextGen, nextSid,
                    genFirst, incarnation, srv, t, clock, faults, clientCrashes,
@@ -387,7 +401,7 @@ TypeOK ==
     /\ clock \in [Peers -> Int]
     /\ faults \in BOOLEAN
     /\ lastAct \in {"none"} \cup Phases
-    /\ lastDel \in [session : BOOLEAN, inc : BOOLEAN]
+    /\ lastDel \in BOOLEAN
 
 \* A peer that is not up sends nothing and receives nothing.
 CrashedPeerSilent ==
@@ -400,10 +414,9 @@ RestartIsFresh ==
     \A c \in Clients : cst[c] # "idle" => genFirst[gen[c]] = sid[c]
 
 \* No delivery reaches a session other than the one that sent it: the
-\* receiving session's ghost tag equals the packet's, and the packet's
-\* incarnation equals the receiving session's.
+\* receiving session's ghost tag equals the packet's.
 DeliverOnlyToLiveGeneration ==
-    lastDel.session /\ lastDel.inc
+    lastDel
 
 \* The incarnation is a separate counter: every session the server holds
 \* was admitted under its current incarnation.
