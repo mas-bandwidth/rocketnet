@@ -211,6 +211,39 @@ uint16_t rocketnet_platform_preferred_client_port();
  */
 bool rocketnet_platform_client_dual_stack();
 
+/**
+ * @brief Reports whether this host can create an IPv6 UDP socket.
+ *
+ * A host with IPv6 disabled (for example ipv6.disable=1 or a container with
+ * no IPv6 stack) refuses socket(AF_INET6) with EAFNOSUPPORT. The client reads
+ * this before choosing its bind family so an IPv4 server stays reachable.
+ * @return true when an IPv6 socket can be created; otherwise false.
+ */
+bool rocketnet_platform_client_ipv6_available();
+
+/**
+ * @brief Overrides the IPv6 availability probe for tests.
+ *
+ * Off unless a test sets it. With false, socket creation for an IPv6 address
+ * fails as it would on a host with no IPv6 stack, so the client bind-family
+ * choice is exercised on any build host.
+ * @param available true to probe the host normally; false to report no IPv6.
+ * @return None.
+ */
+void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available );
+
+/**
+ * @brief Chooses the client bind family from the server family and platform.
+ *
+ * @param server_address_type ROCKETNET_ADDRESS_IPV4 or ROCKETNET_ADDRESS_IPV6.
+ * @param ipv6_available Whether an IPv6 socket can be created on this host.
+ * @param dual_stack Whether IPv6 sockets also carry IPv4-mapped peers.
+ * @return IPv6 when the server needs it or an IPv4 server can use dual stack;
+ * IPv4 when only IPv4 is possible; ROCKETNET_ADDRESS_NONE when the server is
+ * IPv6 and this host has no IPv6 stack.
+ */
+int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_available, bool dual_stack );
+
 #ifdef __cplusplus
 }
 #endif

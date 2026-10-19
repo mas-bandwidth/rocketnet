@@ -210,6 +210,9 @@ static const char * const rocketnet_status_names[] =
     "MUTEX_CREATE_FAILED",
     "THREAD_CREATE_FAILED",
     "TIMER_CREATE_FAILED",
+    "CLIENT_NOT_DISCONNECTED",
+    "SERVER_NOT_STOPPED",
+    "FLOW_ID_RESERVED",
 };
 
 static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_NUM_STATUS_CODES,

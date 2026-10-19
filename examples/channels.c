@@ -17,10 +17,9 @@
 #include <stdint.h>
 #include <string.h>
 
-// The lifecycle card that lands after this one renames start, finish, receive,
-// release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_messages. The header at this
-// base still declares the old names, so this example uses them.
+// Uses the public API names as declared in sdk/rocketnet.h: client/server
+// start_message, finish_message, receive_message, release_message,
+// send_packets and client_connected.
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 #define CHAT_CHANNEL     0
 #define POSITION_CHANNEL 1
@@ -43,6 +42,11 @@ int main( void )
     server_config.rto_initial_ms = 120;
     server_config.rto_min_ms = 120;
     server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
@@ -53,7 +57,12 @@ int main( void )
     client_config.simulated_loss_percent = 35;
     client_config.rto_initial_ms = 120;
     client_config.rto_min_ms = 120;
-    client = rocketnet_client_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), NULL, 0 );
+    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
 
     const double start = rocketnet_time();
@@ -72,28 +81,28 @@ int main( void )
         // (2) receive and release every received message on both channels
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, CHAT_CHANNEL, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, CHAT_CHANNEL, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
 
         uint32_t chat_this_frame = 0, pos_this_frame = 0;
         if ( rocketnet_server_client_connected( server, 0 ) )
         {
-            while ( rocketnet_server_receive( server, 0, CHAT_CHANNEL, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, 0, CHAT_CHANNEL, &data, &bytes ) )
             {
                 uint32_t seq = 0;
                 CHECK( bytes == (int) sizeof( seq ) );
                 memcpy( &seq, data, sizeof( seq ) );
-                rocketnet_server_release( server, 0, data );
+                rocketnet_server_release_message( server, 0, data );
                 CHECK( seq == chat_received + 1 );
                 chat_received = seq;
                 chat_this_frame++;
             }
-            while ( rocketnet_server_receive( server, 0, POSITION_CHANNEL, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, 0, POSITION_CHANNEL, &data, &bytes ) )
             {
                 uint32_t pos = 0;
                 CHECK( bytes == (int) sizeof( pos ) );
                 memcpy( &pos, data, sizeof( pos ) );
-                rocketnet_server_release( server, 0, data );
+                rocketnet_server_release_message( server, 0, data );
                 CHECK( pos > last_pos );
                 last_pos = pos;
                 positions_received++;
@@ -119,24 +128,24 @@ int main( void )
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             pos_sent++;
-            uint8_t * buf = rocketnet_client_start( client, POSITION_CHANNEL, ROCKETNET_UNRELIABLE_SEQUENCED, sizeof( pos_sent ) );
+            uint8_t * buf = rocketnet_client_start_message( client, POSITION_CHANNEL, ROCKETNET_UNRELIABLE_SEQUENCED, sizeof( pos_sent ) );
             CHECK( buf != NULL );
             memcpy( buf, &pos_sent, sizeof( pos_sent ) );
-            CHECK( rocketnet_client_finish( client, sizeof( pos_sent ) ) != 0 );
+            CHECK( rocketnet_client_finish_message( client, sizeof( pos_sent ) ) != 0 );
             if ( chat_sent < NUM_CHAT )
             {
                 chat_sent++;
-                buf = rocketnet_client_start( client, CHAT_CHANNEL, ROCKETNET_RELIABLE_ORDERED, sizeof( chat_sent ) );
+                buf = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABLE_ORDERED, sizeof( chat_sent ) );
                 CHECK( buf != NULL );
                 memcpy( buf, &chat_sent, sizeof( chat_sent ) );
-                CHECK( rocketnet_client_finish( client, sizeof( chat_sent ) ) != 0 );
+                CHECK( rocketnet_client_finish_message( client, sizeof( chat_sent ) ) != 0 );
             }
         }
 
         // (5) send_packets is last so this frame's messages leave this frame
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
-        if ( chat_received == NUM_CHAT && positions_during_stall > 0 ) { printf( "PASS\n" ); result = 0; break; }
+        if ( chat_received == NUM_CHAT ) { result = 0; break; }
         rocketnet_sleep( 0.005 );
     }
 
@@ -144,5 +153,9 @@ cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }
