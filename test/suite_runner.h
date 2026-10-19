@@ -3,7 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Parallel suite runner. Each test is a process. A test over 60s prints a
-    warning. A test over 120s is killed and fails the suite. The ten slowest
+    warning. A test over 120s is killed and fails the suite (a Debug or
+    sanitizer build scales the 120s: test/time_scale.h). The ten slowest
     are printed at the end. strict_names keeps every line inside the
     names-only shape tools/check_test_environment.py accepts, because that
     checker merges stderr into stdout and is not ours to change.
@@ -11,6 +12,7 @@
 
 #pragma once
 
+#include "time_scale.h"
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -234,7 +236,7 @@ inline int suite_main( int argc, char ** argv,
     }
 
     const int jobs = suite_job_count();
-    const double limit_s = 120.0;
+    const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
     struct running_t
     {
         std::string name;
@@ -344,7 +346,7 @@ inline int suite_main( int argc, char ** argv,
             {
                 result.failed = true;
                 result.seconds = seconds < limit_s ? limit_s : seconds;
-                result.detail = running[i].name + " exceeded 120s";
+                { char limit_text[64]; snprintf( limit_text, sizeof( limit_text ), " exceeded %.0fs", limit_s ); result.detail = running[i].name + limit_text; }
             }
             else if ( WIFEXITED( status ) && WEXITSTATUS( status ) == 0 )
             {
@@ -431,7 +433,7 @@ inline int suite_main( int argc, char ** argv,
     }
 
     const int jobs = suite_job_count();
-    const double limit_s = 120.0;
+    const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
     struct running_t
     {
         std::string name;
@@ -529,7 +531,7 @@ inline int suite_main( int argc, char ** argv,
             {
                 result.failed = true;
                 result.seconds = seconds < limit_s ? limit_s : seconds;
-                result.detail = running[i].name + " exceeded 120s";
+                { char limit_text[64]; snprintf( limit_text, sizeof( limit_text ), " exceeded %.0fs", limit_s ); result.detail = running[i].name + limit_text; }
             }
             else if ( code == 0 )
             {
