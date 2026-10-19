@@ -246,8 +246,6 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
 
 const char * rn_region_part_name( int part );
 
-const char * rn_region_part_formula( int part );
-
 // the message table's field descriptors, as the transports' (rocketnet_config.h)
 struct rocketnet_config_field_t;
 const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * num_fields );

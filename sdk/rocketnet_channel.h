@@ -260,8 +260,6 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels );
 // types 6 or 7, and -1 for every other type. No wire receipt code is sent.
 int rn_channels_reliable_receipt_base( int type );
 
-int rn_channels_dispatch_receipt( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
-
 // Counts one receive violation on the owner's counters, once per record:
 // ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED for a code its mask does not
 // admit (7.5), the given counter for anything else.

@@ -536,13 +536,6 @@ uint8_t rocketnet_random_uint8()
     return value;
 }
 
-uint16_t rocketnet_random_uint16()
-{
-    uint16_t value;
-    randombytes_buf( &value, sizeof(value) );
-    return value;
-}
-
 uint32_t rocketnet_random_uint32()
 {
     uint32_t value;

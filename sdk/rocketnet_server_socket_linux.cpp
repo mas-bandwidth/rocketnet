@@ -113,7 +113,6 @@ struct rocketnet_server_xdp_socket_t
 
     int queue;
     int num_os_cpus;
-    int num_queues;
 
     uint8_t padding_1[4096];
 
@@ -548,16 +547,6 @@ static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
         socket->receive_frames[socket->num_free_receive_frames] = INVALID_FRAME;
     }
     return frame;
-}
-
-static void free_receive_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
-{
-    const uint64_t region_begin = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
-    const uint64_t region_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
-    if ( !rocketnet_xdp_free_list_push( socket->receive_frames, &socket->num_free_receive_frames, ROCKETNET_XDP_NUM_FRAMES / 2, frame, region_begin, region_end ) )
-    {
-        rocketnet_error( "xdp receive frame dropped: %llu", (unsigned long long)frame );
-    }
 }
 
 static void rocketnet_server_socket_xdp_thread_function( void * data );
@@ -1708,7 +1697,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
         socket->queue = queue;
-        socket->num_queues = num_queues;
         socket->num_os_cpus = num_os_cpus;
 
         // allocate umem
