@@ -137,6 +137,13 @@ allocation turns the check red:
     python3 tools/macos/leaks_run.py --self-test
     python3 tools/macos/leaks_run.py --matrix
 
+The `ROCKETNET_SANITIZE` option builds and the unit suite passes green under
+ASan+UBSan (`address`) and under TSan (`thread`) on Linux as well, so the same
+configure line serves both platforms. The leaks path is macOS-only: the
+`leaks` tool and `MallocStackLogging` are Apple system facilities. The nightly
+macOS job on the fleet runner runs the sanitizer suite and the leaks matrix on
+an Apple-silicon member.
+
 ## Pinned sodium
 
 The default build uses the committed `sodium/sodium.c` and `sodium/sodium.h`
