@@ -303,7 +303,7 @@ static bool posix_lifecycle_connect_all( struct rocketnet_server_transport_t * s
     return false;
 }
 
-static void posix_lifecycle_wait_disconnected( struct rocketnet_server_transport_t * server, int clients, double seconds )
+static bool posix_lifecycle_wait_disconnected( struct rocketnet_server_transport_t * server, double seconds )
 {
     const double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < seconds && rocketnet_server_transport_num_connected_clients( server ) > 0 )
@@ -312,7 +312,7 @@ static void posix_lifecycle_wait_disconnected( struct rocketnet_server_transport
         rocketnet_server_transport_send_packets( server );
         rocketnet_platform_sleep( 0.001 );
     }
-    (void) clients;
+    return rocketnet_server_transport_num_connected_clients( server ) == 0;
 }
 
 static void posix_lifecycle_init_term_cell( const struct posix_lifecycle_cell_t * cell )
@@ -447,9 +447,21 @@ static void posix_lifecycle_connect_disconnect_cell( const struct posix_lifecycl
         POSIX_LIFECYCLE_CHECK( posix_lifecycle_write_token( address, connect_token ) );
         struct rocketnet_client_transport_t * client = posix_lifecycle_create_client( client_cell->driver, connect_token );
         POSIX_LIFECYCLE_CHECK( client != NULL );
-        POSIX_LIFECYCLE_CHECK( posix_lifecycle_connect( server, client, 5.0 ) );
+        if ( !posix_lifecycle_connect( server, client, 5.0 ) )
+        {
+            printf( "posix_lifecycle posix_connect_disconnect_1000 cell=%s FAILED: cycle %d did not connect, client state %d, server connected %d\n",
+                    label, i, rocketnet_client_transport_state( client ), rocketnet_server_transport_num_connected_clients( server ) );
+            fflush( stdout );
+            exit( 1 );
+        }
         rocketnet_client_transport_disconnect( client );
-        posix_lifecycle_wait_disconnected( server, 1, 3.0 );
+        if ( !posix_lifecycle_wait_disconnected( server, 3.0 ) )
+        {
+            printf( "posix_lifecycle posix_connect_disconnect_1000 cell=%s FAILED: cycle %d still connected on the server 3s after the disconnect\n",
+                    label, i );
+            fflush( stdout );
+            exit( 1 );
+        }
         rocketnet_client_transport_destroy( client );
     }
 
@@ -527,6 +539,19 @@ static bool posix_lifecycle_client_cell_fits( const struct posix_lifecycle_cell_
     return true;
 }
 
+// ROCKETNET_POSIX_LIFECYCLE_PAIRING=<server>+<client> runs one pairing of a
+// combined case, to reproduce one cells red without the others minutes.
+static bool posix_lifecycle_pairing_selected( const struct posix_lifecycle_cell_t * server_cell,
+                                              const struct posix_lifecycle_cell_t * client_cell )
+{
+    const char * selected = getenv( "ROCKETNET_POSIX_LIFECYCLE_PAIRING" );
+    if ( !selected || !selected[0] )
+        return true;
+    char label[128];
+    snprintf( label, sizeof( label ), "%s+%s", server_cell->label, client_cell->label );
+    return strcmp( label, selected ) == 0;
+}
+
 static void posix_lifecycle_run_combined( void ( *run )( const struct posix_lifecycle_cell_t *,
                                                           const struct posix_lifecycle_cell_t * ) )
 {
@@ -539,6 +564,8 @@ static void posix_lifecycle_run_combined( void ( *run )( const struct posix_life
         for ( int c = 0; c < num_client_cells; c++ )
         {
             if ( !posix_lifecycle_client_cell_fits( &server_cells[s], &client_cells[c] ) )
+                continue;
+            if ( !posix_lifecycle_pairing_selected( &server_cells[s], &client_cells[c] ) )
                 continue;
             run( &server_cells[s], &client_cells[c] );
         }
