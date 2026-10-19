@@ -41,9 +41,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 //          status-returning lifecycle forms
 // -----------------------------------------
 
-// The status-returning forms of rocketnet_init, rocketnet_term and
-// rocketnet_allocator. Internal: the library, its tests and tools call them;
-// the public API is the bool forms in rocketnet.h.
+// The int-status forms of rocketnet_init, rocketnet_term and
+// rocketnet_set_allocator, which the public calls wrap: the public calls
+// return the same code as enum rocketnet_status_t.
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,7 +63,7 @@ extern "C" {
  * @code
  * int status;
  * if (!rocketnet_init_ex(NULL, &status)) {
- *     fprintf(stderr, "init failed: %s\n", rocketnet_status_string(status));
+ *     fprintf(stderr, "init failed: %s\n", rocketnet_status_name(status));
  * }
  * @endcode
  */

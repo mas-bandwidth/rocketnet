@@ -111,7 +111,7 @@ static const struct rocketnet_config_field_t rocketnet_message_config_field_tabl
 // structs must have the same size, so the header and the tables cannot drift.
 
 #define ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64( name, def, flags )                                           \
-    void (*state_change_callback)( void * context, int previous_state, int current_state );                 \
+    void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );                 \
     double (*time_callback)( void * context );                                                              \
     uint64_t name;
 

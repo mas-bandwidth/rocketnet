@@ -393,9 +393,9 @@ static void test_receive_boundaries()
 
 int main()
 {
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    rocketnet_allocator(allocate, release);
-    CHECK(rocketnet_init( NULL ));
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_set_allocator(allocate, release);
+    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     test_create_cleanup();
     test_completion_owns_frames();
     test_uso_run_owns_frames();

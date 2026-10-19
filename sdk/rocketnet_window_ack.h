@@ -34,12 +34,12 @@
 // every resend. An ack of `packet_id` therefore measures the exact send that
 // produced that packet (study §7.2 item 21: no Karn ambiguity).
 
-#ifndef ROCKETNET_MESSAGE_ERROR_NONE
-#define ROCKETNET_MESSAGE_ERROR_NONE                0
-#define ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH     1
-#define ROCKETNET_MESSAGE_ERROR_CONFIG_TIMEOUT      2
-#define ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION  3
-#define ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT    4
+#ifndef ROCKETNET_DISCONNECT_REASON_NONE
+#define ROCKETNET_DISCONNECT_REASON_NONE                0
+#define ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH     1
+#define ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT      2
+#define ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION  3
+#define ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT    4
 #endif
 
 #if ROCKETNET_DEVELOPMENT
@@ -90,7 +90,7 @@ struct rn_window_ack_t
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
-    int error;                      // ROCKETNET_MESSAGE_ERROR_NONE or ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT
+    int error;                      // ROCKETNET_DISCONNECT_REASON_NONE or ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT
 
     // Two resend FIFOs over the one link array region->resend_fifo, one per
     // delay class (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla
@@ -219,7 +219,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // Checks the per-connection reliable timeout before resending (docs/CHANNELS.md
 // 6.4 "Giving up"). If U < next and the oldest unacked number at U has
 // now - first_send >= reliable_timeout, sets ack->error to
-// ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT and returns 1. Otherwise returns
+// ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT and returns 1. Otherwise returns
 // whether ack->error is already set.
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 

@@ -80,7 +80,7 @@ int main( int argc, char ** argv )
     CHECK( read_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) );
     CHECK( read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES ) );
     fclose( keys );
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // the matchmaker stub: a real backend runs this on its own server, keeps
     // the secret key, and returns the token to the game client. The fixed
@@ -107,7 +107,7 @@ int main( int argc, char ** argv )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK ) break;
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK ) break;
 
         // (2) receive and release every received message
         const uint8_t * data = NULL;
@@ -127,7 +127,7 @@ int main( int argc, char ** argv )
         {
             const char message[] = "hello from the client";
             const int message_bytes = (int) sizeof( message ) - 1;
-            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_bytes );
             if ( out )
             {
                 memcpy( out, message, (size_t) message_bytes );

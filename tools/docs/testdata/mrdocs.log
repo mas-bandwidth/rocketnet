@@ -17,8 +17,8 @@ Finalizing corpus
        | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet.h:1476:9:
-    1) ROCKETNET_UNRELIABLE: macro is undocumented
-  1476 | #define ROCKETNET_UNRELIABLE 0
+    1) ROCKETNET_RELIABILITY_UNRELIABLE: macro is undocumented
+  1476 | #define ROCKETNET_RELIABILITY_UNRELIABLE 0
        |         ^~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet.h:1814:23:

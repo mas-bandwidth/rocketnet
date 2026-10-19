@@ -50,7 +50,7 @@ void state_stream_never_goes_backwards_over_lossy_link()
         {
             uint8_t bytes[4];
             sequenced_state_bytes( tick, bytes );
-            const int type = tick == 60 ? ROCKETNET_RELIABLE_ORDERED : ROCKETNET_UNRELIABLE_SEQUENCED;
+            const int type = tick == 60 ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED : ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED;
             sequenced_functional_check( rocketnet_channel_harness_client_send( &h, 0, type, bytes, 4 ) != 0, "send" );
             accepted++;
         }
@@ -91,7 +91,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( server ) ) );
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    sequenced_functional_check( rocketnet_write_dev_connect_token( address, 0x51E9ULL, (uint64_t) time( NULL ), token ) != 0, "large token" );
+    sequenced_functional_check( rocketnet_write_dev_connect_token( address, 0x51E9ULL, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK, "large token" );
     rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, token, NULL, NULL, NULL, 0, 0 );
     sequenced_functional_check( client != NULL, "large client create" );
 
@@ -101,8 +101,8 @@ void large_unreliable_sequenced_uses_transport_fragments()
     {
         rocketnet_platform_sleep( 0.001 );
         now = 1000.0 + rocketnet_platform_time() - wall_start;
-        sequenced_functional_check( rocketnet_message_client_update( client, now ) == ROCKETNET_MESSAGE_OK, "large client update" );
-        sequenced_functional_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK, "large server update" );
+        sequenced_functional_check( rocketnet_message_client_update( client, now ) == ROCKETNET_UPDATE_OK, "large client update" );
+        sequenced_functional_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK, "large server update" );
         rocketnet_message_client_send_packets( client );
         rocketnet_message_server_send_packets( server );
         if ( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
@@ -113,19 +113,19 @@ void large_unreliable_sequenced_uses_transport_fragments()
                                 rocketnet_message_server_client_connected( server, 0 ), "large connect" );
 
     const int message_bytes = 2000;
-    uint8_t * write = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED, message_bytes );
+    uint8_t * write = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, message_bytes );
     sequenced_functional_check( write != NULL, "large client start" );
     for ( int i = 0; i < message_bytes; i++ )
         write[i] = (uint8_t) ( i * 37 + 11 );
     sequenced_functional_check( rocketnet_message_client_finish( client, message_bytes ) != 0, "large client finish" );
-    uint8_t * promoted = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED,
+    uint8_t * promoted = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
                                                          ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
     sequenced_functional_check( promoted != NULL, "oversize unreliable start promotes" );
     if ( promoted )
         rocketnet_message_client_abort( client );
     rocketnet_message_config_t default_config;
     rocketnet_message_default_config( &default_config );
-    sequenced_functional_check( rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED,
+    sequenced_functional_check( rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
                                                                  (int) default_config.max_message_bytes + 1 ) == NULL,
                                 "configured message maximum refused before enqueue" );
 
@@ -137,8 +137,8 @@ void large_unreliable_sequenced_uses_transport_fragments()
         rocketnet_message_server_send_packets( server );
         rocketnet_platform_sleep( 0.001 );
         now = 1000.0 + rocketnet_platform_time() - wall_start;
-        sequenced_functional_check( rocketnet_message_client_update( client, now ) == ROCKETNET_MESSAGE_OK, "large client progress" );
-        sequenced_functional_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK, "large server progress" );
+        sequenced_functional_check( rocketnet_message_client_update( client, now ) == ROCKETNET_UPDATE_OK, "large client progress" );
+        sequenced_functional_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK, "large server progress" );
         const uint8_t * data;
         int bytes;
         while ( rocketnet_message_server_receive( server, 0, 0, &data, &bytes ) )

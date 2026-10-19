@@ -28,9 +28,9 @@ struct mode_stats_t {
 };
 int main( void ) {
     static const int modes[NUM_MODES] = {
-        ROCKETNET_UNRELIABLE, ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE,
-        ROCKETNET_RELIABLE_ORDERED, ROCKETNET_RELIABLE_SEQUENCED, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT,
-        ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT
+        ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_RELIABLE,
+        ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
+        ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT
     };
     static const char * const names[NUM_MODES] = {
         "unreliable", "unreliable_sequenced", "reliable", "reliable_ordered",
@@ -43,8 +43,8 @@ int main( void ) {
     memset( stats, 0, sizeof( stats ) );
     for ( int m = 0; m < NUM_MODES; m++ ) stats[m].monotonic = stats[m].strict = 1;
 
-    CHECK( rocketnet_init( NULL ) );
-    CHECK( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == 1 );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
     server_config.simulated_loss_percent = 25; server_config.simulated_latency_ms = 20; server_config.simulated_jitter_ms = 35;
     server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 );
@@ -56,9 +56,9 @@ int main( void ) {
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
-    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
+    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+    CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback"; client_config.num_channels = NUM_MODES; client_config.step_driven = 1;
     client_config.simulated_loss_percent = 25; client_config.simulated_latency_ms = 20; client_config.simulated_jitter_ms = 35;
     client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
@@ -74,8 +74,8 @@ int main( void ) {
     {
         const double now = 1000.0 + (double) frame * 0.010;
         // (1) update pumps the transport and takes in what arrived
-        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
-        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
 
         // (2) receive and release every message, and read resolved ack receipts
         const uint8_t * data = NULL;
@@ -102,7 +102,7 @@ int main( void ) {
             for ( int m = 5; m < NUM_MODES; m++ )
                 for ( int i = 0; i < NUM_MSGS; i++ )
                     if ( stats[m].serials[i] == receipts[r].serial )
-                        receipts[r].status == ROCKETNET_RECEIPT_ACKED ? stats[m].acked++ : stats[m].lost++;
+                        receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ? stats[m].acked++ : stats[m].lost++;
 
         // (3) run the game simulation for the frame
         // (4) queue this frame's outgoing messages with start and finish
@@ -119,7 +119,7 @@ int main( void ) {
                 CHECK( stats[m].serials[seq - 1] != 0 );
                 sent++;
             }
-            uint8_t * tick = rocketnet_client_start_message( client, 0, ROCKETNET_UNRELIABLE, 1 );
+            uint8_t * tick = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1 );
             if ( tick ) { tick[0] = 0; CHECK( rocketnet_client_finish_message( client, 1 ) != 0 ); }
         }
 

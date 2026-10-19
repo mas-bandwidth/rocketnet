@@ -8,7 +8,7 @@ a demo and a profiling instrument, not a load claim.
 
 ## What it shows
 
-1. Install a counting allocator via `rocketnet_allocator` before `rocketnet_init`
+1. Install a counting allocator via `rocketnet_set_allocator` before `rocketnet_init`
    to verify `allocs/tick == 0` during the steady-state soak and zero leaks at teardown.
 2. Connect `--clients <n>` (1..1000, default 1000) to one server in a single
    process over `loopback` by default (1000 real UDP sockets in one process on
@@ -17,8 +17,8 @@ a demo and a profiling instrument, not a load claim.
    `portable`, `gso`, `msgx`, or `xdp` (`xdp` requires root and its own machine).
 3. Run a deterministic 60 Hz step for `--seconds <n>` (default 3 in CI; use
    `--seconds 60` for full profiling) with fixed `--seed <n>` (default 1),
-   exchanging `ROCKETNET_UNRELIABLE_SEQUENCED` state messages and
-   `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT` event messages in both directions.
+   exchanging `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` state messages and
+   `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT` event messages in both directions.
    Every message carries client id, sequence, and FNV-1a body checksum; any gap,
    backward sequence, or checksum mismatch prints `FAIL` naming client and sequence
    (`--self-test-corrupt` flips one byte before send to prove the check bites).
@@ -63,7 +63,7 @@ xctrace record --template 'Time Profiler' --output soak.trace --launch -- ./bin/
 
 ## Public calls it uses
 
-- `rocketnet_allocator`, `rocketnet_init`, `rocketnet_term`, `rocketnet_log_level`, `rocketnet_time`, `rocketnet_api_misuse_count`
+- `rocketnet_set_allocator`, `rocketnet_init`, `rocketnet_term`, `rocketnet_log_level`, `rocketnet_time`, `rocketnet_api_misuse_count`
 - `rocketnet_server_dev_config_sized`, `rocketnet_server_create_sized`, `rocketnet_server_port`, `rocketnet_server_num_connected_clients`, `rocketnet_server_update`, `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_receipts`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`, `rocketnet_server_send_packets`, `rocketnet_server_counter`, `rocketnet_server_destroy`
 - `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`, `rocketnet_client_state`, `rocketnet_client_index`, `rocketnet_client_update`, `rocketnet_client_receive_message`, `rocketnet_client_release_message`, `rocketnet_client_receipts`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`, `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_destroy`
 - `rocketnet_write_dev_connect_token` (development library only)

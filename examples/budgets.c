@@ -53,7 +53,7 @@ int main( void )
     char server_address[64];
     int result = 1;
 
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     printf( "client send budget default: %d kbps\n", ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
     printf( "server per-client send budget default: %d kbps\n", ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
 
@@ -69,7 +69,7 @@ int main( void )
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
-    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
+    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
@@ -83,7 +83,7 @@ int main( void )
         client = NULL;
     }
     CHECK( client != NULL );
-    CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == 1 );
+    CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
     printf( "runtime set-send-kbps returned 1\n" );
 
     int reliable_received = 0;
@@ -96,9 +96,9 @@ int main( void )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             goto cleanup;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
             goto cleanup;
 
         // (2) receive and release every message; count the reliable ones,
@@ -124,13 +124,13 @@ int main( void )
             // unreliable messages over budget are dropped and counted at send
             if ( !unreliable_sent )
             {
-                CHECK( send_burst( client, 0, ROCKETNET_UNRELIABLE, UNRELIABLE_COUNT ) );
+                CHECK( send_burst( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, UNRELIABLE_COUNT ) );
                 unreliable_sent = 1;
             }
             // reliable messages over budget wait and are never dropped
             if ( !reliable_sent )
             {
-                CHECK( send_burst( client, 1, ROCKETNET_RELIABLE_ORDERED, RELIABLE_COUNT ) );
+                CHECK( send_burst( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, RELIABLE_COUNT ) );
                 reliable_sent = 1;
             }
         }

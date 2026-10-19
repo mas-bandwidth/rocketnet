@@ -166,7 +166,7 @@ void init_deterministic_runtime()
     g_rng_state = FIXED_SEED;
     g_sim_time = INITIAL_TIME;
     CHECK(randombytes_set_implementation(&g_fixed_rng) == 0);
-    CHECK(rocketnet_init(NULL));
+    CHECK(rocketnet_init(NULL) == ROCKETNET_STATUS_OK);
     rocketnet_quiet(1);
 }
 
@@ -185,7 +185,7 @@ void run_client_frame(bool setup_only)
     CHECK(strcmp(rocketnet_server_transport_driver(server), "loopback") == 0);
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token("127.0.0.1:42000", 1001ULL, 2000ULL, token));
+    CHECK(rocketnet_write_dev_connect_token("127.0.0.1:42000", 1001ULL, 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
@@ -306,7 +306,7 @@ void run_server_tick(bool setup_only)
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         CHECK(rocketnet_write_dev_connect_token(
-            "127.0.0.1:42001", (uint64_t)(2000 + c), 2000ULL, token));
+            "127.0.0.1:42001", (uint64_t)(2000 + c), 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
 
         rocketnet_client_transport_config_t client_config;
         rocketnet_client_transport_default_config(&client_config);

@@ -67,7 +67,7 @@ static void status_strings_cover_every_code()
     {
         check( status_expected[i].code == i );
 
-        const char * name = rocketnet_status_string( status_expected[i].code );
+        const char * name = rocketnet_status_name( status_expected[i].code );
         check( name != NULL );
         check( name[0] != '\0' );
         check( strcmp( name, status_expected[i].name ) == 0 );
@@ -82,11 +82,11 @@ REGISTER_UNIT_TEST( status_strings_cover_every_code );
 
 static void status_string_out_of_range_is_null()
 {
-    check( rocketnet_status_string( -1 ) == NULL );
-    check( rocketnet_status_string( ROCKETNET_NUM_STATUS_CODES ) == NULL );
-    check( rocketnet_status_string( ROCKETNET_NUM_STATUS_CODES + 1 ) == NULL );
-    check( rocketnet_status_string( INT_MIN ) == NULL );
-    check( rocketnet_status_string( INT_MAX ) == NULL );
+    check( rocketnet_status_name( -1 ) == NULL );
+    check( rocketnet_status_name( ROCKETNET_NUM_STATUS_CODES ) == NULL );
+    check( rocketnet_status_name( ROCKETNET_NUM_STATUS_CODES + 1 ) == NULL );
+    check( rocketnet_status_name( INT_MIN ) == NULL );
+    check( rocketnet_status_name( INT_MAX ) == NULL );
 }
 
 REGISTER_UNIT_TEST( status_string_out_of_range_is_null );

@@ -48,7 +48,7 @@ void reliable_state_stream_over_lossy_link()
         {
             uint8_t bytes[4];
             rs_state_bytes( tick, bytes );
-            const int type = tick == 60 ? ROCKETNET_RELIABLE_ORDERED : ROCKETNET_RELIABLE_SEQUENCED;
+            const int type = tick == 60 ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED : ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED;
             rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, type, bytes, 4 ) != 0, "send" );
             accepted++;
         }
@@ -115,11 +115,11 @@ void reliable_sequenced_long_run_across_epochs()
             if ( tick % ordered_every == 0 )
             {
                 rs_state_bytes( rs_ordered_flag | ++position, bytes );
-                rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE_ORDERED, bytes, 4 ) != 0, "send ordered" );
+                rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes, 4 ) != 0, "send ordered" );
                 ordered_sent++;
             }
             rs_state_bytes( ++position, bytes );
-            rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE_SEQUENCED, bytes, 4 ) != 0, "send state" );
+            rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, bytes, 4 ) != 0, "send state" );
         }
         if ( !rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) )
             rs_functional_check( false, "connection lost" );
@@ -176,11 +176,11 @@ void reliable_sequenced_held_record_released()
 
     uint8_t bytes[4];
     rs_state_bytes( rs_ordered_flag | 1, bytes );
-    rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE_ORDERED, bytes, 4 ) != 0, "send ordered" );
+    rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes, 4 ) != 0, "send ordered" );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     const int ordered_end = h.held_count;
     rs_state_bytes( 2, bytes );
-    rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE_SEQUENCED, bytes, 4 ) != 0, "send state" );
+    rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, bytes, 4 ) != 0, "send state" );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     const int state_end = h.held_count;
     rs_functional_check( ordered_end >= 1 && state_end > ordered_end, "the scripted packets were not held" );

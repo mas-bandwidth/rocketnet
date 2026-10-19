@@ -93,13 +93,13 @@ int main( int argc, char ** argv )
 
     signal( SIGINT, interrupt_handler );
 
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
     }
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -156,7 +156,7 @@ int main( int argc, char ** argv )
                 client = NULL;
             }
             uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-            if ( !rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) )
+            if ( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
             {
                 printf( "soak: failed to write dev connect token\n" );
                 failures++;

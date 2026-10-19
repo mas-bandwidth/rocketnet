@@ -149,13 +149,13 @@ int main( int argc, char ** argv ) {
     double * cli_us = (double *) calloc( MAX_TICKS, sizeof( double ) );
     struct rocketnet_server_t * server = NULL;
     CHECK( c2s && s2c && clients && srv_us && cli_us );
-    CHECK( rocketnet_allocator( soak_malloc, soak_free ) && rocketnet_init( NULL ) );
+    CHECK( rocketnet_set_allocator( soak_malloc, soak_free ) == ROCKETNET_STATUS_OK && rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     inited = true;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     struct rocketnet_server_config_t s_cfg;
     struct rocketnet_client_config_t c_cfg;
-    CHECK( rocketnet_server_dev_config_sized( &s_cfg, sizeof( s_cfg ) ) );
-    CHECK( rocketnet_client_default_config_sized( &c_cfg, sizeof( c_cfg ) ) );
+    CHECK( rocketnet_server_dev_config_sized( &s_cfg, sizeof( s_cfg ) ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_client_default_config_sized( &c_cfg, sizeof( c_cfg ) ) == ROCKETNET_STATUS_OK );
     s_cfg.max_clients = num_clients; c_cfg.step_driven = 1; s_cfg.transport = c_cfg.transport = transport_name;
     s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000; s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
     s_cfg.num_channels = c_cfg.num_channels = s_cfg.num_reassembly_slots = c_cfg.num_reassembly_slots = 2;
@@ -175,7 +175,7 @@ int main( int argc, char ** argv ) {
     snprintf( addr, sizeof( addr ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ ) {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        CHECK( rocketnet_write_dev_connect_token( addr, c + 1, 4102444800ULL, token ) );
+        CHECK( rocketnet_write_dev_connect_token( addr, c + 1, 4102444800ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
         clients[c] = rocketnet_client_create_sized( NULL, &c_cfg, sizeof( c_cfg ), NULL, 0 );
         if ( clients[c] && rocketnet_client_connect( clients[c], token ) != ROCKETNET_STATUS_OK )
         {
@@ -194,10 +194,10 @@ int main( int argc, char ** argv ) {
         for ( int base = 0; base < num_clients; base += BATCH_CLIENTS ) {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
             for ( int c = base; c < end; c++ ) {
-                CHECK( rocketnet_client_update( clients[c], sim_time ) == ROCKETNET_MESSAGE_OK );
+                CHECK( rocketnet_client_update( clients[c], sim_time ) == ROCKETNET_UPDATE_OK );
                 rocketnet_client_send_packets( clients[c] ); // send last so this frame's messages leave this frame
             }
-            CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_MESSAGE_OK );
+            CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_UPDATE_OK );
             rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
         }
     }
@@ -216,7 +216,7 @@ int main( int argc, char ** argv ) {
             double t0 = rocketnet_time();
             for ( int c = base; c < end; c++ ) {
                 // (1) update pumps the transport and takes in what arrived
-                CHECK( rocketnet_client_update( clients[c], sim_time ) == ROCKETNET_MESSAGE_OK );
+                CHECK( rocketnet_client_update( clients[c], sim_time ) == ROCKETNET_UPDATE_OK );
                 // (2) receive and release every received message
                 for ( int ch = 0; ch < 2; ch++ ) {
                     const uint8_t * data = NULL; int bytes = 0;
@@ -229,16 +229,16 @@ int main( int argc, char ** argv ) {
                 }
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_client_receipts( clients[c], recs, 16 );
-                for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_ACKED ) c2s[c].acked_events++;
+                for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) c2s[c].acked_events++;
                 // (3) simulate & (4) queue this frame's outgoing messages
                 if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) ) {
-                    uint8_t * p0 = rocketnet_client_start_message( clients[c], 0, ROCKETNET_UNRELIABLE_SEQUENCED, 48 );
+                    uint8_t * p0 = rocketnet_client_start_message( clients[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 );
                     CHECK( p0 != NULL );
                     soak_write_msg( p0, 48, seed, (uint64_t) c, 0, c2s[c].tx_seq[0]++ );
                     CHECK( rocketnet_client_finish_message( clients[c], 48 ) != 0 );
                     sent_seq++;
                     if ( ( tick % 6 ) == 0 ) {
-                        uint8_t * p1 = rocketnet_client_start_message( clients[c], 1, ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 96 );
+                        uint8_t * p1 = rocketnet_client_start_message( clients[c], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 96 );
                         CHECK( p1 != NULL );
                         soak_write_msg( p1, 96, seed, (uint64_t) c, 1, c2s[c].tx_seq[1]++ );
                         if ( self_test_corrupt && !injected ) { p1[32] ^= 0xffu; injected = true; }
@@ -252,7 +252,7 @@ int main( int argc, char ** argv ) {
             tick_cli_us += ( rocketnet_time() - t0 ) * 1e6;
             double s0 = rocketnet_time();
             // (1) server update
-            CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_MESSAGE_OK );
+            CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_UPDATE_OK );
             for ( int c = base; c < end; c++ ) {
                 uint64_t client_idx = (uint64_t) rocketnet_client_index( clients[c] );
                 // (2) server receive and release
@@ -267,16 +267,16 @@ int main( int argc, char ** argv ) {
                 }
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_server_receipts( server, (int) client_idx, recs, 16 );
-                for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_ACKED ) s2c[c].acked_events++;
+                for ( int r = 0; r < nrec; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) s2c[c].acked_events++;
                 // (3) simulate & (4) server queue outgoing messages
                 if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) ) {
-                    uint8_t * p0 = rocketnet_server_start_message( server, (int) client_idx, 0, ROCKETNET_UNRELIABLE_SEQUENCED, 48 );
+                    uint8_t * p0 = rocketnet_server_start_message( server, (int) client_idx, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 );
                     CHECK( p0 != NULL );
                     soak_write_msg( p0, 48, seed, (uint64_t) c, 0, s2c[c].tx_seq[0]++ );
                     CHECK( rocketnet_server_finish_message( server, (int) client_idx, 48 ) != 0 );
                     sent_seq++;
                     if ( ( tick % 6 ) == 0 ) {
-                        uint8_t * p1 = rocketnet_server_start_message( server, (int) client_idx, 1, ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 96 );
+                        uint8_t * p1 = rocketnet_server_start_message( server, (int) client_idx, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 96 );
                         CHECK( p1 != NULL );
                         soak_write_msg( p1, 96, seed, (uint64_t) c, 1, s2c[c].tx_seq[1]++ );
                         CHECK( rocketnet_server_finish_message( server, (int) client_idx, 96 ) != 0 );
@@ -313,7 +313,7 @@ int main( int argc, char ** argv ) {
                 rocketnet_client_send_packets( clients[c] ); // send last so this frame's messages leave this frame
             }
             sim_time += 1.0 / 60.0;
-            CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_MESSAGE_OK );
+            CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_UPDATE_OK );
             rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
         }
     }

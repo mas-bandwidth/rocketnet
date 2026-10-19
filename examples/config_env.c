@@ -93,7 +93,7 @@ static int run_show_bad_refused( void )
 
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
     CHECK( server == NULL );
-    printf( "bad value refused: %s\n", rocketnet_status_string( ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE ) );
+    printf( "bad value refused: %s\n", rocketnet_status_name( ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE ) );
 
     result = 0;
 cleanup:
@@ -106,7 +106,7 @@ int main( int argc, char ** argv )
     int result = 1;
     const char * env = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
 
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     if ( !env )
     {

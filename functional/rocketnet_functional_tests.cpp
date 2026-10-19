@@ -167,7 +167,7 @@ void rocketnet_test_transport_disconnect_delivery()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -225,7 +225,7 @@ void rocketnet_test_transport_reconnect_churn()
     for ( int cycle = 0; cycle < 5; cycle++ )
     {
         uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+        rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
         rocketnet_check( client );
@@ -299,7 +299,7 @@ void rocketnet_test_client_disconnect_reports_state_change()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_test_state_recorder_t recorder = { 0, {0}, {0} };
 
@@ -370,7 +370,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -619,7 +619,7 @@ void rocketnet_test_transport_ring_exhaustion()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -754,7 +754,7 @@ void rocketnet_test_transport_client_concurrent_fill()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -850,7 +850,7 @@ void rocketnet_test_transport_concurrent_fill()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -951,7 +951,7 @@ void rocketnet_test_transport_wire_totals_concurrent_send_exact()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -1041,7 +1041,7 @@ void rocketnet_test_transport_start_finish_shape()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -1191,7 +1191,7 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -1303,7 +1303,7 @@ void rocketnet_test_transport_udp_loopback()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t loopback_connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), loopback_connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), loopback_connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, loopback_connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -1430,7 +1430,7 @@ void rocketnet_test_transport_stats()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
     rocketnet_check( client );
@@ -1569,7 +1569,7 @@ void rocketnet_test_client_ack_stats_computed_on_read()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
     rocketnet_check( client );
@@ -1673,7 +1673,7 @@ void rocketnet_test_transport_update_time_clamped()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
     rocketnet_check( client );
@@ -1700,11 +1700,11 @@ void rocketnet_test_transport_update_time_clamped()
     // through a non-aborting hook so the suite goes on
 
     rocketnet_test_update_time_clamped_asserts = 0;
-    rocketnet_assert_function( rocketnet_test_update_time_clamped_assert_hook );
+    rocketnet_set_assert_callback( rocketnet_test_update_time_clamped_assert_hook );
 
     rocketnet_server_transport_update( server, NAN );
 
-    rocketnet_assert_function( NULL );
+    rocketnet_set_assert_callback( NULL );
 
     rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 );
 
@@ -1752,7 +1752,7 @@ void rocketnet_test_transport_packet_loss_stats()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
     rocketnet_check( client );
@@ -2473,7 +2473,7 @@ void rocketnet_test_transport_acks_and_client_stats()
     for ( int i = 0; i < 8; i++ )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0x77000ULL + (uint64_t) i, (uint64_t) time( NULL ), token ) );
+        rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0x77000ULL + (uint64_t) i, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
         clients[i] = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
         rocketnet_check( clients[i] );
     }
@@ -2627,7 +2627,7 @@ void rocketnet_test_client_stats_of_empty_slot_read_zero()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0x99100ULL, (uint64_t) time( NULL ), token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0x99100ULL, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
 
@@ -2717,7 +2717,7 @@ void rocketnet_test_transport_fragmentation()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0xF6A9ULL, (uint64_t) time( NULL ), token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0xF6A9ULL, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
 
@@ -3013,7 +3013,7 @@ void rocketnet_test_transport_ipv6_loopback()
     snprintf( server_address, sizeof(server_address), "[::1]:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -3104,7 +3104,7 @@ void rocketnet_test_server_handshake_deadline_from_config()
     snprintf( address_string, sizeof(address_string), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     const uint64_t timestamp = (uint64_t) time( NULL );
-    rocketnet_check( rocketnet_write_dev_connect_token( address_string, rocketnet_random_uint64(), timestamp, token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( address_string, rocketnet_random_uint64(), timestamp, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_protocol_t client;
     struct rocketnet_counters_t client_counters;
     rocketnet_client_protocol_init( &client, &client_counters );
@@ -3202,7 +3202,7 @@ void rocketnet_test_public_client_server_queries()
     char server_address[64];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 77, (uint64_t) time( NULL ), token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 77, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
@@ -3220,16 +3220,16 @@ void rocketnet_test_public_client_server_queries()
     while ( exchanged < 20 && rocketnet_time() - wall_start < 10.0 )
     {
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
-        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const uint8_t payload[16] = { 1, 2, 3 };
-            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
             rocketnet_check( rocketnet_client_finish_message( client, (int) sizeof( payload ) ) != 0 );
-            out = rocketnet_server_start_message( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
+            out = rocketnet_server_start_message( server, rocketnet_client_index( client ), 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, (int) sizeof( payload ) );
             rocketnet_check( out != NULL );
             memcpy( out, payload, sizeof( payload ) );
             rocketnet_check( rocketnet_server_finish_message( server, rocketnet_client_index( client ), (int) sizeof( payload ) ) != 0 );
@@ -3425,7 +3425,7 @@ static void rocketnet_test_driver_pin_exchange( const char * driver_list, const 
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -3529,7 +3529,7 @@ void rocketnet_test_server_driver_pin_loopback()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -3652,7 +3652,7 @@ void rocketnet_test_driver_env_pins_loopback()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -3715,7 +3715,7 @@ void driver_env_pin_is_honoured()
     if ( has_client_pin )
     {
         uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:41040", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+        rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:41040", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         struct rocketnet_client_transport_config_t client_config;
         rocketnet_client_transport_default_config( &client_config );
@@ -4379,11 +4379,11 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_test_captured_log[0] = '\0';
         const int saved_level = rocketnet_get_log_level();
         rocketnet_log_function( rocketnet_test_capture_log );
-        rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+        rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
-        rocketnet_log_level( saved_level );
+        rocketnet_set_log_level( saved_level );
         rocketnet_log_function( rocketnet_test_suite_log_function );
 
         rocketnet_check( server == NULL );
@@ -4399,11 +4399,11 @@ void rocketnet_test_server_port_zero_driver()
 
         rocketnet_test_captured_log[0] = '\0';
         rocketnet_log_function( rocketnet_test_capture_log );
-        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+        rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
-        rocketnet_log_level( saved_level );
+        rocketnet_set_log_level( saved_level );
         rocketnet_log_function( rocketnet_test_suite_log_function );
 
         rocketnet_check( server == NULL );
@@ -4420,11 +4420,11 @@ void rocketnet_test_server_port_zero_driver()
 
         rocketnet_test_captured_log[0] = '\0';
         rocketnet_log_function( rocketnet_test_capture_log );
-        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+        rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", &config);
 
-        rocketnet_log_level( saved_level );
+        rocketnet_set_log_level( saved_level );
         rocketnet_log_function( rocketnet_test_suite_log_function );
 
         rocketnet_check( server == NULL );
@@ -4788,7 +4788,7 @@ void rocketnet_test_client_driver()
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:41040", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:41040", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     // the portable pin grants everywhere and reports itself
 
@@ -5385,11 +5385,11 @@ static bool rocketnet_test_server_uring_skipped( const char * test_name )
     rocketnet_test_captured_log[0] = '\0';
     const int saved_level = rocketnet_get_log_level();
     rocketnet_log_function( rocketnet_test_capture_log );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_server_uring_t * refused = rocketnet_server_uring_create( NULL, &refused_address, 2 );
 
-    rocketnet_log_level( saved_level );
+    rocketnet_set_log_level( saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function );
 
     rocketnet_check( refused == NULL );
@@ -5475,12 +5475,12 @@ void rocketnet_test_server_uring_probe()
     rocketnet_test_captured_log[0] = '\0';
     const int stall_saved_level = rocketnet_get_log_level();
     rocketnet_log_function( rocketnet_test_capture_log );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
 
     rocketnet_server_uring_test_stall_destroy( stalled );
     rocketnet_server_uring_destroy( stalled );
 
-    rocketnet_log_level( stall_saved_level );
+    rocketnet_set_log_level( stall_saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function );
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "destroy gave up waiting" ) != NULL );
@@ -5888,7 +5888,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0xA2A2ULL, (uint64_t) time( NULL ), token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0xA2A2ULL, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
 
@@ -6085,7 +6085,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0xB6B6ULL, (uint64_t) time( NULL ), token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0xB6B6ULL, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
 
@@ -6226,7 +6226,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( server ) ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, connect_token, NULL, NULL, NULL, 0, 0 );
     rocketnet_check( client );
@@ -6236,8 +6236,8 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     double now = game_start;
 
     // the first updates, both at exactly T=1000.0
-    rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
-    rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+    rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_UPDATE_OK );
     rocketnet_check( rocketnet_message_client_state( client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     rocketnet_message_client_send_packets( client );
     rocketnet_message_server_send_packets( server );
@@ -6247,8 +6247,8 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     {
         rocketnet_platform_sleep( 0.001 );
         now = game_start + ( rocketnet_platform_time() - wall_start );
-        rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
-        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( client );
         rocketnet_message_server_send_packets( server );
         if ( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
@@ -6276,7 +6276,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     {
         if ( client_sent < num_reliable )
         {
-            uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, 8 );
+            uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
             rocketnet_check( p );
             for ( int i = 0; i < 8; i++ )
                 p[i] = (uint8_t) ( client_sent + i );
@@ -6285,7 +6285,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
         }
         if ( server_sent < num_reliable )
         {
-            uint8_t * p = rocketnet_message_server_start( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 8 );
+            uint8_t * p = rocketnet_message_server_start( server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
             rocketnet_check( p );
             for ( int i = 0; i < 8; i++ )
                 p[i] = (uint8_t) ( 100 + server_sent + i );
@@ -6295,12 +6295,12 @@ void rocketnet_test_message_objects_loopback_from_t1000()
         if ( server_got_unreliable == 0 )
         {
             const uint8_t ping[4] = { 'p', 'i', 'n', 'g' };
-            rocketnet_check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, ping, 4 ) != 0 );
+            rocketnet_check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, ping, 4 ) != 0 );
         }
         if ( client_got_unreliable == 0 )
         {
             const uint8_t pong[4] = { 'p', 'o', 'n', 'g' };
-            rocketnet_check( rocketnet_message_server_send( server, 0, 0, ROCKETNET_UNRELIABLE, pong, 4 ) != 0 );
+            rocketnet_check( rocketnet_message_server_send( server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, pong, 4 ) != 0 );
         }
 
         rocketnet_message_client_send_packets( client );
@@ -6308,8 +6308,8 @@ void rocketnet_test_message_objects_loopback_from_t1000()
 
         rocketnet_platform_sleep( 0.001 );
         now = game_start + ( rocketnet_platform_time() - wall_start );
-        rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
-        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK );
 
         const uint8_t * data = NULL;
         int bytes = 0;
@@ -6354,8 +6354,8 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     rocketnet_check( server_got_unreliable > 0 );
     rocketnet_check( client_got_unreliable > 0 );
     rocketnet_check( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-    rocketnet_check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    rocketnet_check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    rocketnet_check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // the deliberate disconnect crosses the wire and the server's slot empties
     rocketnet_client_transport_disconnect( rocketnet_message_client_transport( client ) );
@@ -6364,7 +6364,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     {
         rocketnet_platform_sleep( 0.001 );
         now = game_start + ( rocketnet_platform_time() - wall_start );
-        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK );
         if ( !rocketnet_message_server_client_connected( server, 0 ) )
             break;
     }
@@ -6830,7 +6830,7 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
     snprintf( server_address, sizeof(server_address), "%s:%d", bind_host, rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -7053,7 +7053,7 @@ static struct rocketnet_server_transport_t * wire_totals_server_create( const ch
 static struct rocketnet_client_transport_t * wire_totals_client_create( const char * address, uint64_t client_id, double time )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( !rocketnet_write_dev_connect_token( address, client_id, (uint64_t) ::time( NULL ), token ) )
+    if ( rocketnet_write_dev_connect_token( address, client_id, (uint64_t) ::time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         return NULL;
 
     struct rocketnet_client_transport_config_t config;

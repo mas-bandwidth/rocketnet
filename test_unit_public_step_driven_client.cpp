@@ -139,9 +139,9 @@ static void public_step_pair_destroy( public_step_pair_t * pair )
 static void public_step_pump( public_step_pair_t * pair )
 {
     public_step_now = pair->time;
-    check( rocketnet_client_update( pair->client, pair->time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_client_update( pair->client, pair->time ) == ROCKETNET_UPDATE_OK );
     rocketnet_client_send_packets( pair->client );
-    check( rocketnet_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
     rocketnet_server_send_packets( pair->server );
     pair->time += 0.01;
 }
@@ -179,9 +179,9 @@ static void public_step_driven_client_delivers_both_ways()
     const uint8_t server_messages[2][4] = { {9,10,11,12}, {13,14,15,16} };
     for ( int i = 0; i < 2; i++ )
     {
-        uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, 4 );
+        uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
         check( out != NULL ); memcpy( out, client_messages[i], 4 ); check( rocketnet_client_finish_message( pair.client, 4 ) != 0 );
-        out = rocketnet_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 4 );
+        out = rocketnet_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
         check( out != NULL ); memcpy( out, server_messages[i], 4 ); check( rocketnet_server_finish_message( pair.server, 0, 4 ) != 0 );
     }
 
@@ -214,7 +214,7 @@ static void public_step_trace( const public_step_identity_t * identity, const ui
     public_step_connect( &pair );
     for ( int i = 0; i < 8; i++ )
     {
-        uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, 1 );
+        uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
         check( out != NULL ); out[0] = (uint8_t) i; check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
         public_step_pump( &pair );
     }

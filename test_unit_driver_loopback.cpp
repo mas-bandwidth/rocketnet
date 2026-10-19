@@ -460,7 +460,7 @@ static void driver_loopback_refuses_past_max_endpoints()
     const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
     const int live_before = rocketnet_loopback_endpoints_live();
     const int saved_level = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
     rocketnet_set_log_callback( loopback_refusal_log_capture, NULL );
 
     rocketnet_client_transport_config_t client_config;
@@ -503,7 +503,7 @@ static void driver_loopback_refuses_past_max_endpoints()
     rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
 
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( saved_level );
+    rocketnet_set_log_level( saved_level );
     free( clients );
     printf( "driver_loopback_refuses_past_max_endpoints\n" );
 }

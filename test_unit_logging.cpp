@@ -50,7 +50,7 @@ static void log_callback_preformatted_contract()
 {
     const char * ctx = "the-context";
     int saved = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     rocketnet_set_log_callback( capture_callback, (void*) ctx );
 
     char empty[1];
@@ -84,7 +84,7 @@ static void log_callback_preformatted_contract()
     check( memcmp( g_buf, str2048, 1023 ) == 0 );
 
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( saved );
+    rocketnet_set_log_level( saved );
 }
 
 // --- filtering happens before formatting ----------------------------------
@@ -107,7 +107,7 @@ static void counting_callback( void * context, int level, const char * message, 
 static void log_callback_filters_before_formatting()
 {
     int saved = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     rocketnet_set_log_callback( counting_callback, NULL );
     g_count = 0;
 
@@ -135,7 +135,7 @@ static void log_callback_filters_before_formatting()
     check( g_msglen > 0 );
 
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( saved );
+    rocketnet_set_log_level( saved );
 }
 
 // --- last registration wins, NULL restores default ------------------------
@@ -162,7 +162,7 @@ static void pf_callback( void * context, int level, const char * message, size_t
 static void log_callback_and_legacy_function_last_wins()
 {
     int saved = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
 
     rocketnet_log_function( legacy_callback );
     g_legacy_count = g_pf_count = 0;
@@ -182,22 +182,22 @@ static void log_callback_and_legacy_function_last_wins()
 
     rocketnet_set_log_callback( NULL, NULL );
     // the default sink writes to stdout, and a passing suite prints only names
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_error( "default sink" );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     check( g_legacy_count == 2 );
     check( g_pf_count == 1 );
 
     rocketnet_log_function( legacy_callback );
     rocketnet_log_function( NULL );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_error( "default again" );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     check( g_legacy_count == 2 );
     check( g_pf_count == 1 );
 
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( saved );
+    rocketnet_set_log_level( saved );
 }
 
 REGISTER_UNIT_TEST( log_callback_preformatted_contract );
