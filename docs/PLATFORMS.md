@@ -25,8 +25,8 @@ names.
 | macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | macOS 27 (self-hosted fleet) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp, rio | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp, rio | nightly | .github/workflows/nightly.yml | windows-2025 |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | none | none | unsupported | - | - |
 | macOS | x86_64 | none | none | unsupported | - | - |
