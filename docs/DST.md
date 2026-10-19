@@ -172,8 +172,8 @@ at step k, computed from k and never accumulated.
   `traffic.server` for the server, so changing the client count never changes what client 0 sends.
 - Payload: the live-verify scheme. Bytes 0-3 the message's sequence on its (session, send channel,
   direction, type), counted from 0, little endian; byte 4 `0xA0 | direction << 3 | (type & 7)`;
-  byte 5 the send channel; bytes 6-9 the session generation, little endian, its high byte the
-  server incarnation; bytes 10-13 the ordered epoch, which on channel 8 is the number of type 3
+  byte 5 the send channel; bytes 6-8 the session generation (24 bits, little endian), byte 9 the
+  server incarnation the session was admitted under (8 bits); bytes 10-13 the ordered epoch, which on channel 8 is the number of type 3
   messages sent on that stream before this one (0 on other channels); then byte i is
   `(i + sequence) % 256`. The length is the drawn size, which the sender records per (stream,
   sequence) for the checker. Every size is at least 14 bytes.
@@ -182,7 +182,11 @@ at step k, computed from k and never accumulated.
   slot with `rocketnet_client_slots_client_id`. The server message object's `connection(i)` answers
   that client_id while the slot is connected and 0 otherwise; the client's answers its generation
   while CONNECTED. A server incarnation (section 3) is a separate counter, starting at 1, carried
-  in bytes 6-9's high byte. Both links set `clock_from_first_update = 0`, so each message object
+  in byte 9, never merged into the generation word: the two fields are compared separately (the
+  `stale_session_payload` row of section 4). The harness asserts at allocation that the generation
+  is below 2^24 and the incarnation below 256 (a seed's session and server-crash counts are bounded
+  far below both by section 3's crash caps and the schedule's churn bound); a violation is
+  `FAIL check=dst_bound`, never a silent wrap. Both links set `clock_from_first_update = 0`, so each message object
   reads its peer's skewed clock exactly as it is passed (section 3).
 - The seam: the full `rn_message_link_t` (`update`, `payloads`, `acked`, `max_payload_bytes`,
   `start_packet`, `finish_packet`, `abort_packet`, `send_packets`, `connection`, `disconnect`,
@@ -334,7 +338,7 @@ none changes SDK behaviour. "Session" below is (client index, generation) on the
 | Check | Mirrors (module: invariant) | The runtime check | Where it hooks |
 |---|---|---|---|
 | `one_session_per_slot` | ServerSession: `SlotOwnsItsSession`; ClientSession: `CurrentOnlyWhileLive` | No two connected slots hold one client_id; a generation is connected in at most one slot; a client's message object reports a connection only while its transport is CONNECTED | every step, after the server update |
-| `stale_session_payload` | ServerSession: `SlotReuseObservesNothing`; ClientSession: `ReconnectObservesNothing`; RNSlots: `ReusedSlotStartsClean`; RNSimFaults: `DeliverOnlyToLiveGeneration` (section 7) | Every delivery's generation (bytes 6-9) equals the receiving session's: at the server, `rocketnet_client_slots_client_id(slot) >> 8`; at a client, its current generation and the server incarnation it connected to. No payload of a crashed, disconnected or timed-out session is delivered after its session ends | every delivery |
+| `stale_session_payload` | ServerSession: `SlotReuseObservesNothing`; ClientSession: `ReconnectObservesNothing`; RNSlots: `ReusedSlotStartsClean`; RNSimFaults: `DeliverOnlyToLiveGeneration` (section 7) | Every delivery's generation (bytes 6-8, read as a 24-bit value) equals the receiving session's, and its incarnation (byte 9) equals the receiving session's incarnation, the two compared separately: at the server, generation against `rocketnet_client_slots_client_id(slot) >> 8` and incarnation against the server's current one; at a client, its current generation and the incarnation of the server it connected to. No payload of a crashed, disconnected or timed-out session is delivered after its session ends | every delivery |
 | `token_admits_once` | ServerSession: `TokenAdmitsOnce` | Each client_id reaches connected at most once per server incarnation | every server slot change |
 | `client_terminal` | ClientSession: `ConnectReachesConnectedOrError` (safety side) | A terminal client state outside the explained windows of section 3 | every client state change |
 | `whole_message` | RNChannel: `WholeMessagesOnly`; FragmentsAndAcks: `DeliveredExact` | The delivery's length and every byte match the payload scheme for its sequence and the size recorded when it was sent | every delivery |
@@ -460,7 +464,12 @@ seeds into 16 processes of 64 seeds each, in parallel, never more processes than
 cores. At the 0.24 s estimate a process runs 64 x 0.24 = 15 s, so a shard is the build plus about
 15 s, and the job is 4,096 seeds a push: shard k (0..3) runs seeds `k*1024+1` to `(k+1)*1024`. The
 per-push seeds are fixed, so a push red is a regression at a known seed, never a lucky draw. The
-build of the `dst` target alone on a fleet runner is not measured here; `rocketnet-dst-ci-wiring`
+shard's run leg is measured on a proxy: the message-layer pair program (above) run as 16 processes
+in parallel on a 64-core Linux member under other load (load average 57), each 64 seeds of 6,000
+pair-steps (3 clients x 2,000 steps), three repeats: 27.5, 27.6 and 29.5 s wall, a pair-step costing
+66-69 µs under that contention against 30 µs idle. Adding the 30% for the checks and the trace, a
+shard's run leg is about 36 s under contention, leaving about 24 s of the 60 s for the build of the
+`dst` target. The `dst` binary itself and that build are not measured here; `rocketnet-dst-ci-wiring`
 measures each shard's wall time and records it in this section, and if a shard is over 60 s it
 lowers the seeds per shard and raises the shard count (the job is split, never shortened), keeping
 at least 4,096 seeds a push. The selftest (section 5) is a fifth job beside the shards, not a step
