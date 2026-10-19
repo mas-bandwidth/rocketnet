@@ -29,7 +29,7 @@ property is refuted and no sdk defect is established.
   `packet_bytes` bytes. The dispatcher and record harnesses also make the
   output capacity symbolic in 0..1472, over an object of exactly that size.
 - Each run: `nice -n 10`, `prlimit --as` 12 GiB, and a 1800-second timeout.
-- The three runs below used `--overflow-check` alone; the unsigned-overflow
+- The six runs below used `--overflow-check` alone; the unsigned-overflow
   and shift checks were added after them, so they only add properties to a
   run that already did not finish.
 
@@ -44,12 +44,12 @@ property is refuted and no sdk defect is established.
 | harness_open_session_packet | not run | | |
 | harness_process_keep_alive | not run | | |
 | harness_process_ack | not run | | |
-| harness_process_fragment | not run | | |
-| harness_process_disconnect | not run | | |
-| harness_process_packet | not run | | |
+| harness_process_fragment | out of memory | 907 s | 21347 VCCs, 4751 after simplification; "Z3 error out of memory" at 10.3 GB resident |
+| harness_process_disconnect | out of memory | 656 s | 23931 VCCs, 4741 after simplification; "Z3 error out of memory" at 10.3 GB resident |
+| harness_process_packet | out of memory | 431 s | ESBMC "Out of memory", then "SMT solver failed", at 11.9 GB resident |
 | harness_process_record | not run | | |
 
-Proved: 0. Refuted: 0. Out of memory: 2. Solver failed: 1. Not run: 8. The reversed-witness
+Proved: 0. Refuted: 0. Out of memory: 5. Solver failed: 1. Not run: 5. The reversed-witness
 pass runs only after a harness proves, so it has not run under ESBMC.
 
 ## Why the solver runs out of memory
@@ -106,7 +106,7 @@ verdict of the record being consumed. Sequences stay below 2^63.
 - No harness proves under ESBMC. The CBMC 6.6.0 run of the same harnesses
   (this card's previous attempt) proved all eleven at the full bound, with
   every witness reached. That run is not the checker this card names.
-- The eight harnesses marked not run share the same client object, so they
+- The five harnesses marked not run share the same client object, so they
   are expected to stop the same way; that is not measured.
 - The sdk headers are included before the memset and memcpy models are
   defined, so an inline helper in those headers that calls memcpy uses
