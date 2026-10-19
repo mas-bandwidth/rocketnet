@@ -79,8 +79,12 @@ static void dst_fault_skew_bounded()
 {
     struct rocketnet_dst_fault_state_t state;
     rocketnet_dst_faults_init( &state, 0x51EED, ROCKETNET_DST_FAULT_SKEW, 2000, 8 );
+    int skewed_peers = 0;
+    int observed_skew = 0;
     for ( int peer = 0; peer <= 8; peer++ )
     {
+        if ( state.clock_offset[peer] != 0.0 || state.clock_rate[peer] != 1.0 )
+            skewed_peers++;
         double previous = rocketnet_dst_faults_clock( &state, peer, 1000.0 );
         for ( int step = 1; step <= 4000; step++ )
         {
@@ -89,9 +93,13 @@ static void dst_fault_skew_bounded()
             const double bound = 0.25 + 0.005 * ( truth - 1000.0 );
             check( clock >= previous );
             check( fabs( clock - truth ) <= bound + 1e-12 );
+            if ( clock != truth )
+                observed_skew = 1;
             previous = clock;
         }
     }
+    check( skewed_peers > 0 );
+    check( observed_skew );
 }
 REGISTER_UNIT_TEST( dst_fault_skew_bounded );
 
@@ -132,13 +140,18 @@ static void dst_fault_reorder_delivers()
 }
 REGISTER_UNIT_TEST( dst_fault_reorder_delivers );
 
+// Filled only from an unchanged current-base Linux run of this exact seed and
+// option tuple. Zero deliberately keeps the regression red until that frozen
+// compatibility oracle has been measured and reviewed.
+static const uint64_t ROCKETNET_DST_CORE_TRACE_D57 = 0;
+
 static void dst_fault_off_same_trace()
 {
     const struct rocketnet_dst_options_t options = dst_fault_options( 0 );
-    struct rocketnet_dst_result_t first, second;
-    check( rocketnet_dst_run_seed_with_options( 0xD57, &options, &first ) );
-    check( rocketnet_dst_run_seed_with_options( 0xD57, &options, &second ) );
-    check( first.passed && second.passed );
-    check( first.trace_hash == second.trace_hash );
+    struct rocketnet_dst_result_t result;
+    check( ROCKETNET_DST_CORE_TRACE_D57 != 0 );
+    check( rocketnet_dst_run_seed_with_options( 0xD57, &options, &result ) );
+    check( result.passed );
+    check( result.trace_hash == ROCKETNET_DST_CORE_TRACE_D57 );
 }
 REGISTER_UNIT_TEST( dst_fault_off_same_trace );
