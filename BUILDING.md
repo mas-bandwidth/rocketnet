@@ -84,6 +84,8 @@ loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
 takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`
 line continuation, so on Windows write each command on one line.
 
+`tools/windows/appverif_run.py` runs one Windows executable under the Application Verifier Basics layers (`Handles`, `Heaps`, `Locks`, `Memory`, `TLS`, `Threadpool`, `Leak`) with stop-to-log enabled, exports the verifier XML log with symbols from the executable directory, disables verification for the image on every exit path, and exits non-zero naming each stop (`py -3 tools\windows\appverif_run.py bin\Debug\test_iocp.exe`).
+
 The examples are an echo server and a client that connects to it with a
 development token. Run each in its own window:
 
