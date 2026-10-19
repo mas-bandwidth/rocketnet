@@ -92,3 +92,180 @@ static void public_link_simulator_production_refusal()
 }
 
 REGISTER_UNIT_TEST( public_link_simulator_production_refusal );
+
+#include "rocketnet_network_simulator.h"
+#include "rocketnet_address.h"
+#include "rocketnet_constants.h"
+
+struct public_link_wire_t
+{
+    struct rocketnet_network_simulator_t * simulator;
+    struct rocketnet_address_t from;
+    struct rocketnet_address_t to;
+    double time;
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+};
+
+static void public_link_wire_begin( struct public_link_wire_t * wire,
+                                    const struct rocketnet_client_transport_config_t * config,
+                                    uint64_t seed )
+{
+    memset( wire, 0, sizeof(*wire) );
+    wire->time = 1000.0;
+    wire->simulator = rocketnet_network_simulator_create( NULL, 256, seed );
+    check( wire->simulator != NULL );
+    check( rocketnet_address_parse( &wire->from, "198.51.100.1:10000" ) );
+    check( rocketnet_address_parse( &wire->to, "198.51.100.2:10000" ) );
+    rocketnet_network_simulator_config( wire->simulator,
+                                        config->simulated_latency_ms / 1000.0,
+                                        config->simulated_jitter_ms / 1000.0,
+                                        (float) config->simulated_loss_percent,
+                                        (float) config->simulated_duplicate_percent );
+}
+
+static void public_link_wire_end( struct public_link_wire_t * wire )
+{
+    rocketnet_network_simulator_destroy( wire->simulator );
+}
+
+static void public_link_wire_send( struct public_link_wire_t * wire, uint8_t value )
+{
+    rocketnet_network_simulator_send( wire->simulator, &wire->from, &wire->to, &value, 1, wire->time );
+}
+
+static int public_link_wire_receive( struct public_link_wire_t * wire )
+{
+    struct rocketnet_address_t from;
+    return rocketnet_network_simulator_receive( wire->simulator, &wire->to, wire->time, &from, wire->received );
+}
+
+static void public_link_simulator_drops_at_loss()
+{
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.simulated_loss_percent = 100;
+
+    struct public_link_wire_t wire;
+    public_link_wire_begin( &wire, &config, 7 );
+    for ( int i = 0; i < 32; i++ )
+        public_link_wire_send( &wire, (uint8_t) i );
+    check( public_link_wire_receive( &wire ) == 0 );
+    public_link_wire_end( &wire );
+
+    config.simulated_loss_percent = 0;
+    public_link_wire_begin( &wire, &config, 7 );
+    for ( int i = 0; i < 32; i++ )
+        public_link_wire_send( &wire, (uint8_t) i );
+    int delivered = 0;
+    while ( public_link_wire_receive( &wire ) > 0 )
+        delivered++;
+    check( delivered == 32 );
+    public_link_wire_end( &wire );
+}
+
+static void public_link_simulator_latency()
+{
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.simulated_latency_ms = 25;
+
+    struct public_link_wire_t wire;
+    public_link_wire_begin( &wire, &config, 11 );
+    public_link_wire_send( &wire, 1 );
+    check( public_link_wire_receive( &wire ) == 0 );
+    wire.time += 0.024;
+    check( public_link_wire_receive( &wire ) == 0 );
+    wire.time += 0.001;
+    check( public_link_wire_receive( &wire ) == 1 );
+    public_link_wire_end( &wire );
+}
+
+static void public_link_simulator_jitter()
+{
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.simulated_latency_ms = 10;
+    config.simulated_jitter_ms = 20;
+
+    struct public_link_wire_t wire;
+    public_link_wire_begin( &wire, &config, 13 );
+    for ( int i = 0; i < 64; i++ )
+        public_link_wire_send( &wire, (uint8_t) i );
+
+    int delivered = 0;
+    while ( wire.time < 1000.009 )
+    {
+        wire.time += 0.001;
+        while ( public_link_wire_receive( &wire ) > 0 )
+            delivered++;
+    }
+    check( delivered == 0 );
+    while ( wire.time < 1000.031 )
+    {
+        wire.time += 0.001;
+        while ( public_link_wire_receive( &wire ) > 0 )
+            delivered++;
+    }
+    check( delivered == 64 );
+    public_link_wire_end( &wire );
+}
+
+static void public_link_simulator_duplicate()
+{
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.simulated_duplicate_percent = 100;
+
+    struct public_link_wire_t wire;
+    public_link_wire_begin( &wire, &config, 17 );
+    for ( int i = 0; i < 16; i++ )
+        public_link_wire_send( &wire, (uint8_t) i );
+    int delivered = 0;
+    while ( public_link_wire_receive( &wire ) > 0 )
+        delivered++;
+    check( delivered == 32 );
+    public_link_wire_end( &wire );
+}
+
+static void public_link_simulator_same_seed_same_schedule()
+{
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.simulated_loss_percent = 15;
+    config.simulated_latency_ms = 5;
+    config.simulated_jitter_ms = 30;
+    config.simulated_duplicate_percent = 25;
+
+    struct public_link_wire_t a;
+    struct public_link_wire_t b;
+    public_link_wire_begin( &a, &config, 23 );
+    public_link_wire_begin( &b, &config, 23 );
+    for ( int i = 0; i < 64; i++ )
+    {
+        public_link_wire_send( &a, (uint8_t) i );
+        public_link_wire_send( &b, (uint8_t) i );
+    }
+
+    for ( int step = 0; step < 40; step++ )
+    {
+        a.time += 0.001;
+        b.time += 0.001;
+        for (;;)
+        {
+            const int a_bytes = public_link_wire_receive( &a );
+            const int b_bytes = public_link_wire_receive( &b );
+            check( a_bytes == b_bytes );
+            if ( a_bytes == 0 )
+                break;
+            check( memcmp( a.received, b.received, (size_t) a_bytes ) == 0 );
+        }
+    }
+    public_link_wire_end( &a );
+    public_link_wire_end( &b );
+}
+
+REGISTER_UNIT_TEST( public_link_simulator_drops_at_loss );
+REGISTER_UNIT_TEST( public_link_simulator_latency );
+REGISTER_UNIT_TEST( public_link_simulator_jitter );
+REGISTER_UNIT_TEST( public_link_simulator_duplicate );
+REGISTER_UNIT_TEST( public_link_simulator_same_seed_same_schedule );
