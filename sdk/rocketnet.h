@@ -700,10 +700,6 @@ struct rocketnet_client_config_t
     int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
-    int simulated_loss_percent;                     // ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: outgoing datagrams dropped, percent; 0 .. 100; default 0; development library only
-    int simulated_latency_ms;                       // ROCKETNET_CLIENT_SIMULATED_LATENCY_MS: outgoing datagram latency, milliseconds; 0 .. 60000; default 0; development library only
-    int simulated_jitter_ms;                        // ROCKETNET_CLIENT_SIMULATED_JITTER_MS: extra random latency, milliseconds; 0 .. 60000; default 0; development library only
-    int simulated_duplicate_percent;                // ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT: outgoing datagrams duplicated, percent; 0 .. 100; default 0; development library only
 };
 
 // The server is configured explicitly: rocketnet_server_default_config gives
@@ -751,10 +747,6 @@ struct rocketnet_server_config_t
     int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
-    int simulated_loss_percent;                     // ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: outgoing datagrams dropped, percent; 0 .. 100; default 0; development library only
-    int simulated_latency_ms;                       // ROCKETNET_SERVER_SIMULATED_LATENCY_MS: outgoing datagram latency, milliseconds; 0 .. 60000; default 0; development library only
-    int simulated_jitter_ms;                        // ROCKETNET_SERVER_SIMULATED_JITTER_MS: extra random latency, milliseconds; 0 .. 60000; default 0; development library only
-    int simulated_duplicate_percent;                // ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT: outgoing datagrams duplicated, percent; 0 .. 100; default 0; development library only
 };
 
 // -----------------------------------------

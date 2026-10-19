@@ -134,10 +134,6 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     transport->num_reassembly_slots = config->num_reassembly_slots;
     if ( !rn_copy_config_string( transport->driver, sizeof( transport->driver ), config->transport, "auto", "client", "transport" ) )
         return false;
-    transport->simulated_loss_percent = config->simulated_loss_percent;
-    transport->simulated_latency_ms = config->simulated_latency_ms;
-    transport->simulated_jitter_ms = config->simulated_jitter_ms;
-    transport->simulated_duplicate_percent = config->simulated_duplicate_percent;
     transport->state_change_callback = config->state_change_callback;
     transport->time_callback = config->time_callback;
 
@@ -178,10 +174,6 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->num_reassembly_slots = config->num_reassembly_slots;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
-    transport->simulated_loss_percent = config->simulated_loss_percent;
-    transport->simulated_latency_ms = config->simulated_latency_ms;
-    transport->simulated_jitter_ms = config->simulated_jitter_ms;
-    transport->simulated_duplicate_percent = config->simulated_duplicate_percent;
     if ( !rn_copy_config_string( transport->driver, sizeof( transport->driver ), config->transport, "auto", "server", "transport" ) )
         return false;
     if ( !rn_copy_config_string( transport->public_address, sizeof( transport->public_address ), config->public_address, "", "server", "public_address" ) )

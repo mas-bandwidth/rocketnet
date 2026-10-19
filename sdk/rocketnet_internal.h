@@ -348,11 +348,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
-    INT_FIELD(    simulated_loss_percent, 0,                             0, 100,                                               0 )                          \
-    INT_FIELD(    simulated_latency_ms,  0,                              0, 60000,                                             0 )                          \
-    INT_FIELD(    simulated_jitter_ms,   0,                              0, 60000,                                             0 )                          \
-    INT_FIELD(    simulated_duplicate_percent, 0,                        0, 100,                                               0 )
+    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )
 
 #define ROCKETNET_CONFIG_STRUCT_INT( name, def, min, max, flags )       int name;
 #define ROCKETNET_CONFIG_STRUCT_UINT64( name, def, flags )              uint64_t name;
@@ -406,14 +402,10 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
     STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
     INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )                          \
-    INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )                          \
-    INT_FIELD(    simulated_loss_percent, 0,                             0, 100,                                               0 )                          \
-    INT_FIELD(    simulated_latency_ms,  0,                              0, 60000,                                             0 )                          \
-    INT_FIELD(    simulated_jitter_ms,   0,                              0, 60000,                                             0 )                          \
-    INT_FIELD(    simulated_duplicate_percent, 0,                        0, 100,                                               0 )
+    INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )
 
 /** @brief Size in bytes of server transport config revision 1. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( uint64_t ) )
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Current known server transport config size, in bytes. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1
 

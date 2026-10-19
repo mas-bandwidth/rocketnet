@@ -248,10 +248,6 @@ struct rocketnet_client_transport_config_t
     int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
-    int simulated_loss_percent;                     // outgoing datagrams dropped, percent; 0 .. 100; default 0; development library only
-    int simulated_latency_ms;                       // outgoing datagram latency, milliseconds; 0 .. 60000; default 0; development library only
-    int simulated_jitter_ms;                        // extra random latency, milliseconds; 0 .. 60000; default 0; development library only
-    int simulated_duplicate_percent;                // outgoing datagrams duplicated, percent; 0 .. 100; default 0; development library only
     void (*state_change_callback)( void * context, int previous_state, int current_state );
     double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
 };
@@ -592,10 +588,6 @@ struct rocketnet_server_transport_config_t
     char public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     int max_timeout_seconds;                        // 1 .. 3600; default 60
     int handshake_deadline_seconds;                 // 1 .. 60; default 5
-    int simulated_loss_percent;                     // outgoing datagrams dropped, percent; 0 .. 100; default 0; development library only
-    int simulated_latency_ms;                       // outgoing datagram latency, milliseconds; 0 .. 60000; default 0; development library only
-    int simulated_jitter_ms;                        // extra random latency, milliseconds; 0 .. 60000; default 0; development library only
-    int simulated_duplicate_percent;                // outgoing datagrams duplicated, percent; 0 .. 100; default 0; development library only
 };
 
 // a NULL config is a counted no-op.

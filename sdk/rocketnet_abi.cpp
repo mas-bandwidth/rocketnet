@@ -21,7 +21,6 @@ static const abi_field_t client_config_fields[] =
     FIELD(send_buffer_bytes) FIELD(send_queue_messages) FIELD(packets_in_flight) FIELD(max_packets_per_update)
     FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(rto_initial_ms)
     FIELD(rto_min_ms) FIELD(rto_max_ms) FIELD(reliable_timeout_ms)
-    FIELD(simulated_loss_percent) FIELD(simulated_latency_ms) FIELD(simulated_jitter_ms) FIELD(simulated_duplicate_percent)
 };
 #undef ABI_TYPE
 
@@ -36,7 +35,6 @@ static const abi_field_t server_config_fields[] =
     FIELD(send_buffer_bytes) FIELD(send_queue_messages) FIELD(packets_in_flight) FIELD(max_packets_per_update)
     FIELD(unreliable_deliveries) FIELD(sequenced_holds) FIELD(receipt_ring) FIELD(rto_initial_ms)
     FIELD(rto_min_ms) FIELD(rto_max_ms) FIELD(reliable_timeout_ms)
-    FIELD(simulated_loss_percent) FIELD(simulated_latency_ms) FIELD(simulated_jitter_ms) FIELD(simulated_duplicate_percent)
 };
 #undef ABI_TYPE
 
