@@ -2185,9 +2185,9 @@ last three are the long path's resend counts.
 ```vector m9.budget-trace
 clock: 1000.0
 rate: the client default
-trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, written whole and committed
+trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, promoted to reliable sequenced and its first packet written
 00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
-01 01 01 01
+00 01 01 01
 ```
 
 The first fourteen bytes are the decision for each offer in order: SEND,
@@ -2196,9 +2196,10 @@ the reliable item, the seven unreliable items that fit, the unreliable item
 that is dropped, the reliable item that waits, the unreliable item behind it
 that is dropped, the refill's reliable item, the setter and the new-rate
 reliable item. The last six bytes are, in order, the setter to 0 returning
-success, a packet request of more than zero, the item written larger than one
-maximum packet, the queue drained, no bytes charged to the budget and no
-unreliable item dropped.
+success, a packet request of more than zero, the first packet written larger
+than one maximum packet (0: the promoted item is a reliable block, sent one
+maximum packet at a time), the unreliable queue empty, no bytes charged to the
+budget and no unreliable item dropped.
 
 <a id="m10"></a>
 ## m10. Channels and priorities
