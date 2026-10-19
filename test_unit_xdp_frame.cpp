@@ -242,6 +242,132 @@ static void parse_refuses_extension_headers()
     rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, sizeof(frame), &from, &payload, &payload_bytes ) );
 }
 
+// the reply-MAC rule (rocketnet_xdp_reply_mac): learned peer, gateway
+// otherwise, the newest MAC when a peer's source MAC changes, and a refusal
+// counted when there is neither. No socket: the table is driven directly.
+
+static struct rocketnet_xdp_reply_macs_t reply_macs_under_test;
+
+static void xdp_reply_mac_follows_the_peer()
+{
+    static const uint8_t peer_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0a };
+    static const uint8_t peer_new_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0b };
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
+
+    struct rocketnet_xdp_reply_macs_t * table = &reply_macs_under_test;
+    rocketnet_address_t peer, stranger, peer6;
+    rocketnet_unit_check( rocketnet_address_parse( &peer, "192.168.1.20:40001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &stranger, "192.168.1.21:40001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &peer6, "[2001:db8::20]:40001" ) );
+    uint64_t refused = 0;
+
+    // with a gateway: an unlearned address goes to the gateway
+    rocketnet_xdp_reply_macs_reset( table, gateway_mac );
+    const uint8_t * mac = rocketnet_xdp_reply_mac( table, &peer, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
+
+    // an answered packet from the peer teaches its MAC: replies follow it,
+    // and only for that address
+    rocketnet_xdp_reply_macs_learn( table, &peer, peer_mac );
+    mac = rocketnet_xdp_reply_mac( table, &peer, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, peer_mac, 6 ) == 0 );
+    mac = rocketnet_xdp_reply_mac( table, &stranger, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
+
+    // the same IP on another port is another peer
+    rocketnet_address_t other_port = peer;
+    other_port.port = 40002;
+    mac = rocketnet_xdp_reply_mac( table, &other_port, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
+
+    // the peer's source MAC changes: the newest one wins
+    rocketnet_xdp_reply_macs_learn( table, &peer, peer_new_mac );
+    mac = rocketnet_xdp_reply_mac( table, &peer, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, peer_new_mac, 6 ) == 0 );
+
+    // a multicast or zero source MAC is never learned
+    rocketnet_xdp_reply_macs_learn( table, &stranger, zero_mac );
+    static const uint8_t multicast_mac[6] = { 0x01, 0x00, 0x5e, 0x00, 0x00, 0x01 };
+    rocketnet_xdp_reply_macs_learn( table, &stranger, multicast_mac );
+    mac = rocketnet_xdp_reply_mac( table, &stranger, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
+
+    // IPv6 peers are learned the same way
+    rocketnet_xdp_reply_macs_learn( table, &peer6, peer_mac );
+    mac = rocketnet_xdp_reply_mac( table, &peer6, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, peer_mac, 6 ) == 0 );
+
+    // with a gateway, an unauthenticated frame's MAC never wins over it
+    {
+        static const uint8_t spoofer_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0d };
+        mac = rocketnet_xdp_reply_mac( table, &stranger, spoofer_mac, &refused );
+        rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
+    }
+
+    // a forgotten peer falls back to the gateway
+    rocketnet_xdp_reply_macs_forget( table, &peer );
+    mac = rocketnet_xdp_reply_mac( table, &peer, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
+    rocketnet_unit_check( refused == 0 );
+
+    // no gateway: learned peers still get their MAC; an unlearned address is
+    // refused and counted, never given a zero MAC
+    rocketnet_xdp_reply_macs_reset( table, NULL );
+    mac = rocketnet_xdp_reply_mac( table, &peer, NULL, &refused );
+    rocketnet_unit_check( mac == NULL );
+    rocketnet_unit_check( refused == 1 );
+    rocketnet_xdp_reply_macs_learn( table, &peer, peer_mac );
+    mac = rocketnet_xdp_reply_mac( table, &peer, NULL, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, peer_mac, 6 ) == 0 );
+    mac = rocketnet_xdp_reply_mac( table, &stranger, NULL, &refused );
+    rocketnet_unit_check( mac == NULL );
+    rocketnet_unit_check( refused == 2 );
+
+    // with no gateway, a direct response to an unlearned address goes to the
+    // source MAC of the frame it answers (how a connect handshake on link
+    // gets its first replies), never to a zero or multicast one; a learned
+    // peer keeps its learned MAC whatever an unauthenticated frame from its
+    // address carries
+    static const uint8_t stranger_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0c };
+    mac = rocketnet_xdp_reply_mac( table, &stranger, stranger_mac, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, stranger_mac, 6 ) == 0 );
+    mac = rocketnet_xdp_reply_mac( table, &stranger, zero_mac, &refused );
+    rocketnet_unit_check( mac == NULL );
+    mac = rocketnet_xdp_reply_mac( table, &stranger, multicast_mac, &refused );
+    rocketnet_unit_check( mac == NULL );
+    rocketnet_unit_check( refused == 4 );
+    mac = rocketnet_xdp_reply_mac( table, &peer, stranger_mac, &refused );
+    rocketnet_unit_check( mac && memcmp( mac, peer_mac, 6 ) == 0 );
+
+    // the table is fixed-size: far more peers than entries all resolve to a
+    // MAC learned for them or to the refusal, and the newest peer is held
+    rocketnet_address_t many = peer;
+    uint8_t many_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00 };
+    for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_ENTRIES * 2; ++i )
+    {
+        many.port = (uint16_t) ( 1000 + i );
+        many_mac[4] = (uint8_t) ( i >> 8 );
+        many_mac[5] = (uint8_t) i;
+        rocketnet_xdp_reply_macs_learn( table, &many, many_mac );
+        mac = rocketnet_xdp_reply_mac( table, &many, NULL, &refused );
+        rocketnet_unit_check( mac && memcmp( mac, many_mac, 6 ) == 0 );
+    }
+    rocketnet_unit_check( refused == 4 );
+
+    // the frame built for a learned peer carries its MAC as the destination
+    rocketnet_xdp_reply_macs_reset( table, gateway_mac );
+    rocketnet_xdp_reply_macs_learn( table, &peer, peer_mac );
+    rocketnet_address_t src;
+    rocketnet_unit_check( rocketnet_address_parse( &src, "192.168.1.10:40000" ) );
+    uint8_t frame[128];
+    memset( frame, 0, sizeof(frame) );
+    memcpy( frame + 42, golden_payload, sizeof(golden_payload) );
+    mac = rocketnet_xdp_reply_mac( table, &peer, NULL, &refused );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, mac, &src, &peer, (int) sizeof(golden_payload) ) == 46 );
+    rocketnet_unit_check( memcmp( frame, peer_mac, 6 ) == 0 );
+    rocketnet_unit_check( memcmp( frame + 6, server_mac, 6 ) == 0 );
+}
+
 REGISTER_UNIT_TEST( ipv4_frame_matches_golden );
 REGISTER_UNIT_TEST( ipv6_frame_matches_golden );
 REGISTER_UNIT_TEST( ipv6_udp_checksum_verifies );
@@ -250,3 +376,4 @@ REGISTER_UNIT_TEST( ipv6_max_payload_is_1452_and_fits_1514 );
 REGISTER_UNIT_TEST( ipv6_payload_over_budget_is_refused );
 REGISTER_UNIT_TEST( parse_round_trips_both_families );
 REGISTER_UNIT_TEST( parse_refuses_extension_headers );
+REGISTER_UNIT_TEST( xdp_reply_mac_follows_the_peer );
