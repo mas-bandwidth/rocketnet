@@ -115,7 +115,7 @@ class RenderTest( unittest.TestCase ):
 
     def test_evidence_per_cell( self ):
         ok = '(:feature "f" :cells (n n y y n n n n) :evidence ((gso "t1") (io_uring "t2")))'
-        self.assertEqual( cells_of( table( page( [ area( "transports", [ ok ] ) ] ) )[0] ), [ "❌", "❌", "✅", "✅", "❌", "❌", "❌", "❌" ] )
+        self.assertEqual( cells_of( table( page( [ area( "transports", [ ok ] ) ] ) )[1] ), [ "❌", "❌", "✅", "✅", "❌", "❌", "❌", "❌" ] )
         missing = '(:feature "f" :cells (n n y y n n n n) :evidence ((gso "t1")))'
         self.assertIn( "io_uring", self.refusal( page( [ area( "transports", [ missing ] ) ] ) ) )
         foreign = '(:feature "f" :cells (y n n) :evidence ((Linux "t") (gso "t")))'
