@@ -306,6 +306,7 @@ static const char * const counters_appended_names[] =
     "MESSAGE_PROMOTED_UNRELIABLE",
     "MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED",
     "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
+    "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

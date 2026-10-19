@@ -22,6 +22,44 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+
+// The loopback pair names the in-memory loopback driver in its transport configs;
+// a caller's ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin wins over
+// the struct by design, so a CI leg pinned to a real driver would replace it. Each
+// create sets its pin aside and puts it back, as test_unit_status_server_transport_create_ex.cpp does.
+struct reset_env_pin_t
+{
+    const char * name;
+    bool was_set;
+    char value[256];
+};
+
+static void reset_env_pin_set_aside( reset_env_pin_t * pin, const char * name )
+{
+    const char * value = getenv( name );
+    pin->name = name;
+    pin->was_set = value != NULL;
+    pin->value[0] = '\0';
+    if ( value )
+        snprintf( pin->value, sizeof(pin->value), "%s", value );
+#if defined(_WIN32)
+    _putenv_s( name, "" );
+#else
+    unsetenv( name );
+#endif
+}
+
+static void reset_env_pin_put_back( const reset_env_pin_t * pin )
+{
+    if ( !pin->was_set )
+        return;
+#if defined(_WIN32)
+    _putenv_s( pin->name, pin->value );
+#else
+    setenv( pin->name, pin->value, 1 );
+#endif
+}
 
 #define check rocketnet_unit_check
 
@@ -300,7 +338,10 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
     memcpy( config.server_secret_key, keys->server_secret, sizeof(config.server_secret_key) );
     snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
     int status = -1;
+    reset_env_pin_t pin;
+    reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, now, &status );
+    reset_env_pin_put_back( &pin );
     check( transport && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
     rn_message_link_t link;
@@ -327,8 +368,11 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
     rocketnet_client_transport_default_config( &config );
     snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
     config.step_driven = 1;
+    reset_env_pin_t pin;
+    reset_env_pin_set_aside( &pin, "ROCKETNET_CLIENT_TRANSPORT" );
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
         NULL, token, &config, 0.0, 1000, rocketnet_loopback_driver.client, NULL );
+    reset_env_pin_put_back( &pin );
     check( transport );
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
