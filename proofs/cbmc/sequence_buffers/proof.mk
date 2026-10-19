@@ -16,7 +16,8 @@ SEQUENCE_BUFFERS_FLAGS = --std c++17 --overflow-check --ub-shift-check \
 SEQUENCE_BUFFERS_TIMEOUT = 1800
 SEQUENCE_BUFFERS_MEMLIMIT = 12g
 
-# harness:unwind:extra flags (comma for space). Z3 is the default solver;
+# harness:unwind:solver and extra flags (comma for space); every entry names
+# its solver. Z3 is the default solver;
 # Bitwuzla is named where Z3 does not finish (results.md). Every harness in
 # SEQUENCE_BUFFERS_HARNESSES proves its claim, so the nightly target is green
 # when the sdk is. The two loops are proved by their step harnesses plus the
@@ -51,6 +52,7 @@ define sequence_buffers_recipe
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
 	printf '#include "%s"\n' "$(SEQUENCE_BUFFERS_SOURCE)" > "$$work/proof.cpp"; \
 	failed=0; \
+	[ -n "$(strip $(SEQUENCE_BUFFERS_LIST))" ] || { echo "$@: no harnesses listed" >&2; exit 1; }; \
 	for entry in $(SEQUENCE_BUFFERS_LIST); do \
 	    harness=$${entry%%:*}; rest=$${entry#*:}; \
 	    unwind=$${rest%%:*}; extra=$$(echo "$${rest#*:}" | tr ',' ' '); \
@@ -62,14 +64,15 @@ define sequence_buffers_recipe
 	    seconds=$$(( $$(date +%s) - start )); \
 	    if [ $$status -eq 124 ]; then \
 	        verdict="timed out after $(SEQUENCE_BUFFERS_TIMEOUT) s"; \
-	    elif grep -q "^VERIFICATION SUCCESSFUL" "$$output"; then \
-	        verdict="VERIFICATION SUCCESSFUL"; \
 	    elif grep -Eq "^ *FAILED .*unwinding assertion" "$$output"; then \
 	        verdict="unwinding assertion failed"; \
 	    elif grep -q "^VERIFICATION FAILED" "$$output"; then \
 	        verdict="VERIFICATION FAILED"; \
 	    elif grep -q "Out of memory" "$$output"; then \
 	        verdict="out of memory at $(SEQUENCE_BUFFERS_MEMLIMIT)"; \
+	    elif [ $$status -eq 0 ] && grep -q "^VERIFICATION SUCCESSFUL" "$$output" && \
+	         ! grep -Eq "^ *FAILED|not checked" "$$output"; then \
+	        verdict="VERIFICATION SUCCESSFUL"; \
 	    else \
 	        verdict="FAILED (exit $$status)"; \
 	    fi; \

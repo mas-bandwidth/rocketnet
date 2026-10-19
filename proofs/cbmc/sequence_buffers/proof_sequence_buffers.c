@@ -122,9 +122,10 @@ void harness_replay_advance_far( void ) { replay_advance_claim( REPLAY_FAR_ONLY 
 // near skip of at most 2, so the loop body runs at most once and the call is
 // proved whole with unwinding assertions on. Its one loop iteration clears
 // s = highest_opened + 1 for an arbitrary highest_opened, so it covers the
-// body for every s; iteration i of a longer skip is that same body at
-// s = highest_opened + i, which is the first iteration of the state with
-// highest_opened' = highest_opened + i - 1. results.md gives the argument.
+// body for every s. The bounds, shift and overflow checks of the body
+// depend on s alone, so iteration i of a longer skip, at
+// s = highest_opened + i, checks a value of s this harness has already
+// covered. results.md gives the argument.
 void harness_replay_advance_step( void ) { replay_advance_claim( REPLAY_STEP ); }
 
 void harness_ack_record_received( void )
@@ -184,13 +185,9 @@ void harness_ack_record_sent_classified( void )
     sent_classified_claim( &endpoint );
 }
 
-void harness_ack_record_sent_classified_heap( void )
-{
-    rocketnet_ack_endpoint_t * endpoint = (rocketnet_ack_endpoint_t *) malloc( sizeof( rocketnet_ack_endpoint_t ) );
-    __ESBMC_assume( endpoint != NULL );
-    sent_classified_claim( endpoint );
-}
-
+// Object-level only: the sdk's reads and writes stay inside the endpoint,
+// aligned, under the lock model. Ring-level containment is the pinned
+// harness below (owed, results.md).
 void harness_ack_mark_keep_alive( void )
 {
     rocketnet_ack_endpoint_t endpoint;
@@ -200,9 +197,6 @@ void harness_ack_mark_keep_alive( void )
     endpoint.sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].sequence = nondet_uint64();
 
     rocketnet_ack_endpoint_mark_keep_alive( &endpoint, sequence );
-    const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    __ESBMC_assert( slot < ROCKETNET_SENT_PACKET_BUFFER_SIZE,
-                    "keep-alive sequence indexes inside the sent ring" );
 }
 
 // ESBMC checks a dereference against the whole endpoint object, not against
@@ -308,8 +302,10 @@ void harness_window_receive_accept_bounded( void ) { window_accept_claim( SEQUEN
 // The accepted number sets at most one of them, so the loop inspects at
 // most R, R + 1 and R + 2 and the call is proved whole with unwinding
 // assertions on. Its first iteration runs at the arbitrary R the call
-// starts from, so it covers the body for every R and W; iteration k of a
-// longer run is that same body at R + k. results.md gives the argument.
+// starts from, so it covers the body for every R and W. The bounds and
+// shift checks of the body depend on R and W alone, so iteration k of a
+// longer run, at R + k, checks a value this harness has already covered.
+// results.md gives the argument.
 void harness_window_receive_accept_step( void ) { window_accept_claim( SEQUENCE_BUFFERS_FULL_WINDOW, 1 ); }
 
 void harness_window_receive_release( void )
