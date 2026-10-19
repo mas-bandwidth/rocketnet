@@ -139,6 +139,12 @@ struct rn_message_object_t
     double clock_origin;                        // the game's time the transport's 0.0 stands for
     int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1
+
+    // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
+    // the pending start is written in this transport frame
+    int in_place;                               // 1 while the pending start holds a frame
+    struct rocketnet_packet_context_t in_place_context;
+    uint8_t * in_place_payload;                 // the frame's payload root
     void * block;
     int owns_block;
 };

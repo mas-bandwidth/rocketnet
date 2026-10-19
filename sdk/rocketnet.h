@@ -2216,8 +2216,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_c
 // send_packets).
 //
 // Sending mirrors the transport's start_packet and finish_packet: start
-// returns a pointer into the connection's region; write the message there
-// once, in place; finish(bytes_written) queues it and returns its receipt
+// returns a pointer into the connection's region, or, for an unreliable
+// message whose declared bytes fit one packet with every header, into the
+// transport packet buffer itself (docs/OUTGOING-BUILD.md); write the message
+// there once, in place; finish(bytes_written) queues it, or finishes that
+// packet, and returns its receipt
 // serial, nonzero (CHANNELS 7.4); abort gives the room back. One start is
 // pending per object at a time. The enabled types are ROCKETNET_UNRELIABLE,
 // ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE, ROCKETNET_RELIABLE_ORDERED,
@@ -2319,9 +2322,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_client_update( struct rocketnet_mess
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_send_packets( struct rocketnet_message_client_t * client );
 
 // a NULL client is a counted no-op that returns NULL.
+// a fitting unreliable message is written in place in the packet buffer: no copy between the message layer and the transport.
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * client, int channel, int reliability, int bytes );
 
 // the receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. a NULL client is a counted no-op that returns 0.
+// for a message written in place, finish completes and stages that packet buffer, with no copy.
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_client_finish( struct rocketnet_message_client_t * client, int bytes_written );
 
 // a NULL client is a counted no-op.
@@ -2396,9 +2401,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_server_update( struct rocketnet_mess
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server );
 
 // a NULL server is a counted no-op that returns NULL.
+// a fitting unreliable message is written in place in the packet buffer: no copy between the message layer and the transport.
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_message_server_start( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, int bytes );
 
 // a NULL server is a counted no-op that returns 0.
+// for a message written in place, finish completes and stages that packet buffer, with no copy.
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_finish( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
 
 // a NULL server is a counted no-op.

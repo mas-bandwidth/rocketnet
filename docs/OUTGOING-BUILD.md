@@ -85,14 +85,19 @@ and stages the packet; `send_packets` flushes it with everything else.
   so an in-place start still pending at update or send_packets is aborted
   there and counted as `MESSAGE_SEND_REFUSED` (an API misuse); its later
   finish returns 0.
-- **The send budget.** An in-place message is admitted at the unreliable
-  class when its finish seals it, against the bucket as the last write pass
-  left it; while a reliable item of that pass waits, or when the bytes are
-  not there, the message is dropped at finish and counted
-  `MESSAGE_UNRELIABLE_OVER_BUDGET` (a receipt-bearing one also takes its
-  LOSS). finish still returns its serial: the send was accepted and the drop
-  is the budget's, as on the queued path. The settle refunds the difference
-  between the admitted maximum and the sealed size.
+- **The send budget.** start takes the in-place path only when the bucket,
+  refilled to the update's time, can pay the declared maximum now, no
+  reliable item of the last pass waits, and, while the reliable path has
+  work due, one maximum packet stays in the bucket for it, so the class
+  order (reliable before unreliable) holds. A message the bucket cannot pay
+  now takes the queued path (counted as a fallback), and the write pass in
+  send_packets sends it or drops it and counts it
+  `MESSAGE_UNRELIABLE_OVER_BUDGET`, by the rule it always had: the drop
+  happens in send_packets. finish admits the packet at the unreliable class;
+  should the bucket have moved between start and finish it drops the message
+  there, counted the same (a receipt-bearing one takes its LOSS), and still
+  returns its serial. The settle refunds the difference between the admitted
+  maximum and the sealed size.
 - **The per-update packet cap.** `max_packets_per_update` caps the write
   pass in send_packets. In-place packets are not written by the pass, so it
   does not count them; the send budget is what bounds them.
@@ -162,6 +167,7 @@ several threads.
 - An in-place packet can leave before reliable records queued earlier in the
   same update (above, ordering against reliable messages).
 - A message that does not take the in-place path, because the transport
-  gave no frame (a client not yet connected, a full send ring), or because
-  unreliable messages already wait in the queue, takes the queued path as
-  today and is counted `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`.
+  gave no frame (a client not yet connected, a full send ring), because
+  unreliable messages already wait in the queue, or because the budget
+  cannot pay it now, takes the queued path as today and is counted
+  `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`.

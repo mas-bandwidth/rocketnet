@@ -107,6 +107,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnxdpreplay` | 3 | Kernel replay high-water map control and two invariant witnesses |
 | `rnriodriver` | 3 | Windows RIO server driver design: control with two liveness properties and two invariant witnesses |
 | `rnlivefleetrun` | 3 | Live fleet run lifecycle (docs/LIVE-XDP.md): control with one liveness property and two invariant witnesses |
+| `rnoutgoingbuild` | 2 | The outgoing build (docs/OUTGOING-BUILD.md): control and the reversed copy-step witness (`NoCopy`) |
 
 The 47-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh

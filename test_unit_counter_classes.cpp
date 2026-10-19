@@ -300,6 +300,7 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_REPLAYED",
     "CLIENT_CHALLENGE_WRONG_SIZE",
     "CLIENT_DENIED_WRONG_SIZE",
+    "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

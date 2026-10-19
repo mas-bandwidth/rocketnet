@@ -76,6 +76,15 @@ struct rn_endpoint_t
     uint32_t pending_descriptor;                // UNRELIABLE: its send descriptor
     uint32_t pending_bytes;
 
+    // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
+    // a fitting unreliable message written in the transport frame start took
+    int pending_in_place;                       // 1 while the pending start is written in place
+    int pending_channel;                        // its channel
+    int pending_header;                         // its header bytes in front of the data (0: the SINGLE form)
+    uint32_t in_place_serial;                   // the finished in-place packet: its serial
+    int in_place_receipt;                       // 1 when it carries a receipt (UNRELIABLE_WITH_ACK_RECEIPT)
+    int in_place_admitted;                      // the wire bytes admitted to the budget (0: uncapped)
+
     // the queued UNRELIABLE sends: send descriptors linked through their `next`
     uint32_t unreliable_head, unreliable_tail;
     uint32_t unreliable_count;
@@ -132,6 +141,50 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial );
 void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
+
+// The in-place send of a fitting unreliable message (docs/OUTGOING-BUILD.md,
+// tla/RNOutgoingBuild.tla StartInPlace and FinishInPlace): the owner starts a
+// transport frame and the message is written in it, with no copy between the
+// message layer and the transport. in_place_header answers the header bytes
+// in front of the data (0 for UNRELIABLE, the SINGLE form; 3 for the receipt
+// twin's code-0 record; 10 or 11 for a code-1 record) when the message takes
+// this path, RN_ENDPOINT_IN_PLACE_QUEUED when it fits but unreliable messages
+// wait in the queue ahead of it (it queues behind them, so no mode is
+// reordered), and RN_ENDPOINT_IN_PLACE_NO otherwise (the region path decides
+// and refuses). It changes nothing and counts nothing. The frame the owner
+// asks for holds header + bytes + 1 payload bytes (the declared maximum, the
+// header and the form byte).
+#define RN_ENDPOINT_IN_PLACE_NO             -1
+#define RN_ENDPOINT_IN_PLACE_QUEUED         -2
+
+int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
+
+// Whether the send budget can pay an in-place packet of payload_bytes now
+// (R6, RNSendBudget Fits at the unreliable class): the bucket refilled to now,
+// no reliable item of the last write pass waiting, and, while the reliable path
+// has work due, one maximum packet left over for it. A message the bucket
+// cannot pay now takes the queued path, where the write pass sends it or drops
+// it and counts it (MESSAGE_UNRELIABLE_OVER_BUDGET) by the rule it always had.
+bool rn_endpoint_in_place_affordable( struct rn_endpoint_t * endpoint, int payload_bytes, double now );
+
+// The start is pending in place: the owner holds the frame and the game
+// writes at payload root + header.
+void rn_endpoint_in_place_begin( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int header );
+
+// The finish of an in-place start: the header and the form byte are written
+// around the bytes in place at payload (the frame's payload root), the
+// sequencing index and the serial are taken, and the send budget admits the
+// packet. Returns the serial, or 0 when bytes is outside 1 to the bytes
+// started (the start stays pending). *payload_bytes is the payload length to
+// finish the frame with, or 0 when the budget dropped the message (counted
+// MESSAGE_UNRELIABLE_OVER_BUDGET; a receipt takes its LOSS): the owner then
+// aborts the frame.
+uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t * payload, int bytes, double now, int * payload_bytes );
+
+// The finished in-place frame left (finish_packet returned wire_bytes), or
+// did not (counted MESSAGE_UNRELIABLE_SEND_FAILED; a receipt takes its LOSS).
+void rn_endpoint_in_place_sent( struct rn_endpoint_t * endpoint, uint64_t packet_id, int wire_bytes, double now );
+void rn_endpoint_in_place_failed( struct rn_endpoint_t * endpoint );
 
 // The transport acked packet_id (R1: the only ack).
 void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, double now );

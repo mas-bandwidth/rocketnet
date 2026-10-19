@@ -2117,6 +2117,18 @@ unreliable means.
 RECORDS is the aggregation form: small unreliable messages, reliable records,
 resends and the CONFIG record share one payload, back to back.
 
+**A fitting unreliable message is written in place in the packet buffer, with
+no copy between the message layer and the transport.** A message is fitting
+when it is UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT and
+its payload, every header and the form byte included, is at most one wire
+frame: it travels as a payload of its own, UNRELIABLE in the SINGLE form and
+the other two as one record of a RECORDS payload, and the sender writes the
+header and the form byte around the application's bytes in the frame the
+transport sealed (docs/OUTGOING-BUILD.md). A sender MAY instead copy a fitting
+message into a shared payload when the transport has no frame for it, or when
+unreliable messages are already queued ahead of it; it MUST count that
+(`MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`). A receiver reads both alike.
+
 ### Record
 
 ```

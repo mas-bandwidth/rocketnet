@@ -575,7 +575,16 @@
     /* gate and before any AEAD open (STANDARD.md, Reading packets). */ \
     /* appended: indices are the contract. */ \
     X( CLIENT_CHALLENGE_WRONG_SIZE, REFUSAL, CLIENT_CHALLENGE_RECEIVED ) \
-    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED )
+    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED ) \
+    \
+    /* A fitting unreliable message (docs/OUTGOING-BUILD.md) that was not */ \
+    /* written in place in a packet buffer and took the queued path, with */ \
+    /* its one copy into the frame at send_packets: the transport gave no */ \
+    /* frame (a client not yet connected, a full send ring), or unreliable */ \
+    /* messages already waited in the connection's queue. EXPECTED: a */ \
+    /* client's sends before CONNECTED take it. Counted on the owner's */ \
+    /* counters, once per message. appended: indices are the contract. */ \
+    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE )
 
 enum
 {

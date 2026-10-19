@@ -18,8 +18,13 @@
 // and the arena of regions. The only allocator calls in this file are that
 // one allocation, in create, and destroy's matching free.
 //
-// Copies (R3): the payload is written once by the application, in place, into
-// its region record (start, finish). THE COPIES (a): each packet write copies
+// Copies (R3): a fitting unreliable message is written in place in the packet
+// buffer, with no copy between the message layer and the transport: start
+// takes the transport frame and hands out a pointer inside it, finish writes
+// the header and form byte around it and finishes that frame
+// (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla). Every other message is
+// written once by the application, in place, into its region record (start,
+// finish). THE COPIES (a): each packet write copies
 // the record into the transport frame start_packet returned
 // (rocketnet_message_writer_add, inside rn_ordered_write and
 // rn_packet_builder_write), because a reliable record must outlive the frame
@@ -324,8 +329,29 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
     rn_message_connection_t * connection = &object->connections[index];
     if ( object->pending_connection != index )
         return;
+    if ( object->in_place )
+    {
+        // RNOutgoingBuild Abort: the frame goes back to the transport
+        object->link.abort_packet( object->link.transport, &object->in_place_context );
+        object->in_place = 0;
+        object->in_place_payload = NULL;
+    }
     rn_endpoint_abort( connection );
     object->pending_connection = -1;
+}
+
+// The transport forbids an update or a flush while a fill is open (sdk/rocketnet.h,
+// the threading contract), so an in-place start still pending there is aborted:
+// the caller's error, counted, and its later finish returns 0.
+
+static void rn_message_object_close_in_place( rn_message_object_t * object )
+{
+    if ( !object->in_place )
+        return;
+    rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    rocketnet_api_misuse_record();
+    rocketnet_error( "message start pending at update or send_packets: the in-place send is aborted" );
+    rn_message_connection_cancel_pending( object, object->pending_connection );
 }
 
 void rn_message_object_kick( struct rn_message_object_t * object, int index, int reason )
@@ -396,6 +422,8 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rocketnet_assert( held == 0 && "every received message is released before the next update" );
         result = ROCKETNET_ERROR_MESSAGE_NOT_RELEASED;
     }
+
+    rn_message_object_close_in_place( object );
 
     if ( time != time || time < object->time )
         time = object->time;
@@ -551,6 +579,42 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     const int transport_max = unreliable && object->link.max_payload_bytes ?
         object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PAYLOAD_BYTES;
 
+    // RNOutgoingBuild StartInPlace: a fitting unreliable message takes a
+    // transport frame and is written in it, its header's room in front and
+    // the form byte's after; header + bytes + 1, the declared maximum,
+    // decides the frame
+    if ( unreliable && object->link.start_packet )
+    {
+        int header = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max );
+        if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
+            header = RN_ENDPOINT_IN_PLACE_QUEUED;               // the bucket cannot pay it now: the write pass decides
+        if ( header >= 0 )
+        {
+            const int request = header + bytes + 1;
+            const bool can_send = object->is_server || object->link.connection( object->link.transport, 0 ) != 0;
+            rocketnet_packet_context_t context;
+            uint8_t * frame = can_send ? object->link.start_packet( object->link.transport, index, request, &context ) : NULL;
+            if ( frame && context.payload_capacity < request )
+            {
+                object->link.abort_packet( object->link.transport, &context );
+                frame = NULL;
+            }
+            if ( frame )
+            {
+                rn_endpoint_in_place_begin( connection, channel, reliability, bytes, header );
+                object->in_place = 1;
+                object->in_place_context = context;
+                object->in_place_payload = frame + context.payload_index;
+                object->pending_connection = index;
+                return object->in_place_payload + header;
+            }
+        }
+        // RNOutgoingBuild StartQueued with fellback: no frame, unreliable
+        // messages wait ahead of it, or the budget cannot pay it now
+        if ( header >= 0 || header == RN_ENDPOINT_IN_PLACE_QUEUED )
+            rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+    }
+
     // RNEndpoint Send's first half
     uint8_t * pointer = rn_endpoint_start( connection, channel, reliability, bytes, transport_max );
     if ( !pointer )
@@ -570,6 +634,34 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
     // in FIFO order and takes its receipt serial (7.4: nonzero for every send)
     if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
         return 0;
+
+    if ( object->in_place )
+    {
+        // RNOutgoingBuild FinishInPlace: the header and form byte written
+        // around the bytes, and the same frame finished: sealed and staged by
+        // the transport, the acks due riding in it
+        rn_message_connection_t * connection = &object->connections[index];
+        rn_message_link_t * link = &object->link;
+        int payload_bytes = 0;
+        const uint32_t serial = rn_endpoint_in_place_finish( connection, object->in_place_payload, bytes, object->time, &payload_bytes );
+        if ( serial == 0 )
+            return 0;                                           // the start stays pending
+        rocketnet_packet_context_t context = object->in_place_context;
+        object->in_place = 0;
+        object->in_place_payload = NULL;
+        object->pending_connection = -1;
+        if ( payload_bytes == 0 )
+        {
+            link->abort_packet( link->transport, &context );     // FinishInPlaceOverBudget: dropped and counted
+            return serial;
+        }
+        const int wire_bytes = link->finish_packet( link->transport, &context, payload_bytes );
+        if ( wire_bytes > 0 )
+            rn_endpoint_in_place_sent( connection, context.packet_id, wire_bytes, object->time );
+        else
+            rn_endpoint_in_place_failed( connection );
+        return serial;
+    }
 
     const uint32_t serial = rn_endpoint_finish( &object->connections[index], bytes, 0 );   // RNEndpoint Send's second half
     if ( serial == 0 )
@@ -641,6 +733,7 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
 
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
+    rn_message_object_close_in_place( object );
     for ( int i = 0; i < object->num_connections; i++ )
     {
         rn_message_connection_t * connection = &object->connections[i];
