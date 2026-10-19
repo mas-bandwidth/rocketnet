@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# scripts/live-xdp-fleet-merge
+# Merge live-stress result files (docs/LIVE-XDP.md section 7) into the per
+# bench x direction x mode x channel x size-bucket table, the per-bench
+# connect, cycle and failure rows, and a pass/fail verdict line. Exits 0
+# only on PASS. Result lines are tab-separated:
+#   cell <bench> <window> <dir> <mode> <channel> <bucket> <sent> <received>
+#        <verified> <failed> <lost> <superseded> <missing> <out-of-order>
+#        <duplicate> <over> <paced>
+#   connect <bench> <cycle> <ok> <ms>
+#   cycle  <bench> <cycle> <kind>
+#   fail   <bench> <cycle> <dir> <mode> <channel> <sequence> <reason> <bytes>
+#   counters <bench> <name> <value>
+#   rss    <bench> <seconds> <kb>
+#   verdict <PASS|FAIL>
+set -euo pipefail
+
+awk '
+BEGIN { FS = "\t" }
+{
+    if ( $1 == "cell" ) {
+        key = $2 "|" $4 "|" $5 "|" $6 "|" $7;
+        S[key] += $8;  R[key] += $9;  V[key] += $10; F[key] += $11;
+        L[key] += $12; SS[key] += $13; MI[key] += $14; OO[key] += $15;
+        D[key] += $16; OVER[key] += $17; P[key] += $18;
+    }
+    else if ( $1 == "connect" ) {
+        csum[$2]++;
+        if ( $4 == 1 ) cok[$2]++;
+        ct[$2] += $5;
+        if ( $4 != 1 ) vfail = 1;
+    }
+    else if ( $1 == "cycle" ) {
+        cyc[$2]++;
+        cycind[$2 "_" $4]++;
+    }
+    else if ( $1 == "fail" ) {
+        fails[++nf] = $0;
+        failbench[$2] = 1;
+    }
+    else if ( $1 == "verdict" ) {
+        if ( $2 != "PASS" ) vfail = 1;
+    }
+}
+END {
+    n = 0;
+    for ( k in S ) keys[++n] = k;
+    for ( i = 1; i <= n; i++ )
+        for ( j = i + 1; j <= n; j++ )
+            if ( keys[j] < keys[i] ) { t = keys[i]; keys[i] = keys[j]; keys[j] = t; }
+    printf "bench\tdir\tmode\tchannel\tbucket\tsent\treceived\tverified\tfailed\tlost\tsuperseded\tmissing\tout-of-order\tduplicate\tover\tpaced\n";
+    for ( i = 1; i <= n; i++ ) {
+        k = keys[i];
+        split( k, a, "|" );
+        printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+            a[1], a[2], a[3], a[4], a[5],
+            S[k], R[k], V[k], F[k], L[k], SS[k], MI[k], OO[k], D[k], OVER[k], P[k];
+    }
+    print "";
+    for ( b in csum )
+        printf "connect %s: connects %d ok %d avg-ms %.1f\n",
+            b, csum[b], cok[b], ( csum[b] ? ct[b] / csum[b] : 0 );
+    print "";
+    for ( b in cyc )
+        printf "cycle %s: cycles %d clean %d silent %d\n",
+            b, cyc[b], ( cycind[b "_clean"] + 0 ), ( cycind[b "_silent"] + 0 );
+    print "";
+    if ( nf > 0 ) {
+        print "failures:";
+        for ( i = 1; i <= nf; i++ ) print fails[i];
+        print "";
+    }
+    if ( nf > 0 || vfail == 1 ) {
+        print "verdict: FAIL";
+        exit 1;
+    }
+    print "verdict: PASS";
+}
+' "$@"
