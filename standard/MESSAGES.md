@@ -143,7 +143,7 @@ When the connection layer's payload capacity is below the row `maximum payload s
 
 A sender MUST promote an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to its reliable twin: code 0 to code 2, code 1 to code 4, and code 5 to its reliable receipt twin (reliability 6, wire code 2) with the ACKED receipt kept. The receiver observes the twin's wire code. The sender MUST count each promotion once per send in `MESSAGE_PROMOTED_UNRELIABLE`, `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` or `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT`, according to the reliability the application chose.
 
-A sender MUST refuse a message above the row `record maximum message`, above the configured maximum message size, or, for UNRELIABLE_SEQUENCED, above the row `record maximum message` in wire length; a refused message MUST NOT be promoted. A receiver MUST accept a reliable or CONTROL record only in a payload no longer than the row `maximum payload size`.
+A sender MUST refuse a message above the configured maximum message size. For UNRELIABLE, UNRELIABLE_SEQUENCED and UNRELIABLE_WITH_ACK_RECEIPT that is the only refusal by size: a message at or below the configured maximum and above its one-record limit MUST be promoted, never refused by size, and a refused message MUST NOT be promoted. The row `record maximum message` bounds the data length of one record, not of a message: a message above its one-record limit travels as a block, and no record carries more than the row `record maximum message`. A receiver MUST accept a reliable or CONTROL record only in a payload no longer than the row `maximum payload size`.
 
 <a id="m2.2"></a>
 ### m2.2. Constants
@@ -1630,10 +1630,242 @@ Every record has exactly one encoding. A field a record does not carry is absent
 <a id="m4"></a>
 ## m4. Receiver checks
 
-Status: pending
 
-Scope: the ordered checks over a whole payload before any record is handed
-up, each naming one violation; duplicates.
+A receiver MUST apply the checks below, in this order, to one payload. A
+payload that fails a check is a violation: the receiver MUST refuse the whole
+payload, MUST hand no record of it to the application, and MUST increment the
+counter that the check names. Checks 1 to 9 run over the whole payload before
+any record of it is handed up, except check 7's block-descriptor agreement,
+which runs when the record is applied. Checks 10 to 12 run as each record is
+applied.
+A duplicate is not a violation: the receiver MUST count it as
+`MESSAGE_DUPLICATE` and MUST NOT refuse the payload for it.
+
+A record is measured before its flags are judged, so a code of 5 to 7 still
+has a defined header. The receiver's runtime values are its channel count C,
+its enabled wire-code mask, its window W, its maximum message size, and its
+receive ring size B.
+
+The constants this section names are:
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| message code count | `5` | codes | wire codes 0 to 4 are defined |
+| wide channel threshold | `256` | channels | the lowest channel a WIDE record carries |
+| message fragment bytes | `1152` | bytes | the block stride F |
+| message number modulus | `16777216` | numbers | 2^24, the number, sequencing and ordering space |
+| config body bytes | `28` | bytes | the CONFIG control body |
+| payload capacity | `1416` | bytes | the largest payload a sender emits in one packet |
+
+1. The payload MUST be at least 2 bytes, and its last byte MUST be 0 for
+   SINGLE or 1 for RECORDS. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+2. In RECORDS form, at least the row `record fixed bytes` MUST remain for a record,
+   and every field the flags name MUST lie inside the body. Counter:
+   `MESSAGE_PROTOCOL_VIOLATION`.
+3. A record MUST NOT carry a code at or above `message code count`, a set bit
+   in the two high flag bits, BLOCK on code 0 or 1, WIDE on a code without a
+   channel field, or CONTROL on a code other than 2 or together with BLOCK.
+   Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+4. A record's length MUST be at least 1, and its data MUST lie inside the
+   body. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+ 5. A record with a channel field MUST carry a channel below C, and a WIDE
+    record MUST carry a channel at or above `wide channel threshold`. Counter:
+    `MESSAGE_PROTOCOL_VIOLATION`.
+ 6. An application record MUST carry a code present in the receiver's enabled
+    mask. A CONTROL record is exempt. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+ 7. In the whole-payload scan, a block record MUST satisfy all of: its
+    fragment count is at least 1; its fragment index is at most its fragment
+    count; its fragment count plus one is at most W; its fragment count plus
+    one, times `message fragment bytes`, is at most the maximum message size
+    plus `message fragment bytes` minus 1; every fragment but the last is
+    exactly `message fragment bytes` long; the last is at most `message fragment bytes` long. Counter: `MESSAGE_PROTOCOL_VIOLATION`. When the
+    record is applied, a block record's ring base, the ring less the fragment
+    index times `message fragment bytes` divided by 16, MUST agree with a live
+    block descriptor for the same block. Counter: `MESSAGE_BAD_BLOCK`.
+8. A holdable record MUST have a span inside B. The span of a non-block record
+   is its length rounded up to 16 bytes, added to 16 times its ring value. The
+   span of a block runs from its base, the ring value less the fragment index
+   times `message fragment bytes` divided by 16, to the end of its last
+    fragment; a fragment that is not the last is measured as the shortest block
+    it could belong to. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+9. A reliable or CONTROL record MUST NOT lie in a payload longer than
+   `payload capacity`. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+10. A reliable record MUST have a number less than W ahead of the receiver's
+     next number. A record whose receive slot is live for a different number
+     MUST be refused. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+11. A code 3 record MUST NOT carry an ordering index behind its channel's read
+    index, modulo `message number modulus`, and MUST NOT carry one W or more
+    ahead of it. Counters: `MESSAGE_ORDERING_BEHIND` and
+    `MESSAGE_ORDERING_AHEAD`.
+12. A CONTROL record MUST carry a recognised kind, a body of exactly
+     `config body bytes` bytes for kind 1, and zero reserved bytes for a known
+     version. Counter: `MESSAGE_PROTOCOL_VIOLATION`.
+
+The vectors below freeze one malformed payload for each check and the counter
+it produces.
+
+```vector m4.check-1-bad-form
+input: one payload byte whose form value is 2
+counter: MESSAGE_PROTOCOL_VIOLATION
+02
+```
+
+```vector m4.check-2-truncated
+input: a RECORDS payload whose body is one byte
+counter: MESSAGE_PROTOCOL_VIOLATION
+00 01
+```
+
+```vector m4.check-3-bad-flags
+input: a record whose code is 5
+counter: MESSAGE_PROTOCOL_VIOLATION
+05 01 00 aa 01
+```
+
+```vector m4.check-4-bad-length
+input: a code 0 record whose length is zero
+counter: MESSAGE_PROTOCOL_VIOLATION
+00 00 00 01
+```
+
+```vector m4.check-5-bad-channel
+input: a code 1 record on channel 4, the receiver channel count
+counter: MESSAGE_PROTOCOL_VIOLATION
+01 01 00 00 00 00 00 00 00 04 aa 01
+```
+
+```vector m4.check-6-type-not-enabled
+input: a code 2 record whose code is absent from the enabled mask
+counter: MESSAGE_PROTOCOL_VIOLATION
+02 01 00 00 00 00 aa 01
+```
+
+```vector m4.check-7-bad-block
+input: a block fragment whose fragment count is zero
+counter: MESSAGE_PROTOCOL_VIOLATION
+0a 01 00 00 00 00 00 00 00 00 00 00 aa 01
+```
+
+```vector m4.check-8-bad-ring
+input: a code 3 record at ring 65535 in a 65536-byte ring
+counter: MESSAGE_PROTOCOL_VIOLATION
+03 01 00 00 00 00 ff ff 00 00 00 00 aa 01
+```
+
+```vector m4.check-9-bad-size
+input: a code 2 record that makes the payload 1417 bytes
+counter: MESSAGE_PROTOCOL_VIOLATION
+02 82 05 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 01
+```
+
+```vector m4.check-10-number-outside-window
+input: a code 2 record numbered one window above the next number
+counter: MESSAGE_PROTOCOL_VIOLATION
+02 01 00 00 04 00 aa 01
+```
+
+```vector m4.check-11-ordering-behind
+input: a code 3 record one behind the channel read index
+counter: MESSAGE_ORDERING_BEHIND
+03 01 00 00 00 00 00 00 63 00 00 00 aa 01
+```
+
+```vector m4.check-12-bad-control
+input: a CONTROL record whose body is 27 bytes
+counter: MESSAGE_PROTOCOL_VIOLATION
+22 1b 00 00 00 00 01 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 01
+```
+
 
 <a id="m5"></a>
 ## m5. Message numbering and the reliable window
@@ -2045,10 +2277,253 @@ input: code 4 number 9 ring 3 ordering 66 sequencing 0 channel 0 data 39 (64 ahe
 <a id="m8"></a>
 ## m8. Blocks
 
-Status: pending
+A block is a reliable message carried as consecutive fragments that share one
+number sequence and one receive-ring span, reassembled by the receiver and
+delivered whole. Each fragment is one record ([m3 Record format](#m3)).
 
-Scope: the block stride, fragment numbering, ring placement, completion and
-single delivery; vectors.
+1. **Use.** A sender MUST send a reliable message that fits one record of its
+   reliability as that record. A sender MUST send a reliable message that does
+   not fit one record of its reliability as a block. A sender MUST send an
+   unreliable, an unreliable sequenced or an unreliable with ack receipt
+   message larger than one packet's records can carry under its reliable twin
+   as a block where that twin needs one
+   ([m2 Payload forms and sender size rules](#m2)).
+2. **Split.** The block stride F is the row `block stride` of
+   [m2 Payload forms and sender size rules](#m2). A block of L bytes MUST have
+   k = ceil(L / F) fragments, with k at least 2. Fragments 0 to k − 2 MUST
+   carry exactly F bytes each; fragment k − 1 MUST carry from 1 to F bytes.
+3. **Numbering.** A sender MUST assign the block's fragments consecutive
+   numbers in ascending fragment order, all before the first fragment enters a
+   payload. If the first fragment's number is b, fragment i MUST carry number
+   b + i. Every fragment MUST carry the block's channel and ordering index;
+   the block MUST take one ordering slot.
+4. **Ring placement.** The receive ring is B bytes. A sender MUST place a
+   block in one contiguous span that starts at ring position p and does not
+   cross a multiple of B. When the span does not fit between the position the
+   previous placement left and the next multiple of B, the sender MUST pad
+   forward to that multiple and place the block there. Fragment i occupies
+   bytes from p + i × F for that fragment's length. The span is (k − 1) × F
+   plus the last fragment's length rounded up to a multiple of 16, and MUST NOT
+   exceed B. A fragment's ring field is (p + i × F) modulo B divided by 16. A
+   receiver MUST compute the block's base as ring − fragment × (F / 16) and
+   MUST refuse the payload when the base is negative or when the base in bytes
+   plus the span exceeds B ([m4 Receiver checks](#m4)). A receiver that has
+   not seen the last fragment MUST use 16 bytes as the last fragment's rounded
+   length for that check, the shortest block the fragment could belong to.
+5. **Receive, completion and delivery.** A receiver MUST copy each fragment's
+   data to ring + fragment × F, by index and not by arrival. When all k
+   fragments have arrived, a receiver MUST deliver the block exactly once and
+   whole, at its one ordering slot, as fragments 0 to k − 1 in order. A
+   receiver MUST NOT deliver an incomplete block. A receiver MUST count a
+   duplicate fragment once. A receiver MUST refuse a fragment whose fragment
+   count, first number or base disagrees with the block's first fragment.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| collecting | a fragment arrives | no block state exists, or its count, first number and base agree | copy the fragment to ring + fragment × F and count it | collecting |
+| collecting | a fragment arrives | a block state exists and the count, first number or base disagrees | refuse the payload as a violation | connection ends |
+| collecting | a duplicate fragment arrives | its number was already counted | count it once and change nothing | collecting |
+| collecting | the last missing fragment arrives | every fragment of the block has arrived | deliver the block whole at its ordering slot | complete |
+| complete | any | | ignore the event | complete |
+
+An event a state does not list is ignored in that state.
+
+**Vectors.** Each vector is a RECORDS payload before sealing. The split
+vectors are fragments 1 and 2 of a three-fragment block of 2404 bytes:
+fragments 0 and 1 carry 1152 bytes and fragment 2 carries 100. The ring-wrap
+vector is two RECORDS payloads back to back, fragment 0 and then fragment 1 of
+a two-fragment block of 1153 bytes placed after the ring was filled to 1152
+bytes of its 1168-byte ring, so the span is padded to the boundary and the
+fragments' ring fields are 0 and 72.
+
+```vector m8.split-nonfinal
+block bytes: 2404
+fragment bytes: 1152
+fragment index: 1
+fragment count: 3
+number: 10
+ring: 72
+ordering: 7
+channel: 3
+0b 80 04 0a 00 00 48 00 07 00 00 03 01 00 02 00
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f
+90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef
+f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f
+90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef
+f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f
+90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef
+f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f
+90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef
+f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+01
+```
+
+```vector m8.final-short
+block bytes: 2404
+fragment bytes: 100
+fragment index: 2
+fragment count: 3
+number: 11
+ring: 144
+ordering: 7
+channel: 3
+0b 64 00 0b 00 00 90 00 07 00 00 03 02 00 02 00
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 01
+```
+
+```vector m8.ring-wrap
+ring bytes: 1168
+prior bytes: 1152
+block bytes: 1153
+payloads: 2
+first number: 1
+fragment 0 ring: 0
+fragment 1 ring: 72
+0b 80 04 01 00 00 00 00 01 00 00 00 00 00 01 00
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f
+90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef
+f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f
+90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef
+f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f
+90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef
+f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f
+90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef
+f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
+30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f
+40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f
+50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
+60 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f
+70 71 72 73 74 75 76 77 78 79 7a 7b 7c 7d 7e 7f
+01 0b 01 00 02 00 00 48 00 01 00 00 00 01 00 01
+00 00 01
+```
 
 <a id="m9"></a>
 ## m9. Acknowledgement mapping, resend and send budget
@@ -2185,9 +2660,9 @@ last three are the long path's resend counts.
 ```vector m9.budget-trace
 clock: 1000.0
 rate: the client default
-trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, written whole and committed
+trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, promoted to reliable sequenced and its first packet written
 00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
-01 01 01 01
+00 01 01 01
 ```
 
 The first fourteen bytes are the decision for each offer in order: SEND,
@@ -2196,9 +2671,10 @@ the reliable item, the seven unreliable items that fit, the unreliable item
 that is dropped, the reliable item that waits, the unreliable item behind it
 that is dropped, the refill's reliable item, the setter and the new-rate
 reliable item. The last six bytes are, in order, the setter to 0 returning
-success, a packet request of more than zero, the item written larger than one
-maximum packet, the queue drained, no bytes charged to the budget and no
-unreliable item dropped.
+success, a packet request of more than zero, the first packet written larger
+than one maximum packet (0: the promoted item is a reliable block, sent one
+maximum packet at a time), the unreliable queue empty, no bytes charged to the
+budget and no unreliable item dropped.
 
 <a id="m10"></a>
 ## m10. Channels and priorities
@@ -2265,10 +2741,195 @@ configuration: build-specific maximum at least 301; num_channels 301
 <a id="m11"></a>
 ## m11. CONFIG control record
 
-Status: pending
+1. Each endpoint MUST send exactly one CONFIG record for each connection and
+   MUST NOT send another.
+2. An endpoint MUST send the CONFIG record before any other reliable record of
+   that connection, and MUST resend it until the connection layer acknowledges
+   it ([m7 Delivery: reliable codes 2, 3 and 4](#m7)).
+3. An endpoint MUST start its CONFIG wait at the first update at which its
+   connection layer reports the connection established.
+4. An endpoint MUST end the connection with `RELIABLE_TIMEOUT` when an update
+   is at or after the start of the CONFIG wait plus the reliable timeout
+   ([m9 Acknowledgement mapping, resend and send budget](#m9)) and it has not
+   accepted the peer's CONFIG.
+5. An endpoint MUST accept a CONFIG record only when its body length is the
+   body size row of [m11.2 Constants and defaults](#m11.2), its kind is its kind row, and, when its
+   version is its version row, both reserved fields are zero.
+6. An endpoint MUST refuse every other CONFIG record as `MESSAGE_BAD_CONTROL`,
+   and MUST end the connection with `PROTOCOL_VIOLATION` when it does.
+7. An endpoint MUST read a body whose version it does not know and MUST
+   compare it; such a body is a CONFIG mismatch and never
+   `MESSAGE_BAD_CONTROL`.
+8. An endpoint MUST compare the `version`, `enabled`, `num_channels`,
+   `window_messages`, `receive_ring_bytes`, `max_message_bytes` and
+   `fragment_bytes` fields of the body with its own values.
+9. An endpoint MUST end the connection with `CONFIG_MISMATCH` when any
+   compared field differs.
+10. An endpoint MAY receive message records before the peer's CONFIG, and
+    when it does it MUST process them against its own configuration.
 
-Scope: the one CONFIG record each endpoint sends, its 28-byte body, the
-fields compared, mismatch handling; the defaults of the wire fields; vectors.
+<a id="m11.1"></a>
+### m11.1. Wire layout
+
+The CONFIG record is a code 2 record with the CONTROL flag set, inside a
+payload of the RECORDS form. Its record header carries the connection's first
+reliable number. The payload is 35 bytes:
+
+```
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |     flags     |            length             |    number     |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |            number             |     kind      |    version    |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |    enabled    |     zero      |         num_channels          |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |         num_channels          |        window_messages        |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |        window_messages        |      receive_ring_bytes       |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |      receive_ring_bytes       |       max_message_bytes       |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |       max_message_bytes       |        fragment_bytes         |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |        fragment_bytes         |             zero              |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |             zero              |     form      |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| flags | 0 | 1 | u8 | the record's code and flags | `0x22` |
+| length | 1 | 2 | u16 | the body length | `28` |
+| number | 3 | 3 | u24 | the connection's first reliable number | the first reliable number |
+| kind | 6 | 1 | u8 | the record kind | `1` |
+| version | 7 | 1 | u8 | the body version | `1` |
+| enabled | 8 | 1 | u8 | bit r set: reliability r may be sent by the application | a mask of enabled reliabilities |
+| reserved byte | 9 | 1 | zero[1] | reserved | `0` |
+| num_channels | 10 | 4 | u32 | the count of channels | the sender's configured count |
+| window_messages | 14 | 4 | u32 | the reliable window W | the sender's configured window |
+| receive_ring_bytes | 18 | 4 | u32 | the receive ring B | the sender's configured ring size |
+| max_message_bytes | 22 | 4 | u32 | the largest message | the sender's configured maximum |
+| fragment_bytes | 26 | 4 | u32 | the block stride F | the fragment bytes row of [m5 Message numbering and the reliable window](#m5) |
+| reserved tail | 30 | 4 | zero[4] | reserved | `0` |
+| form | 34 | 1 | u8 | the payload form | `1` |
+
+<a id="m11.2"></a>
+### m11.2. Constants and defaults
+
+The library's default configuration is the one below, with the window and
+ring defaults and the fragment stride in the [m5 Message numbering and the reliable window](#m5)
+rows window messages default, receive ring bytes default and fragment bytes. Every field of the
+body except the reserved fields is compared, so two ends whose configurations
+differ in any compared field end the connection with `CONFIG_MISMATCH`.
+
+| Name | Value | Unit |
+|---|---|---|
+| flags | `0x22` | none |
+| body size | `28` | bytes |
+| kind | `1` | none |
+| version | `1` | none |
+| enabled default | `0xFF` | mask |
+| num channels default | `32` | channels |
+| max message bytes default | `262144` | bytes |
+| form | `1` | none |
+
+`enabled` with bit r set permits the application to send reliability r; the
+default mask sets every one of the eight reliabilities
+([m1.3 Reliability types](#m1.3)).
+
+<a id="m11.3"></a>
+### m11.3. States
+
+An endpoint has one CONFIG state per connection.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| Waiting | CONFIG body accepted | every compared field is equal | the CONFIG wait ends | Verified |
+| Waiting | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
+| Waiting | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |
+| Waiting | update | at or after the start of the CONFIG wait plus the reliable timeout | end the connection with `RELIABLE_TIMEOUT` | none |
+| Verified | CONFIG body accepted | every compared field is equal | no change | Verified |
+| Verified | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
+| Verified | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |
+
+An event that a state does not list is ignored in that state.
+
+<a id="m11.4"></a>
+### m11.4. Vectors
+
+Each vector is the full payload, before the connection layer seals it. An
+implementation MUST reproduce each one from the CONFIG record and MUST parse
+each one back to the same record and body. The first vector is the CONFIG
+record at the library's defaults, with number 0. Each later vector is the
+defaults with exactly one field changed; a receiver at the defaults MUST
+accept the first vector and MUST end the connection with `CONFIG_MISMATCH`
+for each of the others.
+
+```vector m11.config-defaults
+config: library defaults
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.version-mismatch
+field: version
+value: 2
+22 1c 00 00 00 00 01 02 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.enabled-mismatch
+field: enabled
+value: 0x01
+22 1c 00 00 00 00 01 01 01 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.num-channels-mismatch
+field: num_channels
+value: 16
+22 1c 00 00 00 00 01 01 ff 00 10 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.window-messages-mismatch
+field: window_messages
+value: 512
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 02
+00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.receive-ring-bytes-mismatch
+field: receive_ring_bytes
+value: 131072
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 02 00 00 00 04 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.max-message-bytes-mismatch
+field: max_message_bytes
+value: 131072
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 02 00 80 04 00 00 00 00
+00 00 01
+```
+
+```vector m11.fragment-bytes-mismatch
+field: fragment_bytes
+value: 1024
+22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
+00 00 00 00 04 00 00 00 04 00 00 04 00 00 00 00
+00 00 01
+```
 
 <a id="m12"></a>
 ## m12. Receipts

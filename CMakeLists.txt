@@ -330,6 +330,34 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
+    # The promotion case exercises the WIDE channel header (an index of 256 or
+    # more) on channel 300, past the default build's cap, so this binary
+    # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
+    # (RakNet promotion rule: oversize unreliable sends promote to their twin).
+    add_executable(test_wide
+        test.cpp test_channels.cpp test_unit_unreliable_promotion.cpp
+        sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+    add_dependencies(test_wide rocketnet_xdp_header)
+    target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
+        ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1
+        $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
+    target_include_directories(test_wide PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_compile_features(test_wide PRIVATE cxx_std_11)
+    target_compile_options(test_wide PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
+    rocketnet_use_sodium(test_wide)
+    target_link_libraries(test_wide PRIVATE Threads::Threads)
+    # The SDK sources link their platform libraries, as the library targets do.
+    if(APPLE)
+        target_link_libraries(test_wide PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(test_wide PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        if(TARGET RocketNet::Uring)
+            target_link_libraries(test_wide PRIVATE RocketNet::Uring)
+            target_compile_definitions(test_wide PRIVATE ROCKETNET_IO_URING=1)
+        endif()
+    endif()
     # The endpoint's clock intercept (test_unit_endpoint.cpp): on Linux the
     # linker sends every call to the library's clock, rocketnet_platform_time,
     # from any object file of the test binary, to the test's counting wrapper.
@@ -421,6 +449,10 @@ if(ROCKETNET_BUILD_TESTS)
             add_custom_target(rocketnet_xdp_filter_object DEPENDS "${ROCKETNET_XDP_FILTER_OBJECT}")
             add_executable(test_xdp_filter test_xdp_filter.cpp)
             add_dependencies(test_xdp_filter rocketnet_xdp_filter_object)
+            # xdp_on_link_reply_reaches_the_peer runs bin/server and bin/client
+            if(TARGET server AND TARGET client)
+                add_dependencies(test_xdp_filter server client)
+            endif()
             target_compile_definitions(test_xdp_filter PRIVATE
                 "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
             target_include_directories(test_xdp_filter PRIVATE sdk)
@@ -451,8 +483,10 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(functional
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
+        functional/server_receive_backlog.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
+        functional/live_matrix.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     target_compile_features(functional PRIVATE cxx_std_11)
@@ -477,6 +511,12 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
     add_executable(load load.c)
     add_executable(soak_sim soak_sim.cpp)
+    # The deterministic simulation harness (docs/DST.md): one seed drives N
+    # clients and a server over the in-memory wire, no socket and no clock.
+    add_executable(dst dst.cpp)
+    target_link_libraries(dst PRIVATE rocketnet_dev)
+    rocketnet_use_sodium(dst)
+    target_compile_features(dst PRIVATE cxx_std_11)
     add_executable(keygen keygen.cpp)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(transport_fill bench/transport_fill.cpp)

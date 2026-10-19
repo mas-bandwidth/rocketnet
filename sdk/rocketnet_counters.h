@@ -574,7 +574,31 @@
     /* gate and before any AEAD open (STANDARD.md, Reading packets). */ \
     /* appended: indices are the contract. */ \
     X( CLIENT_CHALLENGE_WRONG_SIZE, REFUSAL, CLIENT_CHALLENGE_RECEIVED ) \
-    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED )
+    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED ) \
+    \
+    /* The two token-time refusals that were merged into */ \
+    /* CONNECTION_REQUEST_TOKEN_EXPIRED, split out so each refusal reason has */ \
+    /* its own counter (STANDARD.md, Counters: refusal reasons are never */ \
+    /* merged; Processing Connection Requests, the request order). They sit */ \
+    /* beside TOKEN_EXPIRED in class and parent, and are appended here because */ \
+    /* the indices are the contract. */ \
+    X( CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
+    X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
+    \
+    /* A send the driver refused for want of a link-layer destination: the */ \
+    /* xdp driver on a segment with no default route, to an address with no */ \
+    /* learned MAC that answers no received frame (DRIVERS.md, xdp). Never */ \
+    /* sent and never counted as sent. appended: indices are the contract. */ \
+    X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE ) \
+    \
+    /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
+    /* too big for one packet's record is promoted to its reliable twin, as */ \
+    /* RakNet's ReliabilityLayer does. EXPECTED: promotion is the normal path */ \
+    /* for a large unreliable send, one count per send. appended: indices are */ \
+    /* the contract. */ \
+    X( MESSAGE_PROMOTED_UNRELIABLE, EXPECTED, NONE ) \
+    X( MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED, EXPECTED, NONE ) \
+    X( MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT, EXPECTED, NONE )
 
 enum
 {

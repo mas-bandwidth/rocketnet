@@ -187,3 +187,8 @@ MCServerSession.cfg	MCServerSession.tla	pass	-	ignore-terminal	serversession	req
 MCServerSessionUnresetSlot.cfg	MCServerSession.tla	invariant	SlotReuseObservesNothing	ignore-terminal	serversession	required	-
 MCServerSessionStopLeavesClient.cfg	MCServerSession.tla	invariant	NoClientWhileStopped	ignore-terminal	serversession	required	-
 MCServerSessionTouchesOtherSlot.cfg	MCServerSession.tla	invariant	ResetTouchesOnlyItsSlot	ignore-terminal	serversession	required	-
+MCRNSimFaults.cfg	MCRNSimFaults.tla	pass	-	check	rnsimfaults	required	-
+MCRNSimFaultsBrokenRestartKeepsSession.cfg	MCRNSimFaults.tla	invariant	RestartIsFresh	check	rnsimfaults	required	-
+MCRNSimFaultsBrokenCrashedSends.cfg	MCRNSimFaults.tla	invariant	CrashedPeerSilent	check	rnsimfaults	required	-
+MCRNClientIoStepDriven.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
+MCRNClientIoBrokenStepStartsThread.cfg	MCRNClientIo.tla	invariant	NoIoThreadActionInStepMode	check	rnclientio	required	-
