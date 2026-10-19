@@ -17,20 +17,20 @@ names.
 | --- | --- | --- | --- | --- | --- | --- |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
-| macOS 15 | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macos-15 |
+| [macOS 15](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macos-15 |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | supported | .github/workflows/ci.yml | windows-2025 |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, hosted) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | ubuntu-24.04 |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
-| macOS latest | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macos-latest |
+| [macOS latest](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macos-latest |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | none | none | unsupported | - | - |
-| macOS | x86_64 | none | none | unsupported | - | - |
+| [macOS](MACOS.md) | x86_64 | none | none | unsupported | - | - |
 
-The drivers column names the backends the row actually exercises or proves in
-CI. The registry (`rocketnet_drivers.inc`) also lists portable on every
+The macOS rows are covered by [MACOS.md](MACOS.md). The drivers column names
+the backends the row actually exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists portable on every
 platform, gso and xdp on Linux, msgx on macOS and iocp on Windows. A driver
 that the row does not name is not part of that row's claim.
 

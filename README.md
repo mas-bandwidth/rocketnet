@@ -12,6 +12,9 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 
 - [USAGE.md](USAGE.md) — how to drive it: the frame, the delivered-batch and
   burned-sequence contracts, configuration, and driver selection.
+- [docs/MACOS.md](docs/MACOS.md) — building on macOS, the msgx and portable
+  transports, App Nap and QoS, socket errors, the firewall prompt, lldb and
+  verification on a Mac.
 - [sdk/rocketnet.h](sdk/rocketnet.h) — the public header, and the authority
   wherever a contract is written down.
 - [examples/README.md](examples/README.md) — the feature-focused examples series, starting with hello.
