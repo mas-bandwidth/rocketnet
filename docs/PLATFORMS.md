@@ -110,7 +110,9 @@ new support claim:
 - `nightly-frame-budget.yml` runs its Linux leg on the
   `self-hosted, Linux, X64, rocketnet-quiet` label, its macOS leg report-only
   on `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on
-  hosted `windows-2025`.
+  hosted `windows-2025`. The macOS leg is report-only because the runner is
+  not reserved quiet; the workflow concurrency group keeps one run per ref so
+  the recording does not overlap a louder run.
 - `nightly-examples.yml` runs its Linux leg on
   `self-hosted, Linux, X64, fleet`, its macOS leg on
   `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on hosted
