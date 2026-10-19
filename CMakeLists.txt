@@ -457,6 +457,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/rocketnet_functional_tests.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
+        functional/live_matrix.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     target_compile_features(functional PRIVATE cxx_std_11)

@@ -1200,13 +1200,13 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     if ( server_socket->gateway_known )
     {
-        rocketnet_info( "gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x", 
-            server_socket->gateway_ethernet_address[0], 
-            server_socket->gateway_ethernet_address[1], 
-            server_socket->gateway_ethernet_address[2], 
-            server_socket->gateway_ethernet_address[3], 
-            server_socket->gateway_ethernet_address[4], 
-            server_socket->gateway_ethernet_address[5] 
+        rocketnet_info( "gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x",
+            server_socket->gateway_ethernet_address[0],
+            server_socket->gateway_ethernet_address[1],
+            server_socket->gateway_ethernet_address[2],
+            server_socket->gateway_ethernet_address[3],
+            server_socket->gateway_ethernet_address[4],
+            server_socket->gateway_ethernet_address[5]
         );
     }
     else
