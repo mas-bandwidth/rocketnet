@@ -15,7 +15,9 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 - [sdk/rocketnet.h](sdk/rocketnet.h) — the public header, and the authority
   wherever a contract is written down.
 - [examples/README.md](examples/README.md) — the feature-focused examples series, starting with hello.
-- [STANDARD.md](STANDARD.md) — the wire format.
+- [standard/TRANSPORT.md](standard/TRANSPORT.md) — the transport standard: the wire format.
+- [standard/MESSAGES.md](standard/MESSAGES.md) — the message standard.
+- [standard/RATIONALE.md](standard/RATIONALE.md) — the rationale for both.
 - [ROADMAP.md](ROADMAP.md) — the releases, streams and cards planned, rendered from the work record.
 - [CLAUDE.md](CLAUDE.md) — contributor guide.
 

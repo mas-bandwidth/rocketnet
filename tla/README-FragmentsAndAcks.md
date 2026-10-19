@@ -1,5 +1,7 @@
 # FragmentsAndAcks: fragment reassembly and the ack window
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 `tla/FragmentsAndAcks.tla` is one direction of a rocketnet session: a sender A hands
 payloads to a receiver B over the shared lossy link `tla/Link.tla` (instance `D2R`),
 and B sends ack blocks back over a second instance (`R2D`). A is the session sequence

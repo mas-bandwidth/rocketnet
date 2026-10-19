@@ -120,6 +120,7 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     endpoint->large_descriptor = RN_DESCRIPTOR_NONE;
     endpoint->packet_records = 0;
     endpoint->receipt_count = 0;
+    memset( endpoint->receipt_serials, 0, sizeof( endpoint->receipt_serials ) );
 }
 
 void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now )

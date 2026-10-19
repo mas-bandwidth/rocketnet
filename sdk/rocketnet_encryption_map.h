@@ -40,31 +40,42 @@ struct rocketnet_replay_protection_t
     uint64_t window[ROCKETNET_HISTORY_PACKETS / 64];
 };
 
+/*
+    The declaration manifest: the struct is declared from this list, so a
+    member exists only as an entry here. The RESET/KEEP inventory in
+    rocketnet_connection_reset.h is compared with it by name, and a member with
+    no decision is named in connection_reset_inventory_covers_every_field.
+*/
+#define ROCKETNET_ENCRYPTION_MAPPING_LAYOUT_FIELDS( X ) \
+    X( keys, struct rocketnet_connection_keys_t keys )                                                                                                             \
+    X( connection_salt, uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES] )                                                                                 \
+    X( session_nonce, uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES] )                                                                                       \
+    X( server_ephemeral_public_key, uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES] )                                                                     \
+    X( client_ephemeral_public_key, uint8_t client_ephemeral_public_key[ROCKETNET_KEY_BYTES] ) /* public; needed to build the type 3 AD */                         \
+    X( challenge_packet, uint8_t challenge_packet[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES] )                                                                     \
+    X( client_id, uint64_t client_id )                                                                                                                             \
+    X( user_data, uint8_t user_data[ROCKETNET_USER_DATA_BYTES] )                                                                                                   \
+    X( token_identifier, uint8_t token_identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES] )                                                                              \
+    X( token_expire_timestamp, uint64_t token_expire_timestamp )                                                                                                   \
+    X( timeout_seconds, int32_t timeout_seconds )                                                                                                                  \
+    X( established, int established )                                                                                                                              \
+    X( client_index, int client_index ) /* -1 until a slot is assigned */                                                                                          \
+    X( handshake_deadline, double handshake_deadline ) /* absolute, never refreshed */                                                                             \
+    X( last_receive_time, double last_receive_time ) /* refreshed by every opened packet */                                                                        \
+    X( last_send_time, double last_send_time ) /* refreshed by every send; suppresses keep-alives once one has been acknowledged */                                \
+    X( last_keep_alive_send_time, double last_keep_alive_send_time ) /* refreshed by keep-alives alone; paces them until one has been acknowledged */              \
+    X( send_sequence_handshake, uint64_t send_sequence_handshake ) /* next handshake-phase sequence to send */                                                     \
+    X( send_sequence_session, uint64_t send_sequence_session ) /* next session-phase sequence to send */                                                           \
+    X( send_fragment_payload_id, uint64_t send_fragment_payload_id ) /* next fragmented payload id to send, per _Fragmentation_ */                                 \
+    X( replay_handshake, struct rocketnet_replay_protection_t replay_handshake )                                                                                   \
+    X( replay_session, struct rocketnet_replay_protection_t replay_session )                                                                                       \
+    X( integrity_failures, uint64_t integrity_failures ) /* sealed packets that did not open under either key; ROCKETNET_INTEGRITY_LIMIT tears the mapping down */
+
 struct rocketnet_encryption_mapping_t
 {
-    struct rocketnet_connection_keys_t keys;
-    uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
-    uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
-    uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
-    uint8_t client_ephemeral_public_key[ROCKETNET_KEY_BYTES];   // public; needed to build the type 3 AD
-    uint8_t challenge_packet[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
-    uint64_t client_id;
-    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    uint8_t token_identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
-    uint64_t token_expire_timestamp;
-    int32_t timeout_seconds;
-    int established;
-    int client_index;                       // -1 until a slot is assigned
-    double handshake_deadline;              // absolute, never refreshed
-    double last_receive_time;               // refreshed by every opened packet
-    double last_send_time;                  // refreshed by every send; suppresses keep-alives once one has been acknowledged
-    double last_keep_alive_send_time;       // refreshed by keep-alives alone; paces them until one has been acknowledged
-    uint64_t send_sequence_handshake;       // next handshake-phase sequence to send
-    uint64_t send_sequence_session;         // next session-phase sequence to send
-    uint64_t send_fragment_payload_id;      // next fragmented payload id to send, per _Fragmentation_
-    struct rocketnet_replay_protection_t replay_handshake;
-    struct rocketnet_replay_protection_t replay_session;
-    uint64_t integrity_failures;            // sealed packets that did not open under either key; ROCKETNET_INTEGRITY_LIMIT tears the mapping down
+#define ROCKETNET_ENCRYPTION_MAPPING_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
+    ROCKETNET_ENCRYPTION_MAPPING_LAYOUT_FIELDS( ROCKETNET_ENCRYPTION_MAPPING_LAYOUT_FIELDS_DECLARE )
+#undef ROCKETNET_ENCRYPTION_MAPPING_LAYOUT_FIELDS_DECLARE
 };
 
 struct rocketnet_encryption_map_t;

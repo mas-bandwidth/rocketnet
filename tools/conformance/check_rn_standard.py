@@ -341,8 +341,10 @@ def read_pins(faults):
     includes = []
     unpinned = []
     for path in sorted(glob.glob(os.path.join(PINS_DIR, "*.tsv"))):
-        tag = pin_document(path)
         name = os.path.basename(path)
+        if name == "retired.tsv":
+            continue
+        tag = pin_document(path)
         if tag is None:
             faults.append((None, "pins/%s: a pin file is transport.tsv, messages.tsv or <section id>.tsv" % name))
             continue

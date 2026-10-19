@@ -1,5 +1,7 @@
 # RNSecurityTables
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 The security tables at the table grain: the used-token history
 (`sdk/rocketnet_token_tables.cpp`) and the one-live-connection rule (the
 admitted-token set it replaced survives as a reversed witness), the cookie gate
