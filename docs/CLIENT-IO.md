@@ -457,6 +457,19 @@ exit 2. Needs: rocketnet-client-io-transport.
   handoff; a release and acquire implementation of the owed flag is outside
   what the model checks.
 
+## The step-driven mode
+
+`rocketnet_client_config_t.step_driven` (the client transport config's
+`step_driven` field, environment `ROCKETNET_CLIENT_STEP_DRIVEN`) selects a
+client with no I/O thread. Zero, the default, keeps the I/O thread above. One
+runs `rocketnet_client_io_step` inside `rocketnet_client_update` and
+`rocketnet_client_send_packets` on the caller's thread, so a game or a test
+owns both the clock and the thread that reads the transport. The field is
+accepted with a driver whose receive returns at once when drained, the
+loopback driver included. A driver without a non-blocking I/O step is refused
+at create with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` and one log line naming
+`step_driven`.
+
 ## The model
 
 `tla/RNClientIo.tla` (wrapper `tla/MCRNClientIo.tla`, document

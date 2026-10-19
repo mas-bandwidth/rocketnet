@@ -250,6 +250,7 @@ struct rocketnet_client_transport_config_t
     char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
     void (*state_change_callback)( void * context, int previous_state, int current_state );
     double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
+    uint64_t step_driven;                           // 1: the caller's update and send_packets run the I/O step, no I/O thread; 0: today's thread
 };
 
 // a NULL config is a counted no-op.
