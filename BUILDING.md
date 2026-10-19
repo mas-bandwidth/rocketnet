@@ -256,7 +256,7 @@ UMEM), `umem_bytes` (XDP frame memory, the plan's UMEM), `socket_send_buffer_byt
 and `socket_receive_buffer_bytes` (the `SO_SNDBUF` and `SO_RCVBUF` sizes asked of
 every socket the transport opens), `xdp_ring_bytes` (the AF_XDP RX and TX
 descriptor rings of every queue) and `thread_stack_bytes` (`worker_threads` x
-`thread_stack_bytes_per_thread`; drivers create threads with the platform
+`thread_stack_bytes_per_thread`; transports create threads with the platform
 default stack, so on POSIX this is the default thread attribute's stack size,
 set by `ulimit -s` on glibc, and on Windows the executable's 1 MiB default
 reserve). `total_bytes` is their sum and is never below `required_memory`.
@@ -314,7 +314,7 @@ ACK/keepalive clients while the buffered transport accepts only 256 controls per
 batch. Its elapsed time is a diagnostic for that synthetic workload, not a packet
 rate or a frame/send/ACK cadence requirement.
 
-## Server transport drivers
+## Server transports
 
 Transport selection is runtime (#106): one build carries every transport its
 platform has — on Linux the AF_XDP transport (privileged), the GSO transport

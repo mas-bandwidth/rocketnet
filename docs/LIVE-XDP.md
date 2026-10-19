@@ -61,7 +61,7 @@ choice. The config's `transport` field (`sdk/rocketnet.h`) or
 a pin: that transport or a loud failure, never a silent fall to gso or portable
 (the server transport implementation; registry row
 `sdk/rocketnet_drivers.inc:7`). The run starts `server` with
-`ROCKETNET_SERVER_TRANSPORT=xdp`. It also passes `--driver xdp`, so the config
+`ROCKETNET_SERVER_TRANSPORT=xdp`. It also passes `--transport xdp`, so the config
 records the pin. It reads the transport name query
 (`sdk/rocketnet.h`) after create and refuses to continue unless it
 reads `xdp`.
@@ -264,8 +264,9 @@ every window. The channel-less modes 0, 2, 5 and 6 name all 32 channels; the
 modes 1, 3, 4 and 7 run on channels 0 to 30, because channel 31 carries the
 progress reports and the HELLO (below and section 6). That is
 2 x (4 x 32 + 4 x 31) = 504 streams per connection. Each update, the
-receiver polls every channel with `rocketnet_message_*_receive`, and it
-releases every view before the next update (`sdk/rocketnet.h:1726-1731`).
+receiver polls every channel with `rocketnet_client_receive` on a client
+and `rocketnet_server_receive` on the server, and it releases every view
+before the next update (`sdk/rocketnet.h:889-892`).
 The receive channel is checked against the sender's channel byte. Codes 1,
 3, 4 and 7 must arrive on the channel sent. Codes 0, 2, 5 and 6 arrive on
 channel 0, because their records carry no channel (`sdk/rocketnet.h:1716`;
@@ -550,8 +551,9 @@ timed out, the counters at that moment and a 50-line log excerpt:
 - any failed connect;
 - any denial;
 - any disconnect other than the scheduled clean disconnect or silent drop
-  (a `rocketnet_message_*_disconnect_reason` other than NONE,
-  `sdk/rocketnet.h:1812`, `:1882`; a timeout on a live connection; a kick).
+  (a `rocketnet_client_disconnect_reason` or
+  `rocketnet_server_disconnect_reason` other than NONE, `sdk/rocketnet.h:868`,
+  `:978`; a timeout on a live connection; a kick).
 
 **The pass rule.** The run passes only when every row holds, for the whole
 run, on every bench:
@@ -619,7 +621,7 @@ server's public IPv4 address (`sdk/rocketnet_server_socket_linux.cpp:444-475`).
 The address must be IPv4: the pre-flight refuses anything else (`:706-718`).
 The transport binds that interface and no other. The attach is native, falling
 back to SKB mode (`:1335-1352`). Each queue binds an AF_XDP socket. The bind
-asks for no explicit mode, so the kernel gives zero copy where the driver
+asks for no explicit mode, so the kernel gives zero copy where the transport
 supports it and copy otherwise (`:1487-1493`, see section 15). The run
 records which it got.
 
@@ -742,7 +744,7 @@ file run over ssh under a timeout (section 12):
   bench on the same segment therefore gets its replies through the gateway,
   not directly. Step 6 of section 9 proves one LAN client's round trip first.
   If it fails, the run stops with that finding (section 15).
-- **The host firewall** never sees our port. XDP redirects in the driver,
+- **The host firewall** never sees our port. XDP redirects in the transport,
   before netfilter, so no host rule is needed. Upstream filtering in front of
   the test server must pass UDP 40000 from the internet benches. The run
   reads, never changes, any firewall. Opening a rule is an access-control
@@ -987,7 +989,7 @@ mode and the orchestration script.
    (`sdk/rocketnet_server_socket_linux.cpp:1489`) puts a bind-flag constant
    in the attach-flags field. With `XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD`
    (`:1491`) it does not request zero copy at bind; the kernel picks zero
-   copy where the driver supports it and copy otherwise. The run records
+   copy where the transport supports it and copy otherwise. The run records
    the mode it got. A fix belongs to its own card.
 8. **The provision script.** `rocketnet-provision` in provision mode mutates
    the NIC, so on the uplink the run uses verify only. If verify fails (the

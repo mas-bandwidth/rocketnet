@@ -32,7 +32,7 @@ outside, floor; then the next P; three rounds):
   unchanged.
 - **lock**: BASE plus the scratch timers below.
 - **outside**: lock plus the receive recipe of rocketnet-client-receive-outside-lock
-  in `rocketnet_client_receive_packets` (the driver's receive runs with the
+  in `rocketnet_client_receive_packets` (the transport's receive runs with the
   mutex released; the mutex is held only to check for room and to append one
   datagram), so the receive thread's hold does not show up as update's wait.
 - **floor**: outside plus a scratch acknowledged floor in
@@ -54,7 +54,7 @@ p50 and p99 over the 2000 measured frames of each run:
 | decrypt | `rocketnet_open_sealed_packet` in `rocketnet_client_open_session_packet` (`crypto_aead_chacha20poly1305_ietf_decrypt`) |
 | protocol | the rest of the per-datagram loop: the replay advance, the ack block read, `rocketnet_ack_endpoint_record_received`, `rocketnet_ack_endpoint_process_block`, the payload copy, the loss and jitter trackers |
 | block walk | `rocketnet_ack_endpoint_process_block` alone (inside protocol) |
-| protocol update, protocol send | `rocketnet_client_protocol_update`, and the driver send of its packet inside update |
+| protocol update, protocol send | `rocketnet_client_protocol_update`, and the transport send of its packet inside update |
 | stats | `rocketnet_client_update_stats` |
 | ack stats | the internal ack statistics update (`sdk/rocketnet_layers.h`) alone (inside stats) |
 | rest | update minus all of the above |
@@ -72,7 +72,7 @@ at P = 1 20.6 against 19.1 us.
 x86-64, 32 cores with 2-way SMT (64 hardware threads), 3.0 GHz maximum, 64 MiB
 L3, 125 GiB, Linux 6.8.0-142-generic, g++ 13.3.0, Release build
 (`cmake -DCMAKE_BUILD_TYPE=Release`, `cmake --build build -j8`), portable
-driver, 2000 measured frames per run after 200 discarded.
+transport, 2000 measured frames per run after 200 discarded.
 
 The machine was not quiet, and no quiet Linux member was available in this
 attempt: the one-minute load average was 155 to 197 during set 1 and 96 to 138
@@ -655,7 +655,7 @@ with `rocketnet_client_stat`.
 | rocketnet-ack-walk-unacked-only | pro | extend `tla/FragmentsAndAcks.tla` with the held and unacknowledged bitmaps and their two witnesses first, then give `sdk/rocketnet_ack.cpp` the bitmaps so a block's runs visit only held unacknowledged records; unit test `ack_block_walk_visits_only_unacknowledged` (a block restating 4096 acknowledged sequences makes zero record visits, a deferred record still surfaces from the next block); the meter at P = 32, BASE and head interleaved | `./bin/test ack_block_walk_visits_only_unacknowledged` prints `unknown unit test ack_block_walk_visits_only_unacknowledged`, exit 2 |
 | rocketnet-client-ack-stats-on-read | flash | call the internal ack statistics update (`sdk/rocketnet_layers.h`) from `rocketnet_client_stat` instead of every update; unit test `client_ack_stats_computed_on_read` (the stats a getter returns are unchanged, and update does not recompute them); the meter at P = 1 | `./bin/test client_ack_stats_computed_on_read` prints `unknown unit test client_ack_stats_computed_on_read`, exit 2 |
 | rocketnet-client-io-decrypt-model | heavy | write `tla/RNClientIoDecrypt.tla` as If decrypt moves names it, with the four reversed witnesses, checked with TLC on a bench, a `tla/COVERAGE.tsv` row and its README | `ls tla/RNClientIoDecrypt.tla` prints `ls: cannot access 'tla/RNClientIoDecrypt.tla': No such file or directory`, exit 2 |
-| rocketnet-client-io-decrypt | pro | after rocketnet-client-io-transport, rocketnet-client-io-linux and the model: the I/O thread opens session datagrams before `IoPublish` with its own key copy and window, verdicts in the records, update consumes them; unit tests (step-driven, fake driver, clock from 1000.0) `client_io_decrypt_opens_before_publish`, `client_io_decrypt_replay_refused_before_open` (the crypto tally's `aead_open` does not move for a duplicate), `client_io_decrypt_no_open_after_retire`, `client_io_decrypt_verdicts_counted_in_order`; the gate row of docs/CLIENT-IO.md at P = 32 | `./bin/test client_io_decrypt_opens_before_publish` prints `unknown unit test client_io_decrypt_opens_before_publish`, exit 2 |
+| rocketnet-client-io-decrypt | pro | after rocketnet-client-io-transport, rocketnet-client-io-linux and the model: the I/O thread opens session datagrams before `IoPublish` with its own key copy and window, verdicts in the records, update consumes them; unit tests (step-driven, fake transport, clock from 1000.0) `client_io_decrypt_opens_before_publish`, `client_io_decrypt_replay_refused_before_open` (the crypto tally's `aead_open` does not move for a duplicate), `client_io_decrypt_no_open_after_retire`, `client_io_decrypt_verdicts_counted_in_order`; the gate row of docs/CLIENT-IO.md at P = 32 | `./bin/test client_io_decrypt_opens_before_publish` prints `unknown unit test client_io_decrypt_opens_before_publish`, exit 2 |
 
 Each red was run at BASE `b0b4527` on the Linux bench of this note.
 rocketnet-client-receive-outside-lock and the client I/O cards of
