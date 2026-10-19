@@ -751,25 +751,37 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
 
     // the socket binds after the token parse so the bind family can follow
-    // the server when the platform has no dual stack
+    // the server and the host's IPv6 capability
+
+    const bool dual_stack = rocketnet_platform_client_dual_stack();
+    const bool ipv6_available = rocketnet_platform_client_ipv6_available();
+    const int bind_family = rocketnet_platform_client_bind_family(
+        client_transport->protocol.server_address.type, ipv6_available, dual_stack );
+
+    if ( bind_family == ROCKETNET_ADDRESS_NONE )
+    {
+        rocketnet_error( "client cannot connect: ipv6 is unavailable on this host" );
+        rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+        return NULL;
+    }
 
     rocketnet_address_t bind_address;
     memset( &bind_address, 0, sizeof(bind_address) );
-    bind_address.type = ROCKETNET_ADDRESS_IPV4;
+    bind_address.type = bind_family;
 
     // IMPORTANT: for many platforms it's best practice to bind to ipv6 and go dual stack on the client
-    if ( rocketnet_platform_client_dual_stack() )
+    if ( bind_family == ROCKETNET_ADDRESS_IPV6 )
     {
-        rocketnet_info( "client socket is dual stack ipv4 and ipv6" );
-        bind_address.type = ROCKETNET_ADDRESS_IPV6;
+        if ( dual_stack )
+            rocketnet_info( "client socket is dual stack ipv4 and ipv6" );
+        else
+            rocketnet_info( "client socket is ipv6 only" );
     }
-    else if ( client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6 )
+    else if ( client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV4 && dual_stack && !ipv6_available )
     {
-        // no dual stack on this platform (openbsd rejects v4-mapped
-        // addresses by design): one socket speaks one family, so bind
-        // the server's own
-        rocketnet_info( "client socket is ipv6 only" );
-        bind_address.type = ROCKETNET_ADDRESS_IPV6;
+        rocketnet_info( "client socket is ipv4 because ipv6 is unavailable on this host" );
     }
 
     // IMPORTANT: some platforms (GDK) have a preferred port that we must use to access packet tagging
