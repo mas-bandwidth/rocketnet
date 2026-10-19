@@ -409,6 +409,28 @@ void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t 
  */
 int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+/**
+ * @brief Test-only seam: makes the next sends report a chosen error.
+ *
+ * Compiled into the development library only. The next count calls to sendto
+ * and sendmsg_x on any socket return -1 with error set, without reaching the
+ * kernel. A non-positive count clears the seam. Development builds only.
+ * @param count Number of sends to fail.
+ * @param error errno value each failed send reports.
+ * @return None.
+ */
+void rocketnet_platform_socket_fail_next_sends( int count, int error );
+
+/**
+ * @brief Test-only seam: how many sends the seam has failed so far.
+ *
+ * Development builds only.
+ * @return The number of injected failures since the seam was last set.
+ */
+int rocketnet_platform_socket_send_failures();
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+
 // the name of the pump path live behind the seam ("portable", "msgx"), for
 // logging and for tests that pin the degradation contract
 

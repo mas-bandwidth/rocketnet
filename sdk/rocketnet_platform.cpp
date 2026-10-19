@@ -68,6 +68,37 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
 // no IPv6 stack. the client's availability probe reads the same flag.
 static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
 
+// Test-only send-failure seam, compiled into the development library only.
+// The next N sendto and sendmsg_x calls report the chosen errno without
+// reaching the kernel, so a functional case can drive the send error arms.
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+static int rocketnet_platform_send_failures_remaining = 0;
+static int rocketnet_platform_send_failure_errno = 0;
+static int rocketnet_platform_send_failures_injected = 0;
+
+void rocketnet_platform_socket_fail_next_sends( int count, int error )
+{
+    rocketnet_platform_send_failures_remaining = count > 0 ? count : 0;
+    rocketnet_platform_send_failure_errno = error;
+    rocketnet_platform_send_failures_injected = 0;
+}
+
+int rocketnet_platform_socket_send_failures()
+{
+    return rocketnet_platform_send_failures_injected;
+}
+
+static bool rocketnet_platform_send_failure_should_inject( int * error )
+{
+    if ( rocketnet_platform_send_failures_remaining <= 0 )
+        return false;
+    --rocketnet_platform_send_failures_remaining;
+    ++rocketnet_platform_send_failures_injected;
+    *error = rocketnet_platform_send_failure_errno;
+    return true;
+}
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
 // linux and the BSDs. one POSIX section: the sockets, threads and mutexes
@@ -503,6 +534,18 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     rocketnet_assert( to_input->type == ROCKETNET_ADDRESS_IPV6 || to_input->type == ROCKETNET_ADDRESS_IPV4 );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    int injected_error = 0;
+    if ( rocketnet_platform_send_failure_should_inject( &injected_error ) )
+    {
+        errno = injected_error;
+        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+        rocketnet_address_to_string( to_input, address_string );
+        rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+        return;
+    }
+#endif
 
     rocketnet_address_t to = *to_input;
 
@@ -2175,6 +2218,18 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
 
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    int injected_error = 0;
+    if ( rocketnet_platform_send_failure_should_inject( &injected_error ) )
+    {
+        errno = injected_error;
+        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+        rocketnet_address_to_string( input_to, address_string );
+        rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+        return;
+    }
+#endif
+
     rocketnet_address_t to = *input_to;
 
     if ( socket->ipv6 )
@@ -2506,7 +2561,21 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
         while ( offset < count )
         {
             errno = 0;
-            ssize_t result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
+            ssize_t result;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            int injected_error = 0;
+            if ( rocketnet_platform_send_failure_should_inject( &injected_error ) )
+            {
+                errno = injected_error;
+                result = -1;
+            }
+            else
+            {
+                result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
+            }
+#else
+            result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
+#endif
             if ( result > 0 )
             {
                 offset += (int) result;
