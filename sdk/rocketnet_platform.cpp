@@ -3078,6 +3078,10 @@ static DWORD WINAPI thread_function_shim( void * data )
     return 0;
 }
 
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif // #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
 {
     rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t ) );
@@ -3106,10 +3110,16 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
         return NULL;
     }
 
+    // created here, not on the thread, so thread_wake can fire it; NULL (before
+    // Windows 10 1803) falls back to a rounded-up wait on the event
+    thread->wake_timer = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
+
     thread->handle = CreateThread(NULL, 0, thread_function_shim, shim_data, 0, NULL);
 
     if ( thread->handle == NULL )
     {
+        if ( thread->wake_timer )
+            CloseHandle( thread->wake_timer );
         CloseHandle( thread->wake_event );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
@@ -3129,14 +3139,25 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
     CloseHandle( thread->handle );
+    if ( thread->wake_timer )
+        CloseHandle( thread->wake_timer );
     CloseHandle( thread->wake_event );
     rocketnet_free( thread->context, thread );
 }
 
+// the event is set first, then the timer is fired at once: a wait that set its
+// timer before this fire ends now, and one that sets its timer after the event
+// sees the event on its re-check (thread_wait)
 void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
     SetEvent( thread->wake_event );
+    if ( thread->wake_timer )
+    {
+        LARGE_INTEGER due;
+        due.QuadPart = -1;
+        SetWaitableTimer( thread->wake_timer, &due, 0, NULL, NULL, FALSE );
+    }
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
@@ -3286,8 +3307,9 @@ void rocketnet_platform_thread_wait( double time )
         return;
     }
 
-    // the sleep's plan and its high-resolution timer, waited on beside the
-    // wake event, so the wait keeps the sleep's resolution and ends on a wake
+    // the sleep's plan on the thread's own high-resolution timer, waited on
+    // alone as the sleep waits on its timer; thread_wake sets the event and
+    // fires the timer, so the wait ends on a wake
     const rocketnet_platform_sleep_plan_t plan = rocketnet_platform_sleep_plan( time );
     if ( WaitForSingleObject( thread->wake_event, 0 ) == WAIT_OBJECT_0 )
         return;
@@ -3297,21 +3319,16 @@ void rocketnet_platform_thread_wait( double time )
         return;
     }
 
-    if ( !rocketnet_platform_sleep_timer.tried )
-    {
-        rocketnet_platform_sleep_timer.tried = true;
-        rocketnet_platform_sleep_timer.handle = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
-    }
-
-    if ( rocketnet_platform_sleep_timer.handle )
+    if ( thread->wake_timer )
     {
         LARGE_INTEGER due;
         due.QuadPart = plan.due_time;
-        if ( SetWaitableTimer( rocketnet_platform_sleep_timer.handle, &due, 0, NULL, NULL, FALSE ) )
+        if ( SetWaitableTimer( thread->wake_timer, &due, 0, NULL, NULL, FALSE ) )
         {
-            HANDLE handles[2] = { thread->wake_event, rocketnet_platform_sleep_timer.handle };
-            WaitForMultipleObjects( 2, handles, FALSE, (DWORD) plan.fallback_milliseconds + 1 );
-            CancelWaitableTimer( rocketnet_platform_sleep_timer.handle );
+            // a wake whose fire landed before this set has set the event
+            if ( WaitForSingleObject( thread->wake_event, 0 ) == WAIT_OBJECT_0 )
+                return;
+            WaitForSingleObject( thread->wake_timer, INFINITE );
             return;
         }
     }

@@ -806,6 +806,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         void * context;
         HANDLE handle;
         HANDLE wake_event;              // manual-reset: set once by thread_wake, never reset
+        HANDLE wake_timer;              // high-resolution waitable timer: thread_wait waits on it alone, thread_wake fires it at once; NULL falls back to the event
     };
 
     struct rocketnet_platform_mutex_t
