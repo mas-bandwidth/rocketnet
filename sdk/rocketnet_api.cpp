@@ -124,7 +124,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     struct rocketnet_client_config_t defaults;
     if ( !config )
     {
-        rocketnet_client_default_config( &defaults );
+        rocketnet_client_default_config_sized( &defaults, sizeof( defaults ) );
         config = &defaults;
     }
 
@@ -161,7 +161,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     struct rocketnet_server_config_t defaults;
     if ( !config )
     {
-        rocketnet_server_default_config( &defaults );
+        rocketnet_server_default_config_sized( &defaults, sizeof( defaults ) );
         config = &defaults;
     }
 
@@ -235,7 +235,7 @@ static inline struct rocketnet_message_client_t * rn_client( const struct rocket
     return (struct rocketnet_message_client_t *) client;
 }
 
-void rocketnet_client_default_config( struct rocketnet_client_config_t * config )
+static void rn_client_default_config_current( struct rocketnet_client_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return;
@@ -260,14 +260,23 @@ void rocketnet_client_default_config( struct rocketnet_client_config_t * config 
 #undef RN_COPY
 }
 
+void rocketnet_client_default_config( struct rocketnet_client_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
+    struct rocketnet_client_config_t defaults;
+    rn_client_default_config_current( &defaults );
+    memcpy( config, &defaults, ROCKETNET_CLIENT_CONFIG_BYTES_1 );
+}
+
 static size_t rn_client_config_bytes_1()
 {
-    return offsetof( struct rocketnet_client_config_t, simulated_loss_percent );
+    return ROCKETNET_CLIENT_CONFIG_BYTES_1;
 }
 
 static size_t rn_server_config_bytes_1()
 {
-    return offsetof( struct rocketnet_server_config_t, simulated_loss_percent );
+    return ROCKETNET_SERVER_CONFIG_BYTES_1;
 }
 
 static bool rn_public_config_size_known( size_t bytes, size_t revision_1, size_t current )
@@ -285,12 +294,24 @@ int rocketnet_client_default_config_sized( struct rocketnet_client_config_t * co
         return 0;
     }
     struct rocketnet_client_config_t defaults;
-    rocketnet_client_default_config( &defaults );
+    rn_client_default_config_current( &defaults );
     memcpy( config, &defaults, config_bytes );
     return 1;
 }
 
-int rocketnet_client_validate_config( const struct rocketnet_client_config_t * config )
+static const rocketnet_client_config_t * rn_client_config_read( rocketnet_client_config_t * current,
+                                                                    const rocketnet_client_config_t * config,
+                                                                    size_t config_bytes )
+{
+    if ( !config )
+        return NULL;
+    rn_client_default_config_current( current );
+    memcpy( current, config, config_bytes );
+    return current;
+}
+
+static int rn_client_validate_config_current( const struct rocketnet_client_config_t * config )
+
 {
     struct rocketnet_client_transport_config_t transport;
     struct rocketnet_message_config_t message;
@@ -304,7 +325,22 @@ int rocketnet_client_validate_config( const struct rocketnet_client_config_t * c
     return rocketnet_message_validate_config( &message );
 }
 
-uint64_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config )
+int rocketnet_client_validate_config( const struct rocketnet_client_config_t * config )
+{
+    struct rocketnet_client_config_t current;
+    return rn_client_validate_config_current( rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) );
+}
+
+int rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
+{
+    if ( config && !rn_public_config_size_known( config_bytes, ROCKETNET_CLIENT_CONFIG_BYTES_1, sizeof(*config) ) )
+        return 0;
+    struct rocketnet_client_config_t current;
+    return rn_client_validate_config_current( rn_client_config_read( &current, config, config_bytes ) );
+}
+
+static uint64_t rn_client_required_memory_current( const struct rocketnet_client_config_t * config )
+
 {
     struct rocketnet_client_transport_config_t transport;
     struct rocketnet_message_config_t message;
@@ -314,7 +350,21 @@ uint64_t rocketnet_client_required_memory( const struct rocketnet_client_config_
     return rocketnet_message_client_required_memory( &message );
 }
 
-struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, void * memory, uint64_t memory_bytes )
+uint64_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config )
+{
+    struct rocketnet_client_config_t current;
+    return rn_client_required_memory_current( rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) );
+}
+
+uint64_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
+{
+    if ( config && !rn_public_config_size_known( config_bytes, ROCKETNET_CLIENT_CONFIG_BYTES_1, sizeof(*config) ) )
+        return 0;
+    struct rocketnet_client_config_t current;
+    return rn_client_required_memory_current( rn_client_config_read( &current, config, config_bytes ) );
+}
+
+static struct rocketnet_client_t * rn_client_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, void * memory, uint64_t memory_bytes )
 {
     if ( !rocketnet_api_null_guard( connect_token ) )
         return NULL;
@@ -326,6 +376,13 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8
     return (struct rocketnet_client_t *) rocketnet_message_client_create( context, connect_token, &transport, &message, memory, memory_bytes, kbps );
 }
 
+struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, void * memory, uint64_t memory_bytes )
+{
+    struct rocketnet_client_config_t current;
+    return rn_client_create_current( context, connect_token,
+        rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ), memory, memory_bytes );
+}
+
 struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
 {
     if ( config && !rn_public_config_size_known( config_bytes, rn_client_config_bytes_1(), sizeof( struct rocketnet_client_config_t ) ) )
@@ -334,11 +391,11 @@ struct rocketnet_client_t * rocketnet_client_create_sized( void * context, const
         return NULL;
     }
     if ( !config || config_bytes == sizeof( struct rocketnet_client_config_t ) )
-        return rocketnet_client_create( context, connect_token, config, memory, memory_bytes );
+        return rn_client_create_current( context, connect_token, config, memory, memory_bytes );
     struct rocketnet_client_config_t current;
-    rocketnet_client_default_config( &current );
+    rn_client_default_config_current( &current );
     memcpy( &current, config, config_bytes );
-    return rocketnet_client_create( context, connect_token, &current, memory, memory_bytes );
+    return rn_client_create_current( context, connect_token, &current, memory, memory_bytes );
 }
 
 void rocketnet_client_destroy( struct rocketnet_client_t * client )
@@ -519,7 +576,7 @@ static inline struct rocketnet_server_transport_t * rn_server_transport( const s
     return rocketnet_message_server_transport( rn_server( server ) );
 }
 
-static void rn_server_config_from_transport( struct rocketnet_server_config_t * config, const struct rocketnet_server_transport_config_t * transport )
+static void rn_server_config_from_transport_current( struct rocketnet_server_config_t * config, const struct rocketnet_server_transport_config_t * transport )
 {
     memset( config, 0, sizeof( *config ) );
     config->protocol_id = transport->protocol_id;
@@ -548,13 +605,22 @@ static void rn_server_config_from_transport( struct rocketnet_server_config_t * 
 #undef RN_COPY
 }
 
-void rocketnet_server_default_config( struct rocketnet_server_config_t * config )
+static void rn_server_default_config_current( struct rocketnet_server_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return;
     struct rocketnet_server_transport_config_t transport;
     rocketnet_server_transport_default_config_current( &transport );
-    rn_server_config_from_transport( config, &transport );
+    rn_server_config_from_transport_current( config, &transport );
+}
+
+void rocketnet_server_default_config( struct rocketnet_server_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
+    struct rocketnet_server_config_t defaults;
+    rn_server_default_config_current( &defaults );
+    memcpy( config, &defaults, ROCKETNET_SERVER_CONFIG_BYTES_1 );
 }
 
 int rocketnet_server_default_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes )
@@ -567,22 +633,53 @@ int rocketnet_server_default_config_sized( struct rocketnet_server_config_t * co
         return 0;
     }
     struct rocketnet_server_config_t defaults;
-    rocketnet_server_default_config( &defaults );
+    rn_server_default_config_current( &defaults );
     memcpy( config, &defaults, config_bytes );
     return 1;
 }
 
-void rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
+static void rn_server_dev_config_current( struct rocketnet_server_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return;
     struct rocketnet_server_transport_config_t transport;
     memset( &transport, 0, sizeof(transport) );
     rocketnet_server_transport_dev_config( &transport );
-    rn_server_config_from_transport( config, &transport );
+    rn_server_config_from_transport_current( config, &transport );
 }
 
-int rocketnet_server_validate_config( const struct rocketnet_server_config_t * config )
+void rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
+    struct rocketnet_server_config_t current;
+    rn_server_dev_config_current( &current );
+    memcpy( config, &current, ROCKETNET_SERVER_CONFIG_BYTES_1 );
+}
+
+int rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes )
+{
+    if ( !rocketnet_api_null_guard( config ) || !rn_public_config_size_known( config_bytes, ROCKETNET_SERVER_CONFIG_BYTES_1, sizeof(*config) ) )
+        return 0;
+    struct rocketnet_server_config_t current;
+    rn_server_dev_config_current( &current );
+    memcpy( config, &current, config_bytes );
+    return 1;
+}
+
+static const rocketnet_server_config_t * rn_server_config_read( rocketnet_server_config_t * current,
+                                                                    const rocketnet_server_config_t * config,
+                                                                    size_t config_bytes )
+{
+    if ( !config )
+        return NULL;
+    rn_server_default_config_current( current );
+    memcpy( current, config, config_bytes );
+    return current;
+}
+
+static int rn_server_validate_config_current( const struct rocketnet_server_config_t * config )
+
 {
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
@@ -596,7 +693,22 @@ int rocketnet_server_validate_config( const struct rocketnet_server_config_t * c
     return rocketnet_message_validate_config( &message );
 }
 
-uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config )
+int rocketnet_server_validate_config( const struct rocketnet_server_config_t * config )
+{
+    struct rocketnet_server_config_t current;
+    return rn_server_validate_config_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+}
+
+int rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
+{
+    if ( config && !rn_public_config_size_known( config_bytes, ROCKETNET_SERVER_CONFIG_BYTES_1, sizeof(*config) ) )
+        return 0;
+    struct rocketnet_server_config_t current;
+    return rn_server_validate_config_current( rn_server_config_read( &current, config, config_bytes ) );
+}
+
+static uint64_t rn_server_required_memory_current( const struct rocketnet_server_config_t * config )
+
 {
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
@@ -606,7 +718,21 @@ uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_
     return rocketnet_message_server_required_memory( &transport, &message );
 }
 
-struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes )
+uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config )
+{
+    struct rocketnet_server_config_t current;
+    return rn_server_required_memory_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+}
+
+uint64_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
+{
+    if ( config && !rn_public_config_size_known( config_bytes, ROCKETNET_SERVER_CONFIG_BYTES_1, sizeof(*config) ) )
+        return 0;
+    struct rocketnet_server_config_t current;
+    return rn_server_required_memory_current( rn_server_config_read( &current, config, config_bytes ) );
+}
+
+static struct rocketnet_server_t * rn_server_create_current( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes )
 {
     if ( !rocketnet_api_null_guard( address ) )
         return NULL;
@@ -618,6 +744,13 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
     return (struct rocketnet_server_t *) rocketnet_message_server_create( context, address, &transport, &message, memory, memory_bytes, kbps );
 }
 
+struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, uint64_t memory_bytes )
+{
+    struct rocketnet_server_config_t current;
+    return rn_server_create_current( context, address,
+        rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ), memory, memory_bytes );
+}
+
 struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const char * address, const struct rocketnet_server_config_t * config, size_t config_bytes, void * memory, uint64_t memory_bytes )
 {
     if ( config && !rn_public_config_size_known( config_bytes, rn_server_config_bytes_1(), sizeof( struct rocketnet_server_config_t ) ) )
@@ -626,11 +759,11 @@ struct rocketnet_server_t * rocketnet_server_create_sized( void * context, const
         return NULL;
     }
     if ( !config || config_bytes == sizeof( struct rocketnet_server_config_t ) )
-        return rocketnet_server_create( context, address, config, memory, memory_bytes );
+        return rn_server_create_current( context, address, config, memory, memory_bytes );
     struct rocketnet_server_config_t current;
-    rocketnet_server_default_config( &current );
+    rn_server_default_config_current( &current );
     memcpy( &current, config, config_bytes );
-    return rocketnet_server_create( context, address, &current, memory, memory_bytes );
+    return rn_server_create_current( context, address, &current, memory, memory_bytes );
 }
 
 void rocketnet_server_destroy( struct rocketnet_server_t * server )

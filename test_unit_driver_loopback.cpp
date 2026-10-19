@@ -236,6 +236,9 @@ struct wire_totals_staged_fixture_t
     int finishes;
     int flushes;
     int batch_sends;
+    int finished_bytes;
+    uint8_t aborted_data[ROCKETNET_RECEIVE_CEILING];
+    uint8_t finished_data[ROCKETNET_RECEIVE_CEILING];
 };
 
 static void wt_staged_destroy(void *) {}
@@ -255,13 +258,21 @@ static uint8_t * wt_staged_start_packet(void * p, const rocketnet_address_t * to
     *id = (uint64_t) f->used;
     return f->frame;
 }
-static void wt_staged_finish_packet(void * p, uint64_t, uint8_t *, int)
+static void wt_staged_finish_packet(void * p, uint64_t, uint8_t * frame, int bytes)
 {
     wire_totals_staged_fixture_t * f = (wire_totals_staged_fixture_t*) p;
     ++f->used;
     ++f->finishes;
+    f->finished_bytes = bytes;
+    memcpy( f->finished_data, frame + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bytes );
 }
-static void wt_staged_abort_packet(void * p, uint64_t, uint8_t *) { ++((wire_totals_staged_fixture_t*)p)->aborts; }
+static void wt_staged_abort_packet(void * p, uint64_t, uint8_t * frame)
+{
+    wire_totals_staged_fixture_t * f = (wire_totals_staged_fixture_t*) p;
+    ++f->aborts;
+    memcpy( f->aborted_data, frame + ROCKETNET_FRAME_WIRE_OFFSET, sizeof(f->aborted_data) );
+    memset( frame, 0xee, ROCKETNET_FRAME_STRIDE );
+}
 static void wt_staged_flush(void * p) { wire_totals_staged_fixture_t * f = (wire_totals_staged_fixture_t*) p; f->used = 0; ++f->flushes; }
 
 static void wire_totals_staged_finish_counts_exactly()
@@ -448,6 +459,8 @@ static void public_link_simulator_staged_server_deadline()
     rocketnet_server_link_drain( server );
     rocketnet_unit_check( fx.finishes == 1 );
     rocketnet_unit_check( fx.flushes == 2 );
+    rocketnet_unit_check( fx.finished_bytes > 0 );
+    rocketnet_unit_check( memcmp( fx.finished_data, fx.aborted_data, (size_t) fx.finished_bytes ) == 0 );
 
     rocketnet_server_transport_destroy( server );
 }
