@@ -307,7 +307,9 @@ def self_contained(build, config, compiler_c, compiler_cxx):
             result = subprocess.run(command, capture_output=True, text=True, cwd=directory, env=environment)
             if result.returncode != 0:
                 report(False, "(d) %s client and server build against rocketnet.h and %s alone: %s" %
-                       (name, library.name, (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]))
+                       (name, library.name, (result.stderr.strip().splitlines() or
+                                             [line for line in result.stdout.splitlines() if "error" in line] or
+                                             ["exit %d" % result.returncode])[0]))
                 continue
             report(True, "(d) %s client and server build against rocketnet.h and %s alone" % (name, library.name))
             try:
