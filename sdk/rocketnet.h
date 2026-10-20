@@ -1438,10 +1438,14 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 
 /// @brief Destroy a client from any state.
 ///
-/// A live connection ends as rocketnet_client_disconnect ends it, with the
-/// disconnect packets from a handshake state or CONNECTED, then the client
-/// is freed; a caller memory block is cleared and given back to the caller.
-/// Every pointer from the client is invalid after the call.
+/// A live connection ends as rocketnet_client_disconnect ends it, then the
+/// client is freed; a caller memory block is cleared and given back to the
+/// caller. Once the session keys exist (SENDING_CONNECTION_RESPONSE or
+/// CONNECTED) the redundant disconnect packets are sent before the transport
+/// closes, so the server frees the slot on receipt rather than at timeout;
+/// from DISCONNECTED, an error state, REQUESTING_COOKIE or
+/// SENDING_CONNECTION_REQUEST nothing is sent. Every pointer from the client
+/// is invalid after the call.
 ///
 /// @param client The client; NULL is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
@@ -1825,11 +1829,12 @@ ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t 
 
 /// @brief Destroy a server from either state.
 ///
-/// A running server is stopped first, as rocketnet_server_stop does, so
-/// every client gets the disconnect packets; then the server's memory,
-/// keys included, is wiped and freed, and a caller memory block is given
-/// back to the caller. Every pointer from the server is invalid after the
-/// call.
+/// A running server is stopped first, as rocketnet_server_stop does: every
+/// connected client is sent the redundant disconnect packets before the
+/// transport closes, and with no connected client nothing is sent. Then the
+/// server's memory, keys included, is wiped and freed, and a caller memory
+/// block is given back to the caller. Every pointer from the server is
+/// invalid after the call.
 ///
 /// @param server The server; NULL is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
