@@ -2543,9 +2543,9 @@ bool rocketnet_server_socket_test_inactive_generation()
     // generation (never the front); finish_base refuses a pointer from before
     // the reopen so it cannot rewrite a published packet.
     const int newest = socket->send_flow_index.load();
-    if (newest >= 0)
+    valid &= newest == 1; // the slow path reopened the newest generation, never the front
+    if (newest == 1)
     {
-        valid &= newest == 1; // the newest generation, never the front
         valid &= socket->send_buffer[1].base == 2;
         // A finish or abort through a pointer from before the reopen sits below
         // base and is refused, leaving published packet_bytes intact.
