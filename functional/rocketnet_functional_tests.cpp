@@ -3622,6 +3622,8 @@ void rocketnet_test_config_precedence()
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    config.max_clients = 1;
 
     // default layer
 
@@ -3677,6 +3679,8 @@ static void rocketnet_test_driver_pin_exchange( const char * driver_list, const 
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    server_config.max_clients = 1;
     snprintf( server_config.driver, sizeof(server_config.driver), "%s", driver_list );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -3779,6 +3783,9 @@ void rocketnet_test_server_driver_pin_loopback()
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // Keep a spare slot so the socket-client refusal below cannot pass
+    // merely because the loopback client filled the server.
+    server_config.max_clients = 2;
     snprintf( server_config.driver, sizeof(server_config.driver), "loopback" );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -3901,6 +3908,8 @@ void rocketnet_test_driver_env_pins_loopback()
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    server_config.max_clients = 1;
     rocketnet_check( strcmp( server_config.driver, "auto" ) == 0 );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -4598,6 +4607,8 @@ void rocketnet_test_server_port_zero_driver()
 
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
+        // This selection/configuration fixture needs one connection, not 1000 slots.
+        config.max_clients = 1;
         snprintf( config.driver, sizeof(config.driver), "%s", list );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
@@ -4633,6 +4644,8 @@ void rocketnet_test_server_port_zero_driver()
 
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
+        // This selection/configuration fixture needs one connection, not 1000 slots.
+        config.max_clients = 1;
         snprintf( config.driver, sizeof(config.driver), "%s", name );
 
         rocketnet_test_captured_log[0] = '\0';
