@@ -63,25 +63,38 @@ static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_syn
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 
-static mach_timebase_info_data_t rocketnet_frame_sync_timebase;
+// the timebase is read once, on first use by any caller (a function-local
+// static, initialized once even under concurrent first calls), so
+// rocketnet_frame_sync_now_ns called before any create never divides by an
+// unread zero denominator.
+
+static const mach_timebase_info_data_t & rocketnet_frame_sync_timebase()
+{
+    static const mach_timebase_info_data_t timebase = []
+    {
+        mach_timebase_info_data_t value;
+        mach_timebase_info( &value );
+        return value;
+    }();
+    return timebase;
+}
 
 static void rocketnet_frame_sync_platform_init()
 {
-    if ( rocketnet_frame_sync_timebase.denom == 0 )
-    {
-        mach_timebase_info( &rocketnet_frame_sync_timebase );
-    }
+    rocketnet_frame_sync_timebase();
 }
 
 uint64_t rocketnet_frame_sync_now_ns()
 {
-    return mach_absolute_time() * rocketnet_frame_sync_timebase.numer / rocketnet_frame_sync_timebase.denom;
+    const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
+    return mach_absolute_time() * timebase.numer / timebase.denom;
 }
 
 static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_sync_t * frame_sync, uint64_t deadline_ns )
 {
     (void) frame_sync;
-    mach_wait_until( deadline_ns * rocketnet_frame_sync_timebase.denom / rocketnet_frame_sync_timebase.numer );
+    const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
+    mach_wait_until( deadline_ns * timebase.denom / timebase.numer );
 }
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -90,21 +103,32 @@ static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_syn
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
 
-static LARGE_INTEGER rocketnet_frame_sync_qpc_frequency;
+// the counter frequency is read once, on first use by any caller (a
+// function-local static, initialized once even under concurrent first
+// calls), so rocketnet_frame_sync_now_ns called before any create never
+// divides by an unread zero frequency.
+
+static double rocketnet_frame_sync_qpc_frequency()
+{
+    static const double frequency = []
+    {
+        LARGE_INTEGER value;
+        QueryPerformanceFrequency( &value );
+        return (double) value.QuadPart;
+    }();
+    return frequency;
+}
 
 static void rocketnet_frame_sync_platform_init()
 {
-    if ( rocketnet_frame_sync_qpc_frequency.QuadPart == 0 )
-    {
-        QueryPerformanceFrequency( &rocketnet_frame_sync_qpc_frequency );
-    }
+    rocketnet_frame_sync_qpc_frequency();
 }
 
 uint64_t rocketnet_frame_sync_now_ns()
 {
     LARGE_INTEGER counter;
     QueryPerformanceCounter( &counter );
-    return (uint64_t) ( (double) counter.QuadPart * ( 1e9 / (double) rocketnet_frame_sync_qpc_frequency.QuadPart ) );
+    return (uint64_t) ( (double) counter.QuadPart * ( 1e9 / rocketnet_frame_sync_qpc_frequency() ) );
 }
 
 static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_sync_t * frame_sync, uint64_t deadline_ns )
@@ -144,9 +168,10 @@ static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t
     struct sched_param param;
     memset( &param, 0, sizeof(param) );
     param.sched_priority = 80;
-    if ( pthread_setschedparam( pthread_self(), SCHED_FIFO, &param ) != 0 )
+    const int error = pthread_setschedparam( pthread_self(), SCHED_FIFO, &param );
+    if ( error != 0 )
     {
-        rocketnet_info( "frame sync: SCHED_FIFO refused (%s), plain absolute sleep", strerror( errno ) );
+        rocketnet_info( "frame sync: SCHED_FIFO refused (%s), plain absolute sleep", strerror( error ) );
         return;
     }
     frame_sync->priority_held = 1;
@@ -169,7 +194,8 @@ static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t
 
     frame_sync->waiter_thread = pthread_self();
 
-    const uint64_t period_mach = frame_sync->period_ns * rocketnet_frame_sync_timebase.denom / rocketnet_frame_sync_timebase.numer;
+    const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
+    const uint64_t period_mach = frame_sync->period_ns * timebase.denom / timebase.numer;
 
     thread_time_constraint_policy_data_t policy;
     policy.period = (uint32_t) period_mach;
@@ -177,8 +203,12 @@ static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t
     policy.constraint = (uint32_t) ( period_mach / 2 );
     policy.preemptible = TRUE;
 
-    kern_return_t result = thread_policy_set( mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY,
+    // mach_thread_self returns a new send right on each call; it is released
+    // after the policy call so no port leaks per call
+    const mach_port_t thread = mach_thread_self();
+    kern_return_t result = thread_policy_set( thread, THREAD_TIME_CONSTRAINT_POLICY,
                                               (thread_policy_t) &policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT );
+    mach_port_deallocate( mach_task_self(), thread );
     if ( result != KERN_SUCCESS )
     {
         rocketnet_info( "frame sync: time constraint policy refused (%d), plain absolute sleep", (int) result );
@@ -193,8 +223,10 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
     if ( !frame_sync->priority_held || !pthread_equal( pthread_self(), frame_sync->waiter_thread ) )
         return;
     thread_standard_policy_data_t policy;
-    thread_policy_set( mach_thread_self(), THREAD_STANDARD_POLICY,
+    const mach_port_t thread = mach_thread_self();
+    thread_policy_set( thread, THREAD_STANDARD_POLICY,
                        (thread_policy_t) &policy, THREAD_STANDARD_POLICY_COUNT );
+    mach_port_deallocate( mach_task_self(), thread );
 }
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
