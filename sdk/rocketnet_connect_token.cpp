@@ -299,21 +299,39 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
     return crypto_sign_verify_detached( signature, signed_connect_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, backend_public_key ) == 0;
 }
 
+// The private block seam, compiled into the unit suite's hook library only
+// (ROCKETNET_SECRET_WIPE_TEST_HOOKS): rocketnet_open_connect_token_private
+// hands its private block staging to the hook as it enters (at_exit 0, so a
+// unit case can plant a canary in it) and on each of its two exits (at_exit
+// 1, so the case reads what the staging still holds)
+// (test_unit_secrets_wiped.cpp).
+#if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
+void (*rocketnet_token_private_block_hook)( uint8_t * block, int bytes, int at_exit ) = NULL;
+#define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do { if ( rocketnet_token_private_block_hook ) rocketnet_token_private_block_hook( block, bytes, at_exit ); } while ( 0 )
+#else
+#define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do {} while ( 0 )
+#endif
+
 int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private_t * output,
                                           const uint8_t * signed_connect_data,
                                           const uint8_t * server_public_key,
                                           const uint8_t * server_secret_key )
 {
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+    ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof(private_block), 0 );
     rocketnet_crypto_tally.seal_open++;
     if ( crypto_box_seal_open( private_block,
                                signed_connect_data + ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK,
                                ROCKETNET_SEALED_BLOCK_BYTES,
                                server_public_key,
                                server_secret_key ) != 0 )
+    {
+        ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof(private_block), 1 );
         return 0;
+    }
     rocketnet_read_connect_token_private( output, private_block );
     sodium_memzero( private_block, sizeof(private_block) );
+    ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof(private_block), 1 );
     return 1;
 }
 
