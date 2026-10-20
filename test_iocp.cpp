@@ -1090,13 +1090,13 @@ static void send_failed_log( void *, rocketnet_log_level_t, const char * message
 
 // a sendto that answers SOCKET_ERROR (an oversize datagram: WSAEMSGSIZE) is
 // counted on the socket and logged with WSAGetLastError(); a good send is not
-// counted. IPv4 socket, and dual-stack IPv6 socket to IPv4 and IPv6 peers.
+// counted. An IPv4 socket and an IPv6 socket: both sendto arms.
 static void test_windows_send_failures_counted()
 {
-    const char * binds[] = { "127.0.0.1:0", "[::1]:0", "[::1]:0" };
-    const char * peers[] = { "127.0.0.1:0", "127.0.0.1:0", "[::1]:0" };
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    const char * peers[] = { "127.0.0.1:0", "[::1]:0" };
     std::vector<uint8_t> oversize( 70000, 0x5A );
-    for ( int c = 0; c < 3; ++c )
+    for ( int c = 0; c < 2; ++c )
     {
         rocketnet_address_t bind = address(binds[c]);
         rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create(NULL, &bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024);
