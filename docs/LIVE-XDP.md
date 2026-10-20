@@ -14,7 +14,7 @@ at `sprint/rocketnet-proof` `20d8b35`; `client.c`, `server.c`, `soak.c`,
 2026-10-18 sit on top of the card that asked for this document. Where the two
 differ, the rulings win, and section 15 lists each difference. The base tip
 this design lands on, `962e3a4`, has since raised the `max_clients` default
-to 1,000 (`rocketnet-max-clients-defaults-to-1000`, the same line 923) and
+to 1 (`rocketnet-max-clients-defaults-to-1000`, the same line 923) and
 added a Windows server transport row to `sdk/rocketnet_drivers.inc`; no other
 cited line moves.
 
@@ -30,7 +30,7 @@ the message records and their forms, channels, the eight reliabilities,
 blocks and their chunks, the transport's fragments, reliable resend, the ack
 and message windows, the send budget, the slot table, the handshake, and the
 timeout and disconnect paths. The library's functional suite runs these over
-loopback and the simulator (`functional/channel_harness.h:5-17`). This run
+loopback and the simulator (`functional/channel_harness.h`). This run
 puts them on real NICs, a real 10 Gbit XDP data plane, real LAN and internet
 paths, and about ten peers at once.
 
@@ -41,9 +41,9 @@ paths, and about ten peers at once.
 - Any failed connect, any denial and any unexpected disconnect fails the run
   (section 7).
 
-The run follows the soak discipline of `soak.c:5-9`: duration turns
+The run follows the soak discipline of `soak.c`: duration turns
 probability into certainty. It also keeps soak's counter discipline. Every
-counter family must balance (`soak.c:54`, `rocketnet_counters_conserved`).
+counter family must balance (`soak.c`, `rocketnet_counters_conserved`).
 Every refusal counter must read 0, except the ones section 7 names, each
 with its mechanism and an exact expected count.
 
@@ -54,7 +54,7 @@ separate harness.
 
 **Server: `server.c`, with the transport pinned to xdp.** `server_xdp/server_xdp.c`
 is the kernel XDP program, not a server. The library embeds and loads it
-itself (`CMakeLists.txt:75-89`; `sdk/rocketnet_server_socket_linux.cpp:1302-1352`).
+itself (`CMakeLists.txt`; `sdk/rocketnet_server_socket_linux.cpp`).
 It is read-only for every card of this run. The xdp transport is a runtime
 choice. The config's `transport` field (`sdk/rocketnet.h`) or
 `ROCKETNET_SERVER_TRANSPORT` gives the candidate list, and a one-element list is
@@ -67,13 +67,13 @@ records the pin. It reads the transport name query
 reads `xdp`.
 
 **Client: `client.c`.** `soak.c` stays the loopback soak. It owns both ends
-in one process (`soak.c:115`, `soak.c:164`) and cannot be split across
+in one process (`soak.c`, `soak.c`) and cannot be split across
 machines.
 
 Today both programs exchange transport payloads, not messages: `client.c`
 sends with `rocketnet_client_start_message` and `rocketnet_client_finish_message`
-(`client.c:91`), and
-`server.c` echoes payloads back (`server.c:76-82`). Each gains a `--matrix`
+(`client.c`), and
+`server.c` echoes payloads back (`server.c`). Each gains a `--matrix`
 mode built on the client and server API (`rocketnet_client_create`,
 `rocketnet_server_create`, `sdk/rocketnet.h`). Without
 `--matrix`, each program behaves exactly as it does today; it is the
@@ -82,26 +82,25 @@ out-of-the-box example. The new flags, on both programs unless marked:
 | Flag | Meaning |
 |---|---|
 | `--matrix` | Run the message matrix instead of the payload echo. |
-| `--address A:P` | Server: the public address it binds and that tokens name. Client: the address it mints tokens for. Positional `argv[1]` keeps working (`client.c:34`, `server.c:38`). |
+| `--address A:P` | Server: the public address it binds and that tokens name. Client: the address it mints tokens for. Positional `argv[1]` keeps working (`client.c`, `server.c`). |
 | `--label L` | The bench label written on every result line. It comes from the inventory (section 8), never from a hostname. |
 | `--duration S` | Client: the stress window length in seconds (section 6). |
 | `--cycles N` | Client: reconnects before the final window (section 6). |
 | `--stagger S` | Client: seconds to wait before the first connect (section 6). |
 | `--seed X` | The run seed, printed at start. It offsets the length rule (section 4). Both ends must be given the same seed. |
-| `--modes M` / `--channels C` | The modes and channel count to drive. Defaults: all eight modes and the config's `num_channels` (32, `sdk/rocketnet.h:1533`). |
-| `--send-kbps K` | The send budget: the client's own, or the server's per client (`sdk/rocketnet.h:1809`, `:1879`). |
-| `--max-packets-per-update N` | The message config's `max_packets_per_update` (`sdk/rocketnet.h:1540`). It is not a WIRE field, so the two ends may differ. |
+| `--modes M` / `--channels C` | The modes and channel count to drive. Defaults: all eight modes and the config's `num_channels` (32, `sdk/rocketnet.h`). |
+| `--send-kbps K` | The send budget: the client's own, or the server's per client (`sdk/rocketnet.h`). |
+| `--max-packets-per-update N` | The message config's `max_packets_per_update` (`sdk/rocketnet.h`). It is not a WIRE field, so the two ends may differ. |
 | `--max-clients N` | Server: `max_clients`, set explicitly (section 7). |
-| `--update-hz H` | Update rate of the main loop: server through `rocketnet_frame_sync_create` (`sdk/rocketnet.h:1334`), client through `rocketnet_sleep`. |
+| `--update-hz H` | Update rate of the main loop: server through `rocketnet_frame_sync_create` (`sdk/rocketnet.h`), client through `rocketnet_sleep`. |
 | `--counters-every S` | Snapshot every counter, RSS and the transport stats every S seconds (default 60), and at start and exit. |
 | `--results PATH` | Where the result lines go (section 7). |
 | `--status PATH` | Server: one line per state change (`listening`, `stopping`, `stopped`), for the orchestrator. |
 
-**Linking.** Both programs already link `rocketnet_dev` (`CMakeLists.txt:275-278`).
-That library is compiled with `ROCKETNET_DEVELOPMENT=1` (`CMakeLists.txt:159-163`,
-`:220-221`), and only that build carries `rocketnet_write_dev_connect_token`
-(`sdk/rocketnet_connect_token.h:186-191`) and the published development keys
-`rocketnet_server_dev_config` fills (`server.c:41`). The run uses
+**Linking.** Both programs already link `rocketnet_dev` (`CMakeLists.txt`).
+That library is compiled with `ROCKETNET_DEVELOPMENT=1` (`CMakeLists.txt`), and only that build carries `rocketnet_write_dev_connect_token`
+(`sdk/rocketnet_connect_token.h`) and the published development keys
+`rocketnet_server_dev_config` fills (`server.c`). The run uses
 those development keys. The run is a protocol test on a dedicated machine
 with its own filter value, not a deployment.
 
@@ -114,7 +113,7 @@ the generator and the checker are one piece of code on every platform.
 ## 3. Verify scheme
 
 **The source.** The owner's sequence-derived pair is `generate_packet_data`
-and `check_packet_data` in mas-bandwidth/reliable `soak.c:82-134` at
+and `check_packet_data` in mas-bandwidth/reliable `soak.c` at
 `ea82613c5560`; the card quotes it. The rule:
 
 - The length comes from the sequence: `((sequence * 1023) % (MAX - 2)) + 2`.
@@ -123,7 +122,7 @@ and `check_packet_data` in mas-bandwidth/reliable `soak.c:82-134` at
 
 The checker recomputes the length from the sequence it reads, so a message
 with the right bytes but the wrong length fails. rocketnet's own pair
-(`soak.c:26-41`, `sdk/rocketnet_tests.cpp:2306-2322`) derives the contents
+(`soak.c`, `sdk/rocketnet_tests.cpp`) derives the contents
 from the length alone. A lost, duplicated or reordered message of the same
 length therefore passes it. The run needs the sequence form.
 
@@ -135,7 +134,7 @@ run changes those. The new pair is for messages only.
 
 | Bytes | Field | Why |
 |---|---|---|
-| 0 | tag: `0xA0 | direction << 3 | mode` (mode 0 to 7, direction 0 = client to server) | The receive call alone cannot name the mode. Codes 0 and 2 carry no channel on the wire (`sdk/rocketnet_message.h:112-116`), and 5 and 6 travel as 0 and 2 (`sdk/rocketnet_message.h:31-33`). The constant top nibble catches garbage. |
+| 0 | tag: `0xA0 | direction << 3 | mode` (mode 0 to 7, direction 0 = client to server) | The receive call alone cannot name the mode. Codes 0 and 2 carry no channel on the wire (`sdk/rocketnet_message.h`), and 5 and 6 travel as 0 and 2 (`sdk/rocketnet_message.h`). The constant top nibble catches garbage. |
 | 1 | the channel the sender passed (0 to 255) | Checked against the channel the message was received on, by the rule of section 5. |
 | 2 | the connection's cycle number, mod 256 | A message from an earlier connection fails on its first byte past the channel. This is the "no leak from the old connection" check of section 6. |
 | 3 to 6 | the stream sequence, u32 little endian | One counter per (direction, mode, channel) stream, starting at 0 on every connection. |
@@ -144,7 +143,7 @@ run changes those. The new pair is for messages only.
 **Why 32 bits.** The fastest stream sends under 10^6 messages a second, so a
 35 s window uses under 2^26 sequences. A u32 never wraps in a window. The
 source's u16 would wrap in under a second at LAN rates, and then a message
-65,536 behind would verify. Sequences restart on every connection, so the
+65 behind would verify. Sequences restart on every connection, so the
 width only has to cover one window.
 
 **Messages under 7 bytes** carry the first L bytes of the header and nothing
@@ -169,43 +168,43 @@ and duplicate is one failure line:
 
 **The modes' maxima.** Each value is the largest message a mode accepts at
 the run's config (message config defaults, client `max_payload_bytes`
-default 16,384 at `sdk/rocketnet.h:560`):
+default 16 at `sdk/rocketnet.h`):
 
 | Mode | Maximum `max_m` | Source |
 |---|---|---|
-| 0 UNRELIABLE | 1,411 | `unreliable_limit` = 1415 - 1 - 3 (`sdk/rocketnet_endpoint.cpp:47`) |
-| 1 UNRELIABLE_SEQUENCED | 16,373 on channels below 256 | the smallest of 65,535, `max_message_bytes` and the transport cap less the 10-byte header and the form byte (`sdk/rocketnet_endpoint.cpp:150-157`) |
-| 2, 3, 4, 6, 7 (reliable) | 262,144 | `max_message_bytes` (`sdk/rocketnet.h:1536`; `sdk/rocketnet_channel.cpp:814`) |
-| 5 UNRELIABLE_WITH_ACK_RECEIPT | 262,144 | above 1,411 it goes as a reliable code-2 block (`sdk/rocketnet_endpoint.cpp:158-176`; `docs/CHANNELS.md` 7.4) |
+| 0 UNRELIABLE | 1 | `unreliable_limit` = 1415 - 1 - 3 (`sdk/rocketnet_endpoint.cpp`) |
+| 1 UNRELIABLE_SEQUENCED | 16 on channels below 256 | the smallest of 65, `max_message_bytes` and the transport cap less the 10-byte header and the form byte (`sdk/rocketnet_endpoint.cpp`) |
+| 2 (reliable) | 262 | `max_message_bytes` (`sdk/rocketnet.h`; `sdk/rocketnet_channel.cpp`) |
+| 5 UNRELIABLE_WITH_ACK_RECEIPT | 262 | above 1 it goes as a reliable code-2 block (`sdk/rocketnet_endpoint.cpp`; `docs/CHANNELS.md` 7.4) |
 
 **The boundary list B.** Each value is clipped to the mode's maximum and
 skipped when it is not a valid length (below 1):
 
-- **The header prefix:** 1, 2, 3, 4, 5, 6, 7.
-- **The single-record edge E_m, at -1, 0 and +1.** E is 1,411 for codes 0
-  and 5 (`sdk/rocketnet_endpoint.cpp:47`) and 1,401 for codes 3 and 7 (the
+- **The header prefix:** 1.
+- **The single-record edge E_m, at -1 and +1.** E is 1 for codes 0
+  and 5 (`sdk/rocketnet_endpoint.cpp`) and 1 for codes 3 and 7 (the
   payload capacity less 14, `docs/CHANNELS.md` 8 "As built";
-  `sdk/rocketnet_channel.h:117`). It is derived as 1,408 for code 2 and 1,399
-  for code 4 from their header widths (`sdk/rocketnet_message.h:52-55`). The
+  `sdk/rocketnet_channel.h`). It is derived as 1 for code 2 and 1
+  for code 4 from their header widths (`sdk/rocketnet_message.h`). The
   matrix functional test's first case asserts each derived E against the
   library by sending E and E + 1. A difference is a finding.
 - **The transport payload edges, for code 1,** whose message rides one
   RECORDS payload with an 11-byte overhead (the 10-byte header and the form
-  byte, `sdk/rocketnet_endpoint.cpp:153-157`): message lengths 1,404, 1,405
-  and 1,406, where the payload crosses 1,415 and 1,416
+  byte, `sdk/rocketnet_endpoint.cpp`): message lengths 1
+  and 1, where the payload crosses 1 and 1
   (`ROCKETNET_MESSAGE_SINGLE_BYTES` and `ROCKETNET_MAX_PAYLOAD_BYTES`,
-  `sdk/rocketnet.h:1503`, `:543`). The transport fragment stride is 1,413
-  (`sdk/rocketnet_fragment.h:37`), so the list adds the message lengths
-  k x 1,413 - 11 - 1, 0 and +1 for k = 2, 3 (the payload filling exactly k
-  fragments), and the payload maximum of 16,384 less the 11 bytes with its
+  `sdk/rocketnet.h`). The transport fragment stride is 1
+  (`sdk/rocketnet_fragment.h`), so the list adds the message lengths
+  k x 1 - 11 - 1 and +1 for k = 2 (the payload filling exactly k
+  fragments), and the payload maximum of 16 less the 11 bytes with its
   neighbours.
-- **The block stride and the store's chunk:** F = 1,152
-  (`sdk/rocketnet_message.h:66`). That is also the send store's large class
-  (`sdk/rocketnet_allocator.h:233`), with spans from F + 1
-  (`sdk/rocketnet_allocator.h:410`). The list adds k x F - 1, k x F and
-  k x F + 1 for k = 1, 2, 3.
-- **The near-maximum values:** 16,383, 16,384 and 16,385 (the default
-  transport payload maximum, `sdk/rocketnet.h:560`), `max_m - F - 1`,
+- **The block stride and the store's chunk:** F = 1
+  (`sdk/rocketnet_message.h`). That is also the send store's large class
+  (`sdk/rocketnet_allocator.h`), with spans from F + 1
+  (`sdk/rocketnet_allocator.h`). The list adds k x F - 1, k x F and
+  k x F + 1 for k = 1.
+- **The near-maximum values:** 16 and 16 (the default
+  transport payload maximum, `sdk/rocketnet.h`), `max_m - F - 1`,
   `max_m - F`, `max_m - 1` and `max_m` exactly.
 
 **The over-maximum send.** `max_m + 1` is never sent. Once per window, per
@@ -213,10 +212,10 @@ direction and per mode, on channel 0 and on the last channel, the runner
 calls start with `max_m + 1`. Start must return NULL, the connection must
 stay up, and the named counter must rise by exactly one:
 
-- `MESSAGE_SEND_REFUSED` for the reliable path (`sdk/rocketnet_channel.cpp:814`,
-  counted at `sdk/rocketnet_endpoint.cpp:136-141`).
+- `MESSAGE_SEND_REFUSED` for the reliable path (`sdk/rocketnet_channel.cpp`,
+  counted at `sdk/rocketnet_endpoint.cpp`).
 - `MESSAGE_UNRELIABLE_SEND_FAILED` for codes 0 and 1
-  (`sdk/rocketnet_endpoint.cpp:158-164`).
+  (`sdk/rocketnet_endpoint.cpp`).
 
 The runner logs `refused <mode> <bytes> <counter> <delta>`. A start that
 succeeds, a different counter, or a delta other than 1 is a failure.
@@ -230,9 +229,9 @@ takes a slot `r = (s + channel) % 32`:
   `32 x ceil(|B| / 32)` sequences, so a window covers B even on the internet
   paths.
 - `r = 1 to 23`: small, from 7 to E_m.
-- `r = 24 to 29`: medium, from E_m + 1 to min(16,384, max_m).
-- `r = 30 to 31`: large, from 16,385 to max_m (small instead, where max_m is
-  below 16,385).
+- `r = 24 to 29`: medium, from E_m + 1 to min(16, max_m).
+- `r = 30 to 31`: large, from 16 to max_m (small instead, where max_m is
+  below 16).
 
 Inside a bucket from lo to hi, the length is
 `lo + (((s + seed) * 1023) % (hi - lo + 1))`, computed in 64-bit unsigned
@@ -241,37 +240,36 @@ the bucket's range, with the run seed added. The receiver recomputes the
 length exactly from s, the channel, the seed and the mode.
 
 **Size buckets, as named in the results:** `tiny` (1-6), `small`, `edge`
-(E_m and its neighbours), `fragment` (every k x F and k x 1,413 neighbour),
+(E_m and its neighbours), `fragment` (every k x F and k x 1 neighbour),
 `medium`, `large`, `max` (exactly max_m) and `over` (max_m + 1, refused).
 
 ## 5. Types and channels
 
 **Every mode.** The public header numbers eight reliabilities
-(`sdk/rocketnet.h:1460-1467`). At BASE all eight are enabled: the channels
-take the first-version mask when given 0 (`sdk/rocketnet_channel.cpp:189`),
-and that mask sets all eight bits (`sdk/rocketnet_channel.h:59`). The
-ordered path passes 0 (`sdk/rocketnet_channel.cpp:1023`). Two comments
+(`sdk/rocketnet.h`). At BASE all eight are enabled: the channels
+take the first-version mask when given 0 (`sdk/rocketnet_channel.cpp`),
+and that mask sets all eight bits (`sdk/rocketnet_channel.h`). The
+ordered path passes 0 (`sdk/rocketnet_channel.cpp`). Two comments
 disagree with the code. The object comment lists five enabled types
-(`sdk/rocketnet.h:1708-1716`), and `docs/CHANNELS.md` 7.5 says the mask is
-{0, 3}. The run drives all eight and counts `MESSAGE_SEND_TYPE_NOT_ENABLED`,
+(`sdk/rocketnet.h`), and `docs/CHANNELS.md` 7.5 says the mask is
+{0}. The run drives all eight and counts `MESSAGE_SEND_TYPE_NOT_ENABLED`,
 which must stay 0. Section 15 lists the stale comments.
 
 **The block form** applies to every reliable mode above its single-record
-edge, and to mode 5 above 1,411 (`docs/CHANNELS.md` 8; 7.4).
+edge, and to mode 5 above 1 (`docs/CHANNELS.md` 8; 7.4).
 
 **Every channel, all at once.** The config allows 32 channels
-(`sdk/rocketnet.h:1533`). Every stream (direction x mode x channel) runs in
-every window. The channel-less modes 0, 2, 5 and 6 name all 32 channels; the
-modes 1, 3, 4 and 7 run on channels 0 to 30, because channel 31 carries the
+(`sdk/rocketnet.h`). Every stream (direction x mode x channel) runs in
+every window. The channel-less modes 0 and 6 name all 32 channels; the
+modes 1 and 7 run on channels 0 to 30, because channel 31 carries the
 progress reports and the HELLO (below and section 6). That is
 2 x (4 x 32 + 4 x 31) = 504 streams per connection. Each update, the
 receiver polls every channel with `rocketnet_client_receive_message` on a client
 and `rocketnet_server_receive_message` on the server, and it releases every view
-before the next update (`sdk/rocketnet.h:889-892`).
-The receive channel is checked against the sender's channel byte. Codes 1,
-3, 4 and 7 must arrive on the channel sent. Codes 0, 2, 5 and 6 arrive on
-channel 0, because their records carry no channel (`sdk/rocketnet.h:1716`;
-`sdk/rocketnet_message.h:112-116`). The functional test pins this rule per
+before the next update (`sdk/rocketnet.h`).
+The receive channel is checked against the sender's channel byte. Codes 1 and 7 must arrive on the channel sent. Codes 0 and 6 arrive on
+channel 0, because their records carry no channel (`sdk/rocketnet.h`;
+`sdk/rocketnet_message.h`). The functional test pins this rule per
 code first. A disagreement is a finding, not a pass.
 
 **The receive checks, per mode:**
@@ -279,29 +277,29 @@ code first. A disagreement is a finding, not a pass.
 | Mode | Every arrival | Completeness and order |
 |---|---|---|
 | 0 UNRELIABLE | verifies | loss counted: sent - received, per stream per window. No order is promised. |
-| 1 UNRELIABLE_SEQUENCED | verifies | sequences strictly increase. Skips count as superseded (`MESSAGE_SEQUENCED_SUPERSEDED`, `sdk/rocketnet_counters.h:485`) or lost. |
+| 1 UNRELIABLE_SEQUENCED | verifies | sequences strictly increase. Skips count as superseded (`MESSAGE_SEQUENCED_SUPERSEDED`, `sdk/rocketnet_counters.h`) or lost. |
 | 2 RELIABLE | verifies | every sequence sent in the window arrives exactly once, in any order. |
 | 3 RELIABLE_ORDERED | verifies | every sequence arrives exactly once, in order: each arrival equals the expected next. |
 | 4 RELIABLE_SEQUENCED | verifies | strictly increasing. Each channel's drain closes with one mode-4 message sent after that channel's last ordered send, and that message must arrive. |
-| 5 UNRELIABLE_WITH_ACK_RECEIPT | verifies | as mode 0 at 1,411 bytes or less, as mode 2 above. Every serial gets exactly one receipt (`docs/CHANNELS.md` 7.4). |
+| 5 UNRELIABLE_WITH_ACK_RECEIPT | verifies | as mode 0 at 1 bytes or less, as mode 2 above. Every serial gets exactly one receipt (`docs/CHANNELS.md` 7.4). |
 | 6 RELIABLE_WITH_ACK_RECEIPT | verifies | as mode 2, plus exactly one ACKED receipt per serial and no LOSS. |
 | 7 RELIABLE_ORDERED_WITH_ACK_RECEIPT | verifies | as mode 3, plus exactly one ACKED receipt per serial and no LOSS. |
 
-In every mode, a duplicate is a failure. The receiver keeps a 65,536-bit
+In every mode, a duplicate is a failure. The receiver keeps a 65-bit
 seen-window per stream for the unordered modes. Receipts are read every
-update (`sdk/rocketnet.h:1803`), so `MESSAGE_RECEIPT_RING_FULL` stays 0.
+update (`sdk/rocketnet.h`), so `MESSAGE_RECEIPT_RING_FULL` stays 0.
 
 **The drain.** A window does not end mid-flight. The sender stops new sends,
 then waits until the peer's progress reports show that every reliable
 sequence has arrived. Only then does it disconnect. The wait is bounded by
-`reliable_timeout_ms` (10 s, `sdk/rocketnet.h:1547`). This is how
+`reliable_timeout_ms` (10 s, `sdk/rocketnet.h`). This is how
 completeness is defined even on a silent-drop window: the drop comes after
 the drain.
 
 **Sequenced and ordered share a channel's epoch.** An ordered send resets
-the channel's sequenced counter (`sdk/rocketnet_channel.cpp:240-252`), and a
+the channel's sequenced counter (`sdk/rocketnet_channel.cpp`), and a
 sequenced message from an older epoch is not delivered after a newer ordered
-one (`sdk/rocketnet_channel.cpp:288-298`). Running modes 1 and 4 on the same
+one (`sdk/rocketnet_channel.cpp`). Running modes 1 and 4 on the same
 channels as 3 and 7 tests that coupling, so `MESSAGE_SEQUENCED_STALE` moves
 by design as well as by loss. That is why the closing mode-4 message above
 follows the channel's last ordered send.
@@ -312,8 +310,8 @@ stream, the highest contiguous sequence received and the bytes received. It
 is verified like any message. The sender's pacing ledger and the drain read
 it. Channel 31 carries no other mode-1 or mode-4 stream, and no ordered
 stream, so the reports never supersede, or are superseded by, a matrix
-stream: the matrix's modes 1, 3, 4 and 7 run on channels 0 to 30, and the
-channel-less modes 0, 2, 5 and 6 name all 32.
+stream: the matrix's modes 1 and 7 run on channels 0 to 30, and the
+channel-less modes 0 and 6 name all 32.
 
 ## 6. Load and the cycle
 
@@ -322,8 +320,8 @@ window. A window is 35 s of stress plus a drain, normally under 1 s and at
 most 10 s (`reliable_timeout_ms`). Between windows the client waits 2 x the
 timeout, which is 20 s at the run's token (below). One cycle is about 56 s.
 One client's run is about 9 x 36 + 8 x 20 = 484 s, and at worst, with every
-drain at its 10 s bound, 9 x 45 + 8 x 20 = 565 s. The stagger adds at most
-one cycle, 56 s, so the run is about 9 minutes and at worst 10.4 minutes,
+drain at its 10 s bound x 45 + 8 x 20 = 565 s. The stagger adds at most
+one cycle s, so the run is about 9 minutes and at worst 10.4 minutes,
 the owner's example. Load and listen take under 30 s and teardown under 60 s,
 so the XDP-attached time is at worst about 12 minutes, inside the dead-man
 timer's 15 (section 9). The orchestrator computes the attached time from the
@@ -331,11 +329,11 @@ worst-case drains and refuses a plan over 13 minutes.
 
 **The timeout, read, never a literal.** The connection timeout is the
 token's `timeout_seconds`. The development token writes it as a literal 10
-(`sdk/rocketnet_connect_token.cpp:285`), and the server caps it at
-`max_timeout_seconds`, 60 (`sdk/rocketnet.h:935`). The need
+(`sdk/rocketnet_connect_token.cpp`), and the server caps it at
+`max_timeout_seconds` (`sdk/rocketnet.h`). The need
 `rocketnet-dev-token-timeout-is-a-named-constant` adds a named constant,
 `ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS`, beside
-`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS` (`sdk/rocketnet_connect_token.h:171`);
+`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS` (`sdk/rocketnet_connect_token.h`);
 the runner card does not.
 Both programs read the wait from that constant. The client prints the value
 it waits on, and the merge refuses a run whose two ends printed different
@@ -344,15 +342,15 @@ values.
 **Rates: the cap is a total, set by the site.** The send budget is what
 pushes the protocol. It is configuration, not a compile-time limit: the
 message config fields `client_send_kbps` and `server_send_kbps` carry the
-defaults, 1,000 kbps for a client and 10,000 kbps per client for the server,
+defaults kbps for a client and 10 kbps per client for the server,
 and each runner sets its own caps explicitly in its config. Under RULINGS
 (b) and (d) every client's cap is its total, both directions combined, and
 the site sets it:
 
 | Path | Client send | Server per-client send | `max_packets_per_update` | Update rate |
 |---|---|---|---|---|
-| Studio site (1 Mbit/s total) | 500 kbps | 500 kbps | 64 | 1,000 Hz |
-| Datacenter (100 Mbit/s total) | 50,000 kbps | 50,000 kbps | 64 | 1,000 Hz |
+| Studio site (1 Mbit/s total) | 500 kbps | 500 kbps | 64 | 1 Hz |
+| Datacenter (100 Mbit/s total) | 50 kbps | 50 kbps | 64 | 1 Hz |
 
 No client runs the LAN flat-out rate against the test server; anything
 heavier belongs in the LAN phases (`docs/LAN-BENCH.md`). The studio site
@@ -362,13 +360,13 @@ the macOS bench, is capped at 1 Mbit/s total; the datacenter benches do not
 cross that uplink and keep 100 Mbit/s total.
 
 **The server's per-client cap.** The server takes one budget at create
-(`sdk/rocketnet.h:1823-1826`), so it cannot know a client's site from its
+(`sdk/rocketnet.h`), so it cannot know a client's site from its
 flags alone. Each client's first message on every connection is a HELLO: one
 RELIABLE_ORDERED message on channel 31, tag nibble `0xD`, carrying the bench
 label and the path's cap in kbps from the inventory. Under RULINGS (d) the
-server creates with the lowest cap, 500 kbps, and on HELLO calls
+server creates with the lowest cap kbps, and on HELLO calls
 `rocketnet_server_set_send_kbps( server, client_index, cap )`
-(`sdk/rocketnet.h:1879`), raising the slot only to that slot's inventory cap.
+(`sdk/rocketnet.h`), raising the slot only to that slot's inventory cap.
 So no studio client is ever sent more than its cap, even before its HELLO
 arrives. The server logs the label and cap per slot, which is also how the
 results name the bench for each slot.
@@ -377,7 +375,7 @@ results name the bench for each slot.
 which at most 1 GB crosses the studio uplink. The cap is a total for each
 client, both directions combined. The send budget bounds wire bytes by
 construction: no end sends more than its kbps x the time
-(`sdk/rocketnet.h:1733-1736`). The plan's upper bound is therefore
+(`sdk/rocketnet.h`). The plan's upper bound is therefore
 `sum(client total kbps) x worst-case run seconds / 8`. At 621 s, seven
 studio clients at 1 Mbit/s bound at about 0.54 GB and two datacenter clients
 at 100 Mbit/s at about 15.5 GB, about 16.07 GB in all. The orchestrator
@@ -385,27 +383,27 @@ computes the run bound and the studio-uplink bound from the inventory before
 it starts and refuses a plan over 20 GB or over 1 GB; the run records the
 studio-uplink total separately. The library has no cumulative wire-byte
 counter: the stats give trailing per-second rates only
-(`sdk/rocketnet.h:830-839`, `:1284-1292`). So the reported actual total is
+(`sdk/rocketnet.h`). So the reported actual total is
 the integral of the per-second samples, labelled approximate, beside the
 exact bound (section 15).
 
 **The mix.** The generator offers 110% of the budget, so the budget always
 binds and the send queues stay near their bounds. The offered bytes split by
-mode: 0: 15%, 1: 15%, 2: 15%, 3: 20%, 4: 10%, 5: 5%, 6: 10%, 7: 10%.
+mode: 0: 15%: 15%: 15%: 20%: 10%: 5%: 10%: 10%.
 Unreliable bytes over the budget are dropped and counted
-(`MESSAGE_UNRELIABLE_OVER_BUDGET`, `sdk/rocketnet_counters.h:482`), which is
+(`MESSAGE_UNRELIABLE_OVER_BUDGET`, `sdk/rocketnet_counters.h`), which is
 expected. Reliable messages wait for the budget and are never dropped
-(`sdk/rocketnet.h:1722-1724`).
+(`sdk/rocketnet.h`).
 
 **Pacing, the backpressure the API does not give.** A start the region has
 no room for ends the connection with `MESSAGE_MEMORY_EXHAUSTED`. It is not a
-soft refusal (`sdk/rocketnet.h:1719-1724`; `docs/CHANNELS.md` 4, "Exhaustion
-kicks"; `sdk/rocketnet_endpoint.cpp:134-141`). The API has no query for
+soft refusal (`sdk/rocketnet.h`; `docs/CHANNELS.md` 4, "Exhaustion
+kicks"; `sdk/rocketnet_endpoint.cpp`). The API has no query for
 free room, so the runner keeps its own ledger. It admits a reliable send only
 while all three of these hold:
 
-- outstanding bytes + L <= `send_buffer_bytes` / 2 (400,000 at
-  `sdk/rocketnet.h:1537`);
+- outstanding bytes + L <= `send_buffer_bytes` / 2 (400 at
+  `sdk/rocketnet.h`);
 - outstanding messages < `send_queue_messages` / 2 (512);
 - outstanding reliable numbers + ceil(L / F) <= W / 2 (512).
 
@@ -414,7 +412,7 @@ The half margins cover the acks in flight. A send held back by the ledger
 counts as `paced` in the runner's own counter. That is the run's
 backpressure figure, recorded per mode. `MESSAGE_SEND_STORE_FULL`,
 `MESSAGE_SEND_QUEUE_FULL` and `MESSAGE_MEMORY_EXHAUSTED`
-(`sdk/rocketnet_counters.h:420-421`, `:469`) must stay 0. Any of them is the
+(`sdk/rocketnet_counters.h`) must stay 0. Any of them is the
 kick, which is an unexpected disconnect and a FAIL. On the 1 Mbit/s studio
 path the reliable modes are window-bound and the unreliable ones
 budget-bound: about 400 KB per round trip against 62.5 KB/s each way. On a
@@ -422,26 +420,26 @@ budget-bound: about 400 KB per round trip against 62.5 KB/s each way. On a
 
 **Loss, reorder and resends.** The LAN loses little, and the internet path
 loses and reorders some. Resends (`MESSAGE_RESENT`,
-`sdk/rocketnet_counters.h:460`) and abandoned transport fragments
-(`FRAGMENT_PAYLOAD_ABANDONED`, `:350`) are expected on the internet path and
+`sdk/rocketnet_counters.h`) and abandoned transport fragments
+(`FRAGMENT_PAYLOAD_ABANDONED`) are expected on the internet path and
 near 0 on the LAN. The run injects no loss: the paths are the test.
 
 **The ack and message windows wrap.** In every window, in each direction:
 
-- **The message window W = 1,024** (`sdk/rocketnet.h:1534`): at least
+- **The message window W = 1** (`sdk/rocketnet.h`): at least
   10 x W reliable numbers. The runner counts the numbers it uses exactly, as
   1 per small message and ceil(L / F) per block, and the pass table requires
   10 W.
-- **The transport's sent-history ring of 4,096 packets**
-  (`sdk/rocketnet_history.h:8`) and the 2,048-entry receive buffer
-  (`sdk/rocketnet_constants.h:122`): at least 4 full wraps each. No counter
+- **The transport's sent-history ring of 4 packets**
+  (`sdk/rocketnet_history.h`) and the 2-entry receive buffer
+  (`sdk/rocketnet_constants.h`): at least 4 full wraps each. No counter
   gives packets sent, so each end counts its own: the message objects hand
   every packet through the transport's start and finish
   (the server message layer), and the runner reads the
   per-second rate from the stats each second and integrates it. The figure
   is labelled approximate, and the pass row uses a margin of 2: at least
-  8 x 4,096 packets estimated per window per direction.
-- **The 24-bit reliable number** (`sdk/rocketnet_message.h:68-70`) does not
+  8 x 4 packets estimated per window per direction.
+- **The 24-bit reliable number** (`sdk/rocketnet_message.h`) does not
   wrap. That takes 16.7 million numbers on one connection, and no window
   inside the 15-minute dead-man timer gets there. Its wrap is covered by
   `ChannelsWindowReceiveReconstructsAcrossThe24BitWrap` and `RNWindow`
@@ -460,14 +458,14 @@ near 0 on the LAN. The run injects no loss: the paths are the test.
 The disconnect kind alternates, starting with clean:
 
 - **Clean:** `rocketnet_client_disconnect` on the client's
-  transport (`sdk/rocketnet.h:814`, `:1774`). Its redundant disconnect burst
+  transport (`sdk/rocketnet.h`). Its redundant disconnect burst
   frees the server's slot at once. If the whole burst is lost, the timeout
   frees it.
 - **Silent drop:** destroy the message client without a disconnect call.
   Destroy hands off the payloads already committed and sends no disconnect
   packet (the client transport implementation, `rocketnet_client_destroy`).
   The server's timeout path frees the slot (`CLIENT_TIMED_OUT`,
-  `sdk/rocketnet_counters.h:190`). The merge checks the server's event log:
+  `sdk/rocketnet_counters.h`). The merge checks the server's event log:
   every silent drop is followed by a timeout of that slot, every clean
   disconnect by a disconnect of that slot (or a timeout, when the whole burst
   was lost, which the log names), and `CLIENT_TIMED_OUT` plus
@@ -485,7 +483,7 @@ are waiting at any moment, and live traffic never stops.
 **On every reconnect:**
 
 - No denial and no full result. The client state never goes negative
-  (`sdk/rocketnet.h:519-525`).
+  (`sdk/rocketnet.h`).
 - No leak from the old connection. Sequences restart at 0, and every message
   carries the new cycle byte, so an old message fails at byte 2.
 - The server's event log shows the old slot freed (disconnect or timeout)
@@ -514,18 +512,18 @@ missing and out-of-order (reliable, both 0), duplicate (0), refused-on-send
 - the final clean disconnect.
 
 **Internal counters on both sides, at start, every minute and at exit.**
-Every counter goes out by name, as `server.c:95-106` already prints them.
+Every counter goes out by name, as `server.c` already prints them.
 The table picks out:
 
 | Figure | Counters |
 |---|---|
 | resends | `MESSAGE_RESENT` |
 | ack-window wraps | sent-history and message-window wraps, computed (section 6); `SEND_HISTORY_LOST` (`:514`) and `SEND_HISTORY_OVERFLOW` (`:395`, must be 0) |
-| fragment and block drops | `FRAGMENT_PAYLOAD_ABANDONED`, `CLIENT_FRAGMENT_PAYLOAD_ABANDONED` (`:350`, `:372`), `MESSAGE_BAD_BLOCK` (must be 0) |
+| fragment and block drops | `FRAGMENT_PAYLOAD_ABANDONED`, `CLIENT_FRAGMENT_PAYLOAD_ABANDONED` (`:350`), `MESSAGE_BAD_BLOCK` (must be 0) |
 | backpressure | the runner's `paced`; `MESSAGE_WINDOW_STALL` (`:452`); `MESSAGE_SEND_QUEUE_FULL` and `MESSAGE_SEND_STORE_FULL` (0) |
 | decrypt and replay refusals | `PAYLOAD_DID_NOT_OPEN`, `PAYLOAD_ALREADY_RECEIVED` (`:161-162`) and their siblings for every packet type; `XDP_KERNEL_DROPPED_REPLAYED` (`:570`) |
 | XDP kernel verdicts | `XDP_KERNEL_REDIRECTED` (`:543`) and every `XDP_KERNEL_DROPPED_*` |
-| conservation | `rocketnet_counters_conserved` on both sides at every snapshot (`soak.c:54`) |
+| conservation | `rocketnet_counters_conserved` on both sides at every snapshot (`soak.c`) |
 
 **Resident memory.** Each program reads its own resident set each minute:
 `/proc/self/statm` on Linux, `task_info` on macOS, `GetProcessMemoryInfo` on
@@ -533,28 +531,27 @@ Windows. The bound: after the first full cycle (the warm-up), the peak minus
 the reading at the end of cycle 1 stays within 2 MiB for each client and for
 the server. The library allocates nothing after create (`docs/CHANNELS.md`
 1, R1), and the XDP UMEM is taken once at create
-(`sdk/rocketnet_server_socket_linux.cpp:646-655`). Growth past 2 MiB is a
+(`sdk/rocketnet_server_socket_linux.cpp`). Growth past 2 MiB is a
 FAIL, named with its curve.
 
-**max_clients.** The library constant `ROCKETNET_MAX_CLIENTS` is 1,000
-(`sdk/rocketnet.h:44`). At `20d8b35` the config table's `max_clients`
-default is 64 (`sdk/rocketnet.h:923`); at the base tip `962e3a4` another card
-has made it 1,000. `server.c` sets 256 (`server.c:42`), which overrides
-either default, and `soak.c` sets 16 (`soak.c:105`). The run never relies on
+**max_clients.** The library constant `ROCKETNET_MAX_CLIENTS` is 1
+(`sdk/rocketnet.h`). At `20d8b35` the config table's `max_clients`
+default is 64 (`sdk/rocketnet.h`); at the base tip `962e3a4` another card
+has made it 1. `server.c` sets 256 (`server.c`), which overrides
+either default, and `soak.c` sets 16 (`soak.c`). The run never relies on
 a default. It passes `--max-clients 1000`, and the server prints
 the value it created with. With about ten clients, every reconnect finds a
 free slot even while the server is still timing out the old one.
 
 **Failures are recorded with their reason.** Each of these is recorded
-with the denial code or client state (`sdk/rocketnet.h:519-525`), which side
+with the denial code or client state (`sdk/rocketnet.h`), which side
 timed out, the counters at that moment and a 50-line log excerpt:
 
 - any failed connect;
 - any denial;
 - any disconnect other than the scheduled clean disconnect or silent drop
   (a `rocketnet_client_disconnect_reason` or
-  `rocketnet_server_disconnect_reason` other than NONE, `sdk/rocketnet.h:868`,
-  `:978`; a timeout on a live connection; a kick).
+  `rocketnet_server_disconnect_reason` other than NONE, `sdk/rocketnet.h`; a timeout on a live connection; a kick).
 
 **The pass rule.** The run passes only when every row holds, for the whole
 run, on every bench:
@@ -570,7 +567,7 @@ run, on every bench:
 | P7 | Conservation holds on both sides at every snapshot. |
 | P8 | Every nonzero counter is explained by one row of the table below. Every refusal-class counter not in that table reads 0. |
 | P9 | Coverage: each (direction, mode, bucket) cell sent at least once per window. Each boundary value of B sent at least once per (direction, mode) over the run. 10 x W numbers and 4 history wraps (estimated, section 6) per window per direction. |
-| P10 | The server's transport read back `xdp`, and `max_clients` read back 1,000. |
+| P10 | The server's transport read back `xdp`, and `max_clients` read back 1. |
 
 **The nonzero counters expected, with their mechanism and size:**
 
@@ -581,7 +578,7 @@ run, on every bench:
 | `MESSAGE_UNRELIABLE_SEND_FAILED` | the over-maximum starts on codes 0 and 1 | exactly the runner's count |
 | `MESSAGE_WINDOW_STALL` | the W or ring bound is reached under load | many per window on the internet path |
 | `MESSAGE_RESENT`, `FRAGMENT_PAYLOAD_ABANDONED`, `CLIENT_FRAGMENT_PAYLOAD_ABANDONED`, `SEND_HISTORY_LOST`, `MESSAGE_DUPLICATE`, `MESSAGE_SEQUENCED_SUPERSEDED`, `MESSAGE_SEQUENCED_STALE`, `MESSAGE_RECEIPT_LOSS` (mode 5 only) | path loss and reorder | near 0 on the LAN; proportional to loss on the internet |
-| `MESSAGE_UNRELIABLE_DELIVERY_FULL` | a burst past 256 unreliable deliveries in one update (`sdk/rocketnet.h:1541`) | rare; each occurrence is listed |
+| `MESSAGE_UNRELIABLE_DELIVERY_FULL` | a burst past 256 unreliable deliveries in one update (`sdk/rocketnet.h`) | rare; each occurrence is listed |
 | `CLIENT_TIMED_OUT` | the silent drops | exactly the silent drop count |
 | the handshake and lifecycle EXPECTED counters | connects and disconnects | proportional to cycles |
 | `XDP_KERNEL_REDIRECTED` | every server-bound packet | all of them |
@@ -601,8 +598,8 @@ run, on every bench:
   `ROCKETNET_LIVE_INVENTORY`. It has one row per machine: `label`,
   `ssh-name`, `role` (server or client), `shape` (linux, windows-interop or
   macos), `site` (studio or datacenter), `path` (lan or internet),
-  `cap-kbps` (the client's total, both directions combined: 1,000 for a
-  studio-site client and 100,000 for a datacenter client, RULINGS (b) and
+  `cap-kbps` (the client's total, both directions combined: 1 for a
+  studio-site client and 100 for a datacenter client, RULINGS (b) and
   (d)), `nic`, `address` and `queues` (server row only). Every studio-site
   bench, both sides of the Linux-on-Windows bench included, crosses the one
   shared studio uplink; the datacenter benches do not. The repository commits
@@ -618,7 +615,7 @@ under the safety procedure below. The line, for the owner: **NIC: the
 uplink, by the 2026-10-18 ruling; not blocked.**
 
 **How the transport finds the NIC.** It looks up the interface that carries the
-server's public IPv4 address (`sdk/rocketnet_server_socket_linux.cpp:444-475`).
+server's public IPv4 address (`sdk/rocketnet_server_socket_linux.cpp`).
 The address must be IPv4: the pre-flight refuses anything else (`:706-718`).
 The transport binds that interface and no other. The attach is native, falling
 back to SKB mode (`:1335-1352`). Each queue binds an AF_XDP socket. The bind
@@ -628,16 +625,16 @@ records which it got.
 
 **The pre-flight.** It refuses unless the machine is provisioned:
 
-- root (R1, `:697-701`);
+- root (R1);
 - the interface UP with the address (R2);
-- no XDP program already attached (R3, `:722-745`);
-- IRQ pinning, busy poll, SMT off and the queue count (R4-R7, `:804-990`).
+- no XDP program already attached (R3);
+- IRQ pinning, busy poll, SMT off and the queue count (R4-R7).
 
 `scripts/rocketnet-provision` is the setup, hand-run once for the game
 (`scripts/rocketnet-provision:8-16`). The run uses only its `verify` mode,
 which mutates nothing (`:98`). It never runs provision mode on this NIC.
 Provision mode unloads XDP, rewrites IRQ affinity and runs `ethtool -L`,
-which resets the NIC's queues under the ssh session (`:54-66`, `:80-85`).
+which resets the NIC's queues under the ssh session (`:54-66`).
 If verify fails, the run stops and the owner decides.
 
 **The NIC driver.** It must be the out-of-tree i40e, built from source
@@ -653,7 +650,7 @@ reports its own release number.
   other destination address, returns `XDP_PASS` (`:126-128`). That is the
   server's port-and-address gate.
 - **Unconfigured:** with no configuration, or port 0, every UDP frame passes
-  (`:271-275`, `:301-305`).
+  (`:271-275`).
 - **Non-UDP IPv4:** any non-UDP IPv4 frame, or one with IP options
   (`ihl != 5`), skips the UDP branch at `:263` and reaches `return XDP_PASS`
   at `:336`. That covers ssh (TCP), ICMP and anything else.
@@ -668,15 +665,15 @@ The program returns `XDP_DROP` in three places outside our port:
 - an IPv4 frame too short for its IPv4 header (`:257-261`);
 - an IPv6 frame too short for its IPv6 header (`:287-291`);
 - a frame for our port that fails the server's own checks
-  (`:137-182`, `:220-225`, `:240`).
+  (`:137-182`).
 
 The first two are malformed frames that no stack could deliver. So
 everything the machine needs (ssh, the tailnet, ARP, ICMP, DNS) passes.
-The program never touches egress. The server's port for the run, 40000, is
+The program never touches egress. The server's port for the run, is
 not the overlay's.
 
 **Deployment.** One server per machine, about 3.9 GB of XDP memory, an
-accepted cost (`CMakeLists.txt:49`, the 4,096 MiB budget). The server binds
+accepted cost (`CMakeLists.txt`, the 4 MiB budget). The server binds
 `<public IPv4>:40000`. The queue count comes from the NIC's combined
 channels as provisioned, read-only, and `--num-xdp-queues` passes it.
 
@@ -712,11 +709,11 @@ file run over ssh under a timeout (section 12):
    orchestrator stops sending heartbeats, and the watchdog detaches inside
    30 s. The dead-man timer covers a watchdog that never ran.
 6. **Wait for `listening`** in the status file. Check the transport read-back
-   `xdp`, `max_clients` 1,000, and one LAN client connecting, before the
+   `xdp`, `max_clients` 1, and one LAN client connecting, before the
    other clients start.
 7. **Teardown, on every exit path (trap):**
    1. SIGINT the server. Its stop and destroy detach the program
-      (`server.c:89-108`; `sdk/rocketnet_server_socket_linux.cpp:1627-1641`).
+      (`server.c`; `sdk/rocketnet_server_socket_linux.cpp`).
    2. Run `ip link set dev <nic> xdp off` and `xdpgeneric off` regardless.
    3. Confirm that `ip -d link show` and `xdp-loader status` show no program
       on the NIC.
@@ -731,8 +728,8 @@ file run over ssh under a timeout (section 12):
 ## 10. Addresses and firewall
 
 - **The address every bench dials** is the test server's public IPv4 and
-  UDP port 40000. The token carries it (`sdk/rocketnet_connect_token.cpp:288-302`),
-  and it is the address XDP matches (`server_xdp/server_xdp.c:277`).
+  UDP port 40000. The token carries it (`sdk/rocketnet_connect_token.cpp`),
+  and it is the address XDP matches (`server_xdp/server_xdp.c`).
 - **No tailnet or private address.** Overlay traffic arrives on the overlay
   interface, not on the address the transport binds. A token naming it would be
   refused.
@@ -740,8 +737,8 @@ file run over ssh under a timeout (section 12):
   **Internet benches** reach it across the internet.
 - **Replies go through the gateway.** The xdp transport addresses every frame
   it sends to the default gateway's MAC address
-  (`sdk/rocketnet_server_socket_linux.cpp:1141-1158`; override
-  `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`, `:255-274`, `USAGE.md:446`). A LAN
+  (`sdk/rocketnet_server_socket_linux.cpp`; override
+  `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`, `USAGE.md:446`). A LAN
   bench on the same segment therefore gets its replies through the gateway,
   not directly. Step 6 of section 9 proves one LAN client's round trip first.
   If it fails, the run stops with that finding (section 15).
@@ -756,12 +753,12 @@ file run over ssh under a timeout (section 12):
 - **Minted at each connect, in the client process.** Each client mints its
   own development token just before each connect, with
   `rocketnet_write_dev_connect_token(address, rocketnet_random_uint64(), time(NULL), token, sizeof(token))`,
-  as `client.c:46` does. (`rocketnet_random_uint64` is an internal SDK
+  as `client.c` does. (`rocketnet_random_uint64` is an internal SDK
   helper in `sdk/rocketnet_layers.h`, not a public call in `sdk/rocketnet.h`.)
   It is never minted ahead of time and never shipped between machines.
 - **Lifetime and identity.** The token lives 30 s
   (`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`,
-  `sdk/rocketnet_connect_token.h:165-171`), and the client id is random per
+  `sdk/rocketnet_connect_token.h`), and the client id is random per
   connect. A reconnect after 20 s therefore always uses a token minted 0 s
   earlier, and no token is ever reused (`docs/SESSION.md` 1.6).
 - **Clock-skew check.** Before the run, the orchestrator reads
@@ -788,7 +785,7 @@ The steps, in order:
    bound (refuse if over 13 min), the run byte bound (refuse if over 20 GB)
    and the studio-uplink bound (refuse if over 1 GB), both from each row's
    total cap under RULINGS (d). Refuse any client whose cap is missing or
-   above its site's 1,000 kbps (studio) or 100,000 kbps (datacenter) total.
+   above its site's 1 kbps (studio) or 100 kbps (datacenter) total.
    Print the plan, every client's cap and both bounds.
 2. **Build.** On each machine in parallel, run `bench-build.sh <commit>`:
    clone from GitHub into `~/rocketnet-live/<commit>`, check out the one
@@ -809,7 +806,7 @@ The steps, in order:
 5. **Clients.** Start one per bench with `bench-client.sh`, under
    `systemd-run --user` on Linux, `nohup` on macOS and `start /b` on
    Windows. Each client has its label, stagger, its row's total cap (500
-   kbps each way on the studio site, 50,000 kbps each way in a datacenter)
+   kbps each way on the studio site kbps each way in a datacenter)
    and the seed.
 6. **Watch.** Every 30 s, read each client's last status line and the
    server's. A client or server exit before plan, or a `fail` line, begins
@@ -915,7 +912,7 @@ matrix code, and a loopback functional test that CI runs on every platform.
     matrix for two windows (one clean disconnect, one silent drop), the
     over-maximum refusals, and the E_m and receive-channel assertions of
     sections 4 and 5.
-- Touches: `CMakeLists.txt` (the functional source list, `:433-438`; the
+- Touches: `CMakeLists.txt` (the functional source list; the
   unit glob at `:295` already picks the new file up).
 - Gate: `make && ./bin/test && ./bin/functional`.
 
@@ -962,33 +959,33 @@ mode and the orchestration script.
    makes it cover every live XDP test on the test server, not only this run;
    worst case the owner can force-reboot the test server from its provider's
    console.
-2. **max_clients.** The constant is 1,000 (`sdk/rocketnet.h:44`). The table
-   default was 64 (`sdk/rocketnet.h:923` at `20d8b35`) and is 1,000 at the
-   base tip `962e3a4`. But `server.c` sets 256 (`server.c:42`), so the
-   example server never gets the default either way. The run sets 1,000
+2. **max_clients.** The constant is 1 (`sdk/rocketnet.h`). The table
+   default was 64 (`sdk/rocketnet.h` at `20d8b35`) and is 1 at the
+   base tip `962e3a4`. But `server.c` sets 256 (`server.c`), so the
+   example server never gets the default either way. The run sets 1
    explicitly with `--max-clients` and changes no default.
-3. **Stale comments about enabled types.** `sdk/rocketnet.h:1708-1716` lists
-   five enabled types, and `docs/CHANNELS.md` 7.5 says {0, 3}. The code
-   enables all eight (`sdk/rocketnet_channel.h:59`,
-   `sdk/rocketnet_channel.cpp:189`). This is a doc fix, outside this card's
+3. **Stale comments about enabled types.** `sdk/rocketnet.h` lists
+   five enabled types, and `docs/CHANNELS.md` 7.5 says {0}. The code
+   enables all eight (`sdk/rocketnet_channel.h`,
+   `sdk/rocketnet_channel.cpp`). This is a doc fix, outside this card's
    paths.
 4. **The dev token's timeout is a literal 10**
-   (`sdk/rocketnet_connect_token.cpp:285`) with no name. The run must read
+   (`sdk/rocketnet_connect_token.cpp`) with no name. The run must read
    2 x timeout from a constant, so the need
    `rocketnet-dev-token-timeout-is-a-named-constant` adds one (section 6);
    the runner card does not.
 5. **No soft backpressure at the message API.** A send the region has no
-   room for ends the connection (`sdk/rocketnet.h:1719-1724`). So the run's
+   room for ends the connection (`sdk/rocketnet.h`). So the run's
    backpressure figure is its own pacing ledger, and `MESSAGE_SEND_QUEUE_FULL`
    at any value is a FAIL, not a measured backpressure. A soft "would not
    fit" query would let applications pace without a ledger. That is a
    possible library card, not this run's.
 6. **XDP replies go to the gateway's MAC address**
-   (`sdk/rocketnet_server_socket_linux.cpp:1141`). On-link LAN peers depend
+   (`sdk/rocketnet_server_socket_linux.cpp`). On-link LAN peers depend
    on the gateway forwarding back onto the segment. The run proves one LAN
    round trip before it starts.
 7. **The AF_XDP bind mode.** `xsk_config.xdp_flags = XDP_ZEROCOPY`
-   (`sdk/rocketnet_server_socket_linux.cpp:1489`) puts a bind-flag constant
+   (`sdk/rocketnet_server_socket_linux.cpp`) puts a bind-flag constant
    in the attach-flags field. With `XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD`
    (`:1491`) it does not request zero copy at bind; the kernel picks zero
    copy where the transport supports it and copy otherwise. The run records
@@ -997,7 +994,7 @@ mode and the orchestration script.
    the NIC, so on the uplink the run uses verify only. If verify fails (the
    pre-flight refuses without R4 to R7), the run stops for the owner.
 9. **Root on the test server.** The xdp transport needs root
-   (`sdk/rocketnet_server_socket_linux.cpp:697-701`). The workers' standing
+   (`sdk/rocketnet_server_socket_linux.cpp`). The workers' standing
    rule is no sudo. RULINGS (c) grants root for exactly three steps and no
    other: loading and unloading the XDP program, arming and cancelling the
    systemd-run dead-man timer, and starting and stopping the server. The
@@ -1008,27 +1005,27 @@ mode and the orchestration script.
 10. **The cap is a total.** RULINGS (b) and (d) settle it: every per-client
     cap is the client's total, both directions combined. A studio-site client
     is capped at 1 Mbit/s total (500 kbps each way), a datacenter client at
-    100 Mbit/s total (50,000 kbps each way), and the run is bounded at 20 GB
+    100 Mbit/s total (50 kbps each way), and the run is bounded at 20 GB
     in all and 1 GB across the studio uplink.
 11. **The 24-bit reliable number wrap** cannot happen inside the 15-minute
     dead-man timer at these rates. The run does not claim it (section 6).
-12. **Soak's refusal rule cannot hold under full load.** `soak.c:60-68`
+12. **Soak's refusal rule cannot hold under full load.** `soak.c`
     fails any nonzero refusal. Here
     `MESSAGE_UNRELIABLE_OVER_BUDGET`, `MESSAGE_WINDOW_STALL` and the
     over-maximum refusals move by design, so section 7 replaces that rule
     with an exact allow-list.
 13. **No cumulative wire counters.** The transport stats are trailing
-    per-second rates (`sdk/rocketnet.h:830-839`, `:1284-1292`), and no
+    per-second rates (`sdk/rocketnet.h`), and no
     counter counts packets or bytes sent. The run's internet byte total and
     its sent-history wrap count are therefore integrals of samples, labelled
     approximate, beside the exact bound the send budget gives. A cumulative
     packets-sent and bytes-sent pair on the counter surface would make both
     exact. That is a possible library card.
 14. **The server's send budget is one value at create**
-    (`sdk/rocketnet.h:1823-1826`). Per-path caps need the per-slot setter
-    (`sdk/rocketnet.h:1879`) and a way for the server to learn each client's
+    (`sdk/rocketnet.h`). Per-path caps need the per-slot setter
+    (`sdk/rocketnet.h`) and a way for the server to learn each client's
     path. The run uses a HELLO message (section 6). Under RULINGS (d) the
-    server creates with the lowest cap, 500 kbps, and raises a slot only to
+    server creates with the lowest cap kbps, and raises a slot only to
     that slot's inventory cap, so no client is ever over its cap.
 
 ## Running it
@@ -1043,7 +1040,7 @@ studio-uplink bound of RULINGS (d), and every per-host build, start, collect
 and teardown step, including every XDP SAFETY step, with the client and
 server command lines in full. It contacts no host and ends with
 `dry-run: no host contacted`. It refuses an inventory with a studio-site cap
-above 1,000 kbps or a plan over 20 GB in all or 1 GB across the studio
+above 1 kbps or a plan over 20 GB in all or 1 GB across the studio
 uplink.
 
 The real run copies `scripts/live-xdp-fleet-remote` to each machine and runs

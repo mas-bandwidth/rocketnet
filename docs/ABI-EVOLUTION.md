@@ -95,8 +95,9 @@ Each sized create takes one config struct and its size, checked by the rule.
 A sized create refuses an unknown size before any other check: it
 returns `NULL` with the log line, and the API misuse count does not move (a
 size mismatch is a build mismatch, not a NULL misuse). The sized defaults
-return 1 when they write and 0 when they refuse; a `NULL` config there is a
-counted no-op that returns 0, as every NULL at the boundary.
+return `enum rocketnet_status_t` (`ROCKETNET_STATUS_OK` on success, or
+`ROCKETNET_STATUS_INVALID_ARGUMENT` when `config` is `NULL` or `config_bytes`
+is not a known revision size).
 
 The known sizes are in the internal layer header, oldest first, so the library
 and a caller read one list. Each revision's size is written as the
