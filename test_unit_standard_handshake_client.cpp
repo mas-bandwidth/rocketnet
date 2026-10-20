@@ -190,7 +190,6 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
     memcpy( client.client_ephemeral_public_key, rocketnet_test_client_eph_public, ROCKETNET_KEY_BYTES );
 
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    uint8_t incoming[ROCKETNET_RECEIVE_CEILING];
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
 

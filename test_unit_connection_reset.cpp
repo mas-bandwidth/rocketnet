@@ -106,10 +106,20 @@ static const rocketnet_reset_member_t endpoint_layout[] =
 #undef ENDPOINT_MEMBER
 
 #define MESSAGE_FIELD( decision, field ) { #field, offsetof( rn_message_connection_t, field ), sizeof( ((rn_message_connection_t*)0)->field ), alignof(decltype(((rn_message_connection_t*)0)->field)), #decision[0] == 'R' },
+// rn_message_connection_t is not standard layout, so offsetof is
+// conditionally supported on it; every supported compiler gives the member
+// offset, which is all the reset audit compares
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
 static const rocketnet_reset_member_t message_connection_fields[] =
 {
     ROCKETNET_MESSAGE_CONNECTION_FIELDS( MESSAGE_FIELD )
 };
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #undef MESSAGE_FIELD
 
 #define RESET_COUNT( array ) ( sizeof(array) / sizeof((array)[0]) )
