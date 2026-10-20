@@ -129,15 +129,8 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
     return NULL;
 }
 
-// true when the last loopback create on this thread failed because its queue
-// allocation returned NULL, so the caller can tell a refusal (bad address,
-// full table) from a shortage of memory. thread_local: a create runs on its
-// caller's thread. Read and cleared by rocketnet_loopback_create_out_of_memory.
-static thread_local bool loopback_create_failed_for_memory = false;
-
 static void * loopback_create( void * context, rocketnet_address_t * bind )
 {
-    loopback_create_failed_for_memory = false;
     if ( bind->type != ROCKETNET_ADDRESS_IPV4 && bind->type != ROCKETNET_ADDRESS_IPV6 )
         return NULL;
     rocketnet_loopback_state_t & state = loopback_state();
@@ -194,10 +187,7 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
     ep->packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( context,
         sizeof( rocketnet_loopback_packet_t ) * ROCKETNET_LOOPBACK_QUEUE_PACKETS );
     if ( !ep->packets )
-    {
-        loopback_create_failed_for_memory = true;
         return NULL;
-    }
     ep->context = context;
     ep->bind = *bind;
     ep->dropped = 0;
@@ -341,13 +331,6 @@ uint64_t rocketnet_loopback_endpoint_dropped( void * instance )
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     return ep->dropped;
-}
-
-bool rocketnet_loopback_create_out_of_memory()
-{
-    const bool failed = loopback_create_failed_for_memory;
-    loopback_create_failed_for_memory = false;
-    return failed;
 }
 
 int rocketnet_loopback_endpoints_live()

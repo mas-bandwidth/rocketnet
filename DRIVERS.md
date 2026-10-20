@@ -108,6 +108,23 @@ tentative bind address cannot constrain the next candidate. A discovering
 factory reports its actual port on success. Existing XDP preflight and the
 commit barrier remain in its adapter/backend.
 
+A factory reports why it failed through `config->status`
+(`rocketnet_server_driver_config_t.status` and
+`rocketnet_client_driver_config_t.status`, sdk/rocketnet_driver.h:52 and :115),
+one form for every driver. A NULL create whose reason is a failed allocation
+writes `ROCKETNET_STATUS_OUT_OF_MEMORY` there; any other NULL is a refusal.
+`rocketnet_server_driver_open` and `rocketnet_client_driver_open` write it on
+the factory's behalf when the create returned NULL after `rocketnet_malloc`
+refused an allocation on the calling thread (sdk/rocketnet_driver.cpp:126,
+:148 and :182, reading the per-thread count kept at sdk/rocketnet.cpp:369), so
+every built-in driver (portable, msgx, gso, xdp, io_uring, iocp, rio, loopback)
+reports it without code of its own. The transport ladder falls to the next
+candidate on a refusal, and on OUT_OF_MEMORY it stops:
+`rocketnet_server_transport_create_ex` (sdk/rocketnet_server_transport.cpp:1299)
+and `rocketnet_client_transport_create_ex`
+(sdk/rocketnet_client_transport.cpp:870) destroy what they built and return
+NULL with `ROCKETNET_STATUS_OUT_OF_MEMORY`.
+
 Server stop is an idempotent stop/poll callback: false means work remains; true
 allows the transport to report stopped. It must not wait for outstanding I/O
 inside update. Destroy handles partial setup and a created instance that never
