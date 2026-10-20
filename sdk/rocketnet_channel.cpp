@@ -1083,7 +1083,7 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
 // ---------------------------------------------------------------
 
 bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region, const struct rocketnet_message_config_t * config,
-                      struct rocketnet_send_budget_t * budget, int max_packets_per_update, int payload_capacity )
+                      struct rocketnet_send_budget_t * budget, int packets_per_update, int payload_capacity )
 {
     if ( !ordered )
         return false;
@@ -1104,7 +1104,7 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
     rn_window_ack_init( &ordered->ack, &ordered->send, region, config );
     rn_window_receive_init( &ordered->receive, region, 0 );
 
-    if ( !rn_packet_builder_init( &ordered->builder, region, &ordered->ack, budget, max_packets_per_update, payload_capacity ) )
+    if ( !rn_packet_builder_init( &ordered->builder, region, &ordered->ack, budget, packets_per_update, payload_capacity ) )
     {
         memset( ordered, 0, sizeof( *ordered ) );
         return false;
@@ -1252,7 +1252,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     if ( ordered->budget )
         rocketnet_send_budget_begin_update( ordered->budget, now );
 
-    const int packet_limit = builder->max_packets_per_update < num_payloads ? builder->max_packets_per_update : num_payloads;
+    const int packet_limit = builder->packets_per_update < num_payloads ? builder->packets_per_update : num_payloads;
     const uint32_t capacity = channels->payload_capacity;
     const uint64_t room = (uint64_t) packet_limit * ( capacity - 1 );
 
@@ -1265,7 +1265,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     plan.capacity = capacity;
 
     // 1. The two resend FIFOs (6.4 "Resend"): single-packet records at
-    // min( rto, resend_interval ), then the chunks of blocks at the RTO alone
+    // min( resend_delay, resend_interval ), then the chunks of blocks at the resend delay alone
     // (rn_window_ack_chunk_resend_delay), retransmits first (R6). Each walk
     // stops at its own first number not yet due, so a chunk that is not due
     // never holds back a small record that is (RNResendTiming!

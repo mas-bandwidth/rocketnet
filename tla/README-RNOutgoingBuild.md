@@ -81,7 +81,7 @@ room; the next update begins and owes message 3 a packet; message 4
 packet; the flush's reliable phase has no room, and the flush ends with
 message 3 still queued. In the code without the reservation,
 `rn_endpoint_in_place_header` compared `written` alone with
-`max_packets_per_update`, so the in-place packet was admitted while
+`packets_per_update`, so the in-place packet was admitted while
 `rn_endpoint_ordered_due` held, and the write pass's reliable phase
 (`written < max_packets`) sent nothing. The unit case
 `reliable_not_starved_by_in_place` is the same run at a cap of two.

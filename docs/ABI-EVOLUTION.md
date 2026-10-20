@@ -208,10 +208,12 @@ with the standard size-mismatch log. `rocketnet_server_dev_config_sized`
 applies the same rule before writing. A NULL config retains each call's
 existing default or counted-no-op behavior.
 
-The client and server creates return a handle or `NULL`; the sized forms take
-the config size and write no separate status code, a size refusal included. A
-game that needs both a handle and a status uses the log line and
-`rocketnet_api_misuse_count`.
+The client and server creates return a handle or `NULL` and write the outcome
+through a final nullable status out-parameter: `ROCKETNET_STATUS_OK` with the
+handle, or the refusal's specific code with `NULL`. The four creates remain
+`rocketnet_client_create`, `rocketnet_client_create_sized`,
+`rocketnet_server_create` and `rocketnet_server_create_sized`; the sized forms
+also take the config size. There is no second `_ex` or `_status` form.
 
 ## 8. The Public Counter and Stat Enums
 
@@ -247,7 +249,9 @@ first released ABI. The lifecycle API changed the calling contract once
 before 1.0.0; no earlier ABI was released, so the release starts at 1:
 
 - `rocketnet_client_create` and `rocketnet_client_create_sized` take no
-  connect token; the token moves to the new `rocketnet_client_connect`.
+  connect token and report through a final nullable status out-parameter; the
+  token moves to the new `rocketnet_client_connect`. The same status contract
+  applies to `rocketnet_server_create` and `rocketnet_server_create_sized`.
 - `rocketnet_server_create` and `_sized` bind nothing; the new
   `rocketnet_server_start`, `rocketnet_server_stop` and
   `rocketnet_server_running` run the transport, and

@@ -70,7 +70,7 @@ static void usage( void )
         "  --seed X                the run seed, printed at start\n"
         "  --send-kbps K           the per-client send budget\n"
         "  --max-clients N         max_clients, set explicitly (the run uses 1000)\n"
-        "  --max-packets-per-update N  the message config's max_packets_per_update\n"
+        "  --max-packets-per-update N  the message config's packets_per_update\n"
         "  --update-hz H           update rate of the main loop\n"
         "  --counters-every S      snapshot counters, RSS and transport stats every S seconds\n"
         "  --results PATH          where the result lines go\n"
@@ -872,7 +872,7 @@ int main( int argc, char ** argv )
     const char * results_path = NULL;
     const char * status_path = NULL;
     int max_clients = 1000;
-    int max_packets_per_update = 64;
+    int packets_per_update = 64;
     double counters_every = 60.0;
     double update_hz = 1000.0;
     uint32_t seed = 0;
@@ -892,7 +892,7 @@ int main( int argc, char ** argv )
         else if ( strcmp( a, "--seed" ) == 0 && i + 1 < argc ) seed = (uint32_t) strtoul( argv[++i], NULL, 10 );
         else if ( strcmp( a, "--send-kbps" ) == 0 && i + 1 < argc ) send_kbps = (uint32_t) strtoul( argv[++i], NULL, 10 );
         else if ( strcmp( a, "--max-clients" ) == 0 && i + 1 < argc ) max_clients = (int) strtol( argv[++i], NULL, 10 );
-        else if ( strcmp( a, "--max-packets-per-update" ) == 0 && i + 1 < argc ) max_packets_per_update = (int) strtol( argv[++i], NULL, 10 );
+        else if ( strcmp( a, "--max-packets-per-update" ) == 0 && i + 1 < argc ) packets_per_update = (int) strtol( argv[++i], NULL, 10 );
         else if ( strcmp( a, "--update-hz" ) == 0 && i + 1 < argc ) update_hz = strtod( argv[++i], NULL );
         else if ( strcmp( a, "--counters-every" ) == 0 && i + 1 < argc ) counters_every = strtod( argv[++i], NULL );
         else if ( strcmp( a, "--results" ) == 0 && i + 1 < argc ) results_path = argv[++i];
@@ -947,7 +947,7 @@ int main( int argc, char ** argv )
 
     struct rocketnet_message_config_t message_config;
     rocketnet_message_default_config( &message_config );
-    message_config.max_packets_per_update = max_packets_per_update;
+    message_config.packets_per_update = packets_per_update;
     g_live.max_message_bytes = (uint32_t) message_config.max_message_bytes;
     g_live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 

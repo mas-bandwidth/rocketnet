@@ -603,7 +603,19 @@ static void xdp_receive_dispatches_both_families_counted()
     rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame6, (size_t) ( 62 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1 ), ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame4, (size_t) ( 42 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1 ), ROCKETNET_ADDRESS_IPV4, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( drops.malformed == 2 );
-    rocketnet_unit_check( rocketnet_xdp_frame_receive( frame6, (size_t) ( 62 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES ), ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
+
+    // cut below the length its UDP header names: malformed, as the kernel
+    // filter drops it (server_xdp_udp); a frame whose UDP length is the
+    // smallest server packet is taken at that size
+
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame6, (size_t) ( 62 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES ), ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( drops.malformed == 3 );
+    uint8_t smallest6[256];
+    memset( smallest6, 0, sizeof(smallest6) );
+    const int smallest_len6 = rocketnet_xdp_frame_build( smallest6, sizeof(smallest6), server_mac, gateway_mac, &src6, &dst6, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    rocketnet_unit_check( smallest_len6 == 62 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    rocketnet_unit_check( rocketnet_xdp_frame_receive( smallest6, (size_t) smallest_len6, ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( payload_bytes == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
 
     // ARP, and a frame too short to name an ethertype: not_ip
 
@@ -612,7 +624,7 @@ static void xdp_receive_dispatches_both_families_counted()
     rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame4, (size_t) len4, ROCKETNET_ADDRESS_IPV4, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame6, 13, ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( drops.not_ip == 2 );
-    rocketnet_unit_check( drops.ipv6_extension == 0 && drops.other_family == 2 && drops.malformed == 2 );
+    rocketnet_unit_check( drops.ipv6_extension == 0 && drops.other_family == 2 && drops.malformed == 3 );
 }
 
 // The server ladder keeps xdp for either family: the list parses the same

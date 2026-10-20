@@ -46,7 +46,9 @@ int main( void )
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
     server_config.transport = "loopback";
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -60,7 +62,9 @@ int main( void )
     CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.simulated_loss_percent = 30;
-    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );

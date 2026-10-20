@@ -52,7 +52,8 @@ int main( int argc, char ** argv )
     config.max_clients = 1;
     config.transport = "portable";
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, &config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, &config, NULL, 0, &create_status );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -60,7 +61,7 @@ int main( int argc, char ** argv )
     }
     if ( !server )
     {
-        printf( "error: failed to create server\n" );
+        printf( "error: failed to create server: %s\n", rocketnet_status_name( create_status ) );
         rocketnet_term();
         return 1;
     }

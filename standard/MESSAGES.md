@@ -2560,15 +2560,15 @@ round-trip sample equal to the time between the send and the acknowledgement.
 A number that was already acknowledged MUST NOT be acknowledged or sampled a
 second time.
 
-### m9.2. Round-trip estimate and retransmission timeout
+### m9.2. Round-trip estimate and resend delay
 
 The sender MUST estimate the round-trip time as RakNet does. On the first
 sample, it MUST set both the smoothed round-trip time and deviation to the
 sample. On every later sample, the deviation MUST move 5 percent toward
 the absolute difference between the prior smoothed RTT and the new sample;
-the smoothed RTT MUST then move 5 percent toward the new sample. The retransmission timeout is
+the smoothed RTT MUST then move 5 percent toward the new sample. The resend delay is
 
-    clamp( 2 x srtt + 4 x deviation + 30 ms, rto_min_ms, rto_max_ms )
+    clamp( 2 x srtt + 4 x deviation + 30 ms, resend_delay_min_ms, resend_delay_max_ms )
 
 where srtt and deviation are in seconds. The timeout MUST be 2 seconds before
 the first sample by default. The minimum defaults to 0, which applies no floor
@@ -2580,9 +2580,9 @@ until the reliable timeout ends the connection.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| rto_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
-| rto_min_ms | 0 | ms | optional floor for the sampled RTO; zero disables it |
-| rto_max_ms | 2000 | ms | the configured largest timeout |
+| resend_delay_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
+| resend_delay_min_ms | 0 | ms | optional floor for the sampled resend delay; zero disables it |
+| resend_delay_max_ms | 2000 | ms | the configured largest timeout |
 | reliable_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
 | min_resend_attempts | 4 | count | the sends that fit before the reliable timeout |
 
@@ -2592,8 +2592,8 @@ A sender MUST keep two resend queues. A single-packet reliable record is in the
 small-record queue; a fragment of a block is in the chunk queue. A number MUST
 be in at most one queue.
 
-The resend delay of a single-packet record MUST be rto. The resend delay of
-a chunk MUST be min( rto, reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
+The resend delay of a single-packet record MUST be resend_delay. The resend delay of
+a chunk MUST be min( resend_delay, reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
 at the first update whose time is at least the number's last send plus its
 resend delay, and MUST NOT resend it before then. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.

@@ -299,13 +299,13 @@ struct ip_pair_t
     double time;
 };
 
-static void ip_pair_setup( ip_pair_t * pair, int max_packets_per_update = 8 )
+static void ip_pair_setup( ip_pair_t * pair, int packets_per_update = 8 )
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.num_channels = 4;
-    config.max_packets_per_update = max_packets_per_update;
-    config.rto_initial_ms = 100;
+    config.packets_per_update = packets_per_update;
+    config.resend_delay_initial_ms = 100;
     pair->net = new ip_net_t();
     pair->net->server.net = pair->net;
     pair->net->server.is_server = true;
@@ -572,7 +572,7 @@ static void mixed_in_place_and_queued_respect_packet_cap()
     const size_t finished_before = client->finished.size();
 
     // 1 in-place unreliable packet + 2 queued reliable packets in one update:
-    // at most max_packets_per_update (2) packets reach the fake transport.
+    // at most packets_per_update (2) packets reach the fake transport.
     ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 100, 90 );
     check( client->finished.size() == finished_before + 1 );
 
@@ -618,7 +618,7 @@ static void repeated_fill_flush_respects_packet_cap()
     const size_t finished_before = client->finished.size();
 
     // Repeatedly filling and calling send_packets within one update (without
-    // calling update) must not exceed max_packets_per_update packets.
+    // calling update) must not exceed packets_per_update packets.
     for ( int cycle = 0; cycle < 4; cycle++ )
     {
         uint8_t msg[1400];
@@ -661,7 +661,7 @@ static bool ip_carries( const ip_packet_t & packet, const uint8_t * needle, int 
 static void reliable_not_starved_by_in_place()
 {
     // RNOutgoingBuild ReliableSentWithinOneUpdate: with reliable work due, an
-    // in-place packet never takes the last of max_packets_per_update, so the
+    // in-place packet never takes the last of packets_per_update, so the
     // write pass sends that work in the same update
     const int cap = 2;
     ip_pair_t pair;
@@ -926,7 +926,7 @@ static void unreliable_fit_in_place_every_transport()
 static void message_burst_start_finish_delivers_every_message()
 {
     const int updates = 60;
-    const int per_update = 100;                         // under max_packets_per_update (8) x 16 records
+    const int per_update = 100;                         // under packets_per_update (8) x 16 records
     const int bytes = 32;
     ip_pair_t pair;
     ip_pair_setup( &pair );

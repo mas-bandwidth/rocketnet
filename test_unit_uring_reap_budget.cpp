@@ -372,7 +372,61 @@ static void uring_reap_destroy_after_saturation()
     free( fake );
 }
 
+// a receive completion with res >= 0 that names no provided buffer (no
+// IORING_CQE_F_BUFFER, or a buffer id outside the ring) is dropped and
+// counted in RECEIVE_DROPPED_NO_BUFFER, never delivered; a completion that
+// names a buffer is still delivered
+
+static void uring_receive_without_a_buffer_is_counted()
+{
+    struct rocketnet_server_uring_test_source_t source;
+    struct uring_fake_t * fake = uring_fake_create( 1000, &source );
+    fake->flood_on_arm = false;
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
+    if ( !uring )
+    {
+        printf( "[SKIPPED the io_uring driver is not built]\n" );
+        free( fake );
+        return;
+    }
+
+    const uint64_t leaked_before = rocketnet_server_uring_leaked_drivers();
+    const uint64_t recv_tag = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
+
+    uring_fake_push( fake, recv_tag, ROCKETNET_URING_RECV_BUFFER_BYTES, IORING_CQE_F_MORE );
+    rocketnet_server_uring_receive_packets( uring );
+    check( !fake->guard_tripped );
+    check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 1 );
+
+    const uint32_t outside = IORING_CQE_F_BUFFER | IORING_CQE_F_MORE | ( (uint32_t) ROCKETNET_URING_RECV_BUFFERS << IORING_CQE_BUFFER_SHIFT );
+    uring_fake_push( fake, recv_tag, ROCKETNET_URING_RECV_BUFFER_BYTES, outside );
+    rocketnet_server_uring_receive_packets( uring );
+    check( !fake->guard_tripped );
+    check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
+
+    uring_fake_push_receive( fake, 0 );
+    rocketnet_server_uring_receive_packets( uring );
+    check( !fake->guard_tripped );
+    check( rocketnet_server_uring_process_packets( uring )->num_packets == 1 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE ) == 0 );
+
+    rocketnet_server_uring_destroy( uring );
+    check( !fake->guard_tripped );
+    check( rocketnet_server_uring_leaked_drivers() == leaked_before );
+
+    free( fake );
+}
+
 #else
+
+static void uring_receive_without_a_buffer_is_counted()
+{
+    printf( "uring_receive_without_a_buffer_is_counted [SKIPPED the io_uring completion seam requires Linux]\n" );
+}
 
 static void uring_reap_receive_flood_returns_within_budget()
 {
@@ -394,3 +448,4 @@ static void uring_reap_destroy_after_saturation()
 REGISTER_UNIT_TEST( uring_reap_receive_flood_returns_within_budget );
 REGISTER_UNIT_TEST( uring_reap_send_retires_under_receive_pressure );
 REGISTER_UNIT_TEST( uring_reap_destroy_after_saturation );
+REGISTER_UNIT_TEST( uring_receive_without_a_buffer_is_counted );

@@ -138,8 +138,8 @@ struct boundary_pair_t { boundary_net_t * net; rocketnet_message_server_t * serv
 struct boundary_received_t { int channel; std::vector<uint8_t> data; };
 static void boundary_config(rocketnet_message_config_t * c) {
     rocketnet_message_default_config(c); c->num_channels=4; c->window_messages=64; c->receive_ring_bytes=65536; c->max_message_bytes=16384;
-    c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->max_packets_per_update=8; c->unreliable_deliveries=64;
-    c->rto_initial_ms=100; c->rto_min_ms=20; c->rto_max_ms=400; c->reliable_timeout_ms=120000;
+    c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->packets_per_update=8; c->unreliable_deliveries=64;
+    c->resend_delay_initial_ms=100; c->resend_delay_min_ms=20; c->resend_delay_max_ms=400; c->reliable_timeout_ms=120000;
 }
 static void boundary_setup(boundary_pair_t * pair) {
     rocketnet_message_config_t config; boundary_config(&config); pair->net=new boundary_net_t(); pair->net->slot_connection=100; pair->net->next_packet_id=1000; pair->net->next_payload_id=1; memset(pair->net->fragment_counters,0,sizeof(pair->net->fragment_counters));

@@ -85,9 +85,9 @@ extern "C" {
 
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
-// The reliable resend schedule follows RakNet's adaptive RTO, with no
+// The reliable resend schedule follows RakNet's adaptive resend delay, with no
 // per-resend back-off. The timeout uses 2*srtt + 4*rttvar + 30 ms and is
-// capped at 2 s. Validation reserves four sends of the configured initial RTO.
+// capped at 2 s. Validation reserves four sends of the configured initial resend delay.
 
 #define ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS                        4
 
@@ -1459,19 +1459,19 @@ struct rocketnet_message_config_t
     /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
     int packets_in_flight;              // 16 .. 1 << 16; default 256
     /** @brief Packets sent per connection per update, in-place unreliable messages and the send pass together; 1 through 1024, default 256. */
-    int max_packets_per_update;         // 1 .. 1024; default 256
+    int packets_per_update;         // 1 .. 1024; default 256
     /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
     int unreliable_deliveries;          // per connection per update; 1 .. 1 << 16; default 256
     /** @brief Messages held for sequenced delivery; 0 through 4096, default 16. */
     int sequenced_holds;                // 0 .. 4096; default 16
     /** @brief Receipt history entries; 16 through 1<<16, default 256; a full ring drops its oldest. */
     int receipt_ring;                   // 16 .. 1 << 16; default 256
-    /** @brief Initial retransmit timeout in milliseconds; 10 through 60000, default 2000. */
-    int rto_initial_ms;                 // 10 .. 60000; default 2000
-    /** @brief Optional sampled RTO floor in milliseconds; 0 disables it. 0 through 60000, default 0. */
-    int rto_min_ms;                     // optional RTO floor; 0 disables; 0 .. 60000; default 0
-    /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 2000. */
-    int rto_max_ms;                     // 10 .. 60000; default 2000
+    /** @brief Initial resend delay in milliseconds; 10 through 60000, default 2000. */
+    int resend_delay_initial_ms;                 // 10 .. 60000; default 2000
+    /** @brief Optional sampled resend delay floor in milliseconds; 0 disables it. 0 through 60000, default 0. */
+    int resend_delay_min_ms;                     // optional resend delay floor; 0 disables; 0 .. 60000; default 0
+    /** @brief Maximum resend delay in milliseconds; 10 through 60000, default 2000. */
+    int resend_delay_max_ms;                     // 10 .. 60000; default 2000
     /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
     int reliable_timeout_ms;            // 1000 .. 600000; default 10000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */

@@ -238,7 +238,7 @@ static void reliable_receipt_waits_for_every_number()
 static void rnreceipts_reliable_witness_replays()
 {
     // BrokenLastIndexAck and BrokenReliableLoss: neither a last-index ACK nor
-    // an RTO sweep completes or loses a still-incomplete reliable block.
+    // a resend delay sweep completes or loses a still-incomplete reliable block.
     reliable_receipt_fixture_t f;
     reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 1412 );
     rocketnet_unit_check( f.transport.sent_count == 2 );

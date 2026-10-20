@@ -2,7 +2,7 @@
 ; tools/roadmap/render.py (make testing); make testing-check fails when the
 ; committed page is not what this renders. This file is the whole plan: every
 ; test RocketNet will run before and after v1.0.0, including the hardening
-; and long runs deferred until after the payment milestone (public API
+; and long runs deferred until after v1.0.0 (public API
 ; complete, unit and functional green), so none of them is lost.
 ;
 ; Five tables. "Tests per platform" holds the tests that apply to every
