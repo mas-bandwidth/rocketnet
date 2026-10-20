@@ -101,7 +101,33 @@ struct rocketnet_server_iocp_t
     // bytes (zero for an aborted or empty slot) and destination.
     int run_bytes[ROCKETNET_IOCP_SEND_QUEUE_SIZE];
     rocketnet_address_t run_to[ROCKETNET_IOCP_SEND_QUEUE_SIZE];
+#if defined(ROCKETNET_IOCP_TESTS)
+    std::atomic<int> test_faults[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
+    std::atomic<int> test_fault_status[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
+#endif
 };
+
+// The fault seam (rocketnet_server_iocp_test_fail_next) exists only in the
+// test executable. Elsewhere the check is the constant false, so the
+// production paths carry no test branch.
+#if defined(ROCKETNET_IOCP_TESTS)
+static bool rocketnet_iocp_test_fault( rocketnet_server_iocp_t * iocp, int fault, int * status )
+{
+    int left = iocp->test_faults[fault].load( std::memory_order_acquire );
+    while ( left > 0 )
+    {
+        if ( iocp->test_faults[fault].compare_exchange_weak( left, left - 1, std::memory_order_acq_rel ) )
+        {
+            *status = iocp->test_fault_status[fault].load( std::memory_order_relaxed );
+            return true;
+        }
+    }
+    return false;
+}
+#define ROCKETNET_IOCP_TEST_FAULT( iocp, fault, status ) rocketnet_iocp_test_fault( iocp, fault, status )
+#else
+#define ROCKETNET_IOCP_TEST_FAULT( iocp, fault, status ) false
+#endif
 
 static int rocketnet_iocp_address_write( const rocketnet_address_t * input, bool ipv6, sockaddr_storage * storage )
 {
@@ -168,7 +194,13 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     op->address_bytes = sizeof(op->address);
     op->flags = 0;
     int result;
-    if ( op->uro_data )
+    int error = 0;
+    if ( ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST, &error ) )
+    {
+        iocp->pending.fetch_add( 1, std::memory_order_relaxed );
+        result = SOCKET_ERROR;
+    }
+    else if ( op->uro_data )
     {
         // URO: a buffer of the coalesced maximum and a control area for
         // UDP_COALESCED_INFO, the stride of all but the last datagram.
@@ -192,7 +224,9 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
         result = WSARecvFrom( iocp->socket, &op->buffer, 1, NULL, &op->flags,
             (sockaddr*) &op->address, &op->address_bytes, &op->overlapped, NULL );
     }
-    if ( result == 0 || WSAGetLastError() == WSA_IO_PENDING )
+    if ( result != 0 && error == 0 )
+        error = WSAGetLastError();
+    if ( result == 0 || error == WSA_IO_PENDING )
         return true; // Immediate success also produces exactly one IOCP event.
     iocp->pending.fetch_sub( 1, std::memory_order_release );
     iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].fetch_add( 1, std::memory_order_relaxed );
@@ -302,7 +336,11 @@ static void rocketnet_iocp_worker( void * argument )
             if ( !entries[i].lpOverlapped )
                 continue; // A shutdown wakeup, not an I/O operation.
             rocketnet_iocp_operation_t * op = (rocketnet_iocp_operation_t*) entries[i].lpOverlapped;
-            const bool success = entries[i].Internal == 0;
+            ULONG_PTR status = entries[i].Internal;
+            int injected = 0;
+            if ( ROCKETNET_IOCP_TEST_FAULT( iocp, op->send ? ROCKETNET_IOCP_TEST_FAULT_SEND_COMPLETION : ROCKETNET_IOCP_TEST_FAULT_RECEIVE_COMPLETION, &injected ) )
+                status = (ULONG_PTR) injected;
+            const bool success = status == 0;
             const DWORD bytes = entries[i].dwNumberOfBytesTransferred;
             if ( op->send )
             {
@@ -621,9 +659,16 @@ static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, rocketnet_
     op->buffer.buf = (char*) op->frame + ROCKETNET_FRAME_WIRE_OFFSET;
     op->buffer.len = (ULONG) op->packet_bytes;
     iocp->pending.fetch_add( 1, std::memory_order_relaxed );
-    const int result = WSASendTo( iocp->socket, &op->buffer, 1, NULL, 0,
-        (sockaddr*) &op->address, op->address_bytes, &op->overlapped, NULL );
-    if ( result == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING )
+    int error = 0;
+    int result = SOCKET_ERROR;
+    if ( !ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_SEND_POST, &error ) )
+    {
+        result = WSASendTo( iocp->socket, &op->buffer, 1, NULL, 0,
+            (sockaddr*) &op->address, op->address_bytes, &op->overlapped, NULL );
+        if ( result == SOCKET_ERROR )
+            error = WSAGetLastError();
+    }
+    if ( result == SOCKET_ERROR && error != WSA_IO_PENDING )
     {
         // An unsuccessful submission has no completion. All accepted
         // submissions, including immediate success, retire in the worker.
@@ -667,13 +712,17 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
         first->message.lpBuffers = buffers;
         first->message.dwBufferCount = (ULONG) run;
         iocp->pending.fetch_add( 1, std::memory_order_relaxed );
-        const int result = WSASendMsg( iocp->socket, &first->message, 0, NULL, &first->overlapped, NULL );
-        if ( result == 0 )
+        int result = SOCKET_ERROR;
+        if ( !ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_SEND_POST, &error ) )
         {
-            iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
-            return true;
+            result = WSASendMsg( iocp->socket, &first->message, 0, NULL, &first->overlapped, NULL );
+            if ( result == 0 )
+            {
+                iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
+                return true;
+            }
+            error = WSAGetLastError();
         }
-        error = WSAGetLastError();
         if ( error == WSA_IO_PENDING )
         {
             iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
@@ -818,6 +867,18 @@ bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t 
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp )
 {
     return iocp->stopping.load( std::memory_order_acquire );
+}
+
+void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status )
+{
+    rocketnet_assert( fault >= 0 && fault < ROCKETNET_IOCP_TEST_NUM_FAULTS && count >= 0 );
+    iocp->test_fault_status[fault].store( status, std::memory_order_relaxed );
+    iocp->test_faults[fault].store( count, std::memory_order_release );
+}
+
+int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault )
+{
+    return iocp->test_faults[fault].load( std::memory_order_acquire );
 }
 #endif
 

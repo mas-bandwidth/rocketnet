@@ -63,6 +63,11 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
     return remaining > 0.0 && remaining <= ROCKETNET_PLATFORM_SLEEP_TAIL_SECONDS;
 }
 
+// test seam for the client bind-family choice: true unless a test turns it
+// off, in which case an IPv6 socket create behaves as it does on a host with
+// no IPv6 stack. the client's availability probe reads the same flag.
+static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
 // linux and the BSDs. one POSIX section: the sockets, threads and mutexes
@@ -294,6 +299,13 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     socket->type = socket_type;
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, socket );
+        return NULL;
+    }
 
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -985,7 +997,12 @@ struct thread_shim_data_t
     void * context;
     void * real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function;
+    rocketnet_platform_thread_t * thread;
 };
+
+// the platform thread the calling thread runs as, for thread_wait; NULL on a
+// thread that thread_create did not start
+static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
 
 static void* thread_function_shim( void * data )
 {
@@ -994,9 +1011,34 @@ static void* thread_function_shim( void * data )
     void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
+    rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return NULL;
+}
+
+static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * thread )
+{
+    // thread_wait's deadline is on CLOCK_MONOTONIC, so the wait is immune to
+    // wall-clock steps
+    pthread_condattr_t attr;
+    if ( pthread_condattr_init( &attr ) != 0 )
+        return false;
+    if ( pthread_condattr_setclock( &attr, CLOCK_MONOTONIC ) != 0 )
+    {
+        pthread_condattr_destroy( &attr );
+        return false;
+    }
+    const int cond_result = pthread_cond_init( &thread->wake_cond, &attr );
+    pthread_condattr_destroy( &attr );
+    if ( cond_result != 0 )
+        return false;
+    if ( pthread_mutex_init( &thread->wake_mutex, NULL ) != 0 )
+    {
+        pthread_cond_destroy( &thread->wake_cond );
+        return false;
+    }
+    return true;
 }
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
@@ -1017,9 +1059,20 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
+    shim_data->thread = thread;
+
+    thread->woken = false;
+    if ( !rocketnet_platform_thread_wake_init( thread ) )
+    {
+        rocketnet_free( context, thread );
+        rocketnet_free( context, shim_data );
+        return NULL;
+    }
 
     if ( pthread_create( &thread->handle, NULL, thread_function_shim, shim_data ) != 0 )
     {
+        pthread_cond_destroy( &thread->wake_cond );
+        pthread_mutex_destroy( &thread->wake_mutex );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
         return NULL;
@@ -1037,7 +1090,53 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
+    pthread_cond_destroy( &thread->wake_cond );
+    pthread_mutex_destroy( &thread->wake_mutex );
     rocketnet_free( thread->context, thread );
+}
+
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
+    if ( !thread )
+    {
+        rocketnet_platform_sleep( time );
+        return;
+    }
+    // the condition variable runs on CLOCK_MONOTONIC (thread_wake_init)
+    // whole seconds and nanoseconds converted apart, clamped to a day, so no
+    // conversion overflows a 32-bit long
+    if ( !( time > 0.0 ) )
+        time = 0.0;
+    if ( time > 86400.0 )
+        time = 86400.0;
+    const long whole_seconds = (long) time;
+    const long nanoseconds = (long) ( ( time - (double) whole_seconds ) * 1000000000.0 );
+    struct timespec deadline;
+    clock_gettime( CLOCK_MONOTONIC, &deadline );
+    deadline.tv_sec += whole_seconds;
+    deadline.tv_nsec += nanoseconds;
+    if ( deadline.tv_nsec >= 1000000000L )
+    {
+        deadline.tv_sec += 1;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    pthread_mutex_lock( &thread->wake_mutex );
+    while ( !thread->woken )
+    {
+        if ( pthread_cond_timedwait( &thread->wake_cond, &thread->wake_mutex, &deadline ) != 0 )
+            break;
+    }
+    pthread_mutex_unlock( &thread->wake_mutex );
+}
+
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    pthread_mutex_lock( &thread->wake_mutex );
+    thread->woken = true;
+    pthread_cond_broadcast( &thread->wake_cond );
+    pthread_mutex_unlock( &thread->wake_mutex );
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
@@ -1859,6 +1958,13 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     // create socket
 
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, socket );
+        return NULL;
+    }
+
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
     if ( socket->handle < 0 )
@@ -2584,7 +2690,12 @@ struct thread_shim_data_t
     void * context;
     void * real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function;
+    rocketnet_platform_thread_t * thread;
 };
+
+// the platform thread the calling thread runs as, for thread_wait; NULL on a
+// thread that thread_create did not start
+static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
 
 static void * thread_function_shim( void * data )
 {
@@ -2593,9 +2704,19 @@ static void * thread_function_shim( void * data )
     void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
+    rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return NULL;
+}
+
+static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * thread )
+{
+    semaphore_t semaphore = MACH_PORT_NULL;
+    if ( semaphore_create( mach_task_self(), &semaphore, SYNC_POLICY_FIFO, 0 ) != KERN_SUCCESS )
+        return false;
+    thread->wake_semaphore = semaphore;
+    return true;
 }
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
@@ -2616,9 +2737,19 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
+    shim_data->thread = thread;
+
+    thread->woken = 0;
+    if ( !rocketnet_platform_thread_wake_init( thread ) )
+    {
+        rocketnet_free( context, thread );
+        rocketnet_free( context, shim_data );
+        return NULL;
+    }
 
     if ( pthread_create( &thread->handle, NULL, thread_function_shim, shim_data ) != 0 )
     {
+        semaphore_destroy( mach_task_self(), (semaphore_t) thread->wake_semaphore );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
         return NULL;
@@ -2636,7 +2767,40 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
+    semaphore_destroy( mach_task_self(), (semaphore_t) thread->wake_semaphore );
     rocketnet_free( thread->context, thread );
+}
+
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
+    if ( !thread )
+    {
+        rocketnet_platform_sleep( time );
+        return;
+    }
+    // woken is stored before the semaphore is signalled: a wake that lands
+    // before this check ends the wait here, one that lands after it ends the
+    // semaphore wait
+    if ( __atomic_load_n( &thread->woken, __ATOMIC_ACQUIRE ) )
+        return;
+    // whole seconds and nanoseconds converted apart, clamped to a day
+    if ( !( time > 0.0 ) )
+        time = 0.0;
+    if ( time > 86400.0 )
+        time = 86400.0;
+    const unsigned int whole_seconds = (unsigned int) time;
+    mach_timespec_t relative;
+    relative.tv_sec = whole_seconds;
+    relative.tv_nsec = (clock_res_t) ( ( time - (double) whole_seconds ) * 1000000000.0 );
+    semaphore_timedwait( (semaphore_t) thread->wake_semaphore, relative );
+}
+
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    __atomic_store_n( &thread->woken, 1, __ATOMIC_RELEASE );
+    semaphore_signal( (semaphore_t) thread->wake_semaphore );
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
@@ -2971,6 +3135,14 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_free( thread->context, thread );
 }
 
+// Windows keeps the receive thread's sleep: no per-thread event or timer, so
+// the wake is a no-op and the thread observes quit within one sleep period
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    (void) thread;
+}
+
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If your client runs on windows, you can set the thread priority and affinity of the client thread here
@@ -3109,6 +3281,11 @@ void rocketnet_platform_sleep( double time )
     timeEndPeriod( 1 );
 }
 
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_sleep( time );
+}
+
 double rocketnet_platform_time()
 {
     LARGE_INTEGER now;
@@ -3218,21 +3395,6 @@ int rocketnet_platform_id()
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
-int rocketnet_set_socket_codepoint( SOCKET socket, QOS_TRAFFIC_TYPE trafficType, QOS_FLOWID flowId, PSOCKADDR addr ) 
-{
-    QOS_VERSION QosVersion = { 1 , 0 };
-    HANDLE qosHandle;
-    if ( QOSCreateHandle( &QosVersion, &qosHandle ) == FALSE )
-    {
-        return GetLastError();
-    }
-    if ( QOSAddSocketToFlow( qosHandle, socket, addr, trafficType, QOS_NON_ADAPTIVE_FLOW, &flowId ) == FALSE )
-    {
-        return GetLastError();
-    }
-    return 0;
-}
-
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
@@ -3248,6 +3410,13 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     // create socket
 
     s->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, s );
+        return NULL;
+    }
 
     s->handle = socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -3735,6 +3904,48 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 #endif // #if ROCKETNET_UNREAL_ENGINE
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// ----------------------------------------------------------------
+
+void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available )
+{
+    rocketnet_platform_ipv6_socket_available_for_testing = available;
+}
+
+bool rocketnet_platform_client_ipv6_available()
+{
+    if ( !rocketnet_platform_ipv6_socket_available_for_testing )
+        return false;
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe == INVALID_SOCKET )
+        return false;
+    closesocket( probe );
+    return true;
+#else
+    int probe = (int) ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe < 0 )
+        return false;
+    ::close( probe );
+    return true;
+#endif
+}
+
+int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_available, bool dual_stack )
+{
+    if ( !ipv6_available )
+    {
+        if ( server_address_type == ROCKETNET_ADDRESS_IPV6 )
+            return ROCKETNET_ADDRESS_NONE;
+        return ROCKETNET_ADDRESS_IPV4;
+    }
+
+    if ( server_address_type == ROCKETNET_ADDRESS_IPV6 || dual_stack )
+        return ROCKETNET_ADDRESS_IPV6;
+
+    return ROCKETNET_ADDRESS_IPV4;
+}
 
 // ----------------------------------------------------------------
 

@@ -17,8 +17,8 @@ Finalizing corpus
        | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet.h:1476:9:
-    1) ROCKETNET_UNRELIABLE: macro is undocumented
-  1476 | #define ROCKETNET_UNRELIABLE 0
+    1) ROCKETNET_RELIABILITY_UNRELIABLE: macro is undocumented
+  1476 | #define ROCKETNET_RELIABILITY_UNRELIABLE 0
        |         ^~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet.h:1814:23:
@@ -35,11 +35,6 @@ Finalizing corpus
     1) rocketnet_platform_init: function is undocumented
   20 | ROCKETNET_EXPORT_FUNC bool rocketnet_platform_init();
      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-/workspace/rocketnet/sdk/rocketnet.hpp:34:18:
-    1) update: function is undocumented
-  29 |     virtual void update( double time ) = 0;
-     |                  ^~~~~~~~~~~~~~~~~~~~~~~~~~
 
 /workspace/rocketnet/sdk/rocketnet_counters.h:575:5:
     1) <unnamed enum>::ROCKETNET_COUNTER_PACKETS_SENT: Missing documentation for enum value

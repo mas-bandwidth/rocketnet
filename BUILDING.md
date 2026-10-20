@@ -14,7 +14,11 @@ Makefile is the front door:
 
     make
 
-Binaries and libraries land in `bin/`. Run the unit suite with:
+Binaries and libraries land in `bin/`. On macOS, [docs/MACOS.md](docs/MACOS.md)
+is the guide: the build, the two transports and how to pin them, the client's
+threads and App Nap, socket errors, the file-descriptor limit, the application
+firewall prompt, lldb, fuzz corpus replay, and the commands that verify a Mac.
+Run the unit suite with:
 
     ./bin/test
 
@@ -355,7 +359,7 @@ suite, `./bin/test`, does not start a transport, so a transport pin does not cha
 what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
-config tables and their legacy aliases, then restores them on return.
+config tables and their older aliases, then restores them on return.
 `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
 test pins, and the old transport names are cleared; `ROCKETNET_TEST_VERBOSE`
 keeps its diagnostic meaning. Passing ordinary runs print test names and
@@ -373,7 +377,11 @@ outstanding operations. IPv6 binds accept both address families. The client
 continues to use the portable path.
 
 The existing `num_xdp_queues` field selects IOCP workers, following the GSO
-transport's reuse of this field: zero selects four workers; 1 through 32 are valid.
+transport's reuse of this field: zero selects one worker; 1 through 32 are valid.
+Workers dequeue completions from the one port and each publishes its own receive
+buffer, so more than one worker can reorder a client's datagrams, across workers
+and across ticks, and the reliable layer answers the reordering with resends; one
+worker is the default for that reason.
 There are 128 posted receives per worker, 1024 receive staging slots per worker
 per buffer, and 16384 send frames across all workers. These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
@@ -390,7 +398,7 @@ needs RSS-sharded sockets or a different native backend for the line-rate tier.
 
 ## Deploying the XDP transport: provision, then verify-and-bind
 
-The library never mutates machine state. `rocketnet_server_create()`
+The library never mutates machine state. `rocketnet_server_start( server )`
 with the xdp transport is verify-and-bind only: a non-mutating pre-flight checks
 that the machine is provisioned and refuses by name — each unmet condition logs
 the knob, the wanted value, and the script that sets it — and the library's own

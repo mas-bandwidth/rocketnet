@@ -93,7 +93,7 @@ static void public_step_client_config( rocketnet_client_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
-    config->step_driven = 1;
+    config->step_driven = true;
     config->time_callback = public_step_clock;
 }
 
@@ -110,6 +110,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     snprintf( bind, sizeof( bind ), "127.0.0.1:%u", (unsigned) fixed_port );
     pair->server = rocketnet_server_create( NULL, bind, &server_config, NULL, 0 );
     check( pair->server != NULL );
+    check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
 
     uint8_t local_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     const uint8_t * token = existing_token;
@@ -121,8 +122,9 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     rocketnet_client_config_t client_config;
     public_step_client_config( &client_config );
     pair->threads_before_client = public_step_thread_count();
-    pair->client = rocketnet_client_create( NULL, token, &client_config, NULL, 0 );
+    pair->client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
     check( pair->client != NULL );
+    check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
     pair->threads_after_client = public_step_thread_count();
 }
 
@@ -137,9 +139,9 @@ static void public_step_pair_destroy( public_step_pair_t * pair )
 static void public_step_pump( public_step_pair_t * pair )
 {
     public_step_now = pair->time;
-    check( rocketnet_client_update( pair->client, pair->time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_client_update( pair->client, pair->time ) == ROCKETNET_UPDATE_OK );
     rocketnet_client_send_packets( pair->client );
-    check( rocketnet_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
     rocketnet_server_send_packets( pair->server );
     pair->time += 0.01;
 }
@@ -177,10 +179,10 @@ static void public_step_driven_client_delivers_both_ways()
     const uint8_t server_messages[2][4] = { {9,10,11,12}, {13,14,15,16} };
     for ( int i = 0; i < 2; i++ )
     {
-        uint8_t * out = rocketnet_client_start( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, 4 );
-        check( out != NULL ); memcpy( out, client_messages[i], 4 ); check( rocketnet_client_finish( pair.client, 4 ) != 0 );
-        out = rocketnet_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 4 );
-        check( out != NULL ); memcpy( out, server_messages[i], 4 ); check( rocketnet_server_finish( pair.server, 0, 4 ) != 0 );
+        uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+        check( out != NULL ); memcpy( out, client_messages[i], 4 ); check( rocketnet_client_finish_message( pair.client, 4 ) != 0 );
+        out = rocketnet_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+        check( out != NULL ); memcpy( out, server_messages[i], 4 ); check( rocketnet_server_finish_message( pair.server, 0, 4 ) != 0 );
     }
 
     int at_server = 0, at_client = 0;
@@ -188,15 +190,15 @@ static void public_step_driven_client_delivers_both_ways()
     {
         public_step_pump( &pair );
         const uint8_t * data = NULL; int bytes = 0;
-        while ( rocketnet_server_receive( pair.server, 0, 0, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( pair.server, 0, 0, &data, &bytes ) )
         {
             check( at_server < 2 && bytes == 4 && memcmp( data, client_messages[at_server], 4 ) == 0 );
-            rocketnet_server_release( pair.server, 0, data ); at_server++;
+            rocketnet_server_release_message( pair.server, 0, data ); at_server++;
         }
-        while ( rocketnet_client_receive( pair.client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( pair.client, 0, &data, &bytes ) )
         {
             check( at_client < 2 && bytes == 4 && memcmp( data, server_messages[at_client], 4 ) == 0 );
-            rocketnet_client_release( pair.client, data ); at_client++;
+            rocketnet_client_release_message( pair.client, data ); at_client++;
         }
     }
     check( at_server == 2 && at_client == 2 );
@@ -212,8 +214,8 @@ static void public_step_trace( const public_step_identity_t * identity, const ui
     public_step_connect( &pair );
     for ( int i = 0; i < 8; i++ )
     {
-        uint8_t * out = rocketnet_client_start( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, 1 );
-        check( out != NULL ); out[0] = (uint8_t) i; check( rocketnet_client_finish( pair.client, 1 ) != 0 );
+        uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
+        check( out != NULL ); out[0] = (uint8_t) i; check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
         public_step_pump( &pair );
     }
     for ( int i = 0; i < ROCKETNET_CLIENT_COUNTER_COUNT; i++ )
@@ -245,7 +247,7 @@ static void public_step_driven_client_refused_on_a_threaded_only_transport()
     rocketnet_fake_client_driver_t fake = {};
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    config.step_driven = 1;
+    config.step_driven = true;
     int status = ROCKETNET_STATUS_OK;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex(
         &fake, token, &config, 1000.0, &rocketnet_fake_client_operations_base, &fake, &status );

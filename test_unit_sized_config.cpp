@@ -140,7 +140,7 @@ static void sized_config_accepts_every_known_size()
     // guard (the token or address), a counted no-op, so no socket opens
 
     void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
-    rocketnet_assert_function( sized_config_quiet_assert );
+    rocketnet_set_assert_callback( sized_config_quiet_assert );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_default_config( &server_config );
@@ -183,7 +183,7 @@ static void sized_config_accepts_every_known_size()
         check( rocketnet_api_misuse_count() == before + 4 );
     }
 
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
 }
 
 // R6 (docs/CHANNELS.md 11.5) at the ABI boundary (docs/ABI-EVOLUTION.md 4):
@@ -277,7 +277,7 @@ static void sized_config_refuses_unknown_size()
     // never reaching the NULL token or address guard
 
     void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
-    rocketnet_assert_function( sized_config_quiet_assert );
+    rocketnet_set_assert_callback( sized_config_quiet_assert );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_default_config( &server_config );
@@ -310,7 +310,7 @@ static void sized_config_refuses_unknown_size()
     check( rocketnet_message_default_config_sized( NULL, message_current ) == 0 );
     check( rocketnet_api_misuse_count() == before + 3 );
 
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
 }
 
 static void server_default_config_max_clients_is_1000()

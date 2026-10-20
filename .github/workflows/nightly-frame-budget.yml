@@ -4,13 +4,15 @@
 # the median total_us_p99 <= 100 us on the dedicated quiet Linux runner
 # ([self-hosted, Linux, X64, rocketnet-quiet]).
 #
-# Shared hosted runners (macos-15 with msgx and windows-2025 with portable) run
-# the same script with --report-only so their per-frame latency numbers are
-# recorded every night without flaking the gate on noisy multi-tenant hosts.
+# The macOS leg runs the same script with --report-only on the fleet's
+# Apple-silicon runner: it records the msgx per-frame latency every night
+# without gating on a machine that is not reserved quiet. The Windows leg runs
+# report-only on a shared hosted image so its numbers are recorded without
+# flaking the gate on a noisy multi-tenant host.
 #
 # Hosted minutes budget:
 #   - linux-frame-budget:   0 hosted minutes (self-hosted rocketnet-quiet)
-#   - macos-frame-budget:   timeout-minutes: 10 (~1-2 min/night actual)
+#   - macos-frame-budget:   0 hosted minutes (self-hosted rocketnet-macos)
 #   - windows-frame-budget: timeout-minutes: 10 (~2 min/night actual)
 
 name: Nightly Client Frame Budget
@@ -53,9 +55,12 @@ jobs:
 
   macos-frame-budget:
     name: frame budget (${{ matrix.ref }} / macos-15 msgx report-only)
-    # DISABLED: no darwin fleet runner registered for this repository; owed: a darwin runner registered for this repository
-    if: false
-    runs-on: macos-15
+    # Report-only: the fleet Mac is not reserved quiet (it also carries other
+    # fleet work), so the budget is recorded rather than enforced. Its one
+    # runner takes one job at a time, so no other workflow job overlaps the
+    # measurement, and the workflow concurrency group above keeps one run of
+    # this workflow per ref.
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -67,10 +72,43 @@ jobs:
           ref: ${{ matrix.ref }}
           persist-credentials: false
 
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Configure and build client_main_thread_cost (Release)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target client_main_thread_cost --parallel
+          cmake --build build --target client_main_thread_cost --parallel 4
 
       - name: Report P=32 frame budget (msgx, report-only)
         run: |

@@ -5,14 +5,26 @@
 
 #include "rocketnet_server_replay_marks.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_connection_reset.h"
 
 #include <string.h>
 
+/*
+    The declaration manifest: the struct is declared from this list, so a
+    member exists only as an entry here. The RESET/KEEP inventory in
+    rocketnet_connection_reset.h is compared with it by name, and a member with
+    no decision is named in connection_reset_inventory_covers_every_field.
+*/
+#define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( X ) \
+    X( has_mark, int has_mark )                                    \
+    X( marked_value, uint32_t marked_value )                       \
+    X( marked_address, struct rocketnet_address_t marked_address )
+
 struct rocketnet_server_replay_slot_mark_t
 {
-    int has_mark;
-    uint32_t marked_value;
-    struct rocketnet_address_t marked_address;
+#define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
+    ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS_DECLARE )
+#undef ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS_DECLARE
 };
 
 struct rocketnet_server_replay_marks_t
@@ -92,7 +104,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         if ( forget )
         {
             sink->forget( sink->context, &slot->marked_address );
-            slot->has_mark = 0;
+            memset( slot, 0, sizeof(*slot) );
         }
     }
 
@@ -122,4 +134,66 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         slot->marked_value = high_water;
         slot->marked_address = *address;
     }
+}
+
+
+static void rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
+{
+    (*(int *) context)++;
+}
+
+static void rocketnet_replay_witness_mark( void *, const rocketnet_address_t *, uint32_t ) {}
+
+bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, size_t failure_bytes )
+{
+#define MARK_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_server_replay_slot_mark_t, field, -1 ),
+    static const rocketnet_reset_member_t members[] = { ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( MARK_MEMBER ) };
+#undef MARK_MEMBER
+#define MARK_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_server_replay_slot_mark_t, field, #decision[0] == 'R' ),
+    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION ) };
+#undef MARK_DECISION
+    return rocketnet_reset_inventory_matches( "rocketnet_server_replay_slot_mark_t", members, sizeof(members) / sizeof(members[0]),
+                                              decisions, sizeof(decisions) / sizeof(decisions[0]), 0,
+                                              sizeof(rocketnet_server_replay_slot_mark_t),
+                                              alignof(rocketnet_server_replay_slot_mark_t), failure, failure_bytes );
+}
+
+bool rocketnet_server_replay_marks_reset_witness_for_test()
+{
+    rocketnet_server_replay_marks_t * marks = rocketnet_server_replay_marks_create( NULL, 1 );
+    rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
+    rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 1 );
+    if ( !marks || !slots || !map )
+    {
+        if ( marks ) rocketnet_server_replay_marks_destroy( marks );
+        if ( slots ) rocketnet_client_slots_destroy( slots );
+        if ( map ) rocketnet_encryption_map_destroy( map );
+        return false;
+    }
+    rocketnet_address_t address;
+    const bool parsed = rocketnet_address_parse( &address, "198.51.100.91:4091" );
+    uint8_t user[ROCKETNET_USER_DATA_BYTES] = {};
+    const int mapping = parsed ? rocketnet_encryption_map_add( map, &address, 1005.0 ) : -1;
+    const int index = mapping >= 0 ? rocketnet_client_slots_assign( slots, 1, mapping, user ) : -1;
+    if ( index == 0 )
+    {
+        rocketnet_encryption_mapping_t * entry = rocketnet_encryption_map_entry( map, mapping );
+        entry->client_index = index;
+        entry->replay_session.highest_opened = 0xA5A5;
+    }
+    int forgets = 0;
+    rocketnet_server_replay_sink_t sink = { &forgets, rocketnet_replay_witness_forget, rocketnet_replay_witness_mark };
+    if ( index == 0 )
+    {
+        rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
+        rocketnet_client_slots_release( slots, index );
+        rocketnet_encryption_map_remove( map, mapping );
+        rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
+    }
+    const uint8_t zero[sizeof(rocketnet_server_replay_slot_mark_t)] = {};
+    const bool clean = index == 0 && forgets == 1 && memcmp( &marks->slots[0], zero, sizeof(zero) ) == 0;
+    rocketnet_server_replay_marks_destroy( marks );
+    rocketnet_client_slots_destroy( slots );
+    rocketnet_encryption_map_destroy( map );
+    return clean;
 }

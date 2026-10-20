@@ -458,7 +458,8 @@ void rn_region_carve( rn_region_t * region )
     memset( region->receipts, 0, sizeof(rn_receipt_t) * region->receipt_entries );
 
     region->exhausted = 0;
-    region->exhausted_reason = ROCKETNET_MESSAGE_ERROR_NONE;
+    region->exhausted_reason = ROCKETNET_DISCONNECT_REASON_NONE;
+    region->send_room_armed = 1;
 
     region->carves++;
 }
@@ -479,7 +480,7 @@ void rn_region_exhaust( rn_region_t * region )
     if ( region->exhausted )
         return;
     region->exhausted = 1;
-    region->exhausted_reason = ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED;
+    region->exhausted_reason = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
     rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
 }
 
@@ -492,7 +493,7 @@ bool rn_region_exhausted( const rn_region_t * region )
 int rn_region_exhausted_reason( const rn_region_t * region )
 {
     rocketnet_assert( region );
-    return region->exhausted ? region->exhausted_reason : ROCKETNET_MESSAGE_ERROR_NONE;
+    return region->exhausted ? region->exhausted_reason : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 int rn_connection_memory_decide( const rn_region_t * region )
@@ -501,7 +502,7 @@ int rn_connection_memory_decide( const rn_region_t * region )
     // step is the disconnect (ExhaustionOnlyLeadsToDisconnect), and the
     // decision is this region's alone (NoCrossSlotEffect)
     rocketnet_assert( region );
-    return region->exhausted ? ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_MESSAGE_ERROR_NONE;
+    return region->exhausted ? ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
@@ -859,6 +860,153 @@ void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t ch
         region->descriptors_free++;
     }
 }
+
+// ----------------------------------------------------------------
+//                      the send room watch
+// ----------------------------------------------------------------
+
+static uint32_t rn_permille( uint64_t used, uint64_t total )
+{
+    return total > 0 ? (uint32_t) ( used * 1000 / total ) : 0;
+}
+
+// the span bytes from the oldest live span's start to the tail, the padding
+// a wrap leaves included: the bytes no new span can take
+static uint64_t rn_span_used( const rn_region_t * region )
+{
+    if ( region->span_first == RN_DESCRIPTOR_NONE )
+        return 0;
+    const uint64_t head = region->span_head;
+    const uint64_t tail = region->span_tail;
+    return tail > head ? tail - head : region->span_bytes - head + tail;
+}
+
+void rn_region_send_room( const rn_region_t * region, rn_send_room_t * room )
+{
+    rocketnet_assert( region && room );
+    memset( room, 0, sizeof(*room) );
+
+    room->messages = region->queue;
+    room->used_messages = region->queue - region->descriptors_free;
+    uint32_t permille = rn_permille( room->used_messages, room->messages );
+
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
+        const rn_store_class_t * cls = &region->store.classes[c];
+        const uint32_t used = cls->num_chunks - cls->free_count;
+        room->store_used_bytes += (uint64_t) used * cls->chunk_bytes;
+        room->store_bytes += (uint64_t) cls->num_chunks * cls->chunk_bytes;
+        const uint32_t class_permille = rn_permille( used, cls->num_chunks );
+        if ( class_permille > permille )
+            permille = class_permille;
+    }
+
+    room->span_used_bytes = rn_span_used( region );
+    room->span_bytes = region->span_bytes;
+    const uint32_t span_permille = rn_permille( room->span_used_bytes, room->span_bytes );
+    if ( span_permille > permille )
+        permille = span_permille;
+
+    room->permille = permille;
+}
+
+int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages )
+{
+    rocketnet_assert( region );
+    uint64_t free_room = 0;
+    uint64_t pool = 0;
+    int fits = 0;
+    if ( bytes >= 1 && (uint32_t) bytes <= region->max_message_bytes )
+    {
+        if ( bytes >= (int) RN_SPAN_MIN_BYTES )
+        {
+            free_room = region->span_bytes - rn_span_used( region );
+            pool = region->span_bytes;
+            uint32_t start = 0;
+            fits = rn_span_place( region, rn_span_round16( (uint64_t) bytes ), &start );
+        }
+        else
+        {
+            const rn_store_class_t * cls = &region->store.classes[rn_send_store_class_for( bytes )];
+            free_room = (uint64_t) cls->free_count * cls->chunk_bytes;
+            pool = (uint64_t) cls->num_chunks * cls->chunk_bytes;
+            fits = cls->free_count >= rn_send_store_chunks_needed( bytes );
+        }
+    }
+    if ( free_bytes )
+        *free_bytes = free_room;
+    if ( pool_bytes )
+        *pool_bytes = pool;
+    if ( free_messages )
+        *free_messages = region->descriptors_free;
+    return fits && region->descriptors_free > 0 && !region->exhausted;
+}
+
+int rn_region_send_room_watch( rn_region_t * region )
+{
+    rocketnet_assert( region );
+    rn_send_room_t room;
+    rn_region_send_room( region, &room );
+    if ( room.permille < RN_SEND_ROOM_REARM_PERMILLE )
+    {
+        region->send_room_armed = 1;
+        return RN_SEND_ROOM_NONE;
+    }
+    if ( room.permille >= RN_SEND_ROOM_WARN_PERMILLE && region->send_room_armed )
+    {
+        region->send_room_armed = 0;
+        return RN_SEND_ROOM_CROSSED;
+    }
+    return RN_SEND_ROOM_NONE;
+}
+
+const int rn_send_room_warnings = ROCKETNET_ASSERTS ? 1 : 0;
+
+#if ROCKETNET_ASSERTS
+
+static void rn_region_send_room_log( const rn_region_t * region, int is_server, int index, const char * what )
+{
+    rn_send_room_t room;
+    rn_region_send_room( region, &room );
+    char who[32];
+    if ( is_server )
+        snprintf( who, sizeof(who), "server slot %d", index );
+    else
+        snprintf( who, sizeof(who), "client" );
+    rocketnet_warn( "%s send room %s (%u.%u%% of the fullest pool): store %" PRIu64 " of %" PRIu64 " bytes, spans %" PRIu64 " of %" PRIu64 " bytes, "
+                    "messages %u of %u; sends outrun acks, raise send_buffer_bytes, receive_ring_bytes or send_queue_messages, or send less",
+                    who, what, room.permille / 10, room.permille % 10, room.store_used_bytes, room.store_bytes, room.span_used_bytes, room.span_bytes,
+                    room.used_messages, room.messages );
+}
+
+void rn_region_send_room_note( rn_region_t * region, int is_server, int index )
+{
+    if ( rn_region_send_room_watch( region ) == RN_SEND_ROOM_CROSSED )
+        rn_region_send_room_log( region, is_server, index, "over 75% full" );
+}
+
+void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, int index )
+{
+    rn_region_send_room_log( region, is_server, index, "exhausted, the connection ends (MESSAGE_MEMORY_EXHAUSTED)" );
+}
+
+#else // #if ROCKETNET_ASSERTS
+
+void rn_region_send_room_note( rn_region_t * region, int is_server, int index )
+{
+    (void) region;
+    (void) is_server;
+    (void) index;
+}
+
+void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, int index )
+{
+    (void) region;
+    (void) is_server;
+    (void) index;
+}
+
+#endif // #if ROCKETNET_ASSERTS
 
 bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes )
 {

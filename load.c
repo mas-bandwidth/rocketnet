@@ -169,23 +169,23 @@ static int verify_message( const uint8_t * buf, int bytes, uint32_t expected_mag
 
 static int combo_is_reliable_every( uint32_t combo )
 {
-    return combo == ROCKETNET_RELIABLE ||
-           combo == ROCKETNET_RELIABLE_ORDERED ||
-           combo == ROCKETNET_RELIABLE_WITH_ACK_RECEIPT ||
-           combo == ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
+    return combo == ROCKETNET_RELIABILITY_RELIABLE ||
+           combo == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
+           combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ||
+           combo == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
 }
 
 static int combo_is_ordered( uint32_t combo )
 {
-    return combo == ROCKETNET_RELIABLE_ORDERED ||
-           combo == ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
+    return combo == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
+           combo == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
 }
 
 static int combo_is_unreliable_family( uint32_t combo )
 {
-    return combo == ROCKETNET_UNRELIABLE ||
-           combo == ROCKETNET_UNRELIABLE_SEQUENCED ||
-           combo == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+    return combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
+           combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+           combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
 }
 
 struct load_stream_state_t
@@ -267,12 +267,12 @@ int main( int argc, char ** argv )
     raise_fd_limit();
     signal( SIGINT, interrupt_handler );
 
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
         return 1;
     }
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     struct rocketnet_server_transport_config_t server_tcfg;
     rocketnet_server_transport_dev_config( &server_tcfg );
@@ -340,7 +340,7 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < num_clients; i++ )
     {
         uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        if ( !rocketnet_write_dev_connect_token( server_address, (uint64_t) ( i + 1 ), token_now, connect_token ) )
+        if ( rocketnet_write_dev_connect_token( server_address, (uint64_t) ( i + 1 ), token_now, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         {
             fprintf( stderr, "load: failed to create dev connect token for client %d\n", i );
             return 1;
@@ -481,8 +481,8 @@ int main( int argc, char ** argv )
                 {
                     const uint32_t next_seq = sv_st->sent_count + 1;
                     uint8_t payload[LOAD_PAYLOAD_BYTES];
-                    build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) target_idx, ROCKETNET_RELIABLE_ORDERED, next_seq );
-                    if ( rocketnet_message_server_send( server, sv_slot, ROCKETNET_RELIABLE_ORDERED, ROCKETNET_RELIABLE_ORDERED, payload, LOAD_PAYLOAD_BYTES ) != 0 )
+                    build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) target_idx, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, next_seq );
+                    if ( rocketnet_message_server_send( server, sv_slot, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, LOAD_PAYLOAD_BYTES ) != 0 )
                     {
                         sv_st->sent_count = next_seq;
                     }
@@ -503,11 +503,11 @@ int main( int argc, char ** argv )
 
                 const uint8_t * data = NULL;
                 int bytes = 0;
-                while ( rocketnet_message_client_receive( clients[i], ROCKETNET_RELIABLE_ORDERED, &data, &bytes ) )
+                while ( rocketnet_message_client_receive( clients[i], ROCKETNET_RELIABILITY_RELIABLE_ORDERED, &data, &bytes ) )
                 {
                     uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
                     if ( !verify_message( data, bytes, LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
-                         msg_client != (uint32_t) i || msg_combo != ROCKETNET_RELIABLE_ORDERED )
+                         msg_client != (uint32_t) i || msg_combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED )
                     {
                         reliable_errors++;
                     }
@@ -558,10 +558,10 @@ int main( int argc, char ** argv )
                             }
                             else
                             {
-                                const int expected_rx_ch = ( msg_combo == ROCKETNET_UNRELIABLE ||
-                                                             msg_combo == ROCKETNET_RELIABLE ||
-                                                             msg_combo == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT ||
-                                                             msg_combo == ROCKETNET_RELIABLE_WITH_ACK_RECEIPT ) ? 0 : (int) msg_combo;
+                                const int expected_rx_ch = ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
+                                                             msg_combo == ROCKETNET_RELIABILITY_RELIABLE ||
+                                                             msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
+                                                             msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ) ? 0 : (int) msg_combo;
                                 struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
                                 const int dup = stream_seen_test_and_set( cst, msg_seq );
 
@@ -576,13 +576,13 @@ int main( int argc, char ** argv )
                                 {
                                     if ( dup != 0 )
                                         unreliable_errors++;
-                                    if ( msg_combo == ROCKETNET_UNRELIABLE_SEQUENCED && msg_seq <= cst->max_seq_seen )
+                                    if ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED && msg_seq <= cst->max_seq_seen )
                                         unreliable_errors++;
                                     if ( msg_seq > cst->max_seq_seen )
                                         cst->max_seq_seen = msg_seq;
                                     cst->recv_count++;
                                 }
-                                else if ( msg_combo == ROCKETNET_RELIABLE_SEQUENCED )
+                                else if ( msg_combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
                                 {
                                     if ( dup != 0 || msg_seq <= cst->max_seq_seen )
                                         reliable_errors++;

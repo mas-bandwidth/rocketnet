@@ -146,8 +146,9 @@ jobs:
           - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","fleet"]' }
-          # macos apple silicon DISABLED: no darwin runner registered for this repository; owed: a darwin runner registered for this repository
-          #   (rows: { os: macos-15, build_type: Debug, leg: ab }, { os: macos-15, build_type: Release, leg: ab })
+          # macOS Apple silicon on the fleet's darwin runner (mini-m5-1-rocketnet-1, label rocketnet-macos; rowan-tools fleet/runners.tsv)
+          - { os: macos-15, build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Release, leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
       - uses: actions/checkout@v4
@@ -157,6 +158,20 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
           for tool in cmake gcc g++ clang xxd pkg-config; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
@@ -262,6 +277,119 @@ jobs:
           grep -qx 'driver_env_pin_is_honoured' functional-pinned.log
           ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-pinned.log
 
+      # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
+      # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
+      # server, so a family regression on any one transport fails here.
+      # driver_env_pin_is_honoured runs under the same pin and proves the
+      # pinned transport is the one granted. tools/check_transport_matrix.py
+      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # OS it builds for. A cell line is: server transport, client
+      # transport, then case=card for each case expected to fail until that
+      # card lands: the case fails, or prints a skip naming that card. An
+      # expected failure that passes fails the step, so the mark is removed
+      # as the card lands; any other skip fails. No cell holds a mark: the
+      # in-memory loopback serves dual stack like the socket transports. The xdp
+      # cell needs root, a namespace and a veth pair, so it runs
+      # xdp_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
+      # client) as root inside a virtme-ng guest on the runner's own kernel,
+      # never on the host; a runner with no VM tier fails the cell.
+      - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
+        if: contains(matrix.leg, 'b')
+        timeout-minutes: 3
+        shell: bash
+        env:
+          TRANSPORT_MATRIX_LINUX: |
+            portable portable
+            gso portable
+            io_uring portable
+            loopback loopback
+            xdp portable
+          TRANSPORT_MATRIX_MACOS: |
+            portable portable
+            portable msgx
+            msgx portable
+            msgx msgx
+            loopback loopback
+        run: |
+          set +e -uo pipefail
+          case "$RUNNER_OS" in
+            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
+            macOS)   matrix=$TRANSPORT_MATRIX_MACOS;   functional=./bin/functional ;;
+            Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
+            *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
+          esac
+          socket_cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          xdp_cases="xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6"
+          cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
+          uring_offered=0
+          if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+          mkdir -p build
+          logs=$(mktemp -d "$PWD/build/transport-matrix.XXXXXX")
+          # each cell runs its cases in series; the cells run in parallel
+          while read -r server client expected; do
+            [ -n "$server" ] || continue
+            if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
+              echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              continue
+            fi
+            if [ "$server" = xdp ]; then
+              (
+                # root, a namespace and a veth pair inside a guest of the
+                # runner's own kernel; the host is never touched
+                vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+                if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+                  for case in $xdp_cases; do
+                    echo "no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm" > "$logs/$server.$client.$case.log"
+                    echo 1 > "$logs/$server.$client.$case.rc"
+                  done
+                  exit 0
+                fi
+                timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                  sh -c 'for case in '"$xdp_cases"'; do sudo '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                  > "$logs/$server.$client.vm.log" 2>&1
+                for case in $xdp_cases; do
+                  [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs/$server.$client.vm.log" > "$logs/$server.$client.$case.log"; }
+                done
+              ) &
+              continue
+            fi
+            (
+              for case in $socket_cases; do
+                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
+                echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
+              done
+            ) &
+          done <<< "$matrix"
+          wait
+          failed=0
+          while read -r server client expected; do
+            [ -n "$server" ] && [ -d "$logs" ] || continue
+            cases=$(cell_cases "$server")
+            [ -f "$logs/$server.$client.${cases##* }.rc" ] || continue
+            for case in $cases; do
+              log="$logs/$server.$client.$case.log"
+              rc=$(cat "$logs/$server.$client.$case.rc")
+              card=""
+              for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
+              ok=1
+              [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
+              if [ -n "$card" ] && { [ "$ok" = 1 ] || grep -q 'remove the marker' "$log"; }; then
+                echo "XPASS server=$server client=$client $case: $card has landed; remove its expected-fail mark"
+                failed=1
+              elif [ -n "$card" ]; then
+                echo "XFAIL server=$server client=$client $case (expected until $card lands)"
+              elif [ "$ok" = 1 ]; then
+                echo "PASS server=$server client=$client $case"
+              else
+                echo "FAIL server=$server client=$client $case (exit $rc)"
+                tail -n 5 "$log" | sed 's/^/    /'
+                failed=1
+              fi
+            done
+          done <<< "$matrix"
+          rm -rf "$logs"
+          exit "$failed"
+
       - name: Run lifecycle unit binary
         if: contains(matrix.leg, 'a')
         env:
@@ -277,6 +405,10 @@ jobs:
           else
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
+
+      - name: Check every driver row has transport matrix cells
+        if: runner.os == 'Linux'
+        run: python3 tools/check_transport_matrix.py
 
       - name: Check export source gate
         if: runner.os == 'Linux'
@@ -452,10 +584,10 @@ jobs:
   # tests windows does not build.
 
   build-and-test-windows:
-    name: windows-2025 / Release (${{ matrix.leg }})
-    # DISABLED: no Windows runner is registered for this repository; owed: the Windows fleet machine
-    if: false
-    runs-on: windows-2025
+    name: windows / Release (${{ matrix.leg }})
+    # the fleet's native Windows runner (captain-rocketnet-1: Windows 11, VS 18 Community MSVC, CMake 4, Git Bash, Python 3.9;
+    # label rocketnet-windows; rowan-tools fleet/runners-windows.tsv), never a hosted image
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
       fail-fast: false
       matrix:
@@ -466,7 +598,7 @@ jobs:
 
       - name: Check committed XDP fallback source on Windows
         if: matrix.leg == 'a'
-        # Uses Python and CMake preinstalled on the windows-2025 runner.
+        # Uses the Python and CMake on the fleet Windows runner's job PATH.
         run: python tools/check_xdp_archive.py --committed-only
 
       - name: Configure
@@ -549,6 +681,84 @@ jobs:
           ./bin/Release/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
+      # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
+      # server, so a family regression on any one transport fails here.
+      # driver_env_pin_is_honoured runs under the same pin and proves the
+      # pinned transport is the one granted. tools/check_transport_matrix.py
+      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # OS it builds for. A cell line is: server transport, client
+      # transport, then case=card for each case expected to fail until that
+      # card lands: the case fails, or prints a skip naming that card. An
+      # expected failure that passes fails the step, so the mark is removed
+      # as the card lands; any other skip fails. xdp is Linux only; its cell
+      # is in the Linux matrix.
+      - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
+        if: matrix.leg == 'b'
+        timeout-minutes: 3
+        shell: bash
+        env:
+          TRANSPORT_MATRIX_WINDOWS: |
+            portable portable
+            iocp portable
+            rio portable
+            loopback loopback
+        run: |
+          set +e -uo pipefail
+          case "$RUNNER_OS" in
+            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
+            macOS)   matrix=$TRANSPORT_MATRIX_MACOS;   functional=./bin/functional ;;
+            Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
+            *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
+          esac
+          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          uring_offered=0
+          if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+          mkdir -p build
+          logs=$(mktemp -d "$PWD/build/transport-matrix.XXXXXX")
+          # each cell runs its cases in series; the cells run in parallel
+          while read -r server client expected; do
+            [ -n "$server" ] || continue
+            if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
+              echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              continue
+            fi
+            (
+              for case in $cases; do
+                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
+                echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
+              done
+            ) &
+          done <<< "$matrix"
+          wait
+          failed=0
+          while read -r server client expected; do
+            [ -n "$server" ] && [ -d "$logs" ] || continue
+            [ -f "$logs/$server.$client.driver_env_pin_is_honoured.rc" ] || continue
+            for case in $cases; do
+              log="$logs/$server.$client.$case.log"
+              rc=$(cat "$logs/$server.$client.$case.rc")
+              card=""
+              for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
+              ok=1
+              [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
+              if [ -n "$card" ] && { [ "$ok" = 1 ] || grep -q 'remove the marker' "$log"; }; then
+                echo "XPASS server=$server client=$client $case: $card has landed; remove its expected-fail mark"
+                failed=1
+              elif [ -n "$card" ]; then
+                echo "XFAIL server=$server client=$client $case (expected until $card lands)"
+              elif [ "$ok" = 1 ]; then
+                echo "PASS server=$server client=$client $case"
+              else
+                echo "FAIL server=$server client=$client $case (exit $rc)"
+                tail -n 5 "$log" | sed 's/^/    /'
+                failed=1
+              fi
+            done
+          done <<< "$matrix"
+          rm -rf "$logs"
+          exit "$failed"
+
   # THE HAPPY PATH: the real server and client binaries as separate processes
   # over loopback, watched stage by stage. It is deliberately small -- connect,
   # one message of every reliability type, receipts, clean disconnect, clean
@@ -559,14 +769,15 @@ jobs:
 
   happy-path:
     name: happy path / ${{ matrix.os }}
-    # macOS and Windows rows are DISABLED: no darwin runner registered for
-    # this repository (owed: a darwin runner), and no Windows fleet machine.
+    # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos, Windows on rocketnet-windows
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: windows, runner: '["self-hosted","Windows","X64","rocketnet-windows"]' }
     steps:
 
       - uses: actions/checkout@v4
@@ -576,6 +787,30 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            # MSVC comes through CMake's Visual Studio generator; the job PATH carries cmake, python and Git Bash
+            for tool in cmake python git; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            exit "$missing"
+          fi
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
           for tool in cmake gcc g++ clang xxd pkg-config; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
@@ -594,17 +829,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # tools/happy_path/go.mod says go 1.22: any Go at or above 1.23 builds it (the fleet pins 1.26 on Linux and macOS)
           if ! command -v go >/dev/null 2>&1; then
-            echo "TOOL-MISSING go 1.23 (missing) on $RUNNER_NAME"
+            echo "TOOL-MISSING go >= 1.23 (missing) on $RUNNER_NAME"
             exit 1
           fi
           got="$(go version)"
           echo "$got"
-          case "$got" in
-            *go1.23*)
-              ;;
-            *) echo "TOOL-MISSING go 1.23 $got on $RUNNER_NAME"; exit 1 ;;
-          esac
+          minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\).*/\1/p')"
+          if [ -z "$minor" ] || [ "$minor" -lt 23 ]; then
+            echo "TOOL-MISSING go >= 1.23 $got on $RUNNER_NAME"; exit 1
+          fi
 
       - name: Build (Linux and macOS, through the Makefile)
         if: runner.os != 'Windows'
@@ -744,6 +979,20 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
           for tool in cmake gcc g++ clang xxd pkg-config; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
@@ -866,6 +1115,20 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
           for tool in cmake gcc g++ clang xxd pkg-config; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
@@ -1390,7 +1653,7 @@ jobs:
           # the Linux platform selftest runs on the fleet bench; a host that
           # cannot build a harness reports it as SKIPPED and fails a built one
           - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          # macos DISABLED: no darwin runner registered for this repository; owed: a darwin runner
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
       - uses: actions/checkout@v4
@@ -1400,6 +1663,20 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
           for tool in cmake gcc g++ clang xxd pkg-config; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
@@ -1420,10 +1697,10 @@ jobs:
       # protect. Release, because that is the build the selftest is written
       # against.
 
-      - name: Build soak_sim (Release)
+      - name: Build soak_sim and soak (Release)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target soak_sim --parallel
+          cmake --build build --target soak_sim soak --parallel
 
       # soak_sim's instruments, each driven against its own negative control
       # (#99). The audit legs corrupt the simulator's index on purpose and
@@ -1434,6 +1711,16 @@ jobs:
 
       - name: soak_sim instrument selftest
         run: bash scripts/soak-sim-selftest
+
+      # soak's command line and end-of-run summary: every argument refusal
+      # exits 2 without a run, a --seconds 3 run ends inside 3..15 s with
+      # every summary line, the positional iteration count keeps its meaning,
+      # and a planted verify failure (ROCKETNET_SOAK_FAULT_VERIFY=1) goes red.
+      # About 8 s of wall time.
+
+      - name: soak argument and summary selftest
+        timeout-minutes: 3
+        run: bash scripts/soak-args-selftest
 
       # the bench harnesses' failure states (#98). Building them here is the
       # only place bench/ is compiled by CI at all, which alone catches the
