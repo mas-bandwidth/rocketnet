@@ -342,7 +342,7 @@ static double api_polish_index_clock( void * ) { return g_polish_index_now; }
 
 static void api_polish_client_index_is_zero_until_connected()
 {
-    rocketnet_quiet( true );
+    rocketnet_set_quiet( true );
     rocketnet_set_assert_callback( api_polish_count_assert );
     g_polish_asserts = 0;
     g_polish_index_now = 1000.0;
@@ -415,6 +415,6 @@ static void api_polish_client_index_is_zero_until_connected()
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_set_assert_callback( NULL );
-    rocketnet_quiet( false );
+    rocketnet_set_quiet( false );
 }
 REGISTER_UNIT_TEST( api_polish_client_index_is_zero_until_connected );

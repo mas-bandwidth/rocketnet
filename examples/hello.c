@@ -168,7 +168,7 @@ int main( void )
     result = 0;
 
 cleanup:
-    // destroy on NULL is a counted misuse that asserts in a debug build (sdk/rocketnet_internal.h:298)
+    // destroy on NULL is a counted misuse that asserts in a debug build (sdk/rocketnet_internal.h:314)
     if ( client )
         rocketnet_client_destroy( client );
     if ( server )

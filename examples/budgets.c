@@ -83,10 +83,9 @@ int main( void )
         client = NULL;
     }
     CHECK( client != NULL );
-    CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
-    printf( "runtime set-send-kbps returned 1\n" );
 
     int reliable_received = 0;
+    int budget_set = 0;
     int unreliable_sent = 0;
     int reliable_sent = 0;
     const double start = rocketnet_time();
@@ -107,10 +106,11 @@ int main( void )
         int bytes = 0;
         while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
-        const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+        // the client's server slot exists only once it is CONNECTED; -1 until then
+        const int slot = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED ? (int) rocketnet_client_index( client ) : -1;
+        while ( slot >= 0 && rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
             rocketnet_server_release_message( server, slot, data );
-        while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
+        while ( slot >= 0 && rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
         {
             reliable_received++;
             rocketnet_server_release_message( server, slot, data );
@@ -121,6 +121,14 @@ int main( void )
         // (4) queue this frame's outgoing messages, once connected
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
+            // set-send-kbps takes a CONNECTED client only (sdk/rocketnet.h:1092);
+            // the config's send_kbps already set the connection's starting rate
+            if ( !budget_set )
+            {
+                CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
+                printf( "runtime set-send-kbps returned ROCKETNET_STATUS_OK\n" );
+                budget_set = 1;
+            }
             // unreliable messages over budget are dropped and counted at send
             if ( !unreliable_sent )
             {
@@ -154,8 +162,11 @@ int main( void )
     result = 0;
 
 cleanup:
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    // destroy on NULL is a counted misuse that asserts in a debug build (sdk/rocketnet_internal.h:314)
+    if ( client )
+        rocketnet_client_destroy( client );
+    if ( server )
+        rocketnet_server_destroy( server );
     rocketnet_term();
     // destroy ends a live connection and logs it, so PASS is printed after
     // the cleanup to stay the last line
