@@ -1945,7 +1945,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             struct rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
             const int packet_bytes = receive_buffer->packet_bytes[i];
-            if ( packet_bytes < 0 || packet_bytes > ROCKETNET_DRIVER_MAX_DATAGRAM_BYTES )
+            if ( packet_bytes < 0 || packet_bytes > 65535 )
             {
                 server_transport->driver_faults++;
                 continue;
