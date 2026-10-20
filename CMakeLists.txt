@@ -29,6 +29,16 @@ option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETN
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_IO_URING "Build the io_uring server driver against liburing when it is found (Linux)" ON)
+option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF)
+if(ROCKETNET_SANITIZE_ADDRESS)
+    if(MSVC)
+        add_compile_options(/fsanitize=address /Zi)
+        add_link_options(/DEBUG /INCREMENTAL:NO)
+    else()
+        add_compile_options(-fsanitize=address)
+        add_link_options(-fsanitize=address)
+    endif()
+endif()
 set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
 set(ROCKETNET_DRIVER_SOURCES "" CACHE STRING "Additional native driver source files")
 if(ROCKETNET_DRIVER_REGISTRY_HEADER)
@@ -45,6 +55,17 @@ if(ROCKETNET_TOP_LEVEL)
     endif()
     if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
         set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
+    endif()
+endif()
+if(ROCKETNET_SANITIZE_ADDRESS AND MSVC AND DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    get_filename_component(ROCKETNET_MSVC_BIN_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+    if(EXISTS "${ROCKETNET_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll")
+        add_custom_target(rocketnet_asan_runtime ALL
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${ROCKETNET_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll"
+                "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/clang_rt.asan_dynamic-x86_64.dll"
+            VERBATIM)
     endif()
 endif()
 
@@ -216,12 +237,13 @@ add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The test hook library: the same source with the unit suite's seams compiled
 # in (the filter epoch window's MAC tally, the message layer's payload copy
-# count, and the public link simulator's development switch). Only the unit
+# count, the public link simulator's development switch, and the io_uring
+# driver's fake completion source). Only the unit
 # suite links it, so the installed rocketnet library carries no test hook.
 set(rocketnet_test_hook_targets)
 if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
-    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -378,7 +400,7 @@ if(ROCKETNET_BUILD_TESTS)
     set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
-    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1)
+    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1)
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
         # the test hook library only, matching the filter-epoch seam above, so
@@ -407,6 +429,10 @@ if(ROCKETNET_BUILD_TESTS)
     # reads sdk client/server files through ROCKETNET_SOURCE_DIR, the same way
     # the counter audit does.
     set_property( SOURCE test_unit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    # The env names audit (test_unit_config_env_names.cpp) reads sdk/rocketnet.h
+    # through ROCKETNET_SOURCE_DIR for the variable names it documents.
+    set_property( SOURCE test_unit_config_env_names.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)

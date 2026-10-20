@@ -85,7 +85,7 @@ void rocketnet_message_default_config( struct rocketnet_message_config_t * confi
 static const struct rocketnet_config_field_t rocketnet_client_config_fields[] =
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
-    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 0, 0 },
+    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 1, 0 },
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
@@ -711,6 +711,22 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             break;
 
             case ROCKETNET_CONFIG_KIND_UINT64:
+            {
+                // a row whose max is above its min has that range (the
+                // step_driven row's 0 .. 1 at :88); a 0 .. 0 row takes any value
+                if ( field->max_value > field->min_value )
+                {
+                    uint64_t value;
+                    memcpy( &value, base, sizeof(value) );
+                    if ( value < (uint64_t) field->min_value || value > (uint64_t) field->max_value )
+                    {
+                        rocketnet_error( "%s config %s %" PRIu64 " is out of range (%" PRId64 " to %" PRId64 ")", transport_name, field->name, value, field->min_value, field->max_value );
+                        return false;
+                    }
+                }
+            }
+            break;
+
             case ROCKETNET_CONFIG_KIND_BYTES:
             {
                 // any value of the full width is structurally valid;
