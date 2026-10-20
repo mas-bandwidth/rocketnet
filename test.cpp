@@ -47,6 +47,29 @@ static const char * rocketnet_suite_test_name( int index )
     return rocketnet_unit_tests_name( cindex - channels );
 }
 
+// the unit suite opens no socket: the platform's network lookups read these
+// instead of getifaddrs, the netlink route dump and the IPv6 probe socket
+// (rocketnet_platform_set_network_lookups_for_testing, rocketnet_internal.h;
+// read at sdk/rocketnet_platform.cpp:391 and :4352). UNKNOWN is what
+// get_connection_type returns when a lookup fails (sdk/rocketnet_platform.cpp:1777),
+// and true is the probe's answer on a host with an IPv6 stack (:4361).
+
+static int rocketnet_unit_fake_connection_type()
+{
+    return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+}
+
+static bool rocketnet_unit_fake_ipv6_available()
+{
+    return true;
+}
+
+static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lookups =
+{
+    rocketnet_unit_fake_connection_type,
+    rocketnet_unit_fake_ipv6_available,
+};
+
 static int rocketnet_unit_worker( const char * name )
 {
 #if defined(_WIN32)
@@ -79,6 +102,8 @@ static int rocketnet_unit_worker( const char * name )
 
     // allocator cases install their hooks here: replacement is refused after init
     rocketnet_channels_prepare( name );
+
+    rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
 
     if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
@@ -175,14 +200,56 @@ int main( int argc, char ** argv )
     if ( test_fp_contract_off() )
         return 1;
 
+    // The unit suite runs over the loopback driver with no sockets, so a
+    // transport pin in the environment must not reach it: both pins are
+    // cleared for the whole run and restored on exit, the way
+    // posix_pair_create lifts them around its creates
+    // (functional/posix_socket_errors.cpp). Worker processes inherit the
+    // cleared environment; a case that tests pin handling itself sets and
+    // reads its own pins.
+
+    char saved_server_transport[64] = "";
+    char saved_client_transport[64] = "";
+    const char * pinned_server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const char * pinned_client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
+    const bool server_pinned = pinned_server != NULL;
+    const bool client_pinned = pinned_client != NULL;
+    if ( server_pinned )
+        snprintf( saved_server_transport, sizeof( saved_server_transport ), "%s", pinned_server );
+    if ( client_pinned )
+        snprintf( saved_client_transport, sizeof( saved_client_transport ), "%s", pinned_client );
+#if defined(_WIN32)
+    _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
+    _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
+#else
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+#endif
+
+    int result;
     // ./bin/test <name> runs that one test alone, in this process: a suite
     // name, or a message-layer test's alias (the name a card's TEST line uses)
 
     if ( argc == 2 && argv[1][0] != '-' )
     {
         const char * resolved = rocketnet_channels_test_resolve( argv[1] );
-        return rocketnet_unit_worker( resolved ? resolved : argv[1] );
+        result = rocketnet_unit_worker( resolved ? resolved : argv[1] );
+    }
+    else
+    {
+        result = suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0, NULL, 0, true );
     }
 
-    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0, NULL, 0, true );
+#if defined(_WIN32)
+    if ( server_pinned )
+        _putenv_s( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport );
+    if ( client_pinned )
+        _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport );
+#else
+    if ( server_pinned )
+        setenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, 1 );
+    if ( client_pinned )
+        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, 1 );
+#endif
+    return result;
 }

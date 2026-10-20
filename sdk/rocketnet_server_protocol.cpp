@@ -59,23 +59,19 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
     if ( budget->failure_count < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET )
         return 1;
 
-    // the budget is spent: skip a source that has already failed this window,
-    // and note whether a free slot remains for a source that has not.
-    int empty_slot = -1;
+    // the budget is spent: refuse a source that has already failed this
+    // window. a source with no recorded failure is verified, whether or not
+    // the table has a free slot to remember it: refusing it would refuse
+    // every honest first-time client once forging sources fill the table
+    // (tla/RNSecurityTables.tla HonestConnectsUnderFlood). the verifies such
+    // sources cost are bounded by the per-update handshake work budget, which
+    // runs before this gate, and each needs a valid cookie for its own address.
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
-        if ( budget->sources[i].fail_count == 0 )
-            empty_slot = i;
-        else if ( rocketnet_address_equal( &budget->sources[i].address, source ) )
+        if ( budget->sources[i].fail_count > 0 &&
+             rocketnet_address_equal( &budget->sources[i].address, source ) )
             return 0;
     }
-
-    // a first-time source is verified while a free slot can remember it. when
-    // the table is full, verifying one would fail and be forgotten, letting
-    // one cookie re-verify forever by churning fresh addresses, so refuse it
-    // instead.
-    if ( empty_slot == -1 )
-        return 0;
 
     return 1;
 }
@@ -100,9 +96,9 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
 
     // a source's count is durable for the window: it is only ever reset by
     // the window rolling over, never displaced. when the table is full the
-    // failure is already counted in the global total above but the source is
-    // not tracked, and the gate has refused a first-time source it cannot
-    // remember, so a counted source cannot be re-verified by churn.
+    // failure is counted in the global total above but the source is not
+    // tracked, so that source is verified again on its next request; those
+    // verifies are bounded by the per-update handshake work budget.
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count == 0 )
@@ -882,6 +878,33 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     counters[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
 }
 
+// The server's payload copy: type_data_bytes into out_payload only when the
+// caller's buffer is large enough. Above the capacity the payload is refused
+// whole, never truncated, and counted as RECEIVE_CURSOR_TOO_SMALL; a copy
+// that fits is counted as PAYLOAD_DELIVERED. The transport sizes the buffer,
+// so a caller that passes a smaller one is refused instead of overrun.
+
+int rocketnet_server_payload_copy( uint8_t * out_payload, int out_payload_capacity,
+                                   const uint8_t * type_data, int type_data_bytes,
+                                   int * out_payload_bytes, uint64_t * counters )
+{
+    rocketnet_assert( out_payload );
+    rocketnet_assert( type_data );
+    rocketnet_assert( out_payload_bytes );
+
+    if ( type_data_bytes > out_payload_capacity )
+    {
+        rocketnet_spam( "server refused payload. %d bytes into a %d-byte buffer", type_data_bytes, out_payload_capacity );
+        counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
+        return 0;
+    }
+
+    memcpy( out_payload, type_data, (size_t) type_data_bytes );
+    *out_payload_bytes = type_data_bytes;
+    counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
+    return 1;
+}
+
 struct rocketnet_sealed_type_counters_t
 {
     int received;
@@ -905,6 +928,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                                                    uint8_t * response_packet,
                                                    int * response_bytes,
                                                    uint8_t * out_payload,
+                                                   int out_payload_capacity,
                                                    int * out_payload_bytes,
                                                    int * out_payload_client_index )
 {
@@ -1162,9 +1186,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     if ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
     {
         rocketnet_spam( "server received payload from client %d (%d bytes)", client_index, type_data_bytes );
-        counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
-        memcpy( out_payload, type_data, (size_t) type_data_bytes );
-        *out_payload_bytes = type_data_bytes;
+        if ( !rocketnet_server_payload_copy( out_payload, out_payload_capacity, type_data, type_data_bytes, out_payload_bytes, counters ) )
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
         *out_payload_client_index = client_index;
         server->payload_connection_id = rocketnet_server_protocol_connection_id( server, client_index );     // P9b
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
@@ -1229,7 +1252,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     return ROCKETNET_SERVER_PROCESS_ACCEPTED;
 }
 
-int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
                                      const struct rocketnet_address_t * from,
                                      const uint8_t * packet_data,
                                      int packet_bytes,
@@ -1238,6 +1261,7 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
                                      uint8_t * response_packet,
                                      int * response_bytes,
                                      uint8_t * out_payload,
+                                     int out_payload_capacity,
                                      int * out_payload_bytes,
                                      int * out_payload_client_index )
 {
@@ -1303,7 +1327,26 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
     return rocketnet_server_process_sealed_packet( server, from, (uint8_t) packet_type, packet_data, packet_bytes,
                                                    current_timestamp, current_time,
                                                    response_packet, response_bytes,
-                                                   out_payload, out_payload_bytes, out_payload_client_index );
+                                                   out_payload, out_payload_capacity, out_payload_bytes, out_payload_client_index );
+}
+
+int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t * server,
+                                     const struct rocketnet_address_t * from,
+                                     const uint8_t * packet_data,
+                                     int packet_bytes,
+                                     uint64_t current_timestamp,
+                                     double current_time,
+                                     uint8_t * response_packet,
+                                     int * response_bytes,
+                                     uint8_t * out_payload,
+                                     int * out_payload_bytes,
+                                     int * out_payload_client_index )
+{
+    return rocketnet_server_protocol_process_packet_capacity( server, from, packet_data, packet_bytes,
+                                                              current_timestamp, current_time,
+                                                              response_packet, response_bytes,
+                                                              out_payload, ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES,
+                                                              out_payload_bytes, out_payload_client_index );
 }
 
 // Cookie key rotation: modelled by Tick, LiveGens, PreviousBoundedToOnePeriod

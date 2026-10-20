@@ -520,6 +520,7 @@ ROCKETNET_EXPORT size_t rocketnet_abi_field_size( const char * type, const char 
 /// library is initialized or transitioning; ROCKETNET_STATUS_PLATFORM_INIT_FAILED
 /// or ROCKETNET_STATUS_CRYPTO_INIT_FAILED when that layer does not start.
 /// Call before creating a client or a server; do not race an init or term transition.
+/// Environment: ROCKETNET_LOG_LEVEL overrides the maximum emitted log level before init logs; 0 .. 5 (ROCKETNET_LOG_LEVEL_NONE .. ROCKETNET_LOG_LEVEL_SPAM); a value outside that range is ignored with a warning (sdk/rocketnet.cpp:715).
 /// @code
 /// if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK ) {
 ///     // handle failure
@@ -732,6 +733,25 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_set_allocator( void * (*mallo
 /// sizeof the struct the caller was compiled against, so a struct can grow at
 /// its end without breaking a program built against an older header. An
 /// unknown size is refused with a log line and nothing is read or written.
+///
+/// The transport environment passes, which fill the transport config the
+/// public struct does not expose, read these variables beside the fields the
+/// public structs name below:
+///
+/// Environment: ROCKETNET_CLIENT_GAME_CLOCK_EPOCH sets game_clock_epoch, unix seconds at the game clock's zero for the token check; 0 reads the wall clock (sdk/rocketnet_internal.h:432).
+/// Environment: ROCKETNET_SERVER_GAME_CLOCK_EPOCH sets game_clock_epoch, unix seconds at the game clock's zero for the token check; 0 reads the wall clock (sdk/rocketnet_internal.h:509).
+/// Environment: ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH sets simulated_drop_every_nth, development only: drop every Nth outgoing datagram, 2 .. 1000000; 0 is off (sdk/rocketnet_internal.h:441).
+/// Environment: ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH sets simulated_drop_every_nth, development only: drop every Nth outgoing datagram, 2 .. 1000000; 0 is off (sdk/rocketnet_internal.h:514).
+/// Environment: ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW sets simulated_reverse_window, development only: reverse each window of W outgoing datagrams, 2 .. 64; 0 is off (sdk/rocketnet_internal.h:442).
+/// Environment: ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW sets simulated_reverse_window, development only: reverse each window of W outgoing datagrams, 2 .. 64; 0 is off (sdk/rocketnet_internal.h:515).
+/// Environment: ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES sets the operator memory budget, allocator bytes the client's pre-allocation plan must fit; uint64, 0 is no budget (sdk/rocketnet_client_transport.cpp:653).
+/// Environment: ROCKETNET_SERVER_MEMORY_BUDGET_BYTES sets the operator memory budget, allocator bytes a server candidate's pre-allocation plan must fit; uint64, 0 is no budget (sdk/rocketnet_server_transport.cpp:1082).
+///
+/// The platform passes read these process-wide variables, which are not
+/// config fields:
+///
+/// Environment: ROCKETNET_PUMP=portable forces the portable datagram pump and refuses the msgx pump; any other value leaves the probe (sdk/rocketnet_platform.cpp:2442, :4567).
+/// Environment: ROCKETNET_GATEWAY_ETHERNET_ADDRESS overrides gateway MAC discovery, xx:xx:xx:xx:xx:xx (linux); a malformed value refuses the socket (sdk/rocketnet_server_socket_linux.cpp:488).
 
 struct rocketnet_client_config_t
 {
@@ -760,10 +780,10 @@ struct rocketnet_client_config_t
     int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        ///< ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
-    int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
-    int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
-    int simulated_jitter_ms;                        ///< Development only: outgoing jitter in milliseconds; 0 is off
-    int simulated_duplicate_percent;                ///< Development only: outgoing duplication 0..100; 0 is off
+    int simulated_loss_percent;                     ///< ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off (sdk/rocketnet_internal.h:435)
+    int simulated_latency_ms;                       ///< ROCKETNET_CLIENT_SIMULATED_LATENCY_MS: development only: outgoing latency 0..60000 milliseconds; 0 is off (sdk/rocketnet_internal.h:436)
+    int simulated_jitter_ms;                        ///< ROCKETNET_CLIENT_SIMULATED_JITTER_MS: development only: outgoing jitter 0..60000 milliseconds; 0 is off (sdk/rocketnet_internal.h:437)
+    int simulated_duplicate_percent;                ///< ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT: development only: outgoing duplication 0..100; 0 is off (sdk/rocketnet_internal.h:438)
 };
 
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( void * ) )
@@ -789,7 +809,7 @@ struct rocketnet_server_config_t
     int max_clients;                                ///< ROCKETNET_SERVER_MAX_CLIENTS: 1 .. ROCKETNET_MAX_CLIENTS; default 1000
     uint8_t filter_value[4];                        ///< ROCKETNET_SERVER_FILTER_VALUE: the per-title packet filter, as the clients'
     uint8_t backend_public_key[32];                 ///< ROCKETNET_SERVER_BACKEND_PUBLIC_KEY: verifies connect token signatures
-    uint8_t server_public_key[32];                  ///< ROCKETNET_SERVER_SERVER_PUBLIC_KEY
+    uint8_t server_public_key[32];                  ///< ROCKETNET_SERVER_SERVER_PUBLIC_KEY: title server public key
     uint8_t server_secret_key[32];                  ///< ROCKETNET_SERVER_SERVER_SECRET_KEY: secret, logged redacted
     int num_xdp_queues;                             ///< ROCKETNET_SERVER_NUM_XDP_QUEUES: xdp and gso only; 1 .. 1024; 0 is the transport default
     int num_os_cpus;                                ///< ROCKETNET_SERVER_NUM_OS_CPUS: xdp only, the cores left to the OS; 1 .. 256; 0 is the transport default
@@ -817,10 +837,10 @@ struct rocketnet_server_config_t
     int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
     int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
     int reliable_timeout_ms;                        ///< ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
-    int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
-    int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
-    int simulated_jitter_ms;                        ///< Development only: outgoing jitter in milliseconds; 0 is off
-    int simulated_duplicate_percent;                ///< Development only: outgoing duplication 0..100; 0 is off
+    int simulated_loss_percent;                     ///< ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off (sdk/rocketnet_internal.h:510)
+    int simulated_latency_ms;                       ///< ROCKETNET_SERVER_SIMULATED_LATENCY_MS: development only: outgoing latency 0..60000 milliseconds; 0 is off (sdk/rocketnet_internal.h:511)
+    int simulated_jitter_ms;                        ///< ROCKETNET_SERVER_SIMULATED_JITTER_MS: development only: outgoing jitter 0..60000 milliseconds; 0 is off (sdk/rocketnet_internal.h:512)
+    int simulated_duplicate_percent;                ///< ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT: development only: outgoing duplication 0..100; 0 is off (sdk/rocketnet_internal.h:513)
     const char * second_public_address;             ///< ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS: the other family's "a.b.c.d:port" or "[v6]:port" on the same port; NULL or empty serves one family
 };
 
@@ -940,7 +960,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint
 /// is ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES long, or NULL for all zeros. The
 /// output is ROCKETNET_CONNECT_TOKEN_BYTES long and connect_token_bytes is its
 /// size; a short buffer is refused with ROCKETNET_STATUS_INVALID_ARGUMENT and
-/// nothing is written. Reads no clock.
+/// nothing is written. A timeout_seconds of zero or below, or an
+/// expire_timestamp at or before create_timestamp, is refused with
+/// ROCKETNET_STATUS_INVALID_ARGUMENT and nothing is written. Reads no clock.
 /// Returns ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT,
 /// ROCKETNET_STATUS_INVALID_PROTOCOL_ID, ROCKETNET_STATUS_INVALID_ADDRESS or
 /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. Secret keys are never logged.
@@ -1049,7 +1071,12 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 /// the call. A NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
-/// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. A NULL client is a counted no-op that returns ROCKETNET_UPDATE_OK.
+/// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. The update time
+/// must be finite and nondecreasing: a NaN, an infinity or a step backwards is
+/// refused, counted once in rocketnet_api_misuse_count, and the last good time
+/// is kept, so the clock is never poisoned or wedged. A NULL client is a
+/// counted no-op that returns ROCKETNET_UPDATE_OK; with no connection the update
+/// stores no time, so nothing is counted there.
 ROCKETNET_EXPORT enum rocketnet_update_result_t rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
 /// Sends this frame's queued messages. A NULL client is a counted no-op.
@@ -1231,7 +1258,11 @@ ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t 
 /// from the server is invalid after the call. A NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
-/// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. On a stopped server a counted no-op. A NULL server is a counted no-op that returns ROCKETNET_UPDATE_OK.
+/// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. The update time
+/// must be finite and nondecreasing: a NaN, an infinity or a step backwards is
+/// refused, counted once in rocketnet_api_misuse_count, and the last good time
+/// is kept. On a stopped server a counted no-op, storing no time. A NULL server
+/// is a counted no-op that returns ROCKETNET_UPDATE_OK.
 ROCKETNET_EXPORT enum rocketnet_update_result_t rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
 /// Sends this frame's queued messages. On a stopped server a counted no-op. A NULL server is a counted no-op.

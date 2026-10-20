@@ -28,7 +28,7 @@ void rn_slots_init( struct rn_slots_t * slots, int max_clients )
 // the CONNECTED event and resets the slot; the id going to 0 is DISCONNECTED
 // and drops it; an unchanged id leaves the binding alone. A slot whose
 // binding changes is the update's changed slot, which the server withholds
-// until the transport tags each entry (CHANNELS.md 11.5).
+// until each batch entry carries its connection's id (CHANNELS.md 11.5).
 // tla/RNSlots.tla Observe
 int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_id )
 {

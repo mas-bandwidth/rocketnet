@@ -123,12 +123,6 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
         return ROCKETNET_CHANNEL_DISPATCH_CONTROL;
     }
 
-    if ( !( channels->enabled_types & ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE ) ) )
-    {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED );
-        return ROCKETNET_CHANNEL_DISPATCH_NONE;
-    }
-
     if ( record->block )
         return rn_channels_dispatch_reliable_chunk( channels, record, out );
 
@@ -137,7 +131,8 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
     rn_receive_descriptor_t * descriptor = &region->receive_descriptors[slot];
     if ( !descriptor->live || (uint32_t) ( descriptor->number & ROCKETNET_MESSAGE_U24_MASK ) != record->number )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        // the slot is live for another number (check 10, SLOT_COLLISION)
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
     if ( channels->deliveries >= channels->delivery_capacity )

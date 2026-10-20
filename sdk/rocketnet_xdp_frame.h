@@ -294,6 +294,8 @@ static inline bool rocketnet_xdp_frame_parse(
 //   malformed       an IPv4 or IPv6 frame the parse refuses (IPv4 options, a
 //                   next header that is not UDP) or one too short for the
 //                   smallest server packet
+//   descriptor      a receive descriptor rocketnet_xdp_receive_descriptor
+//                   refuses before the frame is read (below)
 //
 // The caller serialises writes to drops.
 
@@ -303,6 +305,7 @@ struct rocketnet_xdp_receive_drops_t
     uint64_t ipv6_extension;
     uint64_t other_family;
     uint64_t malformed;
+    uint64_t descriptor;
 };
 
 static inline bool rocketnet_xdp_frame_ipv6_is_extension( uint8_t next_header )
@@ -355,7 +358,6 @@ static inline bool rocketnet_xdp_frame_receive(
     }
 
     // address_type below zero accepts either family (ServedFamilies of two).
-    // ROCKETNET_ADDRESS_IPV4 is zero, so the test is signed.
     if ( address_type >= 0 && family != address_type )
     {
         drops->other_family++;
@@ -375,6 +377,77 @@ static inline bool rocketnet_xdp_frame_receive(
     *out_payload = payload;
     *out_payload_length = payload_bytes;
     return true;
+}
+
+// DRIVER BOUNDS: the checks the AF_XDP driver makes before it copies into
+// or reads from a UMEM frame, sets a cpu bit or sizes the stats read. Each
+// holds in a Release build; none relies on an assert.
+//
+// SEND COPY: copies a staged packet of packet_bytes into a UMEM frame of
+// frame_bytes at the header offset of address_type, where
+// rocketnet_xdp_frame_build then writes the headers in front of it. A
+// length of 0, one past ROCKETNET_RECEIVE_CEILING (a negative int stored
+// into the size_t lands here too) or one that does not fit the frame after
+// the header is refused before the copy: *refused is incremented and -1 is
+// returned. Else it returns the payload length.
+
+static inline int rocketnet_xdp_send_copy(
+    uint8_t * frame, size_t frame_bytes, int address_type,
+    const uint8_t * packet, size_t packet_bytes, uint64_t * refused )
+{
+    const int header_bytes = rocketnet_xdp_frame_header_bytes( address_type );
+    if ( !frame || !packet || packet_bytes == 0 || packet_bytes > (size_t) ROCKETNET_RECEIVE_CEILING ||
+         (size_t) header_bytes > frame_bytes || packet_bytes > frame_bytes - (size_t) header_bytes )
+    {
+        if ( refused )
+            ( *refused )++;
+        return -1;
+    }
+    memcpy( frame + header_bytes, packet, packet_bytes );
+    return (int) packet_bytes;
+}
+
+// RECEIVE DESCRIPTOR: the bytes a receive descriptor names inside the UMEM
+// at umem. The receive frames are the region [region_begin, region_end),
+// both multiples of ROCKETNET_XDP_FRAME_SIZE. A descriptor is taken only
+// when its length is at most ROCKETNET_XDP_FRAME_SIZE, its address lies in
+// the region and its bytes end inside the frame that holds its address (a
+// received address carries the headroom offset into its frame, so it is
+// not itself a frame boundary). Anything else is refused before the frame
+// is read: drops->descriptor is incremented and NULL is returned.
+
+static inline const uint8_t * rocketnet_xdp_receive_descriptor(
+    const void * umem, uint64_t region_begin, uint64_t region_end,
+    uint64_t addr, uint32_t len, struct rocketnet_xdp_receive_drops_t * drops )
+{
+    if ( !umem || len > ROCKETNET_XDP_FRAME_SIZE || addr < region_begin || addr >= region_end ||
+         ( addr % ROCKETNET_XDP_FRAME_SIZE ) + len > ROCKETNET_XDP_FRAME_SIZE )
+    {
+        if ( drops )
+            drops->descriptor++;
+        return NULL;
+    }
+    return (const uint8_t*) umem + addr;
+}
+
+// PIN CPU: a cpu is set in a cpu_set_t of set_size bits (CPU_SETSIZE on
+// Linux) only when it lies in 0 .. set_size - 1.
+
+static inline bool rocketnet_xdp_cpu_in_set( int cpu, int set_size )
+{
+    return cpu >= 0 && cpu < set_size;
+}
+
+// STATS READ: the per-cpu stats map is read into a buffer of
+// ROCKETNET_XDP_STATS_MAX_CPUS values held inside the server's create-time
+// allocation (8192 is the largest CONFIG_NR_CPUS the kernel allows). A
+// possible-cpu count outside 1 .. ROCKETNET_XDP_STATS_MAX_CPUS is refused.
+
+#define ROCKETNET_XDP_STATS_MAX_CPUS        8192
+
+static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
+{
+    return num_cpus > 0 && num_cpus <= ROCKETNET_XDP_STATS_MAX_CPUS;
 }
 
 // REPLY MAC: the destination MAC address of a reply frame. A peer is learned

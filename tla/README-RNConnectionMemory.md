@@ -20,11 +20,16 @@ A client owns one region; it is the same machine with one slot.
   - `Connect(s, c)`: a client takes a free slot.
   - `Use(s)`: a send, a receive placement or a hold takes room
     (`rn_region_send_alloc` finding room).
+  - `UseSpan(s, n)`: a large send takes `n` records at once, a descriptor and
+    a span, under the same `~exhausted` guard as `Use`
+    (`rn_region_send_alloc_span` finding room).
   - `Release(s)`: an ack or a released delivery gives room back
-    (`rn_region_send_free`, `rn_region_send_free_fragment`).
+    (`rn_region_send_free`, `rn_region_send_free_fragment`), also while
+    exhausted; that room is not taken again before `Reuse`.
   - `Exhaust(s)`: an operation finds no room. The region takes its sticky
     exhausted state with the reason `MESSAGE_MEMORY_EXHAUSTED`
-    (`rn_region_exhaust`, called from both refusals of `rn_region_send_alloc`).
+    (`rn_region_exhaust`, called from the refusals of `rn_region_send_alloc`
+    and `rn_region_send_alloc_span`).
   - `Kick(s)`: the owner, reading `rn_connection_memory_decide`, disconnects
     the connection with that reason. A server kicks the slot; a client
     disconnects itself.
@@ -36,8 +41,9 @@ A client owns one region; it is the same machine with one slot.
 ## Properties
 
 - **`ExhaustionOnlyLeadsToDisconnect`** (action property): from an exhausted,
-  connected slot, the only step that changes that slot is the kick to
-  `Disconnected` with the reason kept. No further use, release or delivery.
+  connected slot, the steps that change that slot are the kick to
+  `Disconnected` with the reason kept, and a release that gives one record
+  back; no further use, span or delivery takes room.
 - **`ReusedSlotStartsClean`** (invariant): a free slot has `used = 0`, no
   exhaustion, no reason and no records, so the `Connect` that takes it sees a
   fresh region. A connected slot holds records of its own client only.
@@ -55,7 +61,7 @@ A client owns one region; it is the same machine with one slot.
 | Case | Change | Must fail |
 |---|---|---|
 | `MCRNConnectionMemoryBrokenNoReset.cfg` | `Reset = FALSE`: `Reuse` frees the slot without the carve | `ReusedSlotStartsClean` |
-| `MCRNConnectionMemoryBrokenCarryOn.cfg` | `CarryOn = TRUE`: an exhausted connection keeps using and releasing | `ExhaustionOnlyLeadsToDisconnect` |
+| `MCRNConnectionMemoryBrokenCarryOn.cfg` | `CarryOn = TRUE`: an exhausted connection keeps taking room (`Use`, `UseSpan`) | `ExhaustionOnlyLeadsToDisconnect` |
 
 The traces TLC printed, checked against the code by hand:
 
@@ -66,13 +72,16 @@ The traces TLC printed, checked against the code by hand:
   bookkeeping in place. `reused_slot_starts_clean` checks the code's side: a
   region used to exhaustion and reset equals a fresh region byte for byte in
   its bookkeeping, and with the reset removed the test fails.
-- **BrokenCarryOn**, depth 7: `Connect(s1, c1)`, three `Use(s1)`,
-  `Exhaust(s1)`, then `Release(s1)` on the exhausted slot. This is the step
-  the code's region still allows: `rn_region_send_free` works after
-  exhaustion, because the layer 1 tests free and refill after a refusal. The
-  guarantee is the owner's: it reads `rn_connection_memory_decide` before any
-  other work of the update and kicks. The witness shows that a caller who
-  skips the decision breaks the property.
+- **BrokenCarryOn**, depth 5: `Connect(s1, c1)`, `Use(s1)`, `Exhaust(s1)`
+  (an operation asks for more room than the region has left), then `Use(s1)`
+  on the exhausted slot. This is the step the code took: a send still found
+  room after exhaustion. `rn_region_send_alloc` already refused, but
+  `rn_region_send_alloc_span` took a descriptor and a span whenever room
+  happened to be free. Both allocators now refuse while exhausted (`Use`,
+  `UseSpan`), and the guarantee remains the owner's: it reads
+  `rn_connection_memory_decide` before any other work of the update and
+  kicks. The witness shows that a caller who skips the decision, or an
+  allocator that skips the guard, breaks the property.
 
 ## Records
 
@@ -81,9 +90,9 @@ per case, one shard per case:
 
 | Case | Workers | Generated | Distinct | Seconds | Exit | Outcome |
 |---|---:|---:|---:|---:|---:|---|
-| `MCRNConnectionMemory.cfg` | 2 | 236,125 | 46,801 | 3.694 | 0 | pass |
-| `MCRNConnectionMemoryBrokenNoReset.cfg` | 1 | 119 | 83 | 0.643 | 12 | `ReusedSlotStartsClean` violated, as declared |
-| `MCRNConnectionMemoryBrokenCarryOn.cfg` | 1 | 6,782 | 1,994 | 0.852 | 13 | `ExhaustionOnlyLeadsToDisconnect` violated, as declared |
+| `MCRNConnectionMemory.cfg` | 2 | 985,441 | 151,849 | 16.628 | 0 | pass |
+| `MCRNConnectionMemoryBrokenNoReset.cfg` | 1 | 167 | 123 | 0.632 | 12 | `ReusedSlotStartsClean` violated, as declared |
+| `MCRNConnectionMemoryBrokenCarryOn.cfg` | 1 | 1,275 | 500 | 0.740 | 13 | `ExhaustionOnlyLeadsToDisconnect` violated, as declared |
 
 The instance: three slots, four clients, a region of three records.
 
