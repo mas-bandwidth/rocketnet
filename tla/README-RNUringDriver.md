@@ -31,8 +31,10 @@ contents:
   is unique while it is pending.
 - **Phase:** `Running`, `Destroying` or `Freed`.
 
-Two constants act as rule switches and carry the reversed witnesses:
-`ResetWaitsForReap` and `ReapIntoFill`. Both are `TRUE` in the rule.
+Three constants act as rule switches and carry the reversed witnesses:
+`ResetWaitsForReap`, `ReapIntoFill` and `RearmOnReceive`. The first two
+are `TRUE` in the rule; `RearmOnReceive` is `TRUE` in the rule (receive
+re-arms a disarmed multishot) and `FALSE` in the reversed witness.
 
 ## Each action against THE DESIGN
 
@@ -45,10 +47,10 @@ Two constants act as rule switches and carry the reversed witnesses:
 | `KernelComplete(s)` | the kernel finishes the send (any res, where a negative one counts SEND_DROPPED) and posts the send CQE |
 | `KernelFill(b)` | the armed multishot RECVMSG fills a provided ring buffer and posts a receive CQE |
 | `KernelStop` | a CQE without IORING_CQE_F_MORE ends the multishot (ENOBUFS among the causes) |
-| `Reap(c)` | the main thread reaps one CQE, inside send_packets or outside it. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` re-arms the multishot while the driver is running and never during destroy |
+| `Reap(c)` | the main thread reaps one CQE, inside send_packets or outside it. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` disarms the multishot: the one-shot re-arm the CQE handler attempts is not guaranteed (it can find no submission entry), so the multishot stays disarmed until a receive re-arms it |
 | `ReturnBuffer(b)` | after the copy, the buffer goes back to the ring |
+| `Swap` | receive_packets: the old fill bank becomes the exposed bank, the new fill bank is emptied, and a disarmed multishot is re-armed when `RearmOnReceive` is TRUE |
 | `ResetIndex` | send_packets resets the reservation index to 0 only when no slot is `Kernel` owned and every send it submitted has its CQE reaped; the call returns |
-| `Swap` | receive_packets: the old fill bank becomes the exposed bank and the new fill bank is emptied |
 | `TransportReads` | the transport reads the views of the exposed bank. A read changes no driver state, so here it is a stutter; what the read relies on is ExposedStable |
 | `Destroy` | cancels every multishot receive: the cancel posts its own CQE, and an armed multishot ends with a `Term` |
 | `Free` | destroy's drain ends: once no slot is kernel owned, the cq is empty and the multishot is disarmed, slots, banks and the ring are freed |
@@ -73,6 +75,10 @@ Liveness, under `SpecFair`:
 
 - `SubmittedEventuallyFree`: every `Kernel` slot is eventually `Free`.
 - `DestroyEventuallyFrees`: `Destroying ~> Freed`.
+- `ReceiveLiveness`: a disarmed running multishot is re-armed by a receive,
+  or destroy ends the run (`phase = "Running" /\ armed = FALSE` leads-to
+  `armed = TRUE \/ phase # "Running"`). A receive with no retry never re-arms,
+  a silent permanent receive stall.
 
 `SpecFair` gives weak fairness to the following:
 
@@ -81,6 +87,7 @@ Liveness, under `SpecFair`:
   by later ones. With a single disjunctive fairness on Reap, TLC could pick
   `Term` forever while a send CQE waits.
 - **`ReturnBuffer(b)`.**
+- **`Swap`.** The main thread calls receive_packets while the driver runs.
 - **`ResetIndex`.** This is the end of send_packets, which does not return
   without it.
 - **`Free`.** This is destroy's drain.
@@ -102,35 +109,34 @@ fairness too.
 
 ## The small instance and the runs
 
-`MCRNUringDriver.tla` extends the module with no overrides. The constants
-are `Slots = 2`, `Buffers = 2` and `MaxSteps = 2` (two datagrams, two bank
-swaps). The three cases form group `rnuringdriver` in `CASES.tsv`.
+`MCRNUringDriver.tla` extends the module with no overrides. All four cases
+use `Slots = 2`, `Buffers = 2` and `MaxSteps = 2` (two datagrams, two bank
+swaps), the coverage the existing invariants and the receive liveness
+property rely on. The four cases form group `rnuringdriver` in
+`CASES.tsv`.
 
 To run them from the rocketnet checkout, with `$job`, `$jar` and `$java`
 as in `tla/README.md`:
 
 ```sh
-for i in 0 1 2; do
+for i in 0 1 2 3; do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group rnuringdriver --shards 3 --shard "$i" --workers 2 --timeout 110s \
+    --group rnuringdriver --shards 4 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnuringdriver-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
   --out "$job/RUNS.tsv" "$job"/rnuringdriver-*/RUNS.tsv
 ```
 
-Outcomes measured on hulk (linux-amd64, Java 21.0.12.1, the pinned JAR,
-2026-10-17):
+Outcomes measured on linux-amd64 (Java 21.0.12.1, the pinned JAR,
+2026-10-20):
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNUringDriver.cfg` | pass (5 invariants, 2 properties) | 0 | 119869 | 31373 | 67.5 |
-| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 1007 | 459 | 6.6 |
-| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 27 | 22 | 6.1 |
-
-`MaxSteps = 3` also passed when run by hand with raw TLC: 194972 distinct
-states in 2 min 51 s, over the 110 s record budget. That run is not a
-record. Under the budget rule, the committed instance is `MaxSteps = 2`.
+| `MCRNUringDriver.cfg` | pass (5 invariants, 3 properties) | 0 | 189008 | 47387 | 17.8 |
+| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 1128 | 519 | 2.7 |
+| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 27 | 22 | 1.3 |
+| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 155239 | 39907 | 11.0 |
 
 ## Counterexamples, checked by hand against THE DESIGN
 
@@ -169,5 +175,13 @@ the bank the transport is reading changes under it. The design forbids
 this with "Receive CQEs ... always go to the fill bank". This is a real
 defect.
 
-Each witness fails on exactly its declared invariant (exit 12), and the
-control passes every invariant and both liveness properties.
+**BrokenNoRearmRetry** (`RearmOnReceive = FALSE`): receive_packets never
+re-arms. A `Term` leaves `armed` FALSE (the one-shot CQE-handler re-arm is
+not guaranteed), and nothing ever re-arms the multishot. TLC prints a
+counterexample: `KernelStop` disarms the multishot, the next `Swap` does not
+re-arm it, and once the swaps run out `armed` stays FALSE while the driver
+is still running, so `ReceiveLiveness` fails.
+
+Each witness fails on exactly its declared invariant or property (exit 12 for
+the invariants, exit 13 for the temporal property), and the control passes
+every invariant and all three liveness properties.
