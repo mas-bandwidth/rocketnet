@@ -342,8 +342,8 @@ enum rocketnet_status_t rocketnet_client_default_config( struct rocketnet_client
     return ROCKETNET_STATUS_OK;
 }
 
-static const size_t rn_client_config_known_bytes[] = { ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES };
-static const size_t rn_server_config_known_bytes[] = { ROCKETNET_SERVER_CONFIG_KNOWN_BYTES };
+static const size_t rn_client_config_known_bytes[] = { ROCKETNET_CLIENT_CONFIG_BYTES_1 };
+static const size_t rn_server_config_known_bytes[] = { ROCKETNET_SERVER_CONFIG_BYTES_1 };
 
 static bool rn_public_config_size_known( const char * endpoint, const char * type_name, size_t bytes,
                                          const size_t * known, int known_count, size_t current )
@@ -1488,6 +1488,11 @@ void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_
         return;
     if ( rn_server_destination_refused( destination_id ) )
         return;
+    if ( destination_id >= (uint64_t) server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
     int slot;
     if ( !rn_server_slot( server, destination_id, &slot ) )
         return;

@@ -472,6 +472,63 @@ static void api_polish_client_index_is_zero_until_connected()
     rocketnet_set_quiet( false );
 }
 REGISTER_UNIT_TEST( api_polish_client_index_is_zero_until_connected );
+// --- ruling 10: enumeration and queries describe the same ABI types -----------
+
+static void api_polish_abi_layouts()
+{
+    const char * expected[] =
+    {
+        "rocketnet_client_config_t", "rocketnet_server_config_t", "rocketnet_receipt_t",
+        "rocketnet_address_type_t", "rocketnet_client_transport_config_t",
+        "rocketnet_server_transport_config_t", "rocketnet_client_transport_stats_t",
+        "rocketnet_server_transport_stats_t", "rocketnet_server_transport_client_stats_t",
+        "rocketnet_packet_context_t", "rocketnet_frame_sync_stats_t", "rocketnet_message_config_t"
+    };
+    const size_t count = sizeof(expected) / sizeof(expected[0]);
+    bool seen[sizeof(expected) / sizeof(expected[0])] = {};
+    for ( size_t i = 0; i < count; ++i )
+    {
+        const char * name = rocketnet_abi_layouts( i );
+        check( name != NULL );
+        size_t j = 0;
+        while ( j < count && strcmp( name, expected[j] ) != 0 )
+            ++j;
+        check( j < count );
+        check( !seen[j] );
+        seen[j] = true;
+        check( rocketnet_abi_type_size( name ) != SIZE_MAX );
+        check( rocketnet_abi_field_count( name ) >= 0 );
+    }
+    check( rocketnet_abi_layouts( count ) == NULL );
+    check( rocketnet_abi_layouts( SIZE_MAX ) == NULL );
+    check( rocketnet_abi_type_size( "rocketnet_address_type_t" ) == sizeof( enum rocketnet_address_type_t ) );
+    check( rocketnet_abi_field_count( "rocketnet_address_type_t" ) == 0 );
+    check( rocketnet_abi_field_offset( "rocketnet_address_type_t", "value" ) == SIZE_MAX );
+    check( rocketnet_abi_field_size( "rocketnet_address_type_t", "value" ) == SIZE_MAX );
+}
+REGISTER_UNIT_TEST( api_polish_abi_layouts );
+
+// --- ruling 11: server abort_message past max_clients counts misuse ------------
+
+static void api_polish_server_abort_message_misuse()
+{
+    rocketnet_server_config_t config;
+    check( rocketnet_server_dev_config( &config ) == ROCKETNET_STATUS_OK );
+    config.max_clients = 16;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    check( server != NULL );
+
+    rocketnet_set_assert_callback( api_polish_quiet_assert );
+    const uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_server_abort_message( server, 16 );
+    check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_server_abort_message( server, 100 );
+    check( rocketnet_api_misuse_count() == before + 2 );
+    rocketnet_set_assert_callback( NULL );
+
+    rocketnet_server_destroy( server );
+}
+REGISTER_UNIT_TEST( api_polish_server_abort_message_misuse );
 
 // --- the production minter refuses a token no peer accepts ---------------------
 

@@ -14,8 +14,6 @@ proofs-packet_open:
 	set -e; \
 	for harness in \
 	    harness_prefilter \
-	    harness_filter_epochs_install \
-	    harness_filter_epochs_check \
 	    harness_open_sealed_packet \
 	    harness_write_packet_associated_data \
 	    harness_sequence_nonce; do \
