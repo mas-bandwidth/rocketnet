@@ -249,6 +249,26 @@ static void rocketnet_iocp_retire_send( rocketnet_server_iocp_t * iocp, rocketne
     }
 }
 
+// The UDP_COALESCED_INFO stride of a received message's control area, or 0
+// when it has none. A UDP_COALESCED_INFO header whose cmsg_len is shorter
+// than WSA_CMSG_LEN( sizeof( DWORD ) ) carries no whole DWORD and yields 0:
+// only bytes the header claims are read. Not static: the unit suite calls it
+// over a built WSAMSG (windows_coalesced_cmsg_short_length_is_not_read).
+DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message )
+{
+    for ( WSACMSGHDR * cmsg = WSA_CMSG_FIRSTHDR( message ); cmsg; cmsg = WSA_CMSG_NXTHDR( message, cmsg ) )
+    {
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_COALESCED_INFO )
+        {
+            DWORD stride = 0;
+            if ( cmsg->cmsg_len >= WSA_CMSG_LEN( sizeof( stride ) ) )
+                memcpy( &stride, WSA_CMSG_DATA( cmsg ), sizeof( stride ) );
+            return stride;
+        }
+    }
+    return 0;
+}
+
 // Publishes one URO completion: the datagrams of one source, each the
 // UDP_COALESCED_INFO stride except a shorter last one, split by the shared
 // coalescing rule and each checked against the bounds a single datagram is.
@@ -262,15 +282,7 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
         iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
         return;
     }
-    DWORD stride = 0;
-    for ( WSACMSGHDR * cmsg = WSA_CMSG_FIRSTHDR( &op->message ); cmsg; cmsg = WSA_CMSG_NXTHDR( &op->message, cmsg ) )
-    {
-        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_COALESCED_INFO )
-        {
-            memcpy( &stride, WSA_CMSG_DATA( cmsg ), sizeof(stride) );
-            break;
-        }
-    }
+    const DWORD stride = rocketnet_iocp_coalesced_stride( &op->message );
     const int message_bytes = (int) bytes;
     const int segment_bytes = stride > 0 && stride < bytes ? (int) stride : message_bytes;
     // Split window by window: each window but the last is a whole number of

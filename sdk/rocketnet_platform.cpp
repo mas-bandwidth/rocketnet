@@ -4180,10 +4180,10 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
 
-    if ( socket->handle != 0 )
+    if ( socket->handle != INVALID_SOCKET )
     {
         closesocket( socket->handle );
-        socket->handle = 0;
+        socket->handle = INVALID_SOCKET;
     }
 
     rocketnet_free( socket->context, socket );
