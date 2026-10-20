@@ -23,7 +23,11 @@ The public header is `sdk/rocketnet.h`. A game initializes the library, fills a
 client or server config, creates one client or server, and checks the result.
 Every entry point that can refuse returns a value a caller can test, logs one
 line at `ERROR` when it refuses, and counts the refusal in
-`rocketnet_api_misuse_count`.
+`rocketnet_api_misuse_count`. A message send on a connection that is not
+CONNECTED is no refusal of this kind: it is a normal drop that logs nothing,
+returns `NULL` from start message and `0` from finish message, and counts in
+`ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS` or
+`ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS`, never in the misuse count.
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
