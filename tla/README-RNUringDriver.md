@@ -51,7 +51,6 @@ re-arms a disarmed multishot) and `FALSE` in the reversed witness.
 | `ReturnBuffer(b)` | after the copy, the buffer goes back to the ring |
 | `Swap` | receive_packets: the old fill bank becomes the exposed bank, the new fill bank is emptied, and a disarmed multishot is re-armed when `RearmOnReceive` is TRUE |
 | `ResetIndex` | send_packets resets the reservation index to 0 only when no slot is `Kernel` owned and every send it submitted has its CQE reaped; the call returns |
-| `Swap` | receive_packets: the old fill bank becomes the exposed bank and the new fill bank is emptied |
 | `TransportReads` | the transport reads the views of the exposed bank. A read changes no driver state, so here it is a stutter; what the read relies on is ExposedStable |
 | `Destroy` | cancels every multishot receive: the cancel posts its own CQE, and an armed multishot ends with a `Term` |
 | `Free` | destroy's drain ends: once no slot is kernel owned, the cq is empty and the multishot is disarmed, slots, banks and the ring are freed |
@@ -76,10 +75,10 @@ Liveness, under `SpecFair`:
 
 - `SubmittedEventuallyFree`: every `Kernel` slot is eventually `Free`.
 - `DestroyEventuallyFrees`: `Destroying ~> Freed`.
-- `ReceiveLiveness`: a disarmed running multishot is re-armed by a receive
-  while a swap is left (`phase = "Running" /\ armed = FALSE /\ gen < MaxSteps`
-  leads-to `armed = TRUE`). A receive with no retry never re-arms, a silent
-  permanent receive stall.
+- `ReceiveLiveness`: a disarmed running multishot is re-armed by a receive,
+  or destroy ends the run (`phase = "Running" /\ armed = FALSE` leads-to
+  `armed = TRUE \/ phase # "Running"`). A receive with no retry never re-arms,
+  a silent permanent receive stall.
 
 `SpecFair` gives weak fairness to the following:
 
@@ -88,6 +87,7 @@ Liveness, under `SpecFair`:
   by later ones. With a single disjunctive fairness on Reap, TLC could pick
   `Term` forever while a send CQE waits.
 - **`ReturnBuffer(b)`.**
+- **`Swap`.** The main thread calls receive_packets while the driver runs.
 - **`ResetIndex`.** This is the end of send_packets, which does not return
   without it.
 - **`Free`.** This is destroy's drain.
@@ -109,36 +109,34 @@ fairness too.
 
 ## The small instance and the runs
 
-`MCRNUringDriver.tla` extends the module with no overrides. The constants
-are `Slots = 2`, `Buffers = 2` and `MaxSteps = 2` (two datagrams, two bank
-swaps). The three cases form group `rnuringdriver` in `CASES.tsv`.
+`MCRNUringDriver.tla` extends the module with no overrides. The control and
+the receive witness use the smallest instance, `Slots = 1`, `Buffers = 1`
+and `MaxSteps = 1`; the two older witnesses keep `Slots = 2`, `Buffers = 2`
+and `MaxSteps = 2`. The four cases form group `rnuringdriver` in
+`CASES.tsv`.
 
 To run them from the rocketnet checkout, with `$job`, `$jar` and `$java`
 as in `tla/README.md`:
 
 ```sh
-for i in 0 1 2; do
+for i in 0 1 2 3; do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group rnuringdriver --shards 3 --shard "$i" --workers 2 --timeout 110s \
+    --group rnuringdriver --shards 4 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnuringdriver-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
   --out "$job/RUNS.tsv" "$job"/rnuringdriver-*/RUNS.tsv
 ```
 
-Outcomes measured on hulk (linux-amd64, Java 21.0.12.1, the pinned JAR,
-2026-10-17):
+Outcomes measured on linux-amd64 (Java 21.0.12.1, the pinned JAR,
+2026-10-20):
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNUringDriver.cfg` | pass (5 invariants, 3 properties) | 0 | — | — | — |
-| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 1007 | 459 | 6.6 |
-| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 27 | 22 | 6.1 |
-| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 12 | — | — | — |
-
-`MaxSteps = 3` also passed when run by hand with raw TLC: 194972 distinct
-states in 2 min 51 s, over the 110 s record budget. That run is not a
-record. Under the budget rule, the committed instance is `MaxSteps = 2`.
+| `MCRNUringDriver.cfg` | pass (5 invariants, 3 properties) | 0 | 1803 | 574 | 6.4 |
+| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 1025 | 475 | 25.7 |
+| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 21 | 18 | 18.2 |
+| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 1505 | 494 | 7.1 |
 
 ## Counterexamples, checked by hand against THE DESIGN
 
@@ -180,9 +178,10 @@ defect.
 **BrokenNoRearmRetry** (`RearmOnReceive = FALSE`): receive_packets never
 re-arms. A `Term` leaves `armed` FALSE (the one-shot CQE-handler re-arm is
 not guaranteed), and nothing ever re-arms the multishot. TLC prints a
-counterexample: `KernelStop` disarms the multishot, the next `Swap`
-(gen < MaxSteps) does not re-arm it, and `armed` stays FALSE, so
-`ReceiveLiveness` fails.
+counterexample: `KernelStop` disarms the multishot, the next `Swap` does not
+re-arm it, and once the swaps run out `armed` stays FALSE while the driver
+is still running, so `ReceiveLiveness` fails.
 
-Each witness fails on exactly its declared invariant or property (exit 12),
-and the control passes every invariant and all three liveness properties.
+Each witness fails on exactly its declared invariant or property (exit 12 for
+the invariants, exit 13 for the temporal property), and the control passes
+every invariant and all three liveness properties.

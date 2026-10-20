@@ -21,15 +21,17 @@
 (*  bank.  receive_packets swaps the banks (Swap): the old fill bank      *)
 (*  becomes the EXPOSED bank the transport reads (TransportReads) until   *)
 (*  the next Swap.  A CQE without IORING_CQE_F_MORE (KernelStop, the      *)
-(*  ENOBUFS case included) re-arms the multishot when it is reaped.       *)
+(*  ENOBUFS case included) disarms the multishot: the one-shot re-arm    *)
+(*  the CQE handler attempts is not guaranteed, so a receive re-arms it.  *)
 (*                                                                         *)
 (*  DESTROY.  Cancels the multishot (Destroy) and waits for every         *)
 (*  outstanding CQE, sends and cancels, before freeing slots, banks and   *)
 (*  the ring (Free).                                                      *)
 (*                                                                         *)
-(* Two rule switches carry the reversed witnesses.  ResetWaitsForReap =   *)
+(* Three rule switches carry the reversed witnesses.  ResetWaitsForReap =  *)
 (* FALSE lets ResetIndex run right after Submit; ReapIntoFill = FALSE     *)
-(* writes reaped receive datagrams into the exposed bank.                 *)
+(* writes reaped receive datagrams into the exposed bank; RearmOnReceive  *)
+(* = FALSE leaves a multishot that ends disarmed for good.                *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -131,6 +133,7 @@ Abort(s) ==
 \* 0..min(reserved, size), then submit; the kernel owns those slots
 Submit ==
     /\ phase = "Running" /\ ~sending
+    /\ idx # 0
     /\ \A s \in SlotIds : sstate[s] # "Reserved"
     /\ LET out == {s \in SlotIds : sstate[s] = "Finished" /\ bytes[s]}
        IN /\ sstate' = [s \in SlotIds |->
@@ -226,16 +229,17 @@ ResetIndex ==
     /\ UNCHANGED RecvVars
 
 \* receive_packets: the fill bank becomes the exposed bank, a new fill
-\* bank is emptied
+\* bank is emptied. after the bound only a re-arm is left, so the generation
+\* stays put while a disarmed multishot is armed again
 Swap ==
     /\ phase = "Running" /\ ~sending
-    /\ gen < MaxSteps
+    /\ (gen < MaxSteps \/ ~armed)
     /\ exposed' = fill
     /\ snap' = fill
     /\ fill' = {}
-    /\ gen' = gen + 1
+    /\ gen' = IF gen < MaxSteps THEN gen + 1 ELSE gen
     \* receive_packets re-arms a disarmed multishot when the rule has the fix
-    /\ armed' = RearmOnReceive \/ armed
+    /\ armed' = (RearmOnReceive \/ armed)
     /\ UNCHANGED <<bstate, bufdg, copied, nextdg, cq, phase>>
     /\ UNCHANGED SendVars
 
@@ -295,7 +299,7 @@ SpecFair ==
     /\ \A s \in SlotIds : WF_vars(KernelComplete(s))
     /\ \A c \in Cqes : WF_vars(Reap(c))
     /\ \A b \in BufIds : WF_vars(ReturnBuffer(b))
-    /\ WF_vars(Swap)
+    /\ SF_vars(Swap)
     /\ WF_vars(ResetIndex)
     /\ WF_vars(Free)
 
@@ -349,10 +353,10 @@ SubmittedEventuallyFree ==
 DestroyEventuallyFrees ==
     (phase = "Destroying") ~> (phase = "Freed")
 
-\* a disarmed multishot is re-armed by a receive while the driver is running
-\* and there is still a swap left; a receive with no retry never re-arms, a
-\* silent permanent receive stall
+\* a disarmed multishot is re-armed by a receive while the driver runs, or
+\* destroy ends the run; a receive with no retry never re-arms, a silent
+\* permanent receive stall
 ReceiveLiveness ==
-    (phase = "Running" /\ armed = FALSE /\ gen < MaxSteps) ~> (armed = TRUE)
+    (phase = "Running" /\ armed = FALSE) ~> (armed = TRUE \/ phase # "Running")
 
 =============================================================================
