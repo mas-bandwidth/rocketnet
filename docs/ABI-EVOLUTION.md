@@ -239,8 +239,16 @@ before 1.0.0; no earlier ABI was released, so the release starts at 1:
   removed; `rocketnet_init_ex`, `rocketnet_term_ex` and
   `rocketnet_allocator_ex` leave the public header and `tools/exports.txt`.
 - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `SERVER_NOT_STOPPED` and
-  `FLOW_ID_RESERVED` append before `ROCKETNET_NUM_STATUS_CODES` (section 1's
+  `FLOW_ID_RESERVED` append before `ROCKETNET_STATUS_COUNT` (section 1's
   append-only rule).
+- The assert callback has one way in, `rocketnet_set_assert_callback` (NULL
+  restores the default), as netcode.h has only its setter: the writable
+  global pointer the header used to declare leaves the public header and
+  `tools/exports.txt`, and the pointer the library calls is internal and not
+  exported. `rocketnet_set_quiet` replaces the quiet switch under the set_
+  naming, and the status count is `ROCKETNET_STATUS_COUNT`, like every other
+  `_COUNT`. Removing and renaming these exports before the first release keeps
+  ABI 1: no released binary was ever linked against the old names.
 
 No public struct's layout changes, so every config revision and known-size
 list above is unchanged.

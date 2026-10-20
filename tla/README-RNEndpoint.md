@@ -219,7 +219,7 @@ configurations, `num_channels` 2 at a and 1 at b. a writes its first packet,
 `[rel |-> {0}, unrel |-> {}, acks |-> {}]`: CONFIG alone, at the head of
 IMMEDIATE with reliable number 0 (10.3). b opens it with no comparison and
 records `peerCfg[b] = 2` while its own `cfg[b] = 1`, with no error. Section
-13.4 requires "any difference is ERROR_CONFIG_MISMATCH"; without the
+13.4 requires "any difference is DISCONNECT_REASON_CONFIG_MISMATCH"; without the
 comparison b goes on as if both ends were configured the same, so the
 "identical and verified" model of 10.3 is lost on the first CONFIG.
 
@@ -262,7 +262,7 @@ message on its channel is received; with that check, message 2 waits in
 | `PacketFailed(e, S, Us)` | `rn_endpoint_packet_failed` | 6.4 (a failed send marks its records due); P5 |
 | `OnAcked(e, as)` | `rn_endpoint_on_acked` | 6.4 (ack marks records); P2, P4 |
 | `OnPayload(e, p)` | `rn_endpoint_on_payload` | 13.3 (receiver's checks in order); 6.5 (duplicates); 7.2 (dispatch, holds); R6 |
-| `ConfigCompare(e)` | the CONFIG comparison inside `rn_endpoint_on_payload` | 10.3; 13.4 (every field compared, mismatch is `ERROR_CONFIG_MISMATCH`) |
+| `ConfigCompare(e)` | the CONFIG comparison inside `rn_endpoint_on_payload` | 10.3; 13.4 (every field compared, mismatch is `DISCONNECT_REASON_CONFIG_MISMATCH`) |
 | `Tick(e)` | `rn_endpoint_tick` | 10.3 (no CONFIG within `reliable_timeout` is `RELIABLE_TIMEOUT`); 6.4 |
-| `err` | `rn_endpoint_error` | 10.1; 12 (`ROCKETNET_MESSAGE_ERROR_*`) |
+| `err` | `rn_endpoint_error` | 10.1; 12 (`ROCKETNET_DISCONNECT_REASON_*`) |
 | `WriteAck(e)`, `AckSilence(e)` | the transport (not the endpoint) | section 2, P2 and P5 |
