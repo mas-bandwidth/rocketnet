@@ -837,9 +837,10 @@ struct rocketnet_client_config_t
 ///
 /// public_address, when set, displaces the create call's address at start, so the
 /// address the transport binds and the address connect tokens are checked
-/// against are always the same one. ROCKETNET_SERVER_PUBLIC_ADDRESS applies to
-/// the first server start in the process only, and says so in the log, so a
-/// process with several servers is never redirected wholesale by one variable.
+/// against are always the same one. ROCKETNET_SERVER_PUBLIC_ADDRESS and
+/// ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS are consumed together by the first
+/// server start in the process, and say so in the log, so a process with several
+/// servers is never redirected wholesale by ambient address variables.
 
 struct rocketnet_server_config_t
 {
@@ -992,8 +993,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint
 /// user_data, and fresh session keys. server_address_strings holds
 /// server_address_count entries (1 or 2), at most one of each family. With
 /// both families the client selects the IPv6 address on a host that can open
-/// an IPv6 socket and the IPv4 address on one that cannot, and a server
-/// accepts the token when either address is one it serves. user_data
+/// an IPv6 socket and the IPv4 address on one that cannot. The server checks
+/// only the token address for the family the request arrived on; that address
+/// must be one the server advertises. user_data
 /// is ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES long, or NULL for all zeros. The
 /// output is ROCKETNET_CONNECT_TOKEN_BYTES long and connect_token_bytes is its
 /// size; a short buffer is refused with ROCKETNET_STATUS_INVALID_ARGUMENT and

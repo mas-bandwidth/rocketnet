@@ -26,6 +26,7 @@
 #include "rocketnet_test_vectors.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
@@ -33,6 +34,14 @@
 #include "test/counters_expect.h"
 
 #define BOTH_FAMILIES_PROTOCOL 0xB071FA11A11E5001ULL
+
+#if defined(_WIN32)
+static int both_families_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
+static int both_families_unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+#else
+static int both_families_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
+static int both_families_unsetenv( const char * name ) { return unsetenv( name ); }
+#endif
 
 struct both_families_identity_t
 {
@@ -136,6 +145,32 @@ static void server_refuses_an_unparseable_second_address()
     check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
 }
 REGISTER_UNIT_TEST( server_refuses_an_unparseable_second_address );
+
+static void public_address_environment_pair_is_consumed_together()
+{
+    check( both_families_setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:40000" ) == 0 );
+    check( both_families_setenv( "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS", "[::1]:40000" ) == 0 );
+
+    both_families_identity_t identity;
+    both_families_identity( &identity );
+    struct rocketnet_server_t * first = NULL;
+    enum rocketnet_status_t status = both_families_start( &identity, "127.0.0.1:39999", NULL, &first );
+    check( status == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_port( first ) == 40000 );
+    both_families_stop( first );
+
+    // Both address overrides belonged to the first successful create. The
+    // second create uses its own one-family address and port.
+    struct rocketnet_server_t * second = NULL;
+    status = both_families_start( &identity, "127.0.0.1:40001", NULL, &second );
+    check( status == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_port( second ) == 40001 );
+    both_families_stop( second );
+
+    check( both_families_unsetenv( "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) == 0 );
+    check( both_families_unsetenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) == 0 );
+}
+REGISTER_UNIT_TEST( public_address_environment_pair_is_consumed_together );
 
 static void both_families_pump( struct rocketnet_server_t * server, struct rocketnet_client_t * ipv4, struct rocketnet_client_t * ipv6, double * time )
 {

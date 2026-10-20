@@ -1000,6 +1000,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     char struct_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     memcpy( struct_public_address, effective_config.public_address, sizeof(struct_public_address) );
+    char struct_second_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    memcpy( struct_second_public_address, effective_config.second_public_address, sizeof(struct_second_public_address) );
 
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
@@ -1062,14 +1064,18 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     bool consuming_env_public_address = false;
 
-    if ( strncmp( effective_config.public_address, struct_public_address, sizeof(struct_public_address) ) != 0 )
+    const bool env_public_address_changed = strncmp( effective_config.public_address, struct_public_address, sizeof(struct_public_address) ) != 0;
+    const bool env_second_public_address_changed = strncmp( effective_config.second_public_address, struct_second_public_address, sizeof(struct_second_public_address) ) != 0;
+    if ( env_public_address_changed || env_second_public_address_changed )
     {
-        // the env layer (or its deprecated alias) set it
+        // the env layer set one or both related addresses; they are consumed
+        // together so a later create cannot inherit half of a dual-family pair
 
         if ( env_public_address_consumed.load() )
         {
-            rocketnet_info( "the public_address env override was consumed by an earlier server create in this process. using the create parameters" );
+            rocketnet_info( "the public address env overrides were consumed by an earlier server create in this process. using the create parameters" );
             memcpy( effective_config.public_address, struct_public_address, sizeof(struct_public_address) );
+            memcpy( effective_config.second_public_address, struct_second_public_address, sizeof(struct_second_public_address) );
         }
         else
         {
