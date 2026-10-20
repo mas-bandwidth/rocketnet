@@ -249,6 +249,13 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
                       ["exit %d" % result.returncode])[-1]
             report(False, f"{language} client against the {linkage} library builds: {detail}")
             return
+        wanted = set(universal_arch_flags(staging_library)[1::2])
+        if len(wanted) > 1:
+            built = set(subprocess.check_output(["lipo", "-archs", str(executable)], text=True).split())
+            if built != wanted:
+                report(False, f"{language} client against the {linkage} library carries the slices "
+                              f"{sorted(wanted)}: lipo -archs prints {sorted(built)}")
+                return
         try:
             run = subprocess.run([str(executable)], capture_output=True, text=True,
                                  cwd=directory, env=environment, timeout=30)

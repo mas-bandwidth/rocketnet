@@ -59,6 +59,19 @@ def main():
                 command.append(f"-D{key}={cache[key]}")
         run(*command)
         run("cmake", "--build", consumer, "--config", args.config, "--parallel", "4", *native_build_options)
+        # A universal producer build has universal consumers: every consumer executable
+        # carries each slice CMAKE_OSX_ARCHITECTURES names.
+        wanted = set(cache.get("CMAKE_OSX_ARCHITECTURES", "").split(";")) - {""}
+        if len(wanted) > 1:
+            executables = [path for path in consumer.rglob("consumer_rocketnet_*")
+                           if path.is_file() and os.access(path, os.X_OK)]
+            if not executables:
+                raise RuntimeError("no consumer executable found to check its slices")
+            for executable in executables:
+                built = set(subprocess.check_output(["lipo", "-archs", str(executable)], text=True).split())
+                if built != wanted:
+                    raise RuntimeError(f"{executable.name} carries {sorted(built)}, not {sorted(wanted)}")
+            print(f"Universal consumers: {len(executables)} executables carry {sorted(wanted)}")
         env = os.environ.copy()
         # Installed DLL plus vcpkg's copied runtime dependency on Windows.
         env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
