@@ -54,8 +54,15 @@ How to read the verdicts. A row passes only when every column passes:
            of the process, which macOS grants only with developer tools
            access enabled for the user running it.
   refusals soak fails a run on any REFUSAL counter, except the
-           already-received refusal of the duplicates an impaired cell plants;
-           soak prints those as "planted duplicates refused at ...".
+           <FAMILY>_ALREADY_RECEIVED refusals of the duplicates an impaired
+           cell plants (soak.c:142); soak
+           prints those as "planted duplicates refused at ...". The server
+           socket is bound on the wildcard address, so on a machine shared with other
+           suites a foreign packet sent to its port is refused and counted
+           too: a server WRONG_DIRECTION refusal is a CONNECTION_COOKIE,
+           CHALLENGE or DENIED packet arriving at a server, which only ever
+           sends them (sdk/rocketnet_server_protocol.cpp:1271-1279). Read the
+           sender before calling it a defect; rerun the cell on a quiet machine.
 The script exits 0 when every row passes and 1 otherwise.
 """
 
