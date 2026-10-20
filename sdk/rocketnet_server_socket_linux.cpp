@@ -157,6 +157,11 @@ struct rocketnet_server_xdp_socket_t
     // this queue's xdp thread under send_mutex
     uint64_t send_refused_build;
 
+    // staged packets the flush did not copy because their length is 0 or
+    // past ROCKETNET_RECEIVE_CEILING (rocketnet_xdp_send_copy); written by
+    // this queue's xdp thread under send_mutex
+    uint64_t send_refused_length;
+
     uint8_t padding_5[4096];
 
     rocketnet_send_handoff_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
@@ -227,6 +232,10 @@ struct rocketnet_server_socket_t
     rocketnet_server_xdp_socket_t * socket;
 
     rocketnet_server_socket_process_packets_t process_packets;
+
+    // the per-cpu stats map read buffer (rocketnet_xdp_stats_cpus_fit), inside
+    // the create-time allocation; written only by rocketnet_server_socket_xdp_counters
+    struct rocketnet_server_xdp_stats_t stats_values[ROCKETNET_XDP_STATS_MAX_CPUS];
 };
 
 void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server );
@@ -234,7 +243,11 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server );
 static bool get_interface_mac_address( const char * interface_name, uint8_t * mac_address ) 
 {
     char path[256];
-    snprintf( path, sizeof(path), "/sys/class/net/%s/address", interface_name );
+    const int path_length = snprintf( path, sizeof(path), "/sys/class/net/%s/address", interface_name );
+    if ( path_length < 0 || (size_t) path_length >= sizeof(path) )
+    {
+        return false;
+    }
     FILE * file = fopen(path, "r");
     if ( !file )
     {
@@ -2538,8 +2551,16 @@ void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * 
 
 static void pin_thread_to_cpu( int cpu ) 
 {
+    // CPU_SET writes bit cpu of a CPU_SETSIZE-bit set: a cpu outside it is
+    // refused here in every build, before CPU_SET
+
+    if ( !rocketnet_xdp_cpu_in_set( cpu, CPU_SETSIZE ) )
+    {
+        rocketnet_error( "xdp thread not pinned: cpu %d is outside 0 .. %d", cpu, CPU_SETSIZE - 1 );
+        return;
+    }
+
     int num_cpus = sysconf( _SC_NPROCESSORS_ONLN );
-    rocketnet_assert( cpu >= 0 );
     rocketnet_assert( cpu < num_cpus );
 
     cpu_set_t cpuset;
@@ -2579,10 +2600,14 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
     // the stats map is per-CPU: one value struct per possible CPU, summed here
 
     const int num_cpus = libbpf_num_possible_cpus();
-    if ( num_cpus <= 0 )
+    if ( !rocketnet_xdp_stats_cpus_fit( num_cpus ) )
+    {
+        if ( num_cpus > 0 )
+            rocketnet_error( "xdp stats not read: %d possible cpus is past %d", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
         return;
+    }
 
-    struct rocketnet_server_xdp_stats_t * values = (struct rocketnet_server_xdp_stats_t*) alloca( num_cpus * sizeof(struct rocketnet_server_xdp_stats_t) );
+    struct rocketnet_server_xdp_stats_t * values = server_socket->stats_values;
 
     __u32 key = 0;
     if ( bpf_map_lookup_elem( server_socket->stats_map_fd, &key, values ) != 0 )
@@ -2741,7 +2766,18 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 frame[num_consumed] = desc->addr;
                 num_consumed++;
 
-                uint8_t * __restrict__ packet_data = (uint8_t*)socket->buffer + desc->addr;
+                // the descriptor is checked against the receive region and
+                // its own frame before a byte of it is read; a refused one is
+                // counted in receive_drops.descriptor, and its address stays
+                // in frame[] above, so it goes back to the fill queue like any
+                // dropped frame
+
+                const uint8_t * __restrict__ packet_data = rocketnet_xdp_receive_descriptor( socket->buffer,
+                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE,
+                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE,
+                    desc->addr, desc->len, &socket->receive_drops );
+                if ( !packet_data )
+                    continue;
 
                 // the codec dispatches on the ethertype: IPv4 at its
                 // offsets, IPv6 at the 40-byte fixed header, the from-address
@@ -2862,19 +2898,24 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                         uint8_t * packet_data = (uint8_t*)socket->buffer + frame;
 
-                        const int payload_bytes = send_buffer->packet_info[i].packet_bytes;
-
                         // the server's own address is the source, in the
                         // family it serves; the codec builds IPv4 or IPv6
                         // (with the mandatory UDP checksum) and refuses a
                         // destination of the other family, which is counted
                         // and never sent as a malformed frame
 
-                        const int header_bytes = rocketnet_xdp_frame_header_bytes( send_buffer->packet_info[i].to.type );
-                        memcpy( packet_data + header_bytes, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, payload_bytes );
+                        // the length is checked before the copy: 0 or past
+                        // ROCKETNET_RECEIVE_CEILING is refused and counted in
+                        // send_refused_length, and its frame is freed
 
-                        const int frame_bytes = rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, &socket->server_address, &send_buffer->packet_info[i].to, payload_bytes );
-                        if ( frame_bytes <= 0 )
+                        const int copied_bytes = rocketnet_xdp_send_copy( packet_data, ROCKETNET_XDP_FRAME_SIZE, send_buffer->packet_info[i].to.type, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, send_buffer->packet_info[i].packet_bytes, &socket->send_refused_length );
+
+                        const int frame_bytes = ( copied_bytes < 0 ) ? 0 : rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, send_buffer->packet_info[i].destination_mac, &socket->server_address, &send_buffer->packet_info[i].to, copied_bytes );
+                        if ( copied_bytes < 0 )
+                        {
+                            free_send_frame( socket, frame );
+                        }
+                        else if ( frame_bytes <= 0 )
                         {
                             free_send_frame( socket, frame );
                             socket->send_refused_build++;
