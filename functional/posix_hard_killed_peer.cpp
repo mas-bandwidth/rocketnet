@@ -534,18 +534,28 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     posix_hk_server_stop_and_destroy( server );
 }
 
-// a port no socket holds: bind one, read its port, close it
+// a port no socket holds: bind one, close it. it is drawn below the
+// ephemeral range (net.inet.ip.portrange.first, 49152 on macOS), so a socket
+// another case binds to port 0 is never granted it between this close and
+// the bind posix_client_server_gone makes on it; an ephemeral port released
+// here was, and the server's create then failed on a port in use.
 
 static int posix_hk_closed_port( bool ipv6 )
 {
-    rocketnet_address_t address;
-    rocketnet_address_parse( &address, ipv6 ? "[::1]" : "127.0.0.1" );
-    struct rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536, "portable" );
-    posix_hard_killed_require( socket );
-    const int port = address.port;
-    rocketnet_platform_socket_destroy( socket );
-    posix_hard_killed_require( port != 0 );
-    return port;
+    for ( int attempt = 0; attempt < 1000; attempt++ )
+    {
+        rocketnet_address_t address;
+        rocketnet_address_parse( &address, ipv6 ? "[::1]" : "127.0.0.1" );
+        address.port = (uint16_t) ( 20000 + arc4random_uniform( 20000 ) );
+        struct rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536, "portable" );
+        if ( !socket )
+            continue;
+        const int port = address.port;
+        rocketnet_platform_socket_destroy( socket );
+        return port;
+    }
+    posix_hard_killed_require( false );
+    return 0;
 }
 
 static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
