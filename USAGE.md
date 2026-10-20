@@ -16,15 +16,18 @@ format lives in [STANDARD.md](STANDARD.md).
 ## Start and stop
 
 Call `rocketnet_init` once before creating a client or a server, and check its
-result. A second init returns false without disturbing the live library. A
-create before init returns NULL and allocates nothing. Call `rocketnet_term`
-after every client and server is destroyed; termination with live allocations
-is refused and logged, and a repeated termination is a no-op. Startup,
+result. Every call that can fail returns `enum rocketnet_status_t`, and
+`ROCKETNET_STATUS_OK` (0) is success; `rocketnet_status_name` names a code. A
+second init returns `ROCKETNET_STATUS_ALREADY_INITIALIZED` without disturbing
+the live library. A create before init returns NULL and allocates nothing. Call
+`rocketnet_term` after every client and server is destroyed; termination with
+live allocations is refused with `ROCKETNET_STATUS_LIVE_ALLOCATIONS` and
+logged, and a repeated termination returns `ROCKETNET_STATUS_NOT_INITIALIZED`. Startup,
 shutdown and process-wide logging setup are serialized with application work.
 
 Set custom allocator callbacks before initialization, with no live allocations.
-A refused `rocketnet_allocator` replacement returns false; an accepted one
-returns true. Every refused API call logs one line and increments
+A refused `rocketnet_set_allocator` replacement returns its status; an accepted
+one returns `ROCKETNET_STATUS_OK`. Every refused API call logs one line and increments
 `rocketnet_api_misuse_count`.
 
 The public API is NULL safe at the boundary. Every entry point checks each
@@ -38,7 +41,7 @@ refused before any I/O, so no socket opens.
 
 int main( void )
 {
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
     /* create clients and servers here */
@@ -245,8 +248,8 @@ void stop( struct rocketnet_client_t * client, struct rocketnet_server_t * serve
 ```
 
 `rocketnet_client_validate_config` and `rocketnet_server_validate_config`
-report whether create would accept the struct's own values; the environment is
-not read. Destroying a client ends its connection. Destroying a server
+return `ROCKETNET_STATUS_OK` when create would accept the struct's own values,
+else `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`; the environment is not read. Destroying a client ends its connection. Destroying a server
 disconnects every client and frees the server.
 
 ## Frame loop
@@ -259,7 +262,7 @@ the server:
 2. Receive and release every received message with the receive and release
    calls.
 3. Run the game simulation for the frame.
-4. Queue this frame's outgoing messages with start and finish.
+4. Queue this frame's outgoing messages with start message and finish message.
 5. Call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
    **last**, after all of this frame's messages are queued.
 
@@ -287,7 +290,7 @@ void client_frame( struct rocketnet_client_t * client, double time )
     /* 3. run the game simulation for this frame */
 
     /* 4. queue this frame's outgoing messages */
-    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, 64 );
+    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 );
     if ( out )
         rocketnet_client_finish_message( client, 64 );
 
@@ -301,31 +304,31 @@ The server runs the same block with `rocketnet_server_update`,
 `rocketnet_server_start_message`, `rocketnet_server_finish_message` and
 `rocketnet_server_send_packets`, looping the receive step over every client
 index. `rocketnet_client_update` and `rocketnet_server_update` return
-`ROCKETNET_MESSAGE_OK`, or `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` when a
+`ROCKETNET_UPDATE_OK`, or `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` when a
 received view from the last update was not released.
 
 ## Sending messages
 
-The send is start, write the message once in place, then finish:
+The send is start message, write the message once in place, then finish message:
 `rocketnet_client_start_message` or `rocketnet_server_start_message` returns a pointer into the
-connection's region, and finish queues the bytes written and returns the
-serial, nonzero, or `0` when the send was refused. Abort gives the room back.
-One start is pending per object at a time. To send one message to every
+connection's region, and finish message queues the bytes written and returns the
+serial, nonzero, or `0` when the send was refused. Abort message gives the room back.
+One start message is pending per object at a time. To send one message to every
 connected client, loop over the slots with `rocketnet_server_client_connected`
-and start and finish for each. A destination id is a client index today
+and start message and finish message for each. A destination id is a client index today
 (`uint64_t`); ids with `ROCKETNET_FLOW_ID_BIT` set are reserved for flows.
 
-The reliability is one of `ROCKETNET_UNRELIABLE`,
-`ROCKETNET_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABLE`,
-`ROCKETNET_RELIABLE_ORDERED`, `ROCKETNET_RELIABLE_SEQUENCED`,
-`ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABLE_WITH_ACK_RECEIPT`
-or `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one
+The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
+`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_RELIABLE`,
+`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`,
+`ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`, `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT`
+or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one
 message in one packet, up to `ROCKETNET_MESSAGE_SINGLE_BYTES`; the other types
 are bounded by the config's `max_message_bytes`. A larger payload fragments
 transparently, and a lost fragment loses the whole payload.
 
 A send the connection's region has no room for ends the connection with
-`ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
+`ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
 client, and the client disconnects itself. The send budget governs the wire,
 never the queue. A reliable message waits for budget and is never dropped; an
 unreliable message over budget is dropped and counted.
@@ -335,7 +338,7 @@ unreliable message over budget is dropped and counted.
 
 uint32_t queue_state( struct rocketnet_client_t * client, const uint8_t * state, int bytes )
 {
-    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
     if ( !out )
         return 0;
 
@@ -349,7 +352,8 @@ uint32_t queue_state( struct rocketnet_client_t * client, const uint8_t * state,
 `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` change a
 connection's budget at runtime. A value of `0` or less disables the budget in
 that direction, which is not recommended; a positive value up to
-`ROCKETNET_SEND_BUDGET_MAX_KBPS` caps it.
+`ROCKETNET_SEND_BUDGET_MAX_KBPS` caps it. Each returns `ROCKETNET_STATUS_OK`, or
+`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` above the maximum with the rate unchanged.
 
 ## Receiving messages
 
@@ -358,7 +362,7 @@ message of the update on a channel as a const view and its length. The view is
 valid until the next update, and every received message must be released with
 `rocketnet_client_release_message` or `rocketnet_server_release_message` before the next
 update. Copy anything kept past the update. Updating with a view still held
-asserts in a debug build and returns `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` in
+asserts in a debug build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in
 a release build.
 
 Each call returns `1` with the next message, or `0` when there is none on that
@@ -386,7 +390,7 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     /* 4. queue this frame's outgoing messages */
     const uint8_t payload[] = { 1, 2, 3, 4 };
     uint32_t serial = 0;
-    uint8_t * out = rocketnet_server_start_message( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
+    uint8_t * out = rocketnet_server_start_message( server, client_index, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( payload ) );
     if ( out )
     {
         memcpy( out, payload, sizeof( payload ) );
@@ -404,7 +408,7 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     int count = rocketnet_server_receipts( server, client_index, receipts, 64 );
     for ( int i = 0; i < count; i++ )
     {
-        if ( receipts[i].status == ROCKETNET_RECEIPT_LOSS )
+        if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_LOSS )
         {
             /* the send with this serial was lost */
         }
@@ -417,7 +421,7 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
 Every send returns a serial. `rocketnet_client_receipts` and
 `rocketnet_server_receipts` copy this update's outcomes into a caller array, up
 to its capacity, and return the copied count. Each entry carries the serial and
-`ROCKETNET_RECEIPT_ACKED` or `ROCKETNET_RECEIPT_LOSS`. Repeated calls see the
+`ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`. Repeated calls see the
 same list until the next update. A full receipt ring drops its oldest entry;
 the `receipt_ring` config field sets its size.
 
@@ -475,7 +479,9 @@ the state becomes DISCONNECTED. On the server,
 slot and its client, `rocketnet_server_num_connected_clients` counts them, and
 `rocketnet_server_disconnect_client` ends one deliberately.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
-ended. The reason is one of the `ROCKETNET_MESSAGE_ERROR_*` values.
+ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
+`rocketnet_disconnect_reason_name`. A NULL client reads as
+`ROCKETNET_CLIENT_STATE_INVALID`.
 
 ```c
 #include "rocketnet.h"

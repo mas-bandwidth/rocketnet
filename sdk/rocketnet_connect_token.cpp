@@ -173,7 +173,7 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
     return rocketnet_write_connect_token_sealed( signed_fields, private_fields, backend_secret_key, ephemeral_secret_key, token );
 }
 
-int rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key )
+enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key )
 {
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -182,7 +182,7 @@ int rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_k
     return ROCKETNET_STATUS_OK;
 }
 
-int rocketnet_generate_backend_keypair_from_seed( const uint8_t * seed, uint8_t * public_key, uint8_t * secret_key )
+enum rocketnet_status_t rocketnet_generate_backend_keypair_from_seed( const uint8_t * seed, uint8_t * public_key, uint8_t * secret_key )
 {
     if ( !rocketnet_api_null_guard( seed ) || !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -191,7 +191,7 @@ int rocketnet_generate_backend_keypair_from_seed( const uint8_t * seed, uint8_t 
     return ROCKETNET_STATUS_OK;
 }
 
-int rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key )
+enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key )
 {
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -200,18 +200,18 @@ int rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_ke
     return ROCKETNET_STATUS_OK;
 }
 
-int rocketnet_write_production_connect_token( const uint8_t * backend_secret_key,
-                                              const uint8_t * server_public_key,
-                                              uint64_t protocol_id,
-                                              const char * const * server_address_strings,
-                                              int server_address_count,
-                                              uint64_t client_id,
-                                              uint64_t create_timestamp,
-                                              uint64_t expire_timestamp,
-                                              int32_t timeout_seconds,
-                                              const uint8_t * user_data,
-                                              uint8_t * connect_token,
-                                              size_t connect_token_bytes )
+enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t * backend_secret_key,
+                                                                  const uint8_t * server_public_key,
+                                                                  uint64_t protocol_id,
+                                                                  const char * const * server_address_strings,
+                                                                  int server_address_count,
+                                                                  uint64_t client_id,
+                                                                  uint64_t create_timestamp,
+                                                                  uint64_t expire_timestamp,
+                                                                  int32_t timeout_seconds,
+                                                                  const uint8_t * user_data,
+                                                                  uint8_t * connect_token,
+                                                                  size_t connect_token_bytes )
 {
     if ( !rocketnet_api_null_guard( backend_secret_key ) ||
          !rocketnet_api_null_guard( server_public_key ) ||
@@ -367,23 +367,27 @@ const uint8_t rocketnet_dev_server_secret_key[32] =
     0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97};
 
 #if ROCKETNET_DEVELOPMENT
-int rocketnet_write_dev_connect_token( const char * server_address_string,
-                                       uint64_t client_id,
-                                       uint64_t current_timestamp,
-                                       uint8_t * connect_token )
+enum rocketnet_status_t rocketnet_write_dev_connect_token( const char * server_address_string,
+                                                           uint64_t client_id,
+                                                           uint64_t current_timestamp,
+                                                           uint8_t * connect_token,
+                                                           size_t connect_token_bytes )
 {
     if ( !rocketnet_api_null_guard( server_address_string ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !rocketnet_api_null_guard( connect_token ) )
-        return 0;
-    rocketnet_assert( server_address_string );
-    rocketnet_assert( connect_token );
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
+    {
+        rocketnet_error( "dev connect token refused: the buffer is %d bytes, not the %d a token needs", (int) connect_token_bytes, ROCKETNET_CONNECT_TOKEN_BYTES );
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     struct rocketnet_address_t server_address;
     if ( !rocketnet_address_parse( &server_address, server_address_string ) )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ADDRESS;
     if ( server_address.type != ROCKETNET_ADDRESS_IPV4 && server_address.type != ROCKETNET_ADDRESS_IPV6 )
-        return 0;
+        return ROCKETNET_STATUS_INVALID_ADDRESS;
 
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof(signed_fields) );
@@ -417,11 +421,11 @@ int rocketnet_write_dev_connect_token( const char * server_address_string,
     randombytes_buf( private_fields.client_to_server_key, ROCKETNET_KEY_BYTES );
     randombytes_buf( private_fields.server_to_client_key, ROCKETNET_KEY_BYTES );
 
-    int result = rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, connect_token );
+    const int result = rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, connect_token );
 
     sodium_memzero( &private_fields, sizeof(private_fields) );
 
-    return result;
+    return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
 #endif // #if ROCKETNET_DEVELOPMENT
 
