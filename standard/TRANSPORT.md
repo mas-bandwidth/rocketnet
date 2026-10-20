@@ -315,7 +315,6 @@ Registry rules:
 | SipHash key | `16` | bytes | size | [t2 Architecture and key inventory](#t2) |
 | prefilter header | `6` | bytes | size | [t5 Prefilter header](#t5) |
 | filter value | `4` | bytes | size | [t5 Prefilter header](#t5) |
-| prefilter magic | `16` | bytes | size | [t5 Prefilter header](#t5) |
 | sequence | `4` | bytes | size | [t4 Wire encoding primitives](#t4) |
 | per-packet overhead | `26` | bytes | size | [t8 Packet formats](#t8) |
 | associated data | `21` | bytes | size | [t9 Packet protection](#t9) |
@@ -347,7 +346,7 @@ Registry rules:
 | cookie key rotation | `60` | seconds | protocol value | [t12 Handshake: server](#t12) |
 | server redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
 | client redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
-| ack debt threshold | `64` | packets | protocol value | [t15 Acknowledgement](#t15) |
+| ack debt threshold | `1` | packet | send on the next update after an eliciting packet | [t15 Acknowledgement](#t15) |
 | used-token history per slot | `8` | entries | protocol value | [t12 Handshake: server](#t12) |
 
 The token identifier of a connect token is the BLAKE2b hash, of token
@@ -2411,7 +2410,7 @@ The client is in exactly one of the states of the table below. A state number is
 
 1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0). In every other state, a connect token MUST be ignored and the state MUST NOT change.
 2. A connect token accepted in disconnected (0) MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
-3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set, otherwise the IPv4 address.
+3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it.
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1), sending connection request (2) or sending connection response (3), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in connected (4).
@@ -2664,7 +2663,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4).
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
 5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
-6. A server MUST then ignore a request whose timeout is zero or negative without permission, then one whose address flags name no family or set a bit above bit 1, then one whose advertised address is not one this server serves, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
+6. A server MUST then ignore a request whose timeout is zero or negative without permission, then one whose address flags name no family or set a bit above bit 1, then one whose flagged addresses name none this server serves (a token naming both families is accepted when either address is one this server serves), and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
 9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and, once the failed-signature budget of the current window is spent, a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
@@ -3283,13 +3282,12 @@ connection ack packet is opened, replay-marked and processed for its block like
 any other session packet, but MUST NOT add acknowledgement debt. This rule
 prevents acknowledgements from eliciting acknowledgements.
 
-An endpoint SHOULD send a standalone connection ack packet when its
-acknowledgement debt reaches the [t3 Constants and registries](#t3) (ack debt
-threshold row), and MAY send one sooner when fresh delivery information is
-useful. A sender MUST clear the debt when it sends any session packet that
-carries a block. A standalone acknowledgement contains the block and no
-packet-type data. It is an optimization for timely delivery notification;
-correctness does not depend on sending it.
+An endpoint MUST send an acknowledgement block on its next protocol update
+whenever acknowledgement debt is nonzero. If no other session packet carries
+the block on that update, it MUST send a standalone connection ack packet. A sender MUST clear
+the debt when it sends any session packet that carries a block. A standalone
+acknowledgement contains the block and no packet-type data. A type 8 packet
+does not add debt, so acknowledgements do not elicit acknowledgements.
 
 <a id="t15.5"></a>
 ### t15.5. Round-trip sampling
@@ -3616,14 +3614,25 @@ an input ([t1.4 Conventions](#t1.4)).
    rotation period of [t3 Constants and registries](#t3) and no longer.
 8. An endpoint MUST send the redundant disconnect packet count of
    [t3 Constants and registries](#t3) on a deliberate disconnect.
-9. An endpoint SHOULD send a standalone ack when its ack debt reaches the ack
-   debt threshold of [t3 Constants and registries](#t3), and MUST NOT delay an
-   ack past the next packet it sends.
-10. A server SHOULD enforce the handshake work budget after the cookie of a
+9. An endpoint MUST send an acknowledgement block on its next update when
+   ack debt is nonzero, using a standalone ack if no other session packet
+   carries it, and MUST NOT wait for a packet threshold or keep-alive cadence.
+10. A reliable-message sender MUST retransmit an unacknowledged message only
+    when its adaptive retransmission timeout (RTO) expires. Before any RTT
+    sample, the RTO is 2 seconds by default. For the first RTT sample, the
+    sender MUST set both its smoothed RTT and deviation to that sample. For
+    each later sample, deviation MUST move 5 percent toward the absolute
+    difference between the prior smoothed RTT and the sample, then smoothed
+    RTT MUST move 5 percent toward the sample.
+    The RTO is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
+    configured maximum (2 seconds by default) and raised to the configured
+    minimum (0 by default). A nonzero minimum is an implementation option.
+    The sender MUST NOT back off the RTO after retransmission.
+11. A server SHOULD enforce the handshake work budget after the cookie of a
     connection request validates and before any asymmetric operation. When it
     does, a request past the budget MUST be refused with no reply and counted
     as a refusal, and the budget MUST be reset at the start of each update.
-11. A server SHOULD apply the failed-signature budget before the signature
+12. A server SHOULD apply the failed-signature budget before the signature
     verification. When it does, a request from a source that has already
     failed in the current failed-signature window MUST be refused before the
     verification runs and counted as a refusal. The budget MUST NOT refuse a
@@ -3654,7 +3663,7 @@ input: the timing defaults above, in the order stated, each as a little-endian u
 0a 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00
 3c 00 00 00 00 00 00 00 0a 00 00 00 00 00 00 00
-0a 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00
+0a 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00
 00 04 00 00 00 00 00 00 5a 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00
 ```
@@ -4314,3 +4323,28 @@ blocks at readout. In a kernel dataplane the context is a CPU; in userspace
 it is a thread. Counters are monotonic and never reset, so a rate is derived
 by differencing two snapshots and a zero still means that the event never
 happened. See [t18 Error handling and counters](#t18).
+
+
+### Create-time maximum-RTO message reserve
+
+Each connection adds a local payload reserve to its configured message-region
+headroom at CREATE. Let `R = ceil(send_kbps * 125 * rto_max_ms / 1000)` bytes.
+Client and server creation use their respective resolved per-connection budgets,
+including an explicit creation override. Generic connection sizing conservatively
+uses the larger configured budget. A zero/unlimited budget has no finite reserve.
+
+The descriptor pool adds `ceil(R / 128)` entries. The 128-, 512-, and 1152-byte
+fixed pools add `ceil(R / 128)`, `ceil(R / 512)`, and `ceil(R / 1024)` chunks,
+respectively, including each chunk's four-byte link and alignment. The send-span
+arena adds R plus up to 15 padding bytes per 1153 payload bytes, rounded to 64.
+Receive-ring and reliable-window wire parameters do not change. This extends the
+historical headroom-only formula and default sizes above; runtime sizing reports
+the resulting total. All parts remain in the single allocator-hook allocation.
+
+The capacity guarantee assumes typical payload sizes of 128/512/1024 bytes in
+the corresponding fixed pools, or larger messages in the span arena. Arbitrarily
+tiny records can exhaust bounded descriptors or padding capacity; they retain
+MESSAGE_MEMORY_EXHAUSTED and disconnect behavior. Raising the runtime send budget
+after CREATE does not enlarge this allocation; configure the intended maximum
+budget before creation. The full-budget regression retains one maximum RTO of
+payload without acknowledgments at both default client and server budgets.

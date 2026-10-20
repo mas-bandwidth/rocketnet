@@ -1195,3 +1195,45 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 #endif // #if defined(__linux__)
 
 #endif // #if !defined(_WIN32)
+
+/*
+    macOS record (Darwin arm64, macOS 27.0.1, Apple clang 21.0.0, Debug
+    build, ROCKETNET_TEST_VERBOSE=1 so the suite prints the lines of a
+    passing case). Each run is one ./bin/functional --run <case> over the six
+    macOS cells (posix_cells). Seconds per run:
+
+        case                                 r1    r2    r3    r4    r5
+        posix_init_term_1000                 12    11    10    8     8
+        posix_server_create_destroy_1000     owed: a run takes about 150 s
+        posix_client_create_destroy_1000     29    28    27    26    27
+        posix_server_restart_same_port_100   23    22    22    20    20
+        posix_connect_disconnect_1000        52    54    52    51    50
+        posix_destroy_under_traffic_100      77    76    78    78    78
+
+    Every cell of every run printed fds 4 -> 4 and threads 1 -> 1. One
+    earlier run of posix_client_create_destroy_1000 on the same host, a tree
+    whose only difference in this file was this record, printed threads
+    1 -> 5 (fds 4 -> 4) in [server msgx forced portable, client msgx] and
+    failed in posix_case_result, with the host's load average near 15.
+    Twelve runs of that case over the msgx server cells
+    (ROCKETNET_POSIX_LIFECYCLE_CELLS=msgx) right after it passed with flat
+    counts. The four extra threads are not explained yet.
+
+    The red proof, each a scratch build that is not kept, each run as
+    ./bin/functional --run posix_client_create_destroy_1000 and failing at
+    posix_case_result:
+
+    - the macOS rocketnet_platform_socket_destroy skips its close:
+      [server portable, client portable] FAIL fds 4 -> 1004, threads 1 -> 1.
+    - the macOS rocketnet_platform_thread_join skips pthread_join
+      and the thread, its function returned, does not exit:
+      [server portable, client portable] FAIL fds 4 -> 4, threads 1 -> 1001.
+
+    The thread count is pti_threadnum (posix_threads), the threads alive in
+    the task. A skipped join of a thread that then exits leaves no live thread
+    and the case stays green, threads 1 -> 1 in every cell. A
+    skipped join in rocketnet_client_transport_destroy
+    lets destroy free the client while its I/O thread still steps it, and the
+    process ends in SIGSEGV in rocketnet_client_io_step, called from
+    rocketnet_client_io_thread_function.
+*/

@@ -105,15 +105,19 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
 
 uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server )
 {
-    (void) is_server;
     rocketnet_message_config_t defaults;
     if ( !config )
     {
         rocketnet_message_default_config( &defaults );
         config = &defaults;
     }
+    // Only this direction's resolved send budget sizes its connection region.
+    rocketnet_message_config_t sized = *config;
+    const int kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
+    sized.client_send_kbps = kbps;
+    sized.server_send_kbps = kbps;
     rn_message_object_layout_t layout;
-    if ( !rn_message_object_layout( config, num_connections, &layout ) )
+    if ( !rn_message_object_layout( &sized, num_connections, &layout ) )
         return 0;
     return layout.total;
 }
@@ -145,7 +149,7 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
-                                                       int32_t default_kbps, double time )
+                                                       int32_t default_kbps, double time, bool reserve_unlimited )
 {
     rocketnet_message_config_t defaults;
     if ( !config )
@@ -163,6 +167,15 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     // and :173) and pass it as default_kbps.
     if ( default_kbps == 0 )
         default_kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
+
+    // Resolve the explicit create override before sizing. This copy is owned
+    // by the object and does not alter the caller's configuration.
+    rocketnet_message_config_t sized = *config;
+    // Keep the public unlimited runtime ceiling separate from sizing.
+    const int reserve_kbps = reserve_unlimited ? 0 : default_kbps;
+    sized.client_send_kbps = reserve_kbps;
+    sized.server_send_kbps = reserve_kbps;
+    config = &sized;
 
     rn_message_object_layout_t layout;
     const bool laid_out = link && rn_message_object_layout( config, num_connections, &layout );
@@ -1049,13 +1062,13 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps )
 {
-    return rocketnet_message_server_create_ex( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, NULL );
+    return rocketnet_message_server_create_ex( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, NULL, 0 );
 }
 
 struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
                                                                         const struct rocketnet_server_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status )
+                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited )
 {
     int ignored = ROCKETNET_STATUS_OK;
     if ( !status )
@@ -1103,7 +1116,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * c
 
     rn_message_link_t link;
     rn_message_server_link( &link, transport );
-    rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create( context, &link, 1, max_clients, message_config, memory, memory_bytes, kbps, 0.0 );
+    rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create( context, &link, 1, max_clients, message_config, memory, memory_bytes, kbps, 0.0, reserve_unlimited != 0 );
     *status = server ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY;
     return server;
 }

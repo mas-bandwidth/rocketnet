@@ -133,23 +133,49 @@ function(rocketnet_use_sodium target)
     endif()
 endfunction()
 
-# Generate into this build tree. Multiple builds never rewrite the source header.
+# server_xdp.o is compiled here, at build time, and embedded in the library as
+# bytes (cmake/EmbedXdp.cmake); the server host needs no compiler. Only the
+# Linux xdp server transport includes the generated header.
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
-if(WIN32)
-    configure_file(sdk/rocketnet_server_xdp.h "${ROCKETNET_XDP_HEADER}" COPYONLY)
-else()
+set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
+option(ROCKETNET_XDP "Compile and embed the Linux XDP program" ON)
+set(ROCKETNET_BPF_CLANG "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_program(ROCKETNET_XXD xxd REQUIRED)
+    find_program(ROCKETNET_CLANG clang)
+    if(ROCKETNET_XDP AND ROCKETNET_CLANG)
+        execute_process(COMMAND "${ROCKETNET_CLANG}" -print-targets
+            OUTPUT_VARIABLE ROCKETNET_CLANG_TARGETS ERROR_QUIET)
+        if(ROCKETNET_CLANG_TARGETS MATCHES "[ \t\n]bpf[ \t]")
+            set(ROCKETNET_BPF_CLANG "${ROCKETNET_CLANG}")
+        endif()
+    endif()
+    execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
+        OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(NOT ROCKETNET_XDP)
+        message(STATUS "XDP off: ROCKETNET_XDP=OFF; no server_xdp.o is embedded")
+    elseif(NOT ROCKETNET_BPF_CLANG)
+        message(STATUS "XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create")
+    endif()
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
+        CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
             "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
             "-DXXD=${ROCKETNET_XXD}"
+            "-DCLANG=${ROCKETNET_BPF_CLANG}"
+            "-DMULTIARCH=${ROCKETNET_MULTIARCH}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
+        BYPRODUCTS "${ROCKETNET_XDP_OBJECT}"
         DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
         VERBATIM)
+    add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
+else()
+    add_custom_target(rocketnet_xdp_header)
 endif()
-add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
 
 set(ROCKETNET_SOURCE
     sdk/rocketnet.cpp
@@ -242,14 +268,13 @@ add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # installed; the production shared library must not carry the minting symbol.
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The test hook library: the same source with the unit suite's seams compiled
-# in (the filter epoch window's MAC tally, the message layer's payload copy
-# count, the public link simulator's development switch, and the io_uring
-# driver's fake completion source). Only the unit
-# suite links it, so the installed rocketnet library carries no test hook.
+# in (the message layer's payload copy count, the public link simulator's
+# development switch, and the io_uring driver's fake completion source). Only
+# the unit suite links it, so the installed rocketnet library carries no test hook.
 set(rocketnet_test_hook_targets)
 if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
-    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -390,10 +415,9 @@ if(ROCKETNET_BUILD_TESTS)
     rocketnet_use_sodium(rocketnet_test_support)
     rocketnet_warning_floor(rocketnet_sodium_oracle)
     rocketnet_warning_floor(rocketnet_test_support)
-    # The filter epoch window's MAC tally (test_unit_filter_epochs.cpp) and the
-    # message layer's payload copy count (test_unit_unreliable_in_place.cpp)
-    # exist only for the unit suite: the test binary sees the declarations, and
-    # the definitions live in rocketnet_test_hooks, never in rocketnet.
+    # The message layer's payload copy count (test_unit_unreliable_in_place.cpp)
+    # exists only for the unit suite: the test binary sees the declaration, and
+    # the definition lives in rocketnet_test_hooks, never in rocketnet.
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
@@ -411,10 +435,10 @@ if(ROCKETNET_BUILD_TESTS)
     set(ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
-    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1)
+    target_compile_definitions(test PRIVATE ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1)
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
-        # the test hook library only, matching the filter-epoch seam above, so
+        # the test hook library only, matching the link-simulator seam above, so
         # neither the installed static library nor the shared libraries carry it.
         target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
         target_compile_definitions(test PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
@@ -457,7 +481,7 @@ if(ROCKETNET_BUILD_TESTS)
         sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
-        ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1
+        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
@@ -541,6 +565,14 @@ if(ROCKETNET_BUILD_TESTS)
     # bare soname when its rooted name misses; the executable's RUNPATH lets
     # that fallback resolve from any working directory.
     set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
+    # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
+    # test_lifecycle, test_driver, test_serialize, test_transport_control,
+    # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
+    # start threads, sleep or read the wall clock, so none of them is a unit
+    # test. ./bin/functional runs test_serialize, test_transport_control and
+    # the platform's driver binary (the execs table in functional/main.cpp's
+    # main); CI runs test_lifecycle and test_driver in steps named
+    # "Functional: ...".
     foreach(test_target test_lifecycle test_driver)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
@@ -569,24 +601,13 @@ if(ROCKETNET_BUILD_TESTS)
         rocketnet_use_sodium(test_xdp)
         target_link_libraries(test_xdp PRIVATE RocketNet::Bpf RocketNet::Xdp Threads::Threads)
         rocketnet_warning_floor(test_xdp)
-        # test_xdp_filter loads server_xdp/server_xdp.c and runs crafted frames
-        # through it with BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to
-        # run). The object is built with the command server_xdp/Makefile uses.
-        find_program(ROCKETNET_CLANG clang)
-        if(ROCKETNET_CLANG)
-            execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
-                OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-            set(ROCKETNET_XDP_FILTER_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/server_xdp_filter_test.o")
-            add_custom_command(OUTPUT "${ROCKETNET_XDP_FILTER_OBJECT}"
-                COMMAND "${ROCKETNET_CLANG}" -D__linux__ -D__BPF__ -ffreestanding -O2 -g
-                    "-I/usr/include/${ROCKETNET_MULTIARCH}" "-I${CMAKE_CURRENT_SOURCE_DIR}/sdk"
-                    -target bpf -c "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c"
-                    -o "${ROCKETNET_XDP_FILTER_OBJECT}"
-                DEPENDS ${ROCKETNET_XDP_SOURCES}
-                VERBATIM)
-            add_custom_target(rocketnet_xdp_filter_object DEPENDS "${ROCKETNET_XDP_FILTER_OBJECT}")
+        # test_xdp_filter loads server_xdp.o, the object the library embeds
+        # (cmake/EmbedXdp.cmake), and runs crafted frames through it with
+        # BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to run).
+        if(ROCKETNET_BPF_CLANG)
+            set(ROCKETNET_XDP_FILTER_OBJECT "${ROCKETNET_XDP_OBJECT}")
             add_executable(test_xdp_filter test_xdp_filter.cpp)
-            add_dependencies(test_xdp_filter rocketnet_xdp_filter_object)
+            add_dependencies(test_xdp_filter rocketnet_xdp_header)
             # xdp_on_link_reply_reaches_the_peer runs bin/server and bin/client
             if(TARGET server AND TARGET client)
                 add_dependencies(test_xdp_filter server client)
@@ -598,7 +619,7 @@ if(ROCKETNET_BUILD_TESTS)
             target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf)
             rocketnet_warning_floor(test_xdp_filter)
         else()
-            message(STATUS "clang not found: test_xdp_filter is not built")
+            # The configure message above explains why the object is absent.
         endif()
     endif()
     if(APPLE)
@@ -626,12 +647,14 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(functional
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
+        functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
         functional/thread_priority_timing.cpp
         functional/macos_client_timing.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
+        functional/posix_hard_killed_peer.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})

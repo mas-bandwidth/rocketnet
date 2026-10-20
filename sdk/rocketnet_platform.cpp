@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_route.h"
+#include <atomic>
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
@@ -68,6 +69,53 @@ rocketnet_platform_sleep_plan_t rocketnet_platform_sleep_plan( double time )
 bool rocketnet_platform_sleep_tail_yields( double remaining )
 {
     return remaining > 0.0 && remaining <= ROCKETNET_PLATFORM_SLEEP_TAIL_SECONDS;
+}
+
+// The buffer loop of the Windows connection-type query (get_connection_type,
+// below), over a query callback so it is unit-tested with a refusing allocator
+// and a fake query (test_unit_driver_create_out_of_memory.cpp); compiled on
+// every platform. Each attempt asks rocketnet_malloc for bytes and runs the
+// query on the buffer. A refused allocation ends the fetch at once: the query
+// never sees a NULL buffer. An overflow answer, with bytes set to the size the
+// query needs, retries; ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS bounds the
+// attempts in all, so the loop ends whatever the allocator and the query
+// answer. Every end but success frees the buffer and returns NULL; a refusal
+// and running out of attempts are logged.
+
+extern void * rocketnet_malloc( void * context, size_t bytes );
+extern void rocketnet_free( void * context, void * p );
+
+#define ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS 3
+
+enum
+{
+    ROCKETNET_PLATFORM_ADAPTERS_OK,
+    ROCKETNET_PLATFORM_ADAPTERS_OVERFLOW,
+    ROCKETNET_PLATFORM_ADAPTERS_ERROR,
+};
+
+void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, int (*query)( void * buffer, unsigned long * bytes ) )
+{
+    // ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS bounds this loop: each pass makes one
+    // allocation and one query; a refused allocation and an error answer return
+    // at once, and only an overflow answer goes round again
+    for ( int attempt = 0; attempt < ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS; ++attempt )
+    {
+        void * buffer = rocketnet_malloc( context, bytes );
+        if ( !buffer )
+        {
+            rocketnet_warn( "connection type: allocation of %lu bytes refused; the connection type is unknown", bytes );
+            return NULL;
+        }
+        const int answer = query( buffer, &bytes );
+        if ( answer == ROCKETNET_PLATFORM_ADAPTERS_OK )
+            return buffer;
+        rocketnet_free( context, buffer );
+        if ( answer != ROCKETNET_PLATFORM_ADAPTERS_OVERFLOW )
+            return NULL;
+    }
+    rocketnet_warn( "connection type: buffer still too small after %d attempts; the connection type is unknown", ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS );
+    return NULL;
 }
 
 // test seam for the client bind-family choice: true unless a test turns it
@@ -231,12 +279,11 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-
-// A POSIX send that answers -1 drops its datagram: the drop is counted on the
-// socket that made it, so a caller can price what the kernel refused (ENOBUFS
-// from a full interface queue, EAGAIN from a full send buffer, a refused
-// destination). Atomic: the client's I/O thread and the main thread both read.
+// A send that answers -1 (SOCKET_ERROR on Windows) drops its datagram: the
+// drop is counted on the socket that made it, so a caller can price what the
+// kernel refused (ENOBUFS from a full interface queue, EAGAIN from a full send
+// buffer, a refused destination). Atomic: the client's I/O thread and the
+// main thread both read.
 
 static inline void rocketnet_platform_note_send_failure( rocketnet_platform_socket_t * socket )
 {
@@ -246,10 +293,8 @@ static inline void rocketnet_platform_note_send_failure( rocketnet_platform_sock
 uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
-    return __atomic_load_n( &socket->send_failures, __ATOMIC_RELAXED );
+    return rocketnet_platform_atomic_load_u64( &socket->send_failures );
 }
-
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // Test-only send-failure seam, compiled into the development library only.
 // The next N sendto and sendmsg_x calls on one socket report the chosen errno
@@ -343,6 +388,19 @@ void rocketnet_platform_socket_fail_next_sends( rocketnet_platform_socket_t * so
     }
     rocketnet_platform_test_recount_armed();
     rocketnet_platform_test_release();
+}
+
+// Test-only create seam: a callback between the bind and the first batch
+// decision, so a functional case can put a datagram on a fixed-port bind
+// before anything reads it. Development library only, like the sends seam.
+
+typedef void (*rocketnet_platform_create_receive_hook_t)( int handle );
+
+static rocketnet_platform_create_receive_hook_t rocketnet_platform_create_receive_hook = NULL;
+
+void rocketnet_platform_set_create_receive_hook( rocketnet_platform_create_receive_hook_t hook )
+{
+    rocketnet_platform_create_receive_hook = hook;
 }
 
 static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_socket_t * socket, int * error )
@@ -1997,12 +2055,12 @@ extern void rocketnet_free( void * context, void * p );
 //
 // The private-API risk is handled by never depending on them: the symbols
 // are resolved by dlsym at init (no link-time reference at all -- weaker
-// even than a weak import), each socket runs a functional probe at create,
-// any refusal at runtime degrades that socket to the portable per-packet
-// loop mid-flight without losing a packet, and ROCKETNET_PUMP=portable
-// forces the degraded path outright. iOS never resolves them: dlsym of a
-// private symbol is an App Store review finding, so the probe is compiled
-// out and iOS is portable by construction.
+// even than a weak import), each socket's first batch call is its
+// functional probe, any refusal at runtime degrades that socket to the
+// portable per-packet loop mid-flight without losing a packet, and
+// ROCKETNET_PUMP=portable forces the degraded path outright. iOS never
+// resolves them: dlsym of a private symbol is an App Store review finding,
+// so the batch pump is never offered and iOS is portable by construction.
 //
 // struct msghdr_x is from xnu bsd/sys/socket_private.h, defined locally
 // because no public SDK header carries it; the layout is the syscall ABI.
@@ -2237,11 +2295,10 @@ void rocketnet_platform_sleep( double time )
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 
-// the pump request (#106): the plain create probes for the batch pump
-// (auto); a forced-portable create SUPPRESSES the probe entirely -- the
-// pre-#106 ROCKETNET_PUMP=portable semantic, and the probe's recvmsg_x can
-// consume a queued datagram on a fixed-port bind, so a portable pin must
-// never run it at all
+// the pump request (#106): the plain create offers the batch pump (auto);
+// a forced-portable create SUPPRESSES the batch pump entirely -- the
+// pre-#106 ROCKETNET_PUMP=portable semantic. neither form reads the socket
+// at create: the first real batch call is the probe and keeps what it reads.
 
 #define ROCKETNET_PUMP_MODE_AUTO             0
 #define ROCKETNET_PUMP_MODE_FORCE_PORTABLE   1
@@ -2427,42 +2484,27 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
 #if TARGET_OS_OSX
 
-    // the batch pump probe: resolved symbols, a non-blocking socket (the
-    // pump's spin discipline assumes it), no environment override, and one
-    // real recvmsg_x against the just-bound socket -- a live syscall
-    // answers EAGAIN (or delivers, if the socket bound a fixed port that
-    // already had traffic queued: that consumes one datagram, priced as
-    // the UDP loss it is), and anything else (ENOSYS on a kernel that
-    // dropped the syscall, EOPNOTSUPP, EINVAL on an ABI drift) leaves the
-    // socket on the portable pump. degradation is silent above the seam.
+    // the batch pump: resolved symbols, a non-blocking socket (the pump's
+    // spin discipline assumes it) and no environment override make this
+    // socket an msgx candidate. nothing is read at create: recvmsg_x rejects
+    // MSG_PEEK, so a peek cannot decide the pump, and the first real batch
+    // call is the functional probe instead. a fixed-port bind that already
+    // has a datagram queued keeps it -- the receive that decides the pump
+    // also delivers what it read. a refusal there pauses the pump and the
+    // same call finishes portable, so nothing is lost either way.
+    // degradation is silent above the seam.
+
+#if defined(ROCKETNET_PLATFORM_SEND_SEAM)
+    if ( rocketnet_platform_create_receive_hook )
+        rocketnet_platform_create_receive_hook( socket->handle );
+#endif
 
     if ( pump_mode != ROCKETNET_PUMP_MODE_FORCE_PORTABLE && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
         const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
         if ( !pump_override || strcmp( pump_override, "portable" ) != 0 )
         {
-            uint8_t probe_data[64];
-            struct sockaddr_storage probe_name;
-            struct iovec probe_iov;
-            probe_iov.iov_base = probe_data;
-            probe_iov.iov_len = sizeof(probe_data);
-            struct rocketnet_msghdr_x_t probe_msg;
-            memset( &probe_msg, 0, sizeof(probe_msg) );
-            probe_msg.msg_name = &probe_name;
-            probe_msg.msg_namelen = sizeof(probe_name);
-            probe_msg.msg_iov = &probe_iov;
-            probe_msg.msg_iovlen = 1;
-
-            errno = 0;
-            ssize_t probe_result = rocketnet_recvmsg_x( socket->handle, &probe_msg, 1, 0 );
-            if ( probe_result >= 0 || errno == EAGAIN || errno == EWOULDBLOCK )
-            {
-                socket->msgx = true;
-            }
-            else
-            {
-                rocketnet_debug( "recvmsg_x probe refused (%s). socket pump is portable", strerror( errno ) );
-            }
+            socket->msgx = true;
         }
     }
 
@@ -2564,6 +2606,58 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     }
 }
 
+// UDP's ordinary weather on the receive path (DRIVERS.md, ICMP errors). a
+// BSD stack reports an ICMP error (port or host unreachable, a peer that
+// died hard) to the next receive on a CONNECTED socket, and a full mbuf
+// pool reports ENOBUFS; neither says anything about the datagrams still
+// queued behind it. every receive arm skips these and keeps draining:
+// never fatal, never the end of a drain, never an msgx pause. the sockets
+// are unconnected (no connect() anywhere in this file), so the kernel does
+// not route ICMP errors to them at all; this is the contract that keeps an
+// error harmless if one ever arrives. EAGAIN/EWOULDBLOCK stays the drain's
+// end: it means the queue is empty. each weather return is a one-shot
+// report (a pending socket error is cleared as it is returned), so a drain
+// always reaches a datagram or EAGAIN.
+
+static bool rocketnet_platform_receive_weather( int error )
+{
+    return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
+}
+
+#if ROCKETNET_DEVELOPMENT
+
+// the test seam (development builds only, never the production library):
+// the next recvmsg or recvmsg_x on any socket returns -1 with this errno
+// instead of calling the kernel, leaving every queued datagram in place.
+
+static std::atomic<int> rocketnet_platform_receive_errno_for_testing( 0 );
+
+void rocketnet_platform_inject_receive_errno_for_testing( int error )
+{
+    rocketnet_platform_receive_errno_for_testing.store( error );
+}
+
+static int rocketnet_platform_take_receive_errno_for_testing()
+{
+    return rocketnet_platform_receive_errno_for_testing.exchange( 0 );
+}
+
+#endif // #if ROCKETNET_DEVELOPMENT
+
+static ssize_t rocketnet_platform_recvmsg( int handle, struct msghdr * msg )
+{
+#if ROCKETNET_DEVELOPMENT
+    const int injected = rocketnet_platform_take_receive_errno_for_testing();
+    if ( injected != 0 )
+    {
+        errno = injected;
+        return -1;
+    }
+#endif // #if ROCKETNET_DEVELOPMENT
+    return recvmsg( handle, msg, 0 );
+}
+
 int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
 {
     rocketnet_assert( socket );
@@ -2592,13 +2686,21 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
         msg.msg_iov = iov;
         msg.msg_iovlen = 2;
 
-        result = int( recvmsg( socket->handle, &msg, 0 ) );
+        result = int( rocketnet_platform_recvmsg( socket->handle, &msg ) );
 
         if ( result < 0 )
         {
-            if ( errno != EAGAIN && errno != EINTR )
+            const int error = errno;
+
+            // ICMP-class and buffer weather: skip it and read on, the
+            // datagrams behind it are still queued (DRIVERS.md, ICMP errors)
+
+            if ( rocketnet_platform_receive_weather( error ) )
+                continue;
+
+            if ( error != EAGAIN && error != EWOULDBLOCK && error != EINTR )
             {
-                rocketnet_debug( "recvfrom failed with error %d", errno );
+                rocketnet_debug( "recvfrom failed with error %d", error );
             }
             return 0;
         }
@@ -2971,19 +3073,36 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         }
 
         errno = 0;
-        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+        ssize_t result;
+#if ROCKETNET_DEVELOPMENT
+        const int injected = rocketnet_platform_take_receive_errno_for_testing();
+        if ( injected != 0 )
+        {
+            errno = injected;
+            result = -1;
+        }
+        else
+#endif // #if ROCKETNET_DEVELOPMENT
+        result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
         if ( result < 0 )
         {
-            if ( errno == EINTR )
-                continue;
-            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+            const int error = errno;
+            if ( error == EAGAIN || error == EWOULDBLOCK )
                 return total;
+
+            // ICMP-class and buffer weather (and EINTR): skip it and keep
+            // draining on the batch pump until EAGAIN -- never a pause and
+            // never the end of a drain (DRIVERS.md, ICMP errors).
+
+            if ( rocketnet_platform_receive_weather( error ) )
+                continue;
 
             // outside ordinary weather: pause the pump and finish this
             // call per-packet -- what earlier chunks drained is already
-            // delivered, nothing about this call's contract changes.
+            // delivered, nothing about this call's contract changes. the
+            // pause logs once, and a paused pump never reaches this line.
 
-            rocketnet_msgx_pause( socket, "recvmsg_x", errno );
+            rocketnet_msgx_pause( socket, "recvmsg_x", error );
             goto per_packet;
         }
 
@@ -3845,6 +3964,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         return NULL;
 
     s->context = context;
+    s->send_failures = 0;
 
     rocketnet_assert( address );
     rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
@@ -3876,6 +3996,18 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     BOOL bNewBehavior = FALSE;
     DWORD dwBytesReturned = 0;
     WSAIoctl( s->handle, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL );
+
+    // own the port exclusively: without SO_EXCLUSIVEADDRUSE another local
+    // process binds the same port with SO_REUSEADDR and takes its datagrams.
+    // set before bind, as the IOCP and RIO drivers do.
+
+    BOOL exclusive = TRUE;
+    if ( setsockopt( s->handle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)( &exclusive ), sizeof( exclusive ) ) != 0 )
+    {
+        rocketnet_error( "failed to set socket exclusive address use" );
+        rocketnet_platform_socket_destroy( s );
+        return NULL;
+    }
 
     // set ipv6 sockets as dual stack
 
@@ -4026,6 +4158,22 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
     rocketnet_free( socket->context, socket );
 }
 
+// A Winsock sendto that answers SOCKET_ERROR drops its datagram: count it on
+// the socket, and log the error WSAGetLastError() reports (Winsock leaves
+// errno untouched), read by the caller before any other call can replace it.
+static void rocketnet_platform_windows_send_failed( rocketnet_platform_socket_t * socket, const rocketnet_address_t * to, int error )
+{
+    rocketnet_platform_note_send_failure( socket );
+    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_address_to_string( to, address_string );
+    char error_string[256] = { 0 };
+    const DWORD length = FormatMessageA( FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, (DWORD) error,
+        MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ), error_string, (DWORD) sizeof( error_string ), NULL );
+    for ( DWORD i = length; i > 0 && ( error_string[i - 1] == '\r' || error_string[i - 1] == '\n' || error_string[i - 1] == ' ' ); --i )
+        error_string[i - 1] = '\0';
+    rocketnet_debug( "sendto (%s) failed: WSA error %d: %s", address_string, error, error_string );
+}
+
 void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
 {
     rocketnet_assert( socket );
@@ -4054,14 +4202,8 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         }
         socket_address.sin6_port = rocketnet_platform_htons( to.port );
         int result = sendto( socket->handle, (char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in6) );
-        if ( result < 0 )
-        {
-            char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-            rocketnet_address_to_string( &to, address_string );
-            char error_string[256] = { 0 };
-            strerror_s( error_string, sizeof(error_string), errno );
-            rocketnet_debug( "sendto (%s) failed: %s", address_string, error_string );
-        }
+        if ( result == SOCKET_ERROR )
+            rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
     }
     else
     {
@@ -4070,14 +4212,8 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             sockaddr_in socket_address;
             rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
             int result = sendto( socket->handle, (const char*)(packet_data), packet_bytes, 0, (sockaddr*)(&socket_address), sizeof(sockaddr_in) );
-            if ( result < 0 )
-            {
-                char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-                rocketnet_address_to_string( &to, address_string );
-                char error_string[256] = { 0 };
-                strerror_s( error_string, sizeof(error_string), errno );
-                rocketnet_debug( "sendto (%s) failed: %s", address_string, error_string );
-            }
+            if ( result == SOCKET_ERROR )
+                rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
         }
         else
         {
@@ -4177,35 +4313,28 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 extern void * rocketnet_global_context;
 
+// GetAdaptersAddresses as the fetch's query: on ERROR_BUFFER_OVERFLOW it
+// sets the size it needs, which the fetch's next attempt allocates
+static int get_connection_type_query( void * buffer, unsigned long * bytes )
+{
+    ULONG size = *bytes;
+    const ULONG return_code = GetAdaptersAddresses( AF_INET, 0, NULL, (IP_ADAPTER_ADDRESSES*) buffer, &size );
+    *bytes = size;
+    if ( return_code == NO_ERROR )
+        return ROCKETNET_PLATFORM_ADAPTERS_OK;
+    if ( return_code == ERROR_BUFFER_OVERFLOW )
+        return ROCKETNET_PLATFORM_ADAPTERS_OVERFLOW;
+    return ROCKETNET_PLATFORM_ADAPTERS_ERROR;
+}
+
 static int get_connection_type()
 {
-    IP_ADAPTER_ADDRESSES * addresses;
-    ULONG buffer_size = 15000;
-
-    do
-    {
-        addresses = (IP_ADAPTER_ADDRESSES *)( rocketnet_malloc( rocketnet_global_context, buffer_size ) );
-
-        ULONG return_code = GetAdaptersAddresses( AF_INET, 0, NULL, addresses, &buffer_size );
-
-        if ( return_code == NO_ERROR )
-        {
-            // success!
-            break;
-        }
-        else if ( return_code == ERROR_BUFFER_OVERFLOW )
-        {
-            rocketnet_free( rocketnet_global_context, addresses );
-            continue;
-        }
-        else
-        {
-            // error
-            rocketnet_free( rocketnet_global_context, addresses );
-            return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
-        }
-    }
-    while ( true );
+    // a refused allocation, an error, or ROCKETNET_PLATFORM_ADAPTERS_ATTEMPTS
+    // overflows in a row end rocketnet_platform_adapters_fetch with NULL, and
+    // the connection type is unknown
+    IP_ADAPTER_ADDRESSES * addresses = (IP_ADAPTER_ADDRESSES*) rocketnet_platform_adapters_fetch( rocketnet_global_context, 15000, get_connection_type_query );
+    if ( !addresses )
+        return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
     int result = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
     
@@ -4513,14 +4642,15 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // pump-request socket create (#106): the driver ladder's entry into the
 // platform pump selection. pump NULL or "auto" is the pre-existing
-// behavior -- probe where the platform has a batch pump, honoring the
+// behavior -- offer the platform's batch pump, honoring the
 // ROCKETNET_PUMP override. "portable" forces the portable pump: the
-// request wins and no probe result matters. "msgx" REQUIRES the darwin
-// batch pump: refused probes (and the ROCKETNET_PUMP=portable override,
-// the pre-#106 surface this system absorbs) fail loudly here so a pinned
-// rung refuses rather than silently degrading; the granted pump's own
-// live-refusal pause-and-reprobe discipline (#102) remains the driver's
-// internal behavior below the ladder.
+// request wins and no batch decision matters. "msgx" REQUIRES the darwin
+// batch pump: a socket that cannot carry it (missing symbols, or the
+// ROCKETNET_PUMP=portable override, the pre-#106 surface this system
+// absorbs) refuses loudly here so a pinned rung refuses rather than
+// silently degrading. The first real batch call is the functional probe;
+// its own live-refusal pause-and-reprobe discipline (#102) remains the
+// driver's internal behavior below the ladder.
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump )
 {
@@ -4543,10 +4673,9 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 
-    // a forced-portable request suppresses the msgx probe entirely -- the
-    // probe never runs, so it can never consume a queued datagram on a
-    // fixed-port bind and the pre-#106 ROCKETNET_PUMP=portable semantics
-    // hold exactly
+    // a forced-portable request suppresses the batch pump entirely -- the
+    // pre-#106 ROCKETNET_PUMP=portable semantics hold exactly, and no
+    // batch call can read a queued datagram before the caller does
 
     const bool force_portable = pump && strcmp( pump, "portable" ) == 0;
 
@@ -4572,7 +4701,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
 
     if ( require_msgx && !socket->msgx )
     {
-        rocketnet_warn( "msgx pump refused by the probe" );
+        rocketnet_warn( "msgx pump is not available on this socket" );
         rocketnet_platform_socket_destroy( socket );
         return NULL;
     }

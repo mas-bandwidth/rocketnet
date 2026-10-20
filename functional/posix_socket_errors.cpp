@@ -776,6 +776,82 @@ void rocketnet_test_posix_client_receive_weather()
 }
 
 // ---------------------------------------------------
+// the create seam: a datagram queued on the just-bound socket before the
+// first batch call is delivered by that call, never consumed by a create
+// probe. the hook runs between bind and the pump decision.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+void rocketnet_platform_set_create_receive_hook( void ( *hook )( int handle ) );
+
+static const char posix_create_probe_message[] = "queued before the first receive";
+
+static void posix_create_probe_hook( int handle )
+{
+    struct sockaddr_storage storage;
+    socklen_t bytes = sizeof(storage);
+    posix_check( getsockname( handle, (struct sockaddr*) &storage, &bytes ) == 0 );
+
+    const int sender = socket( storage.ss_family, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( sender >= 0 );
+    const ssize_t sent = sendto( sender, posix_create_probe_message, sizeof(posix_create_probe_message) - 1, 0,
+                                 (struct sockaddr*) &storage, bytes );
+    posix_check( sent == (ssize_t) ( sizeof(posix_create_probe_message) - 1 ) );
+    close( sender );
+
+    // Establish the regression's precondition before create resumes: a
+    // successful send alone does not prove the receive queue has the packet.
+    const double deadline = rocketnet_platform_time() + 5.0;
+    for ( ;; )
+    {
+        int queued = 0;
+        socklen_t queued_bytes = sizeof(queued);
+        posix_check( getsockopt( handle, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 );
+        if ( queued == 1 )
+            break;
+        posix_check( rocketnet_platform_time() < deadline );
+        rocketnet_platform_sleep( 0.0002 );
+    }
+}
+
+static void posix_create_keeps_queued_datagram( int ipv6 )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" );
+
+    rocketnet_platform_set_create_receive_hook( posix_create_probe_hook );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                                      ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, "msgx" );
+    rocketnet_platform_set_create_receive_hook( NULL );
+    posix_check( socket != NULL );
+
+    // create read nothing: the datagram the hook queued is still waiting, and
+    // the first batch call below is what takes it and decides the pump
+    posix_check( posix_queued_datagrams( socket ) == 1 );
+
+    uint8_t data[8][ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t from[8];
+    int bytes[8];
+    int received = 0;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( received == 0 && rocketnet_platform_time() < deadline )
+    {
+        received = rocketnet_platform_socket_receive_packets( socket, from, &data[0][0], ROCKETNET_RECEIVE_CEILING, bytes, 8 );
+        if ( received == 0 )
+            rocketnet_platform_sleep( 0.0005 );
+    }
+
+    posix_check( received == 1 );
+    posix_check( bytes[0] == (int) ( sizeof(posix_create_probe_message) - 1 ) );
+    posix_check( memcmp( data[0], posix_create_probe_message, sizeof(posix_create_probe_message) - 1 ) == 0 );
+    posix_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+// ---------------------------------------------------
 // the send seam at the platform: exact counts on each pump
 
 static void posix_send_seam_socket( int ipv6, const char * pump )
@@ -853,6 +929,7 @@ void rocketnet_test_posix_platform_send_seam()
     {
         posix_send_seam_socket( ipv6, "portable" );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        posix_create_keeps_queued_datagram( ipv6 );
         posix_send_seam_socket( ipv6, "msgx" );
 #endif
     }
