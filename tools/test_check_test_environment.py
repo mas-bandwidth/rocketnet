@@ -46,6 +46,23 @@ REGISTER_UNIT_TEST( unguarded_after_comment );
                     checker._register_names(path), ["unguarded_after_comment"]
                 )
 
+    def test_comment_markers_in_literals_do_not_hide_unconditional_name(self):
+        source = r'''
+#if defined(__linux__)
+const char *ordinary = "/*";
+const char *raw = R"tag(/* literal */)tag";
+#endif
+const char *after = "*/";
+REGISTER_UNIT_TEST( unguarded_after_literals );
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "test_unit_literals.cpp"
+            path.write_text(source)
+            with patch.object(checker.sys, "platform", "darwin"):
+                self.assertEqual(
+                    checker._register_names(path), ["unguarded_after_literals"]
+                )
+
     def test_unguarded_missing_registration_still_fails(self):
         with self.assertRaises(SystemExit) as raised:
             checker.assert_name_set({"present_test"},

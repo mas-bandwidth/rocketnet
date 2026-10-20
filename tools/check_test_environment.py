@@ -84,17 +84,58 @@ def _table_names(path):
 LINUX_GUARD_RE = re.compile(
     r"^\s*#\s*if\s+(?:defined\s*\(\s*__linux__\s*\)|defined\s+__linux__|__linux__)\s*$"
 )
-BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+RAW_STRING_START_RE = re.compile(r'(?:u8|u|U|L)?R"([^ ()\\\t\r\n]{0,16})\(')
 
 
-def _mask_block_comments(text):
-    # Preserve line boundaries so a directive-looking line in a comment is
-    # never mistaken for a compiler guard.
-    return BLOCK_COMMENT_RE.sub(
-        lambda match: "".join("\n" if char == "\n" else " " for char in match.group()),
-        text,
-    )
+def _mask_comments_and_literals(text):
+    # Preserve line boundaries and hide comment/string contents before guard
+    # matching, so directive-looking examples cannot change source inventory.
+    output = list(text)
 
+    def blank(start, end):
+        for index in range(start, end):
+            if output[index] != "\n":
+                output[index] = " "
+
+    index = 0
+    length = len(text)
+    while index < length:
+        raw = RAW_STRING_START_RE.match(text, index)
+        if raw:
+            terminator = ")" + raw.group(1) + '"'
+            end = text.find(terminator, raw.end())
+            end = length if end < 0 else end + len(terminator)
+            blank(index, end)
+            index = end
+            continue
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            end = length if end < 0 else end
+            blank(index, end)
+            index = end
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            end = length if end < 0 else end + 2
+            blank(index, end)
+            index = end
+            continue
+        if text[index] in ("\"", "'"):
+            quote = text[index]
+            end = index + 1
+            while end < length:
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == quote:
+                    end += 1
+                    break
+                end += 1
+            blank(index, end)
+            index = end
+            continue
+        index += 1
+    return "".join(output)
 
 def _without_linux_guarded_blocks(text):
     # Unit registrations inside __linux__ guards exist only in the Linux
@@ -106,7 +147,7 @@ def _without_linux_guarded_blocks(text):
     active = True
     stack = []
     source_lines = text.splitlines(keepends=True)
-    directive_lines = _mask_block_comments(text).splitlines(keepends=True)
+    directive_lines = _mask_comments_and_literals(text).splitlines(keepends=True)
     for line, directive_line in zip(source_lines, directive_lines):
         if IF_RE.match(directive_line):
             parent_active = active
