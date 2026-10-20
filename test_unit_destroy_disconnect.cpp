@@ -346,7 +346,7 @@ static void destroy_server_sends_disconnect_to_every_connected_client()
     {
         check( rocketnet_client_update( clients[i], time ) == ROCKETNET_UPDATE_OK );
         check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        check( rocketnet_client_disconnect_reason( clients[i] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( rocketnet_client_disconnect_reason( clients[i] ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
         const uint64_t * cc = destroy_disconnect_client_counters( clients[i] );
         const uint64_t rx_delta = rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED ) - client_rx_before[i];

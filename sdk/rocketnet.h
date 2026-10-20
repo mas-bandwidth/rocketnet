@@ -342,7 +342,8 @@ enum rocketnet_disconnect_reason_t
     ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT                  = 2,   ///< the config exchange did not finish in time
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = 3,   ///< the peer sent what the protocol forbids
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT                = 4,   ///< a reliable message went unacknowledged past reliable_timeout_ms
-    ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED        = 5    ///< the connection's region had no room for an operation it must not drop
+    ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED        = 5,   ///< the connection's region had no room for an operation it must not drop
+    ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED             = 6    ///< the client accepted the server's disconnect packet: the server disconnected the client, stopped, or was destroyed
 };
 
 /** @brief What rocketnet_client_update and rocketnet_server_update return. */
@@ -1635,9 +1636,12 @@ ROCKETNET_EXPORT const char * rocketnet_client_state_name( enum rocketnet_client
  * @brief Read why the last connection ended.
  * @param client The client.
  * @return The reason the last connection ended with, kept until the next
- * connection is established; ROCKETNET_DISCONNECT_REASON_NONE while
- * connected, after a deliberate disconnect, and for a NULL client (a
- * counted no-op).
+ * connection is established: ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED
+ * when the client accepted the server's disconnect packet (the server
+ * disconnected the client, stopped, or was destroyed);
+ * ROCKETNET_DISCONNECT_REASON_NONE while connected, after a deliberate
+ * disconnect, after a connection timeout, and for a NULL client (a counted
+ * no-op).
  */
 ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_client_disconnect_reason( const struct rocketnet_client_t * client );
 
