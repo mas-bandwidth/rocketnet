@@ -380,7 +380,7 @@ static void receipt_free( void *, void * pointer )
     free( pointer );
 }
 
-static void no_allocation_after_create()
+static void receipts_no_allocation_after_create()
 {
     rocketnet_term();
     rocketnet_unit_check( rocketnet_set_allocator( receipt_malloc, receipt_free ) == ROCKETNET_STATUS_OK );
@@ -412,4 +412,4 @@ REGISTER_UNIT_TEST( receipt_ring_full_drops_oldest_and_counts );
 REGISTER_UNIT_TEST( receipts_listed_per_update_by_the_c_api );
 REGISTER_UNIT_TEST( rnreceipts_code5_witness_replays );
 REGISTER_UNIT_TEST( promoted_type5_block_replays_last_index_and_reliable_loss_witnesses );
-REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( receipts_no_allocation_after_create );

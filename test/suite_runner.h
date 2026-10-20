@@ -245,6 +245,12 @@ inline void suite_print_summary( const std::vector<suite_result> & results, bool
     fflush( stdout );
 }
 
+inline int suite_usage( char ** argv )
+{
+    fprintf( stderr, "usage: %s [--run <case>]\n", argv[0] );
+    return 2;
+}
+
 #if !defined(_WIN32)
 
 inline int suite_main( int argc, char ** argv,
@@ -255,8 +261,18 @@ inline int suite_main( int argc, char ** argv,
     const char ** skip_lines, int nskips,
     bool strict_names )
 {
-    if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+    if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
+    {
+        if ( argc < 3 || argv[2][0] == '-' )
+            return suite_usage( argv );
+        for ( int i = 3; i < argc; i++ )
+            if ( argv[i][0] == '-' )
+                return suite_usage( argv );
         return worker( argv[2] );
+    }
+    for ( int i = 1; i < argc; i++ )
+        if ( argv[i][0] == '-' )
+            return suite_usage( argv );
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
@@ -463,8 +479,18 @@ inline int suite_main( int argc, char ** argv,
     const char ** skip_lines, int nskips,
     bool strict_names )
 {
-    if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+    if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
+    {
+        if ( argc < 3 || argv[2][0] == '-' )
+            return suite_usage( argv );
+        for ( int i = 3; i < argc; i++ )
+            if ( argv[i][0] == '-' )
+                return suite_usage( argv );
         return worker( argv[2] );
+    }
+    for ( int i = 1; i < argc; i++ )
+        if ( argv[i][0] == '-' )
+            return suite_usage( argv );
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
