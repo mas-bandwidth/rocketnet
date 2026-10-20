@@ -388,20 +388,41 @@ enum rocketnet_client_state_t
 // monotonic over the client's life, across connections, and starts at 0 at
 // create.
 
+/**
+ * @brief The client's cumulative counters, read one at a time with rocketnet_client_counter.
+ *
+ * Every value is monotonic over the client's life and starts at 0 at create.
+ * The datagram and byte values are the client's wire totals; the others sum the
+ * matching cumulative protocol counters of the client's transport and message
+ * layers.
+ */
 enum rocketnet_client_counter_t
 {
+    /** @brief UDP datagrams the client sent, handshake included. Unit: datagrams. */
     ROCKETNET_CLIENT_COUNTER_PACKETS_SENT,          // packets: UDP datagrams sent, handshake included
+    /** @brief UDP datagrams the client received, handshake included. Unit: datagrams. */
     ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED,      // packets: UDP datagrams received, handshake included
+    /** @brief Bytes the client sent, handshake included: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from the server address's family). Unit: bytes. */
     ROCKETNET_CLIENT_COUNTER_BYTES_SENT,            // bytes: UDP payload plus the IP and UDP headers of the peer's family
+    /** @brief Bytes the client received, handshake included: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from the server address's family). Unit: bytes. */
     ROCKETNET_CLIENT_COUNTER_BYTES_RECEIVED,        // bytes: UDP payload plus the IP and UDP headers of the peer's family
+    /** @brief Datagrams from the server that opened and carried messages. Unit: payloads. */
     ROCKETNET_CLIENT_COUNTER_PAYLOADS_RECEIVED,     // payloads: packets from the server that opened and carried messages
+    /** @brief Reliable message records the client resent on its retransmit timer. Unit: records. */
     ROCKETNET_CLIENT_COUNTER_MESSAGES_RESENT,       // records: reliable message records resent on the retransmit timer
+    /** @brief Reliable messages the client received a second time and dropped. Unit: messages. */
     ROCKETNET_CLIENT_COUNTER_MESSAGES_DUPLICATE,    // messages: reliable messages received a second time and dropped
+    /** @brief Client sends with a receipt that the server acknowledged. Unit: receipts. */
     ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED,        // receipts: sends with a receipt that the server acknowledged
+    /** @brief Client sends with a receipt that were reported lost. Unit: receipts. */
     ROCKETNET_CLIENT_COUNTER_RECEIPTS_LOST,         // receipts: sends with a receipt that were lost
+    /** @brief Unreliable messages the client dropped because its send budget was spent. Unit: messages. */
     ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS,          // messages: unreliable messages dropped because the send budget was spent
+    /** @brief Sends that left with the next hand-off to the send thread instead of at once. Unit: hand-offs. */
     ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED,         // hand-offs: sends that left with the next hand-off to the send thread
+    /** @brief Received messages still held, not released, when a client update began; that update adds the number held, still runs, and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. Unit: messages. */
     ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED, // messages: received messages still held when an update was refused
+    /** @brief The number of client counters; not a counter, and rocketnet_client_counter returns 0 for it. */
     ROCKETNET_CLIENT_COUNTER_COUNT
 };
 
@@ -424,22 +445,45 @@ enum rocketnet_client_stat_t
 // rocketnet_server_counter. Every value is monotonic over the server's life,
 // across starts and stops, and starts at 0 at create.
 
+/**
+ * @brief The server's cumulative counters over all its clients, read one at a time with rocketnet_server_counter.
+ *
+ * Every value is monotonic over the server's life and starts at 0 at create.
+ * The datagram and byte values are the server's whole-socket wire totals; the
+ * others sum the matching cumulative protocol counters of the server's
+ * transport and message layers.
+ */
 enum rocketnet_server_counter_t
 {
+    /** @brief UDP datagrams the server sent to all clients. Unit: datagrams. */
     ROCKETNET_SERVER_COUNTER_PACKETS_SENT,          // packets: UDP datagrams sent
+    /** @brief UDP datagrams the server received. Unit: datagrams. */
     ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED,      // packets: UDP datagrams received
+    /** @brief Bytes the server sent to all clients: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from each datagram's peer family). Unit: bytes. */
     ROCKETNET_SERVER_COUNTER_BYTES_SENT,            // bytes: UDP payload plus the IP and UDP headers of the peer's family
+    /** @brief Bytes the server received: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from each datagram's peer family). Unit: bytes. */
     ROCKETNET_SERVER_COUNTER_BYTES_RECEIVED,        // bytes: UDP payload plus the IP and UDP headers of the peer's family
+    /** @brief Clients that completed the handshake. Unit: connections. */
     ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED,     // connections: clients that completed the handshake
+    /** @brief Connection requests and responses refused because every client slot was taken. Unit: requests. */
     ROCKETNET_SERVER_COUNTER_CLIENTS_DENIED_FULL,   // requests: connect attempts refused because every client slot was taken
+    /** @brief Connection requests dropped by the per-update handshake work budget. Unit: requests. */
     ROCKETNET_SERVER_COUNTER_HANDSHAKES_OVER_BUDGET,// requests: connect attempts dropped by the per-update handshake budget
+    /** @brief Datagrams from clients that opened and carried messages. Unit: payloads. */
     ROCKETNET_SERVER_COUNTER_PAYLOADS_RECEIVED,     // payloads: packets from clients that opened and carried messages
+    /** @brief Reliable message records the server resent on its retransmit timer. Unit: records. */
     ROCKETNET_SERVER_COUNTER_MESSAGES_RESENT,       // records: reliable message records resent on the retransmit timer
+    /** @brief Reliable messages the server received a second time and dropped. Unit: messages. */
     ROCKETNET_SERVER_COUNTER_MESSAGES_DUPLICATE,    // messages: reliable messages received a second time and dropped
+    /** @brief Server sends with a receipt that a client acknowledged. Unit: receipts. */
     ROCKETNET_SERVER_COUNTER_RECEIPTS_ACKED,        // receipts: sends with a receipt that a client acknowledged
+    /** @brief Server sends with a receipt that were reported lost. Unit: receipts. */
     ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST,         // receipts: sends with a receipt that were lost
+    /** @brief Unreliable messages dropped because a client's send budget was spent. Unit: messages. */
     ROCKETNET_SERVER_COUNTER_BUDGET_DROPS,          // messages: unreliable messages dropped because a client's send budget was spent
+    /** @brief Received messages still held, not released, when a server update began; that update adds the number held, still runs, and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. Unit: messages. */
     ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED, // messages: received messages still held when an update was refused
+    /** @brief The number of server counters; not a counter, and rocketnet_server_counter returns 0 for it. */
     ROCKETNET_SERVER_COUNTER_COUNT
 };
 
@@ -459,12 +503,23 @@ enum rocketnet_server_stat_t
 // rocketnet_server_client_counter. The values cover the slot's current
 // connection and go back to 0 when a new connection takes the slot.
 
+/**
+ * @brief One client slot's counters, read one at a time with rocketnet_server_client_counter.
+ *
+ * The values cover the slot's current connection and start again at 0 when a
+ * new connection takes the slot.
+ */
 enum rocketnet_server_client_counter_t
 {
+    /** @brief UDP datagrams the server sent to this client on its current connection. Unit: datagrams. */
     ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT,       // packets: UDP datagrams sent to this client
+    /** @brief UDP datagrams the server received from this client on its current connection. Unit: datagrams. */
     ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_RECEIVED,   // packets: UDP datagrams received from this client
+    /** @brief Bytes the server sent to this client on its current connection: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from this client's family). Unit: bytes. */
     ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_SENT,         // bytes: UDP payload plus the IP and UDP headers of this client's family
+    /** @brief Bytes the server received from this client on its current connection: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from this client's family). Unit: bytes. */
     ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_RECEIVED,     // bytes: UDP payload plus the IP and UDP headers of this client's family
+    /** @brief The number of per-client counters; not a counter, and rocketnet_server_client_counter returns 0 for it. */
     ROCKETNET_SERVER_CLIENT_COUNTER_COUNT
 };
 
@@ -1669,6 +1724,23 @@ ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * clie
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps );
 
 // a counter by its enum; 0 for a value outside the enum. a NULL client is a counted no-op that returns 0.
+/**
+ * @brief Read one of the client's cumulative counters.
+ *
+ * Call it on the thread that updates the client, between updates; never call
+ * it alongside rocketnet_client_update on another thread, since the read
+ * refreshes the client's acknowledgement statistics.
+ * @param client The created client. NULL is an API misuse: it is counted in
+ * rocketnet_api_misuse_count, fires an assert in a debug build, and returns 0.
+ * @param counter A value of rocketnet_client_counter_t below
+ * ROCKETNET_CLIENT_COUNTER_COUNT; any other value returns 0.
+ * @return The counter's value since create, or 0 for a NULL client or a value
+ * outside the enum. A 0 is never an error status.
+ * @code
+ * uint64_t resent = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_MESSAGES_RESENT );
+ * uint64_t sent = rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_PACKETS_SENT );
+ * @endcode
+ */
 ROCKETNET_EXPORT uint64_t rocketnet_client_counter( const struct rocketnet_client_t * client, enum rocketnet_client_counter_t counter );
 
 // a stat by its enum; 0 for a value outside the enum. a NULL client is a counted no-op that returns 0.
@@ -2120,12 +2192,40 @@ ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * serv
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, uint64_t client_index, int kbps );
 
 // a counter by its enum; 0 for a value outside the enum. a NULL server is a counted no-op that returns 0.
+/**
+ * @brief Read one of the server's cumulative counters over all its clients.
+ *
+ * Call it on the thread that updates the server, between updates; never call
+ * it alongside rocketnet_server_update on another thread.
+ * @param server The created server. NULL is an API misuse: it is counted in
+ * rocketnet_api_misuse_count, fires an assert in a debug build, and returns 0.
+ * @param counter A value of rocketnet_server_counter_t below
+ * ROCKETNET_SERVER_COUNTER_COUNT; any other value returns 0.
+ * @return The counter's value since create, or 0 for a NULL server or a value
+ * outside the enum. A 0 is never an error status.
+ */
 ROCKETNET_EXPORT uint64_t rocketnet_server_counter( const struct rocketnet_server_t * server, enum rocketnet_server_counter_t counter );
 
 // a stat by its enum; 0 for a value outside the enum. a NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT double rocketnet_server_stat( const struct rocketnet_server_t * server, enum rocketnet_server_stat_t stat );
 
 // one client slot's counter by its enum; 0 for a free slot or a value outside the enum. a NULL server is a counted no-op that returns 0.
+/**
+ * @brief Read one counter of one connected client slot.
+ *
+ * Call it on the thread that updates the server, between updates; never call
+ * it alongside rocketnet_server_update on another thread.
+ * @param server The created server. NULL is an API misuse: it is counted in
+ * rocketnet_api_misuse_count, fires an assert in a debug build, and returns 0.
+ * @param client_index The slot, in [0, max_clients). A slot outside that range,
+ * a slot with no connected client, or any slot while the server is stopped
+ * returns 0.
+ * @param counter A value of rocketnet_server_client_counter_t below
+ * ROCKETNET_SERVER_CLIENT_COUNTER_COUNT; any other value returns 0.
+ * @return The counter's value over the slot's current connection, or 0 for a
+ * NULL server, a stopped server, a free or out-of-range slot, or a value
+ * outside the enum. A 0 is never an error status.
+ */
 ROCKETNET_EXPORT uint64_t rocketnet_server_client_counter( const struct rocketnet_server_t * server, uint64_t client_index, enum rocketnet_server_client_counter_t counter );
 
 // one client slot's stat by its enum; 0 for a free slot or a value outside the enum. a NULL server is a counted no-op that returns 0.
