@@ -37,5 +37,62 @@
 ## Diagnostic Telemetry (Recorded Without Gating)
 
 At the end of every run, the single summary line records:
+- `connect_s`: wall time from the start of the connect phase until every client and the server report the full client count connected.
+- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each measured when that client first reaches `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED`.
 - `server_update_p50_us` and `server_update_p99_us`: 50th and 99th percentile durations (in microseconds) of `rocketnet_message_server_update`.
 - `rss_mb`: process resident set size (in MiB) at the end of the run.
+- `server_driver` and `client_driver`: the transport the ladder granted to the server and to client `0`.
+- `fd_limit_soft` and `fd_limit_hard`: the `RLIMIT_NOFILE` soft and hard values the run used (`infinity` when unlimited).
+- `fds_start`, `fds_peak` and `fds_end`: open file-descriptor count at start, peak during the run, and end after every client, the server and `rocketnet_term` are gone.
+- `threads_start`, `threads_peak` and `threads_end`: thread count at the same three points.
+
+Start is sampled after `rocketnet_init`, which opens the process-wide random source once and keeps it for the life of the process, so start, peak and end measure what servers and clients add. A run whose end counts differ from its start counts leaks a descriptor or a thread. Each client holds two descriptors and one receive thread while it runs, so a 1000-client run peaks near 2000 descriptors and 1000 threads.
+
+## macOS
+
+### File-descriptor limit
+
+A default macOS login session starts with a soft `RLIMIT_NOFILE` of `256` (`launchctl limit maxfiles` prints the session default; `ulimit -n` prints the shell's value). A 1000-client run needs two descriptors per client, so `bin/load` raises its own soft limit toward `65536` (bounded by the hard limit) and refuses to start when the soft limit it ends with is below two descriptors per client plus a 64-descriptor margin. The refusal exits `1` and names the limit, both values, the needed soft limit and the command that raises it:
+
+```
+load: RLIMIT_NOFILE soft=256 hard=256 cannot cover clients=1000 (2 fds per client) plus margin=64 (need soft >= 2064)
+load: raise it with: ulimit -n 2064
+load: if the hard limit blocks that, raise the hard limit in a new shell (macOS: sudo launchctl limit maxfiles 65536 65536)
+```
+
+When only the soft limit is low (the macOS default: soft `256`, hard `unlimited`), `bin/load` raises it itself and the run starts. The refusal fires when the hard limit is low too. In bash, `ulimit -n 256` sets both the soft and the hard limit, so `bash -c 'ulimit -n 256; ./bin/load 1000 60'` shows the refusal; in zsh, `ulimit -n 256` sets only the soft limit and the run raises it again. To run in a shell whose hard limit is low, raise the hard limit for the login session with `sudo launchctl limit maxfiles 65536 65536`, open a new shell, and run there:
+
+```
+ulimit -n 65536
+./bin/load 1000 60
+```
+
+### Server cells
+
+macOS has two server transports, and the darwin batch pump has a degraded path; the load gate runs each:
+
+```
+ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/load 1000 60   # portable
+ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/load 1000 60           # msgx
+ROCKETNET_PUMP=portable ./bin/load 1000 60                                                   # msgx-degraded
+```
+
+The msgx-degraded cell runs the auto ladder (`msgx,portable`) under the `ROCKETNET_PUMP=portable` override: the msgx rung refuses and the ladder falls to portable, so the summary names `server_driver=portable`. A pinned `msgx` under that override refuses at create by design, so `load` exits `1` with `failed to create message server`.
+
+### Gate runs
+
+The macOS gate is three consecutive runs of each server cell, nine runs in all. Each summary line must say `verdict=PASS`, `fds_end` must equal `fds_start`, `threads_end` must equal `threads_start`, and `connect_p50_s` and `connect_max_s` are recorded for the run table:
+
+```
+for cell in portable msgx msgx-degraded; do
+  for run in 1 2 3; do
+    case "$cell" in
+      portable) env ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/load 1000 60 ;;
+      msgx) env ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/load 1000 60 ;;
+      msgx-degraded) env ROCKETNET_PUMP=portable ./bin/load 1000 60 ;;
+    esac
+  done
+done
+```
+
+A refused run is a finding, not a partial run: `bin/load` names the limit and the command that raises it before it opens a socket, and exits `1`.
