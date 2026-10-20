@@ -88,7 +88,7 @@ struct rn_channels_t
     uint32_t delivery_capacity;       // W + Du, the region's delivery table
     uint32_t violations;              // records refused on receive this update
     uint32_t payload_capacity;        // the payload bytes a frame holds: a message is small when its record fits one (8)
-    int error;                        // sticky: ROCKETNET_DISCONNECT_REASON_NONE, or ERROR_PROTOCOL_VIOLATION after a wire violation (17.3 item 11)
+    int error;                        // sticky: ROCKETNET_DISCONNECT_REASON_NONE, or ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION after a wire violation (17.3 item 11)
     uint32_t pending;                 // the send descriptor between start and finish, or RN_DESCRIPTOR_NONE
     uint32_t pending_bytes;           // what the pending start reserved
     uint32_t pending_channel;
