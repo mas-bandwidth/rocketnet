@@ -296,6 +296,9 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
+      # COMPILE_WARNING_AS_ERROR adds /WX to every target without replacing
+      # CMAKE_C_FLAGS or CMAKE_CXX_FLAGS, so a clang-cl warning MSVC does not
+      # give (MSVC builds every commit in ci.yml) fails this job.
       - name: Configure clang-cl x64 with warnings as errors
         run: cmake -B build-clang -T ClangCL -A x64 "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin" -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 
