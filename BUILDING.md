@@ -548,7 +548,7 @@ explicitly named platform skips. Failures retain the captured diagnostic log.
 
 ### Windows IOCP server
 
-Native transport authors: [DRIVERS.md](DRIVERS.md) describes registration,
+Native transport authors: [TRANSPORTS.md](TRANSPORTS.md) describes registration,
 capabilities, ownership and the independently built extension example.
 
 Select `transport = "iocp"` in the existing server config, or set

@@ -14,20 +14,14 @@ over the in-memory `loopback` transport, which needs no socket and no network.
 5. Send one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message from the client to the
    server with `rocketnet_client_start_message`, a `memcpy` into the returned buffer,
    and `rocketnet_client_finish_message`.
-6. Receive and print it on the server, release the view, disconnect the
+6. Receive and print it on the server, disconnect the
    client, and destroy both ends.
 7. Connect a second client with a second development token, then disconnect
    it, showing that a server keeps serving after one client leaves.
 
-Each frame runs the calls in the order a game does: update, receive and
-release, simulate, queue, then send last. Sending last is what makes this
+Each frame runs the calls in the order a game does: update, drain the one
+receive queue, simulate, queue, then send last. Sending last is what makes this
 frame's messages leave this frame instead of waiting a frame.
-
-The lifecycle card that lands after this one renames start, finish, receive,
-release and send_packets to `*_start_message`, `*_finish_message`,
-`*_receive_message`, `*_release_message` and `*_send_packets`. The header at
-this base still declares the old names, so the example uses them and says so
-in the source comment.
 
 ## Run it
 
@@ -59,12 +53,12 @@ from the library and are not part of the check.
 - `rocketnet_server_dev_config`, `rocketnet_server_create`,
   `rocketnet_server_update`, `rocketnet_server_port`,
   `rocketnet_server_max_clients`, `rocketnet_server_client_connected`,
-  `rocketnet_server_receive_message`, `rocketnet_server_release_message`,
+  `rocketnet_server_receive_messages`,
   `rocketnet_server_send_packets`, `rocketnet_server_destroy`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
   `rocketnet_client_state`, `rocketnet_client_update`,
   `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_message`, `rocketnet_client_release_message`,
+  `rocketnet_client_receive_messages`,
   `rocketnet_client_send_packets`, `rocketnet_client_disconnect`,
   `rocketnet_client_destroy`
 - `rocketnet_write_dev_connect_token` (development library only)

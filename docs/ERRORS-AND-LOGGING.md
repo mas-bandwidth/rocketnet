@@ -182,7 +182,7 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback(
 ### 3.4 Refused Thread Priority Calls
 
 The library's network-thread priority calls (`docs/CLIENT-IO.md`, Thread
-priority; `DRIVERS.md`, Server network threads) check each result. A refused
+priority; `TRANSPORTS.md`, Server network threads) check each result. A refused
 call (`pthread_setschedparam` nonzero, `pthread_setaffinity_np` nonzero on the
 XDP thread, `SetThreadPriority` FALSE, `timeBeginPeriod` or `timeEndPeriod`
 not `TIMERR_NOERROR`) adds one to a process-wide count, read with

@@ -53,15 +53,15 @@ shared libraries into `bin/` (`CMakeLists.txt:34-38`), and `make` reconfigures
 The executables this guide runs: `./bin/test` (the unit suite, no sockets,
 `BUILDING.md:23-34`), `./bin/functional` (real sockets and real transports,
 `BUILDING.md:36-48`), `./bin/test_driver` (registry order and driver contract,
-`DRIVERS.md:145-151`), `./bin/test_lifecycle`, `./bin/transport_memory`
-(`BUILDING.md:284-303`) and `./bin/test_xdp_filter` (`DRIVERS.md:256-270`).
+`TRANSPORTS.md:145-151`), `./bin/test_lifecycle`, `./bin/transport_memory`
+(`BUILDING.md:284-303`) and `./bin/test_xdp_filter` (`TRANSPORTS.md:256-270`).
 
 ## 2. The transport ladder
 
 `sdk/rocketnet_drivers.inc:5-12` is the registry. Each row carries a name, a
 platform mask and a server and client preference rank; a lower nonzero rank
 comes first in `auto`, zero means the endpoint does not have that transport
-(`DRIVERS.md:7-11`, `sdk/rocketnet_driver.cpp:84-100`). The Linux rows:
+(`TRANSPORTS.md:7-11`, `sdk/rocketnet_driver.cpp:84-100`). The Linux rows:
 
 | transport | server rank | client rank | row |
 | --- | ---: | ---: | --- |
@@ -72,11 +72,11 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc:10` |
 
 So the Linux server `auto` order is **xdp → gso → io_uring → portable**
-(`DRIVERS.md:188-189`), and `./bin/test_driver` fails if it is anything else
+(`TRANSPORTS.md:188-189`), and `./bin/test_driver` fails if it is anything else
 (`test_driver.cpp:111-116`). A build without liburing has no `io_uring` in the
-list: xdp → gso → portable (`test_driver.cpp:115-116`, `DRIVERS.md:183-186`).
+list: xdp → gso → portable (`test_driver.cpp:115-116`, `TRANSPORTS.md:183-186`).
 `loopback` is in-process, never chosen by `auto`, and selected only by name
-(`DRIVERS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
+(`TRANSPORTS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
 transport in `auto`, `portable` (`test_driver.cpp:125-130`); on Linux it
 batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
 (`sdk/rocketnet_driver_builtin.cpp:54`, `:87-100`,
@@ -195,12 +195,12 @@ a completion queue twice that (`sdk/rocketnet_server_uring.h:39-41`,
 `ROCKETNET_URING_SEND_WAIT_SECONDS`; sends still pending when the call returns
 stay in the completion queue for a later call and are counted
 `SEND_DEFERRED`, so a send flush never waits unboundedly
-(`sdk/rocketnet_server_uring_linux.cpp:28-33`, `DRIVERS.md:176-179`).
+(`sdk/rocketnet_server_uring_linux.cpp:28-33`, `TRANSPORTS.md:176-179`).
 
 **What the host needs.**
 
 - liburing at build time (section 1). A build without it keeps the row with no
-  platform, so the name is skipped (`DRIVERS.md:183-186`).
+  platform, so the name is skipped (`TRANSPORTS.md:183-186`).
 - A kernel that accepts the ring, `SENDMSG`, `RECVMSG`, `ASYNC_CANCEL` and a
   provided buffer ring. `rocketnet_server_uring_available()` probes this once
   (`sdk/rocketnet_server_uring_linux.cpp:383-421`); on no, create logs
@@ -281,7 +281,7 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
   (`BUILDING.md:232-233`, `:282`), within the 4096 MiB `ROCKETNET_XDP_MEMORY_MIB`
   budget (`BUILDING.md:225-229`, `sdk/rocketnet_server_socket_linux.cpp:894-901`).
 - One family per interface: a server serves the family of its public address,
-  and one interface takes one XDP program (`DRIVERS.md:237-243`).
+  and one interface takes one XDP program (`TRANSPORTS.md:237-243`).
 
 Checks that need no root, as CI runs them
 (`.github/workflows/ci.yml:475-480`, `:492-494`):
@@ -293,7 +293,7 @@ python3 tools/check_xdp_archive.py
 
 Live AF_XDP runs as root only inside a virtme-ng guest of the host's own
 kernel, never on the host (`.github/workflows/ci.yml:290-295`, `:335-349`;
-`DRIVERS.md:260-270`). The guest needs `vng`, a readable
+`TRANSPORTS.md:260-270`). The guest needs `vng`, a readable
 `~/vm-kernels/vmlinuz-$(uname -r)` and a writable `/dev/kvm`
 (`.github/workflows/ci.yml:339-345`). The command is one quoted string so
 older and newer `vng` releases pass it to the guest shell alike:
@@ -304,7 +304,7 @@ vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --appen
 ```
 
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
-`BPF_PROG_TEST_RUN` (`DRIVERS.md:256-261`), on the same `server_xdp.o` the
+`BPF_PROG_TEST_RUN` (`TRANSPORTS.md:256-261`), on the same `server_xdp.o` the
 library embeds. In a 1536M guest with two isolated CPUs and no clang on
 `PATH`, all 17 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
 and `xdp_create_fails_part_way_tears_down`.
@@ -322,7 +322,7 @@ socket only when the socket is connected or has `IP_RECVERR` set (Linux
 (`sdk/rocketnet_platform.cpp:526`, `:540`, `:817`). So a dead or unreachable
 peer produces no error on the receive path of `portable`, `gso` or
 `io_uring`. On `xdp`, ICMP is not UDP, so the XDP program passes it to the
-kernel stack (`DRIVERS.md:216-218`). This command shows the kernel rule on
+kernel stack (`TRANSPORTS.md:216-218`). This command shows the kernel rule on
 the host:
 
 ```sh

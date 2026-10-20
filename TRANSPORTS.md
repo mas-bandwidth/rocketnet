@@ -1,8 +1,8 @@
-# Native transport drivers
+# Native transports
 
 The public transport API in `rocketnet.h` is independent of the backend.
-Native drivers implement `rocketnet_driver.h`; they do not add binding or
-wire-format rules. For Linux driver selection, pinning, host requirements (`xdp`, `gso`, `io_uring`, `portable`) and host verification, see [docs/LINUX.md](docs/LINUX.md).
+Native transport backends implement `rocketnet_driver.h`; they do not add binding or
+wire-format rules. For Linux transport selection, pinning, host requirements (`xdp`, `gso`, `io_uring`, `portable`) and host verification, see [docs/LINUX.md](docs/LINUX.md).
 
 `rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
 bound-port discovery property, backend record, platform mask, and server/client
@@ -12,10 +12,10 @@ derived from these rows. Existing IDs and preference orders are preserved.
 
 The backend record points to immutable server and/or client operations. The
 transport retains the selected operations and opaque instance for its lifetime.
-Factories, resources and platform decisions stay in the driver layer. The
+Factories, resources and platform decisions stay in the transport backend layer. The
 transport branches on generic capabilities, never a specific backend identity.
 
-A driver with a preference rank at or above `ROCKETNET_DRIVER_PIN_ONLY`
+A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
 always selects it, but `auto` never chooses it. The loopback transport is the
 one pin-only row. It is in-process, carries datagrams through memory with no
@@ -29,7 +29,7 @@ that instantiates the loopback transport, which is tests and examples, never a
 game on auto. Lookups scan the table linearly under the mutex.
 
 The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
-and `rocketnet_server_uring_leaked_drivers` are internal driver helpers
+and `rocketnet_server_uring_leaked_transports` are internal transport helpers
 (`sdk/rocketnet_server_uring.h`); a game uses `rocketnet_server_create`,
 `rocketnet_server_required_memory` and the other server entry points in
 `sdk/rocketnet.h`.
@@ -69,21 +69,21 @@ An optional kernel replay capability protects session packets from replay on a
 kernel dataplane. A driver with it implements `replay_forget`,
 `replay_mark` and `replay_commit` together, all three or none; the transport
 calls them on the main thread once per update, after packet processing, and
-nothing else writes the driver's replay map. XDP is the only built-in backend
+nothing else writes the transport's replay map. XDP is the only built-in backend
 that reports it.
 
 ## Per-update send and receive budgets
 
-Every driver receives at least twice what it sends in one update:
+Every transport receives at least twice what it sends in one update:
 `receive_capacity >= 2 * send_budget`, checked by
 `test_unit_receive_budget_twice_send.cpp` and locked by a
-`ROCKETNET_STATIC_ASSERT` beside each driver's constants. The send budget
+`ROCKETNET_STATIC_ASSERT` beside each transport's constants. The send budget
 is what one update stages or submits; the receive capacity is the bank,
 ring, staging or completion budget the send path can fill while it waits.
 The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
-(`sdk/rocketnet_constants.h`, 16000) bounds every driver's drain.
+(`sdk/rocketnet_constants.h`, 16000) bounds every transport's drain.
 
-| Driver | Send budget | Receive capacity |
+| Transport | Send budget | Receive capacity |
 | --- | --- | --- |
 | portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
 | msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
@@ -131,10 +131,10 @@ factory reports its actual port on success. Existing XDP preflight and the
 commit barrier remain in its adapter/backend.
 
 A factory reports why it failed through `config->status`
-(`rocketnet_server_driver_config_t.status` and
-`rocketnet_client_driver_config_t.status`, sdk/rocketnet_driver.h:52 and :115),
-one form for every driver. `rocketnet_server_driver_open` and
-`rocketnet_client_driver_open` write `ROCKETNET_STATUS_OUT_OF_MEMORY` there
+(`rocketnet_server_transport_io_config_t.status` and
+`rocketnet_client_transport_io_config_t.status`, sdk/rocketnet_driver.h:52 and :115),
+one form for every transport. `rocketnet_server_transport_io_open` and
+`rocketnet_client_transport_io_open` write `ROCKETNET_STATUS_OUT_OF_MEMORY` there
 when the create returned NULL after an allocation on the calling thread was
 refused (sdk/rocketnet_driver.cpp:126, :148 and :182, reading the per-thread
 count kept at sdk/rocketnet.cpp:369); any other NULL leaves it OK and is a
@@ -194,7 +194,7 @@ and `:3573`):
 `THREAD_PRIORITY_TIME_CRITICAL` on Windows. These are the flow library's
 settings (`flow_platform.cpp`), unchanged.
 
-| Driver | Threads it creates | What the library sets |
+| Transport | Threads it creates | What the library sets |
 |---|---|---|
 | GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
@@ -210,7 +210,7 @@ game's to set; the library sets nothing on them.
 
 ## Adding a backend without editing the transport
 
-For an in-tree driver, define a `const rocketnet_driver_backend_t`, add its row
+For an in-tree transport backend, define a `const rocketnet_transport_backend_t`, add its row
 to `rocketnet_drivers.inc`, and add its source to the build. It may support one
 endpoint or both. There are no transport switches, members or platform guards
 to extend.
@@ -219,11 +219,11 @@ An embedding project can also supply its own registry rows and implementation:
 
 ```sh
 cmake -S . -B build \
-  -DROCKETNET_DRIVER_REGISTRY_HEADER=/path/to/my_drivers.inc \
-  -DROCKETNET_DRIVER_SOURCES=/path/to/my_driver.cpp
+  -DROCKETNET_TRANSPORT_REGISTRY_HEADER=/path/to/my_drivers.inc \
+  -DROCKETNET_TRANSPORT_SOURCES=/path/to/my_driver.cpp
 ```
 
-The `.inc` has `ROCKETNET_DRIVER(...)` rows in the same format as the built-in
+The `.inc` has `ROCKETNET_TRANSPORT(...)` rows in the same format as the built-in
 file, and no include guard: it is intentionally expanded more than once. Native
 registration is compiled into the SDK; this is not a dynamic plugin ABI.
 Backend symbols are not public C exports. Per-driver settings and resource
@@ -240,10 +240,10 @@ hardware failure tests or per-platform line-rate measurements.
 Dispatch measurements and their limits are recorded in
 [bench/transport_fill.md](bench/transport_fill.md).
 
-## The RIO server driver
+## The RIO server transport
 
 `rio` (`sdk/rocketnet_server_rio_windows.cpp`, `sdk/rocketnet_server_rio.h`)
-is a Windows staged server driver with one registered memory region, polled
+is a Windows staged server transport with one registered memory region, polled
 send and receive completion queues, deferred sends committed once per flush,
 and two send phases so a phase stays owned until its sends complete. It uses no
 worker threads. Its server rank is 45, after IOCP's 40, so automatic selection
@@ -252,10 +252,10 @@ never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
 dropped-overflow receives, failed receive reposts, and RIO commit calls. Its send phase swap and one-bank receive limit are implemented in `rocketnet_server_rio_send_packets` and `rocketnet_server_rio_receive_packets` in `sdk/rocketnet_server_rio_windows.cpp`; its receive banks are modelled in `tla/RNRioDriver.tla`.
 
-## The io_uring server driver
+## The io_uring server transport
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
-is a staged Linux server driver with one io_uring per driver, used only on the
+is a staged Linux server transport with one io_uring per instance, used only on the
 main thread, and no worker threads. An `SO_REUSEPORT` socket group, bound the
 way the GSO driver binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
@@ -285,7 +285,7 @@ re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
 (`SEND_DEFERRED`). A destroy that gives up waiting for outstanding completions leaks the
 kernel-visible memory rather than freeing it and counts it in
-`rocketnet_server_uring_leaked_bytes()` and `rocketnet_server_uring_leaked_drivers()`.
+`rocketnet_server_uring_leaked_bytes()` and `rocketnet_server_uring_leaked_transports()`.
 The send staging, the two receive banks, the per-call completion budget and
 destroy are modelled in `tla/RNUringDriver.tla`.
 

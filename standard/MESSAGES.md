@@ -2568,7 +2568,7 @@ sample. On every later sample, the deviation MUST move 5 percent toward
 the absolute difference between the prior smoothed RTT and the new sample;
 the smoothed RTT MUST then move 5 percent toward the new sample. The retransmission timeout is
 
-    clamp( 2 x srtt + 4 x deviation + 30 ms, rto_min_ms, rto_max_ms )
+    clamp( 2 x srtt + 4 x deviation + 30 ms, resend_delay_min_ms, resend_delay_max_ms )
 
 where srtt and deviation are in seconds. The timeout MUST be 2 seconds before
 the first sample by default. The minimum defaults to 0, which applies no floor
@@ -2580,9 +2580,9 @@ until the reliable timeout ends the connection.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| rto_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
-| rto_min_ms | 0 | ms | optional floor for the sampled RTO; zero disables it |
-| rto_max_ms | 2000 | ms | the configured largest timeout |
+| resend_delay_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
+| resend_delay_min_ms | 0 | ms | optional floor for the sampled RTO; zero disables it |
+| resend_delay_max_ms | 2000 | ms | the configured largest timeout |
 | reliable_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
 | min_resend_attempts | 4 | count | the sends that fit before the reliable timeout |
 

@@ -90,7 +90,7 @@ out-of-the-box example. The new flags, on both programs unless marked:
 | `--seed X` | The run seed, printed at start. It offsets the length rule (section 4). Both ends must be given the same seed. |
 | `--modes M` / `--channels C` | The modes and channel count to drive. Defaults: all eight modes and the config's `num_channels` (32, `sdk/rocketnet.h`). |
 | `--send-kbps K` | The send budget: the client's own, or the server's per client (`sdk/rocketnet.h`). |
-| `--max-packets-per-update N` | The message config's `max_packets_per_update` (`sdk/rocketnet.h`). It is not a WIRE field, so the two ends may differ. |
+| `--max-packets-per-update N` | The message config's `packets_per_update` (`sdk/rocketnet.h`). It is not a WIRE field, so the two ends may differ. |
 | `--max-clients N` | Server: `max_clients`, set explicitly (section 7). |
 | `--update-hz H` | Update rate of the main loop: server through `rocketnet_frame_sync_create` (`sdk/rocketnet.h`), client through `rocketnet_sleep`. |
 | `--counters-every S` | Snapshot every counter, RSS and the transport stats every S seconds (default 60), and at start and exit. |
@@ -264,9 +264,9 @@ every window. The channel-less modes 0, 2, 5 and 6 name all 32 channels; the
 modes 1, 3, 4 and 7 run on channels 0 to 30, because channel 31 carries the
 progress reports and the HELLO (below and section 6). That is
 2 x (4 x 32 + 4 x 31) = 504 streams per connection. Each update, the
-receiver polls every channel with `rocketnet_client_receive_message` on a client
-and `rocketnet_server_receive_message` on the server, and it releases every view
-before the next update (`sdk/rocketnet.h`).
+receiver drains the endpoint-wide queue with `rocketnet_client_receive_messages`
+on a client and `rocketnet_server_receive_messages` on the server, processing
+every batch entry before the next receive call or update (`sdk/rocketnet.h`).
 The receive channel is checked against the sender's channel byte. Codes 1,
 3, 4 and 7 must arrive on the channel sent. Codes 0, 2, 5 and 6 arrive on
 channel 0, because their records carry no channel (`sdk/rocketnet.h`;
@@ -348,7 +348,7 @@ and each runner sets its own caps explicitly in its config. Under RULINGS
 (b) and (d) every client's cap is its total, both directions combined, and
 the site sets it:
 
-| Path | Client send | Server per-client send | `max_packets_per_update` | Update rate |
+| Path | Client send | Server per-client send | `packets_per_update` | Update rate |
 |---|---|---|---|---|
 | Studio site (1 Mbit/s total) | 500 kbps | 500 kbps | 64 | 1,000 Hz |
 | Datacenter (100 Mbit/s total) | 50,000 kbps | 50,000 kbps | 64 | 1,000 Hz |

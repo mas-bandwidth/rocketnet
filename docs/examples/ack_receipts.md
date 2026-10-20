@@ -11,7 +11,7 @@ Sending with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` gives each snap
 3. Read `rocketnet_client_receipts` each frame after `rocketnet_client_update` and match each `rocketnet_receipt_t` serial back to the update that sent it.
 4. Print `ACKED` (`ROCKETNET_RECEIPT_STATUS_ACKED`) or `LOSS` (`ROCKETNET_RECEIPT_STATUS_LOSS`) for each update and verify that all 20 sends receive exactly one receipt.
 
-Each frame runs the five steps in game-loop order: update, receive and release (plus receipts), simulate, queue outgoing messages, and `send_packets` last.
+Each frame runs the five steps in game-loop order: update, drain the receive queue (plus receipts), simulate, queue outgoing messages, and `send_packets` last.
 
 ## Run it
 
@@ -39,7 +39,7 @@ Each `update <n> (serial <s>): ACKED|LOSS` line reports the single outcome for t
 ## Public calls it uses
 
 - `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_port`, `rocketnet_server_update`, `rocketnet_server_client_connected`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`, `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_send_packets`, `rocketnet_server_destroy`
-- `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`, `rocketnet_client_state`, `rocketnet_client_index`, `rocketnet_client_update`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`, `rocketnet_client_receive_message`, `rocketnet_client_release_message`, `rocketnet_client_receipts`, `rocketnet_client_send_packets`, `rocketnet_client_destroy`
+- `rocketnet_server_dev_config`, `rocketnet_server_create`, `rocketnet_server_port`, `rocketnet_server_update`, `rocketnet_server_client_connected`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`, `rocketnet_server_send_packets`, `rocketnet_server_destroy`
+- `rocketnet_client_default_config_sized`, `rocketnet_client_create_sized`, `rocketnet_client_state`, `rocketnet_client_index`, `rocketnet_client_update`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`, `rocketnet_client_receipts`, `rocketnet_client_send_packets`, `rocketnet_client_destroy`
 - `rocketnet_write_dev_connect_token` (development library only)
 - `rocketnet_time`, `rocketnet_sleep`

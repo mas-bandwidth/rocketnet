@@ -213,8 +213,8 @@ the design these points:
 - **The lean profile is refused by the store rule.** At `S = 65536` the large
   class holds 18 chunks. The default `max_message_bytes` of 262144 needs 228.
   The lean profile therefore also needs `max_message_bytes <= 20,736`.
-- **One validation rule more:** rto_min_ms <= rto_initial_ms <= rto_max_ms.
-  rto_min_ms is optional and defaults to 0, matching RakNet.
+- **One validation rule more:** resend_delay_min_ms <= resend_delay_initial_ms <= resend_delay_max_ms.
+  resend_delay_min_ms is optional and defaults to 0, matching RakNet.
 - **The exact region** is the formula plus at most 63 bytes of alignment per
   part. The default headroom without a finite budget reserve is 1,588,480
   bytes with no padding. Section 14 distinguishes this from the total region.
@@ -595,7 +595,7 @@ corruption.
   rto = min( 2·srtt + 4·rttvar + 30 ms, rto_max ), matching RakNet
   (docs/RAKNET-RELIABILITY.md:667-668, 686-695). Before the first sample it
   is rto_initial (2 s by default); the maximum is 2 s by default.
-  rto_min_ms is an optional floor (0 ms by default, matching RakNet); a caller may set it.
+  resend_delay_min_ms is an optional floor (0 ms by default, matching RakNet); a caller may set it.
   There is no back-off: every resend waits the same delay, so attempts fit
   before reliable_timeout (tla/RNResendTiming.tla, AttemptsBeforeTimeout).
 
@@ -801,7 +801,7 @@ card). The implementation made these boundaries explicit:
 
 Congestion control is not in this design (section 18.2, choice G3). The
 sender's numbering is bounded by `W` and `B`, and each update by
-`max_packets_per_update`.
+`packets_per_update`.
 
 ## 7. Layer 4: channels and per-send reliability
 
@@ -1080,7 +1080,7 @@ block mixed with another after numbers wrap is not checked by any module yet
 ### 9.3 Writing packets
 
 `rn_packet_builder_write` (`sdk/rocketnet_packet_builder.cpp`) runs per
-connection, at most `max_packets_per_update` packets:
+connection, at most `packets_per_update` packets:
 
 1. **Plan:** an unreliable message too big for one packet's record was already
    promoted to its reliable twin at the send call (L2.3), so no fragmented
@@ -1295,8 +1295,9 @@ dropped at start message: `NULL`, counted once in `MESSAGE_SEND_NOT_CONNECTED`
 tla/ClientSession.tla DropSend); the server drops a send to a slot that is not
 CONNECTED the same way. Only the CONFIG control record, announced at create, is
 held, unnumbered, until CONNECTED. One client object makes one connection, like the
-transport. The client receives with `rocketnet_client_receive_message`, modelled on the
-transport's receive. CONNECTED is emitted
+transport. The client drains its endpoint-wide receive queue with
+`rocketnet_client_receive_messages`, modelled on the transport's receive.
+CONNECTED is emitted
 when the transport first reports state 4. DISCONNECTED is emitted when the
 transport leaves state 4, or when the endpoint errors, in which case the
 object calls `rocketnet_client_disconnect`.
@@ -1329,12 +1330,13 @@ header; the internal transport and message layers are in
   its receipt serial, nonzero. `abort` gives the room back, and `send` is the
   copying convenience. The one
   copy on the path is THE COPIES (a), record to frame, in layer 6's writer.
-- **The receive.** `rocketnet_client_receive_message` or `rocketnet_server_receive_message` hands out the update's next message on
-  the channel as a const view and a length; `rocketnet_client_release_message` or `rocketnet_server_release_message` gives it back. Every view
-  is released before the next update: update with one held asserts in a debug
-  build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build,
-  counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
-  The views are taken back either way, so memory never grows from a held view.
+- **The receive.** `rocketnet_client_receive_messages` and
+  `rocketnet_server_receive_messages` return the next endpoint-wide
+  `rocketnet_message_batch_t`. Each entry carries its channel, reliability,
+  byte count and data pointer; server entries also carry the sending client
+  index, while client entries use index 0. Keep calling until the function
+  returns false. The data pointers remain valid until the endpoint's next
+  receive call or update, whichever comes first; there is no release call.
 - **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
   message is received on channel 0. It is one record in one packet, up to the
   payload capacity less the form byte and the record's three header bytes
@@ -1401,7 +1403,7 @@ header; the internal transport and message layers are in
 ## 12. Layer 9: the public C API
 
 The public API is `sdk/rocketnet.h`; this document does not restate it. A game
-creates one client or server, pumps it, receives and releases what arrived,
+creates one client or server, pumps it, drains what arrived,
 simulates, queues this frame's messages, and sends last. Every frame, on both
 ends:
 
@@ -1410,14 +1412,12 @@ ends:
 const uint8_t * data = NULL;
 int bytes = 0;
 rocketnet_client_update( client, time );                  /* 1. packets in */
-for ( ;; )                                                /* 2. receive and release */
+rocketnet_message_batch_t batch;
+while ( rocketnet_client_receive_messages( client, &batch ) ) /* 2. drain */
 {
-    const uint8_t * view = NULL;
-    int view_bytes = 0;
-    if ( !rocketnet_client_receive_message( client, channel, &view, &view_bytes ) )
-        break;
-    /* process view */
-    rocketnet_client_release_message( client, view );
+    for ( int i = 0; i < batch.num_messages; ++i )
+        process_message( batch.channel[i], batch.reliability[i],
+                         batch.data[i], batch.bytes[i] );
 }
 /* 3. run the game simulation for this frame */
 uint8_t * out = rocketnet_client_start_message( client, channel, ROCKETNET_RELIABILITY_UNRELIABLE, (int) bytes ); /* 4. queue */
@@ -1430,8 +1430,8 @@ if ( out )
 rocketnet_client_send_packets( client );                  /* 5. last: this frame's messages leave this frame */
 ```
 
-The server is the same loop with a `client_index` on receive, send, and
-release, and a loop over connected clients for a send to every one. The
+The server is the same loop; each batch entry has a `client_index`, and sends
+take a client index. Sending to every client is a loop over connected clients. The
 zero-copy form is `rocketnet_client_start_message`, write, `rocketnet_client_finish_message`
 (or `rocketnet_client_abort_message`), and the server form takes `client_index`.
 Receipts are read with `rocketnet_client_receipts` and
@@ -1467,8 +1467,8 @@ study's §13 is outside RocketNet's library deliverable. The native C API
 covers the following protocol needs:
 
 - RakNet's `Send` maps to `rocketnet_client_start_message`/`rocketnet_client_finish_message`, or the server forms, which return a nonzero serial.
-- `Receive` and `DeallocatePacket` become `rocketnet_client_receive_message` and
-  `rocketnet_client_release_message`, or the server forms with a `client_index`.
+- `Receive` drains `rocketnet_client_receive_messages` or
+  `rocketnet_server_receive_messages`; batch data needs no deallocation call.
 - Receipts and connection notices are lists. A consumer adapter can merge them into
   RakNet's single stream, so the interleaving I17 describes is reproduced above
   this layer.
@@ -1781,9 +1781,9 @@ region follows.
   bandwidth only), but liveness does. `RNWindow` needs this as an assumption
   (`AcksLand`): without it TLC finds a lasso in which every ack names an
   evicted id (`tla/README-RNWindow.md`). The packets a connection writes in
-  one RTT are at most `max_packets_per_update` times the updates in one RTT,
+  one RTT are at most `packets_per_update` times the updates in one RTT,
   resends included, because resends share the update's packet limit, and at
-  most what the send budget pays for. At the defaults (`max_packets_per_update`
+  most what the send budget pays for. At the defaults (`packets_per_update`
   256, 1 .. 1024, so the send budget is the throttle) and RTT 200 ms, the
   client's 1000 kbps pays for about 17 packets of 1452 bytes in one RTT and
   the server's 10000 kbps per client about 172, both inside `P = 256`; the
@@ -1799,8 +1799,8 @@ region follows.
   - a 1152 class (a third of `S`) too small to hold one maximal block, that
     is, fewer than `ceil(max_message_bytes/F)` chunks (as built, the class
     holds `floor(third / 1156)` chunks with their links, section 4);
-  - `rto_initial_ms` outside `rto_min_ms` to `rto_max_ms` (added by card C1);
-  - `reliable_timeout_ms < 4 × rto_initial_ms`,
+  - `resend_delay_initial_ms` outside `resend_delay_min_ms` to `resend_delay_max_ms` (added by card C1);
+  - `reliable_timeout_ms < 4 × resend_delay_initial_ms`,
     so at least `ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS` (4) sends of a
     record fit before the timeout gives up on it (6.4,
     `tla/RNResendTiming.tla`).
@@ -2145,7 +2145,7 @@ requires.
 - **G2. The defaults and their cost** (section 14), about 438 KiB per
   connection, and whether the game wants the lean profile.
 - **G3. No congestion control in the first version.** The sender is bounded
-  by `W`, `B` and `max_packets_per_update`, and the send budget (R6,
+  by `W`, `B` and `packets_per_update`, and the send budget (R6,
   retransmits first) limits resend storms; there is no back-off (6.4). RakNet's sliding window (study §9) could sit at layer 6 later
   without a wire change.
 - **G4. standard/MESSAGES.md's scope.** The transport standard specifies the
@@ -2200,7 +2200,7 @@ requires.
 ### Create-time maximum-RTO message reserve
 
 Each connection adds a local payload reserve to its configured message-region
-headroom at CREATE. Let `R = ceil(send_kbps * 125 * rto_max_ms / 1000)` bytes.
+headroom at CREATE. Let `R = ceil(send_kbps * 125 * resend_delay_max_ms / 1000)` bytes.
 Client and server creation use their respective resolved per-connection budgets,
 including an explicit creation override. Generic connection sizing conservatively
 uses the larger configured budget. A zero/unlimited budget has no finite reserve.

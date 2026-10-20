@@ -4326,7 +4326,7 @@ happened. See [t18 Error handling and counters](#t18).
 ### Create-time maximum-RTO message reserve
 
 Each connection adds a local payload reserve to its configured message-region
-headroom at CREATE. Let `R = ceil(send_kbps * 125 * rto_max_ms / 1000)` bytes.
+headroom at CREATE. Let `R = ceil(send_kbps * 125 * resend_delay_max_ms / 1000)` bytes.
 Client and server creation use their respective resolved per-connection budgets,
 including an explicit creation override. Generic connection sizing conservatively
 uses the larger configured budget. A zero/unlimited budget has no finite reserve.
