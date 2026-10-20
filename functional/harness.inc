@@ -72,8 +72,13 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINES 32
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES 1024
+// a slot holds "<time>: <level>: " in front of a whole captured line: the
+// level name is at most 7 bytes (sdk/rocketnet.cpp:179), so 64 bytes hold
+// the prefix for any clock reading below 10^40 seconds
+#define ROCKETNET_FUNCTIONAL_LOG_RING_PREFIX_BYTES 64
+#define ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES ( ROCKETNET_FUNCTIONAL_LOG_RING_PREFIX_BYTES + ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES )
 
-static char rocketnet_test_log_ring[ROCKETNET_FUNCTIONAL_LOG_RING_LINES][ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES];
+static char rocketnet_test_log_ring[ROCKETNET_FUNCTIONAL_LOG_RING_LINES][ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES];
 static int rocketnet_test_log_ring_lines;
 static rocketnet_log_callback_t rocketnet_test_suite_log_function = NULL;
 static char rocketnet_test_captured_log[16384];
@@ -93,7 +98,7 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     }
 
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_FUNCTIONAL_LOG_RING_LINES];
-    snprintf( slot, ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    snprintf( slot, ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
     rocketnet_test_log_ring_lines++;
 }
 
