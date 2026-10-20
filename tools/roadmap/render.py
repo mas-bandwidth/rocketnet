@@ -30,8 +30,9 @@
 #
 # An area may carry :milestone "next": its heading is marked (next milestone).
 # A cell is y (done and tested), n (red, or not yet), o (owed: a run deferred
-# until every feature has landed, shown as OWED), p (planned: a test with no
-# green run yet that is not a known red and not deferred, shown as PLANNED) or
+# until the final deliverable), p (planned: a test with no green run yet that
+# is not a known red and not deferred), both shown as "planned for the final
+# deliverable", or
 # - (does not apply). Every y
 # cell needs evidence: :evidence is one string whose labels name each column
 # it covers ("Linux, macOS and Windows: ..." at the start or after "; "), or a
@@ -45,7 +46,8 @@
 #
 # An o or p cell needs a :pending entry naming the card that owns it, and a
 # page with any o cell carries :owed,
-# the note printed under each table that has one ("OWED: ...").
+# the note printed under each table that has one ("Planned for the final
+# deliverable: ...").
 #
 # A page may carry :all-cells-apply t: then no cell is -, so no table shows —.
 #
@@ -68,7 +70,8 @@
 import re
 import sys
 
-CELL = { "y": "✅", "n": "❌", "o": "OWED", "p": "PLANNED", "-": "—" }
+PLANNED = "planned for the final deliverable"
+CELL = { "y": "✅", "n": "❌", "o": PLANNED, "p": PLANNED, "-": "—" }
 OPEN = ( "n", "o", "p" )
 
 # The server transports in the order the automatic ladder ranks them (server
@@ -276,7 +279,7 @@ def render( data, source="docs/roadmap.sexp" ):
         if pending:
             lines += [ "" ] + pending
         if owed:
-            lines += [ "", "OWED: " + owed_note ]
+            lines += [ "", "Planned for the final deliverable: " + owed_note ]
         lines += [ "", "[Source data](%s)" % source, "" ]
     for name in full_tests:
         for feature, aid in full_tests[name].items():
