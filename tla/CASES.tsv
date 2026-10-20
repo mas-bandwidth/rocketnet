@@ -97,6 +97,7 @@ MCRNSlotsBrokenNoResetOnReuse.cfg	MCRNSlots.tla	invariant	ReusedSlotStartsClean	
 MCRNSlotsBrokenKickCarriesOn.cfg	MCRNSlots.tla	action	ExhaustionOnlyLeadsToDisconnect	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenReleaseIgnored.cfg	MCRNSlots.tla	temporal	EveryReliableDelivered	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenUpdateWithHeldViews.cfg	MCRNSlots.tla	invariant	UpdateRequiresReleasedViews	ignore-terminal	rnslots	required	-
+MCRNSlotsBrokenDisconnectBypassesKick.cfg	MCRNSlots.tla	invariant	TransportEndedSlotEndedAtOnce	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenClientIdAsConnection.cfg	MCRNSlots.tla	invariant	ReusedSlotStartsClean	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenPendingAcrossReset.cfg	MCRNSlots.tla	invariant	NoPendingAcrossReset	ignore-terminal	rnslots	required	-
 MCRNSlotsExhaustion.cfg	MCRNSlots.tla	pass	-	ignore-terminal	rnslots	required	-
