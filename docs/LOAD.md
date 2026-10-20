@@ -40,7 +40,7 @@ When `counters_agree` fails, `load` prints to stderr every nonzero counter of th
 
 At the end of every run, the single summary line records:
 - `connect_s`: wall time from the start of the connect phase until every client and the server report the full client count connected.
-- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each measured when that client first reaches `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED`.
+- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each read from the clock when `load` first sees that client in `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED` (`load.c:575`), not from the connect loop's per-pass time, which every client of one pass shares. With three or more clients connected, a `connect_p50_s` equal to `connect_max_s` means the stamps share one value: `load` then prints `load: connect_stamps ...` to stderr and fails the run with `failed_criterion=connect_stamps` (`load.c:1019`).
 - `server_update_p50_us` and `server_update_p99_us`: 50th and 99th percentile durations (in microseconds) of `rocketnet_message_server_update`.
 - `rss_mb`: process resident set size (in MiB) at the end of the run.
 - `server_driver` and `client_driver`: the transport the ladder granted to the server and to client `0`.

@@ -569,8 +569,10 @@ int main( int argc, char ** argv )
             const int st = rocketnet_message_client_state( clients[i] );
             if ( st == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
+                // stamped when this client is seen connected, never with the
+                // pass's now: every client of one pass shares that value
                 if ( client_connect_seconds[i] < 0.0 )
-                    client_connect_seconds[i] = now - start_time;
+                    client_connect_seconds[i] = rocketnet_time() - start_time;
                 client_ever_connected[i] = 1;
                 connected_count++;
             }
@@ -1011,6 +1013,13 @@ int main( int argc, char ** argv )
         connect_p50_s = client_connect_seconds[first + ( median < connected_samples ? median : connected_samples - 1 )];
         connect_max_s = client_connect_seconds[num_clients - 1];
     }
+    // each stamp is its own read of the clock, so with three or more
+    // connected clients the median sits below the last: a p50 equal to the
+    // max means the stamps share one value
+    const int connect_stamps_ok = ( connected_samples < 3 || connect_p50_s < connect_max_s ) ? 1 : 0;
+    if ( !connect_stamps_ok )
+        fprintf( stderr, "load: connect_stamps connect_p50_s=%.6f equals connect_max_s over %d connected clients\n",
+                 connect_p50_s, connected_samples );
 
     const uint64_t rss_bytes = query_rss_bytes();
     const double rss_mb = (double) rss_bytes / ( 1024.0 * 1024.0 );
@@ -1026,12 +1035,15 @@ int main( int argc, char ** argv )
         failed_criterion = "unreliable_integrity";
     else if ( !crit5_counters_agree )
         failed_criterion = "counters_agree";
+    else if ( !connect_stamps_ok )
+        failed_criterion = "connect_stamps";
 
     const int pass = crit1_connect_within_10s &&
                      crit2_no_unexpected_disconnect &&
                      crit3_reliable_delivery &&
                      crit4_unreliable_integrity &&
                      crit5_counters_agree &&
+                     connect_stamps_ok &&
                      !quit;
 
     char server_driver[32];
