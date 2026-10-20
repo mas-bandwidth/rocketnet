@@ -3,7 +3,7 @@
 # compiler invocation in the tree. RocketNet builds with -ffp-contract=off
 # (GCC/Clang) or /fp:precise (MSVC) so the wire's contraction invariance holds
 # everywhere rocketnet code is compiled. This walks the build files that are
-# NOT routed through the CMake target (which already carries the floor PUBLIC)
+# NOT routed through the CMake target (which already carries the floor PRIVATE)
 # and fails on any compiler line that omits it.
 #
 # server_xdp/Makefile is exempt: `clang ... -target bpf -c server_xdp.c`
@@ -51,7 +51,7 @@ for f in $files; do
         line="${buf#"${buf%%[![:space:]]*}"}"
         cmd="${line%%[[:space:]]*}"
         # cmake -D defines configure the toolchain; the actual compilation is
-        # routed through the CMake target, which carries the floor PUBLIC.
+        # routed through the CMake target, which carries the floor PRIVATE.
         case "$cmd" in
             -D*) buf=""; continue ;;
         esac
