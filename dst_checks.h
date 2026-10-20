@@ -282,7 +282,8 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
     struct rocketnet_dst_check_stream_t * s =
         rocketnet_dst_check_stream( st, session, channel, type, generation, identity );
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
-    if ( reliable )
+    const int lap = rocketnet_dst_check_lap( st, "sent_size", s->reliable_base, sequence );
+    if ( reliable && !lap )
     {
         if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, sequence, "reliable_sent" ) )
         {
@@ -290,7 +291,7 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
             s->reliable_sent_count++;
         }
     }
-    if ( !rocketnet_dst_check_lap( st, "sent_size", s->reliable_base, sequence ) )
+    if ( !lap )
     {
         s->sent_size[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = (uint16_t) ( bytes > 65535 ? 65535 : bytes );
         s->sent_size_set[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = 1;
@@ -299,7 +300,7 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
     s->last_sent_step = st->step;
     s->has_last_sent = 1;
     rocketnet_dst_check_reliable_resolve( s );
-    if ( reliable )
+    if ( reliable && !lap )
         s->outstanding_bytes += (uint32_t) bytes;
     if ( channel == 8 && ( type == 1 || type == 4 ) )
     {

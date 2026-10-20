@@ -373,7 +373,10 @@ The lap is a finding, never a silent wrap: a stream that reaches it has outgrown
 The `whole_message` size table (`sent_size` and `sent_size_set`, indexed by sequence) uses the same
 window: `rocketnet_dst_check_sent` refuses to record a sent size at or past the base's lap, and
 `rocketnet_dst_check_whole_message` refuses a delivery there instead of comparing it to a newer
-sequence's recorded size; a size for a sequence below the base is resolved and not looked at.
+sequence's recorded size; a size for a sequence below the base is resolved and not looked at. The
+same lap check guards the stream's summary counters, so a sent at or past the lap records neither a
+`reliable_sent_count` increment nor an `outstanding_bytes` addition: the sent leaves the stream's
+counts unchanged once the check has failed.
 
 The checks run from `dst_checks.h`, called by the harness at the hooks the table names: every
 delivery, every link `acked()` call, every server slot change and client state change, every step,
