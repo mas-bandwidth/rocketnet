@@ -34,11 +34,12 @@
     The link simulator is driven by the transports' own env overlay
     (ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT, _LATENCY_MS, _JITTER_MS,
     _DUPLICATE_PERCENT and the same four for ROCKETNET_CLIENT_). A duplicate
-    the simulator injects is refused by the receiver as PAYLOAD_ALREADY_RECEIVED
-    (client: CLIENT_PAYLOAD_ALREADY_RECEIVED); when the sending end's
-    SIMULATED_DUPLICATE_PERCENT is non-zero that one refusal at the receiving
-    end is the expected outcome of the injection and is reported, not failed;
-    every other refusal still fails the run.
+    the simulator injects is refused by the receiver as one of the
+    *_ALREADY_RECEIVED counters (PAYLOAD_ALREADY_RECEIVED, KEEP_ALIVE_ and the
+    client's CLIENT_ forms); when the sending end's SIMULATED_DUPLICATE_PERCENT
+    is non-zero those refusals at the receiving end are the expected outcome of
+    the injection and are reported, not failed; every other refusal still
+    fails the run.
 
     ROCKETNET_SOAK_SERVER_HOST (default 127.0.0.1) is the IPv4 host the server
     binds and the connect token names; ROCKETNET_SOAK_SERVER_PORT (default 0,
@@ -166,7 +167,7 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
         {
             const char * counter = rocketnet_counter_name( i );
             const size_t length = strlen( counter );
-            const char * suffix = "PAYLOAD_ALREADY_RECEIVED";
+            const char * suffix = "_ALREADY_RECEIVED";
             const size_t suffix_length = strlen( suffix );
             if ( duplicates_injected && length >= suffix_length && strcmp( counter + length - suffix_length, suffix ) == 0 )
             {
