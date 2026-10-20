@@ -587,23 +587,73 @@ void rocketnet_test_client_io_windows_handoff_round_trip()
     rocketnet_test_client_io_handoff_round_trip( "portable", "client_io_windows_handoff_round_trip" );
 }
 
+// client_send_buffer_pressure_windows: one game thread per client, each
+// client created with the public step_driven config, so the client I/O step
+// (and so every driver send) runs on the game thread inside send_packets and
+// update (sdk/rocketnet_client_transport.cpp rocketnet_client_transport_send_packets,
+// the step_in_update branch). The case times each of those calls from the
+// game thread under ring pressure: every frame fills the 256-slot hand-off
+// ring with 1000-byte payloads until start_packet refuses, then sends.
+// What the overlapped send is for (docs/CLIENT-IO.md The Windows send,
+// tla/RNClientIo.tla IoNeverBlocksOnSend) is that no such call is held by the
+// kernel: the I/O step posts each slot with WSASendTo and returns. The bound
+// is one 60 Hz frame for one call. Total frame time is not the measure: the
+// refusals are backpressure, counted, and delivery is not checked here.
+
+struct rocketnet_test_send_pressure_thread_t
+{
+    struct rocketnet_client_transport_t * client;
+    int frames;
+    int packets_per_frame;
+    int payload_bytes;
+    int sent;
+    int refused;
+    double longest_send_packets;
+    double longest_update;
+    int over_budget_calls;
+    double budget;
+    std::atomic<int> * finished;
+};
+
+static void rocketnet_test_send_pressure_thread( void * data )
+{
+    rocketnet_test_send_pressure_thread_t * t = (rocketnet_test_send_pressure_thread_t*) data;
+    static thread_local uint8_t drain[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    for ( int frame = 0; frame < t->frames; frame++ )
+    {
+        for ( int i = 0; i < t->packets_per_frame; i++ )
+        {
+            struct rocketnet_packet_context_t context;
+            uint8_t * payload = rocketnet_client_transport_start_packet( t->client, t->payload_bytes, &context );
+            if ( !payload )
+            {
+                t->refused++;
+                break;
+            }
+            memset( payload + context.payload_index, (uint8_t) ( frame + i ), (size_t) t->payload_bytes );
+            rocketnet_check( rocketnet_client_transport_finish_packet( t->client, &context, t->payload_bytes ) > t->payload_bytes );
+            t->sent++;
+        }
+        const double a = rocketnet_platform_time();
+        rocketnet_client_transport_send_packets( t->client );
+        const double b = rocketnet_platform_time();
+        rocketnet_client_transport_update( t->client, b );
+        const double c = rocketnet_platform_time();
+        if ( b - a > t->longest_send_packets ) t->longest_send_packets = b - a;
+        if ( c - b > t->longest_update ) t->longest_update = c - b;
+        if ( b - a >= t->budget ) t->over_budget_calls++;
+        if ( c - b >= t->budget ) t->over_budget_calls++;
+        while ( rocketnet_client_transport_receive_packet( t->client, drain, (int) sizeof(drain) ) > 0 ) {}
+        rocketnet_platform_sleep( 0.001 );
+    }
+    t->finished->fetch_add( 1 );
+}
+
 void rocketnet_test_client_send_buffer_pressure_windows()
 {
-    // docs/CLIENT-IO.md The Windows send, tla/RNClientIo.tla
-    // IoNeverBlocksOnSend: eight portable clients, each with its own I/O
-    // thread, hand off rings of 64 datagrams of 1000 bytes every frame to one
-    // loopback server, so the kernel's send path is under pressure from many
-    // sockets at once. The I/O core records the longest send phase of one
-    // ring (rocketnet_client_io_t longest_send_seconds, read around the post
-    // loop or the driver send calls in rocketnet_client_io_step). With the
-    // overlapped send the phase only posts, so no client's I/O thread is held
-    // past one 60 Hz frame; the synchronous sendto it replaced can be held
-    // by the kernel for longer. Ring-full refusals are backpressure, counted
-    // and skipped: delivery is not what this case measures.
-
     const int NUM_CLIENTS = 8;
-    const int FRAMES = 200;
-    const int PACKETS_PER_FRAME = 64;
+    const int FRAMES = 300;
+    const int PACKETS_PER_FRAME = 256;
     const int PAYLOAD_BYTES = 1000;
     const double FRAME_BUDGET_SECONDS = 1.0 / 60.0;
 
@@ -625,6 +675,7 @@ void rocketnet_test_client_send_buffer_pressure_windows()
         struct rocketnet_client_transport_config_t client_config;
         rocketnet_client_transport_default_config( &client_config );
         snprintf( client_config.driver, sizeof(client_config.driver), "%s", "portable" );
+        client_config.step_driven = 1;
         clients[c] = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
         rocketnet_check( clients[c] );
         rocketnet_check( rocketnet_client_transport_client_io( clients[c] ) != NULL );
@@ -648,48 +699,52 @@ void rocketnet_test_client_send_buffer_pressure_windows()
     }
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == NUM_CLIENTS );
 
-    int sent = 0;
-    int refused = 0;
-    for ( int frame = 0; frame < FRAMES; frame++ )
+    std::atomic<int> finished( 0 );
+    rocketnet_test_send_pressure_thread_t args[NUM_CLIENTS];
+    rocketnet_platform_thread_t * threads[NUM_CLIENTS];
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
     {
-        for ( int c = 0; c < NUM_CLIENTS; c++ )
-        {
-            for ( int i = 0; i < PACKETS_PER_FRAME; i++ )
-            {
-                struct rocketnet_packet_context_t context;
-                uint8_t * payload = rocketnet_client_transport_start_packet( clients[c], PAYLOAD_BYTES, &context );
-                if ( !payload )
-                {
-                    refused++;
-                    continue;
-                }
-                memset( payload + context.payload_index, (uint8_t) ( frame + i ), PAYLOAD_BYTES );
-                rocketnet_check( rocketnet_client_transport_finish_packet( clients[c], &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
-                sent++;
-            }
-            rocketnet_client_transport_send_packets( clients[c] );
-            rocketnet_client_transport_update( clients[c], rocketnet_platform_time() );
-            static uint8_t drain[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
-            while ( rocketnet_client_transport_receive_packet( clients[c], drain, (int) sizeof(drain) ) > 0 ) {}
-        }
+        args[c] = rocketnet_test_send_pressure_thread_t();
+        args[c].client = clients[c];
+        args[c].frames = FRAMES;
+        args[c].packets_per_frame = PACKETS_PER_FRAME;
+        args[c].payload_bytes = PAYLOAD_BYTES;
+        args[c].budget = FRAME_BUDGET_SECONDS;
+        args[c].finished = &finished;
+        threads[c] = rocketnet_platform_thread_create( NULL, rocketnet_test_send_pressure_thread, &args[c] );
+        rocketnet_check( threads[c] );
+    }
+
+    // the server keeps receiving on this thread while the game threads run;
+    // each game thread ends after FRAMES frames
+    const double run_start = rocketnet_platform_time();
+    while ( finished.load() < NUM_CLIENTS )
+    {
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         rocketnet_platform_sleep( 0.001 );
     }
-
-    double longest = 0.0;
-    uint64_t send_errors = 0;
     for ( int c = 0; c < NUM_CLIENTS; c++ )
     {
-        rocketnet_client_io_t * io = rocketnet_client_transport_client_io( clients[c] );
-        const double seconds = io->longest_send_seconds.load( std::memory_order_relaxed );
-        if ( seconds > longest )
-            longest = seconds;
-        send_errors += io->send_errors.load( std::memory_order_relaxed );
+        rocketnet_platform_thread_join( threads[c] );
+        rocketnet_platform_thread_destroy( threads[c] );
     }
-    printf( "client_send_buffer_pressure_windows clients=%d frames=%d sent=%d refused=%d longest_send_ms=%.3f send_errors=%llu\n",
-        NUM_CLIENTS, FRAMES, sent, refused, longest * 1000.0, (unsigned long long) send_errors );
-    rocketnet_check( longest < FRAME_BUDGET_SECONDS );
+    const double run_seconds = rocketnet_platform_time() - run_start;
+
+    int sent = 0, refused = 0, over = 0;
+    double longest_send_packets = 0.0, longest_update = 0.0;
+    for ( int c = 0; c < NUM_CLIENTS; c++ )
+    {
+        sent += args[c].sent;
+        refused += args[c].refused;
+        over += args[c].over_budget_calls;
+        if ( args[c].longest_send_packets > longest_send_packets ) longest_send_packets = args[c].longest_send_packets;
+        if ( args[c].longest_update > longest_update ) longest_update = args[c].longest_update;
+    }
+    printf( "client_send_buffer_pressure_windows clients=%d frames=%d sent=%d refused=%d run_s=%.2f longest_send_packets_ms=%.3f longest_update_ms=%.3f calls_over_%.1fms=%d\n",
+        NUM_CLIENTS, FRAMES, sent, refused, run_seconds, longest_send_packets * 1000.0, longest_update * 1000.0, FRAME_BUDGET_SECONDS * 1000.0, over );
+    rocketnet_check( longest_send_packets < FRAME_BUDGET_SECONDS );
+    rocketnet_check( longest_update < FRAME_BUDGET_SECONDS );
 
     for ( int c = 0; c < NUM_CLIENTS; c++ )
         rocketnet_client_transport_destroy( clients[c] );
