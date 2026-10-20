@@ -11,6 +11,9 @@
 #include <stdlib.h>
 #include <time.h>
 
+// defined in functional/harness.inc: the connect token timestamp from the clock that judges it
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
 static void sequenced_functional_check( bool condition, const char * label )
 {
     if ( condition )
@@ -91,7 +94,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( server ) ) );
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    sequenced_functional_check( rocketnet_write_dev_connect_token( address, 0x51E9ULL, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK, "large token" );
+    sequenced_functional_check( rocketnet_write_dev_connect_token( address, 0x51E9ULL, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK, "large token" );
     rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, token, NULL, NULL, NULL, 0, 0 );
     sequenced_functional_check( client != NULL, "large client create" );
 

@@ -80,6 +80,10 @@ extern uint64_t rocketnet_server_cookie_mac_count();
 // visit counter for testing: defined in rocketnet_ack.cpp
 extern unsigned long long g_ack_visit_count;
 
+// the ack path's popcount and its portable fallback: defined in rocketnet_ack.cpp
+extern int rocketnet_ack_popcount64( uint64_t v );
+extern int rocketnet_ack_popcount64_portable( uint64_t v );
+
 // Sockets, select, and the raw chaff injector live in functional/.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -3428,7 +3432,6 @@ void rocketnet_test_request_path_uncovered_rungs()
     int response_bytes = 0;
     struct rocketnet_counters_t before;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
 
     // SEALED_MISMATCH: a validly signed token whose sealed protocol id
     // disagrees -- only the consistency check refuses it
@@ -7397,7 +7400,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_num_status_codes",
     "rocketnet_status_name",
     "rocketnet_set_assert_callback",
-    "rocketnet_quiet",
+    "rocketnet_set_quiet",
     "rocketnet_set_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_name",
@@ -7550,7 +7553,7 @@ static const char * rocketnet_test_public_null_exempt_exports[] =
     "rocketnet_num_status_codes",
     "rocketnet_status_name",
     "rocketnet_set_assert_callback",
-    "rocketnet_quiet",
+    "rocketnet_set_quiet",
     "rocketnet_set_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_name",
@@ -7596,7 +7599,7 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_term",
     "rocketnet_term_ex",
     "rocketnet_set_assert_callback",
-    "rocketnet_quiet",
+    "rocketnet_set_quiet",
     "rocketnet_set_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_name",
@@ -7879,7 +7882,7 @@ static const char * rocketnet_test_layer_null_exempt_exports[] =
     "rocketnet_term",
     "rocketnet_term_ex",
     "rocketnet_set_assert_callback",
-    "rocketnet_quiet",
+    "rocketnet_set_quiet",
     "rocketnet_set_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_name",
@@ -7930,7 +7933,7 @@ static bool rocketnet_test_name_in( const char * name, const char * const * list
 
 void rocketnet_test_public_api_null()
 {
-    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
     rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
 
     uint8_t data[8] = { 0 };
@@ -8058,7 +8061,7 @@ void rocketnet_test_version_is_one_integer()
 
 void rocketnet_test_public_api_null_is_a_counted_no_op()
 {
-    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
     rocketnet_set_assert_callback( rocketnet_test_null_assert_hook );
     rocketnet_test_null_asserts = 0;
 
@@ -8574,6 +8577,44 @@ void rocketnet_test_frame_sync_wait()
 }
 
 // --- the general acks ---
+
+static int rocketnet_test_popcount64_reference( uint64_t v )
+{
+    int count = 0;
+    for ( int bit = 0; bit < 64; bit++ )
+        count += (int) ( ( v >> bit ) & 1 );
+    return count;
+}
+
+void rocketnet_test_ack_popcount64()
+{
+    const uint64_t values[] = { 0ull, 1ull, 2ull, 3ull, 0x8000000000000000ull, 0xffffffffffffffffull,
+                                0x5555555555555555ull, 0xaaaaaaaaaaaaaaaaull, 0x00000000ffffffffull,
+                                0xffffffff00000000ull, 0x0123456789abcdefull, 0xfedcba9876543210ull,
+                                0x8000000000000001ull, 0x0f0f0f0f0f0f0f0full, 0x7fffffffffffffffull };
+    for ( size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++ )
+    {
+        int expected = rocketnet_test_popcount64_reference( values[i] );
+        rocketnet_check( rocketnet_ack_popcount64( values[i] ) == expected );
+        rocketnet_check( rocketnet_ack_popcount64_portable( values[i] ) == expected );
+    }
+    rocketnet_check( rocketnet_ack_popcount64_portable( 0ull ) == 0 );
+    rocketnet_check( rocketnet_ack_popcount64_portable( 0xffffffffffffffffull ) == 64 );
+    for ( int bit = 0; bit < 64; bit++ )
+    {
+        rocketnet_check( rocketnet_ack_popcount64_portable( 1ull << bit ) == 1 );
+        rocketnet_check( rocketnet_ack_popcount64_portable( ~( 1ull << bit ) ) == 63 );
+        rocketnet_check( rocketnet_ack_popcount64( ~( 1ull << bit ) ) == 63 );
+    }
+    uint64_t x = 0x9e3779b97f4a7c15ull;
+    for ( int i = 0; i < 1000; i++ )
+    {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        int expected = rocketnet_test_popcount64_reference( x );
+        rocketnet_check( rocketnet_ack_popcount64( x ) == expected );
+        rocketnet_check( rocketnet_ack_popcount64_portable( x ) == expected );
+    }
+}
 
 void rocketnet_test_ack_block_encoding()
 {
@@ -14469,6 +14510,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_public_api_null_is_a_counted_no_op", rocketnet_test_public_api_null_is_a_counted_no_op },
     { "test_public_api_null", rocketnet_test_public_api_null },
     { "test_version_is_one_integer", rocketnet_test_version_is_one_integer },
+    { "test_ack_popcount64", rocketnet_test_ack_popcount64 },
     { "test_ack_block_encoding", rocketnet_test_ack_block_encoding },
     { "test_ack_block_validity", rocketnet_test_ack_block_validity },
     { "test_ack_block_build", rocketnet_test_ack_block_build },
