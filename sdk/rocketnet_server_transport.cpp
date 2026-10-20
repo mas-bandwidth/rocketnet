@@ -38,6 +38,10 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
 
+// Defined beside the builtin operation tables in rocketnet_driver_builtin.cpp.
+bool rocketnet_server_driver_receive_drops( const struct rocketnet_server_driver_operations_t * operations,
+                                           void * driver, uint64_t * too_short, uint64_t * too_large );
+
 // The capacity-aware receive entry's declaration lives beside its definition
 // in sdk/rocketnet_server_protocol.cpp; the transport passes the size of the
 // payload buffer it hands over.
@@ -2788,11 +2792,10 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     // a driver's own size pass drops before the prefilter sees a datagram:
     // its growth lands on the prefilter size counters, so one oversize
     // datagram reads PREFILTER_TOO_LARGE on every driver
-    if ( server_transport->io.operations && server_transport->io.operations->receive_drops )
+    uint64_t too_short = 0;
+    uint64_t too_large = 0;
+    if ( rocketnet_server_driver_receive_drops( server_transport->io.operations, server_transport->io.instance, &too_short, &too_large ) )
     {
-        uint64_t too_short = 0;
-        uint64_t too_large = 0;
-        server_transport->io.operations->receive_drops( server_transport->io.instance, &too_short, &too_large );
         server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] += too_short - server_transport->driver_receive_too_short;
         server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] += too_large - server_transport->driver_receive_too_large;
         server_transport->driver_receive_too_short = too_short;

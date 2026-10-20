@@ -199,7 +199,7 @@ static const rocketnet_server_driver_operations_t gso_operations =
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
     gso_create, gso_destroy, synchronous_stop,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, gso_receive_drops
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures
 };
 extern const rocketnet_driver_backend_t rocketnet_gso_driver = { &gso_operations, NULL };
 
@@ -232,7 +232,7 @@ static const rocketnet_server_driver_operations_t io_uring_operations =
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
     io_uring_create, io_uring_destroy, synchronous_stop,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, io_uring_receive_drops
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures
 };
 extern const rocketnet_driver_backend_t rocketnet_io_uring_driver = { &io_uring_operations, NULL };
 
@@ -394,4 +394,26 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 #endif
     else return false; // A custom driver's resource policy remains native to it.
     return plan.driver_bytes != 0;
+}
+
+// Builtin-only receive-drop hook. Match the operations table, not a configured
+// name, so custom drivers retain their own counter policy without a cast.
+bool rocketnet_server_driver_receive_drops( const rocketnet_server_driver_operations_t * operations,
+                                           void * driver, uint64_t * too_short, uint64_t * too_large )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    if ( operations == &gso_operations )
+        gso_receive_drops( driver, too_short, too_large );
+    else if ( operations == &io_uring_operations )
+        io_uring_receive_drops( driver, too_short, too_large );
+    else
+        return false;
+    return true;
+#else
+    (void) operations;
+    (void) driver;
+    (void) too_short;
+    (void) too_large;
+    return false;
+#endif
 }

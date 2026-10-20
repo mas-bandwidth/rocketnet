@@ -862,7 +862,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
 }
 
-// the driver's receive_drops operation (sdk/rocketnet_driver.h:111): the size
+// the builtin driver's receive_drops hook: the size
 // pass's drops (sdk/rocketnet_server_gso_linux.cpp:532-586), split at the receive
 // ceiling; main thread, as the fold into these totals is (:1209-1210)
 

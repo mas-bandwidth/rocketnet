@@ -1216,7 +1216,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
     memcpy( counters, uring->counters, sizeof(uring->counters) );
 }
 
-// the driver's receive_drops operation (sdk/rocketnet_driver.h:111): the size
+// the builtin driver's receive_drops hook: the size
 // drops (:636-638, :653-655), split at the receive ceiling; main thread, where the
 // CQEs are reaped
 

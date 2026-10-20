@@ -66,7 +66,7 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 // platform socket appears for them; their size pass runs before the
 // protocol's prefilter and counts in the driver's own RECEIVE_DROPPED_SIZE,
 // and the transport reads the same drops into PREFILTER_TOO_SHORT and
-// PREFILTER_TOO_LARGE through the driver's receive_drops operation
+// PREFILTER_TOO_LARGE through the builtin driver's receive_drops hook
 // (sdk/rocketnet_server_transport.cpp:2774-2786)
 
 void * rocketnet_server_transport_driver_for_testing( struct rocketnet_server_transport_t * server_transport );
