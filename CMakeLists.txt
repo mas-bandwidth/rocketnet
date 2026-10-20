@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-# 11.0 is the first macOS release on Apple silicon, so it is the lowest target
-# a universal arm64+x86_64 library can run on. Set before project() so the
-# compiler and linker carry it on both slices; -D overrides it.
+# 12.0: the Xcode 27 build system refuses 11.0 (its supported range starts at
+# 12.0), so it is the lowest target both the Xcode generator and the Command
+# Line Tools build on both universal slices. Set before project(); -D overrides.
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum supported macOS version" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)

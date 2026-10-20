@@ -72,10 +72,12 @@ Dependencies, per platform, as CI installs them:
     # macOS
     brew install cmake
 
-The macOS default build is the host's native slice. `CMakeLists.txt:5` sets
-`CMAKE_OSX_DEPLOYMENT_TARGET` to 11.0 when the caller does not: 11.0 is the
-first macOS release on Apple silicon, so it is the lowest target both slices
-of a universal library can share. Override it with `-D` for another minimum.
+The macOS default build is the host's native slice. `CMakeLists.txt:5-6` sets
+`CMAKE_OSX_DEPLOYMENT_TARGET` to 12.0 when the caller does not: the Xcode 27
+build system refuses 11.0 (its supported range starts at 12.0) while the
+Command Line Tools accept it, so 12.0 is the lowest target both toolchains
+build for both slices of a universal library. Override it with `-D` for
+another minimum.
 To build a universal (arm64 and x86_64) library and the suites:
 
     cmake -B build-universal -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release
@@ -92,7 +94,7 @@ each slice:
     otool -l -arch arm64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
     otool -l -arch x86_64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
 
-Both print `minos 11.0`; the static archive carries the same load command in
+Both print `minos 12.0`; the static archive carries the same load command in
 each member, read after `lipo -thin <arch>` and `ar -x`. CMake compiles each
 architecture in its own clang pass, so the vendored sodium builds its x86 asm
 into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
