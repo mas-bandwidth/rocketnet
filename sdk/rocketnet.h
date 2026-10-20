@@ -285,6 +285,18 @@ enum rocketnet_reliability_t
     /// Send once and report whether the carrying packet is acknowledged. A
     /// larger message is sent as a reliable block and can report ACKED only. A
     /// single-packet message can report ACKED or LOSS.
+    ///
+    /// The receipt deadline is RakNet's rto, measured from the send: 2 s while
+    /// the round-trip time is unknown, and otherwise
+    /// min( 2 x estimated rtt + 4 x its deviation + 30 ms, 2 s ), with the
+    /// estimate and the deviation moving 5% toward every acknowledged sample
+    /// and no back-off (rn_window_ack_compute_rto,
+    /// sdk/rocketnet_window_ack.h). The public config field rto_min_ms is its
+    /// floor: default 0 disables it, which matches RakNet's no-floor formula;
+    /// a caller may raise it (for example to 100 ms). The deadline is never
+    /// below the resend rto. It is independent of the resend
+    /// timer: an acknowledgement that arrives after the resend rto but before
+    /// it reports ACKED.
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT           = 5,
     /// Resend until acknowledged and report an ACKED receipt. Delivery is
     /// once without channel ordering. A connection failure does not produce a
@@ -755,9 +767,9 @@ struct rocketnet_client_config_t
     /// @brief Maximum queued client send receipts, 16 through 65536 (default 256).
     /// A full ring drops its oldest receipt; ROCKETNET_CLIENT_RECEIPT_RING can override it.
     int receipt_ring;                               ///< ROCKETNET_CLIENT_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             ///< ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
-    int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
-    int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
+    int rto_initial_ms;                             ///< ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: optional sampled RTO floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 2000
     int reliable_timeout_ms;                        ///< ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
     int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off
@@ -812,9 +824,9 @@ struct rocketnet_server_config_t
     /// @brief Maximum queued receipts per server client, 16 through 65536 (default 256).
     /// A full ring drops its oldest receipt; ROCKETNET_SERVER_RECEIPT_RING can override it.
     int receipt_ring;                               ///< ROCKETNET_SERVER_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             ///< ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
-    int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
-    int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
+    int rto_initial_ms;                             ///< ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: optional sampled RTO floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 2000
     int reliable_timeout_ms;                        ///< ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     int simulated_loss_percent;                     ///< Development only: outgoing loss 0..100; 0 is off
     int simulated_latency_ms;                       ///< Development only: outgoing latency in milliseconds; 0 is off

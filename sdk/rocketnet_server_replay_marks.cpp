@@ -96,16 +96,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         else
         {
             const int mapping_index = rocketnet_client_slots_mapping_index( slots, i );
-            if ( mapping_index < 0 )
-            {
+            const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
+            if ( !rocketnet_address_equal( address, &slot->marked_address ) )
                 forget = 1;
-            }
-            else
-            {
-                const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
-                if ( !rocketnet_address_equal( address, &slot->marked_address ) )
-                    forget = 1;
-            }
         }
 
         if ( forget )
@@ -124,8 +117,6 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             continue;
 
         const int mapping_index = rocketnet_client_slots_mapping_index( slots, i );
-        if ( mapping_index < 0 )
-            continue;
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( map, mapping_index );
         const uint64_t highest_opened = mapping->replay_session.highest_opened;
         if ( highest_opened == 0 )

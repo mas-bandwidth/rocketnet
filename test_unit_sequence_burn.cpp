@@ -828,7 +828,8 @@ static void sequence_burn_message_compare( int side, const char * name )
     // (10 ms here), so the samples differ by less than a step; the burned
     // sequences add no sample and no back-off
     rocketnet_unit_check( fabs( burned.srtt - control.srtt ) < 0.01 );
-    rocketnet_unit_check( fabs( burned.rto - control.rto ) < 0.01 );
+    const double rto_difference_bound = 2.0 * fabs( burned.srtt - control.srtt ) + 4.0 * fabs( burned.rttvar - control.rttvar ) + 1e-9;
+    rocketnet_unit_check( fabs( burned.rto - control.rto ) <= rto_difference_bound );
 }
 
 static void sequence_burn_server_reliable_and_rto_unchanged() { sequence_burn_message_compare( BURN_SIDE_SERVER, "server.message" ); }

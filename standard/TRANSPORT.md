@@ -347,7 +347,7 @@ Registry rules:
 | cookie key rotation | `60` | seconds | protocol value | [t12 Handshake: server](#t12) |
 | server redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
 | client redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
-| ack debt threshold | `64` | packets | protocol value | [t15 Acknowledgement](#t15) |
+| ack debt threshold | `1` | packet | send on the next update after an eliciting packet | [t15 Acknowledgement](#t15) |
 | used-token history per slot | `8` | entries | protocol value | [t12 Handshake: server](#t12) |
 
 The token identifier of a connect token is the BLAKE2b hash, of token
@@ -3279,13 +3279,11 @@ connection ack packet is opened, replay-marked and processed for its block like
 any other session packet, but MUST NOT add acknowledgement debt. This rule
 prevents acknowledgements from eliciting acknowledgements.
 
-An endpoint SHOULD send a standalone connection ack packet when its
-acknowledgement debt reaches the [t3 Constants and registries](#t3) (ack debt
-threshold row), and MAY send one sooner when fresh delivery information is
-useful. A sender MUST clear the debt when it sends any session packet that
-carries a block. A standalone acknowledgement contains the block and no
-packet-type data. It is an optimization for timely delivery notification;
-correctness does not depend on sending it.
+An endpoint MUST send a standalone connection ack packet on its next
+protocol update whenever acknowledgement debt is nonzero. A sender MUST clear
+the debt when it sends any session packet that carries a block. A standalone
+acknowledgement contains the block and no packet-type data. A type 8 packet
+does not add debt, so acknowledgements do not elicit acknowledgements.
 
 <a id="t15.5"></a>
 ### t15.5. Round-trip sampling
@@ -3593,13 +3591,9 @@ an input ([t1.4 Conventions](#t1.4)).
    has elapsed since the last matching connection request from its address,
    unless the handshake deadline elapses first. A connection request whose
    connection salt matches the mapping refreshes the idle deadline.
-5. A client MUST NOT begin an attempt with a token whose expire timestamp is
-   not later than its current time, and MUST send no packet for it. In
-   requesting cookie (1), sending connection request (2) and sending connection
-   response (3) the client MUST abandon the attempt for connect token expired
-   (-7) once the token's lifetime, its expire timestamp less its create
-   timestamp, has elapsed on the client's clock since the attempt began. The
-   check does not apply in connected (4).
+5. A client MUST abandon an attempt when the connect token's expire timestamp
+   has passed. An attempt MUST NOT run past that timestamp, whether or not its
+   own lifetime has elapsed.
 6. An endpoint MUST end an established connection when the connection timeout
    has elapsed with no packet received from the peer. The connection timeout is
    the timeout seconds field of the connect token
@@ -3611,14 +3605,25 @@ an input ([t1.4 Conventions](#t1.4)).
    rotation period of [t3 Constants and registries](#t3) and no longer.
 8. An endpoint MUST send the redundant disconnect packet count of
    [t3 Constants and registries](#t3) on a deliberate disconnect.
-9. An endpoint SHOULD send a standalone ack when its ack debt reaches the ack
-   debt threshold of [t3 Constants and registries](#t3), and MUST NOT delay an
-   ack past the next packet it sends.
-10. A server SHOULD enforce the handshake work budget after the cookie of a
+9. An endpoint MUST send a standalone ack on its next update when ack debt is
+   nonzero, and MUST NOT wait for a packet threshold or keep-alive cadence.
+10. A reliable-message sender MUST retransmit an unacknowledged message only
+    when its adaptive retransmission timeout (RTO) expires. Before any RTT
+    sample, the RTO is 2 seconds by default. For the first RTT sample, the
+    sender MUST set both its smoothed RTT and deviation to that sample. For
+    each later sample, each estimate MUST move 5 percent toward the sample.
+    The RTO is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
+    configured maximum (2 seconds by default) and raised to the configured
+    minimum (0 by default). A nonzero minimum is an implementation option.
+    The sender MUST NOT back off the RTO after retransmission. These estimator
+    and RTO values match RakNet's CCRakNetSlidingWindow.cpp:210-222, 288-314;
+    its 100 ms minimum in CCRakNetSlidingWindow.h:151-154 is commented out
+    by the code at CCRakNetSlidingWindow.cpp:294, 298.
+11. A server SHOULD enforce the handshake work budget after the cookie of a
     connection request validates and before any asymmetric operation. When it
     does, a request past the budget MUST be refused with no reply and counted
     as a refusal, and the budget MUST be reset at the start of each update.
-11. A server SHOULD apply the failed-signature budget before the signature
+12. A server SHOULD apply the failed-signature budget before the signature
     verification. When it does, a request from a source that has already
     failed in the current failed-signature window MUST be refused before the
     verification runs and counted as a refusal. The budget MUST NOT refuse a
@@ -3649,8 +3654,8 @@ input: the timing defaults above, in the order stated, each as a little-endian u
 0a 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00
 3c 00 00 00 00 00 00 00 0a 00 00 00 00 00 00 00
-0a 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00
-00 04 00 00 00 00 00 00 5a 00 00 00 00 00 00 00
+0a 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00
+01 00 00 00 00 00 00 00 5a 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00
 ```
 
@@ -3936,15 +3941,6 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_PASSED_FRAGMENT` | `expected` | `none` |
 | `XDP_KERNEL_DROPPED_FIRST_FRAGMENT` | `refusal` | `none` |
 | `MESSAGE_SEND_NOT_CONNECTED` | `expected` | `none` |
-| `MESSAGE_BAD_FORM` | `refusal` | `none` |
-| `MESSAGE_TRUNCATED` | `refusal` | `none` |
-| `MESSAGE_BAD_FLAGS` | `refusal` | `none` |
-| `MESSAGE_BAD_LENGTH` | `refusal` | `none` |
-| `MESSAGE_BAD_SIZE` | `refusal` | `none` |
-| `MESSAGE_BAD_CONTROL` | `refusal` | `none` |
-| `MESSAGE_NUMBER_OUTSIDE_WINDOW` | `refusal` | `none` |
-| `MESSAGE_SLOT_COLLISION` | `refusal` | `none` |
-| `MESSAGE_DUPLICATE_ORDERING` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4062,10 +4058,7 @@ b1 00 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00
 9b 86 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84
 f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
 01 00 00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00
-00 ab 9f e2 5c 00 00 00 7d 98 4f 4e 00 00 00 58
-b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
-f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
-00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
+00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
