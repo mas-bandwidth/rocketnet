@@ -126,8 +126,8 @@ configuration in the path, and a multi-config generator such as Xcode appends
 the configuration to them, so its executables and libraries land in
 `bin/Release/`. The unit suite opens the shared libraries by the paths
 `bin/librocketnet.dylib` and `bin/librocketnet_dev.dylib` relative to the
-working directory, then by the bare names (`sdk/rocketnet_tests.cpp:14671-14673`,
-`test_unit_api_polish.cpp:154-158`, `test_unit_connect_token_vectors.cpp:644-648`);
+working directory, then by the bare names (`sdk/rocketnet_tests.cpp:14680-14681`,
+`test_unit_api_polish.cpp:154-155`, `test_unit_connect_token_vectors.cpp:651-652`);
 `DYLD_LIBRARY_PATH` is where `dlopen` looks for a bare name, so it points
 those lookups at `bin/Release/`. Set it on the suite's own command line:
 macOS drops `DYLD_` variables when it launches a system binary such as
