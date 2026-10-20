@@ -153,7 +153,8 @@ static const posix_cell_t posix_cells[] =
     { "server portable, client msgx",     "portable",      "portable", "msgx",     "msgx",     NULL },
     { "server msgx, client portable",     "msgx",          "msgx",     "portable", "portable", NULL },
     { "server msgx, client msgx",         "msgx",          "msgx",     "msgx",     "msgx",     NULL },
-    { "server msgx forced portable",      "msgx,portable", "portable", "portable", "portable", "portable" },
+    { "server msgx forced portable, client portable", "msgx,portable", "portable", "portable", "portable", "portable" },
+    { "server msgx forced portable, client msgx",     "msgx,portable", "portable", "msgx",     "msgx",     "portable" },
 };
 
 static double posix_now_seconds()
