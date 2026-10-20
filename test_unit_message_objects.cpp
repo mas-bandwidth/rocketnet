@@ -2641,10 +2641,12 @@ static void slot_bound_this_update_keeps_its_first_payload()
     check( mo_server_slot( &pair, 0 )->connection_id == pair.net->slot_connection[0] );
     const uint8_t * data = NULL;
     int bytes = 0;
-    check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 1 );
+    int from = -1;
+    check( rocketnet_message_server_receive( pair.server, &from, NULL, &data, &bytes ) == 1 );
+    check( from == 0 );
     uint32_t id = 0;
     check( data && mo_verify( std::vector<uint8_t>( data, data + bytes ), &id ) && id == 7 );
-    rocketnet_message_server_release( pair.server, 0, data );
+    rocketnet_message_server_release( pair.server, data );
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == stale );
     mo_pair_teardown( &pair );
 }
@@ -2678,7 +2680,7 @@ static void previous_connection_payload_dropped_after_reconnect()
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         const uint8_t * data = NULL;
         int bytes = 0;
-        check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 0 );          // never applied to B
+        check( rocketnet_message_server_receive( pair.server, NULL, NULL, &data, &bytes ) == 0 );    // never applied to B
         check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == stale + 1 );
         mo_pair_teardown( &pair );
     }
@@ -2786,13 +2788,15 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
         reconnect_pump( world );
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_server_receive_message( world->server, 0, 0, &data, &bytes ) )
+        uint64_t sender = ~0ULL;
+        while ( rocketnet_server_receive_message( world->server, &sender, &data, &bytes ) )
         {
+            check( sender == 0 );
             check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
-            rocketnet_server_release_message( world->server, 0, data );
+            rocketnet_server_release_message( world->server, data );
             at_server++;
         }
-        while ( rocketnet_client_receive_message( c, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( c, &data, &bytes ) )
         {
             check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_client );
             rocketnet_client_release_message( c, data );
