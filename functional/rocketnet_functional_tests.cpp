@@ -407,6 +407,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
     static uint8_t seen[TOTAL];
     memset( seen, 0, sizeof(seen) );
     int received = 0;
+    int start_refusals = 0;
 
     for ( int frame = 0; frame < FRAMES; frame++ )
     {
@@ -424,7 +425,9 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
                     // ring-full backpressure: the Filling ring is full (256
                     // slots) while the I/O thread is behind, so a start is
                     // deferred; update so a handed-off ring is retried with
-                    // the same frame tag (RNClientIo Write, Defer)
+                    // the same frame tag (RNClientIo Write, Defer). Each
+                    // refused start counts SEND_RING_FULL once.
+                    start_refusals++;
                     rocketnet_client_transport_update( client, rocketnet_platform_time() );
                     rocketnet_server_transport_update( server, rocketnet_platform_time() );
                     rocketnet_server_transport_send_packets( server );
@@ -533,7 +536,17 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
     // destroy), and destroy runs Stop, Join, close, free (docs/CLIENT-IO.md
     // Stop and destroy order). The server must still read the disconnect.
     rocketnet_client_transport_disconnect( client );
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+
+    // ring-full backpressure is a counted refusal, not a loss: every refused
+    // start above was retried with its tag and every payload arrived. The
+    // counter covers at least those refusals; it may also count a protocol
+    // packet an update committed while the ring was full, which carries no
+    // payload. Every other counter stays clean.
+    const uint64_t ring_full = rocketnet_counter_value( rocketnet_client_transport_counters( client ),
+        ROCKETNET_COUNTER_SEND_RING_FULL );
+    printf( "%s start_refusals=%d send_ring_full=%llu\n", name, start_refusals, (unsigned long long) ring_full );
+    rocketnet_check( ring_full >= (uint64_t) start_refusals );
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
 
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )

@@ -9,7 +9,7 @@ that no workflow runs is unsupported, even if the code happens to build there.
 The table below is the whole claim. Each row names the workflow file and the
 runner label that prove it. `tools/check_platform_policy.py` reads the table
 and refuses a supported or nightly row whose label is not in the workflow it
-names.
+names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kernel/provisioning requirements, and host verification guide.
 
 ## The table
 
