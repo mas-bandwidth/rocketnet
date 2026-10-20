@@ -286,3 +286,28 @@ void rocketnet_test_free_loopback_address( char * buffer, size_t buffer_size )
 {
     snprintf( buffer, buffer_size, "127.0.0.1:%d", (int) rocketnet_test_free_port() );
 }
+
+// Create a server transport on a free loopback port. The free-port grant and
+// the create are one retried operation: the grant proves the port with a
+// second bind, but another process can take it in the gap before this create
+// binds it, so a create refused on address-in-use is retried with a new free
+// port, up to three times. Any other refusal is final and returned as NULL.
+
+struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_free_port(
+    const struct rocketnet_server_transport_config_t * config )
+{
+    static const int kServerCreateTries = 3;
+    for ( int attempt = 0; attempt < kServerCreateTries; ++attempt )
+    {
+        char address[64];
+        rocketnet_test_free_loopback_address( address, sizeof( address ) );
+        int status = ROCKETNET_STATUS_OK;
+        struct rocketnet_server_transport_t * server =
+            rocketnet_server_transport_create_ex( NULL, address, config, rocketnet_platform_time(), &status );
+        if ( server )
+            return server;
+        if ( status != ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED )
+            return NULL;
+    }
+    return NULL;
+}

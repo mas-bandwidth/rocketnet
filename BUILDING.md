@@ -78,6 +78,9 @@ an xdp create the commit barrier refuses before any bind. Two
 - `posix_server_restart_same_port_100` reserves a port below the kernel's
   ephemeral range in a slice its cell alone scans and binds it again 100
   times, so a sibling suite's port-0 binds cannot take it between rebinds.
+- A server create on a free loopback port is retried up to three times on
+  address-in-use, so a sibling process that takes the granted port in the gap
+  between the free-port proof and the bind does not fail the create.
 - The root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`) makes a fixed
   namespace and veth pair and binds port 40411 on it; it skips without root.
 
