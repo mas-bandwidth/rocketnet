@@ -24,12 +24,13 @@
 // opened a response under it; the binding lives until the token expires. The
 // request claim binds the same identifier to the first source address that
 // presented a valid request, before any asymmetric work, and lives only until
-// the handshake deadline: one token buys one half-open mapping, and a replay
-// from a second address waits until the first mapping dies. Both tables have
-// fixed capacity, oldest-first eviction for bindings, no eviction of a live
-// claim, and entries expire with their deadlines. Lookup is constant time in
-// the number of clients: chained buckets under a per-run SipHash of the
-// identifier, so an attacker cannot craft identifiers that collide.
+// the handshake deadline or the response binding: one token buys one half-open
+// mapping, and a replay from a second address waits until the first mapping
+// dies. One table holds both time fields: fixed capacity, oldest-first
+// eviction for bindings, no eviction of a live claim, and entries expire with
+// their deadlines. Lookup is constant time in the number of clients: chained
+// buckets under a per-run SipHash of the identifier, so an attacker cannot
+// craft identifiers that collide.
 
 struct rocketnet_used_token_history_t;
 

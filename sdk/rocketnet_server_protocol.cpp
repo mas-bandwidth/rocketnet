@@ -504,10 +504,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     // the token-to-address claim and the map capacity are the remaining cheap
     // rungs, both above the signature. the first address to present a valid
-    // request owns the token until the handshake deadline; a request from a
-    // second address is refused here, so one token buys one half-open mapping
-    // and no asymmetric work (STANDARD.md, Processing Connection Requests;
-    // tla/ReceiveOrder.tla, Claim and Capacity).
+    // request owns the token until the handshake deadline or until its
+    // response binds the token; a request from a second address is refused
+    // here, so one token buys one half-open mapping and no asymmetric work
+    // (STANDARD.md, Processing Connection Requests; tla/ReceiveOrder.tla,
+    // Claim and Capacity).
 
     if ( !rocketnet_used_token_history_claim_check( server->used_token_history, token_identifier, from, current_time ) )
     {
