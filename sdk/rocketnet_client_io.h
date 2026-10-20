@@ -106,7 +106,6 @@ struct rocketnet_client_io_t
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
     struct rocketnet_client_io_open_t open;
-    uint64_t * size_drops;                      // the owner's CLIENT_RECEIVE_DROPPED_SIZE, added atomically; NULL counts nothing
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -132,7 +131,6 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->time_context = time_context;
     io->guard_timeout_seconds = ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS;
     io->quit.store( false, std::memory_order_relaxed );
-    io->size_drops = NULL;
     memset( io->open.session_server_to_client, 0, sizeof( io->open.session_server_to_client ) );
     io->open.protocol_id = 0;
     memset( io->open.connection_salt, 0, sizeof( io->open.connection_salt ) );
@@ -323,15 +321,6 @@ inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 
 // The I/O thread's loop body (RNClientIo IoSend, IoFinishRing, IoReceive,
 // IoPublish, IoOwe, IoWait; docs/CLIENT-IO.md _The I/O step_ and _The wake_).
-// a datagram the I/O step drops on size alone (shorter than the prefilter,
-// a zero-length one included, or past the receive ceiling) is counted on the
-// owner's counters: every dropped datagram is counted
-inline void rocketnet_client_io_count_size_drop( rocketnet_client_io_t * io )
-{
-    if ( io->size_drops )
-        rocketnet_platform_atomic_add_u64( io->size_drops, 1 );
-}
-
 inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
     rocketnet_assert( io );
@@ -399,8 +388,12 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     }
 
     // 2. RNClientIo IoReceive: drain into the buffer the handshake gives the
-    // I/O thread. A received datagram is worked even when the size prefilter
-    // skips it; its data slot stays used. One clock read per driver call.
+    // I/O thread. Every received datagram becomes a record, a runt or an
+    // oversize one too: the main thread's prefilter
+    // (sdk/rocketnet_client_protocol.cpp:1248, sizes checked at
+    // sdk/rocketnet_protocol.cpp:176-180) refuses it and counts
+    // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE. One clock read per driver
+    // call.
     rocketnet_client_receive_handshake_t * handshake = &io->receive;
     rocketnet_client_receive_buffer_t * buffer = io->buffer[handshake->fill];
 
@@ -427,11 +420,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 break;
             for ( int i = 0; i < got; i++ )
             {
-                if ( packet_bytes[i] < ROCKETNET_PREFILTER_BYTES || packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
-                {
-                    rocketnet_client_io_count_size_drop( io );
-                    continue;
-                }
                 (void) rocketnet_client_receive_handshake_io_receive( handshake );
                 const int index = buffer->num_packets;
                 buffer->from[index] = from[i];
@@ -454,20 +442,15 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 ROCKETNET_MAX_PACKET_BYTES );
             if ( bytes == 0 )
                 break;
-            if ( bytes >= ROCKETNET_PREFILTER_BYTES && bytes <= ROCKETNET_RECEIVE_CEILING )
-            {
-                (void) rocketnet_client_receive_handshake_io_receive( handshake );
-                const int index = buffer->num_packets;
-                buffer->from[index] = from;
-                buffer->receive_time[index] = now;
-                buffer->packet_data[index] = packet_data;
-                buffer->packet_bytes[index] = (size_t) bytes;
-                rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
-                    (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
-                buffer->num_packets++;
-            }
-            else
-                rocketnet_client_io_count_size_drop( io );
+            (void) rocketnet_client_receive_handshake_io_receive( handshake );
+            const int index = buffer->num_packets;
+            buffer->from[index] = from;
+            buffer->receive_time[index] = now;
+            buffer->packet_data[index] = packet_data;
+            buffer->packet_bytes[index] = (size_t) bytes;
+            rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
+                (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
+            buffer->num_packets++;
             io->fill_slots++;
             worked = true;
         }

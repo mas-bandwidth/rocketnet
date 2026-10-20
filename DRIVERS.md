@@ -238,13 +238,32 @@ families. The IPv6 destination is `public_address_ipv6` in
 `rocketnet_server_xdp_config_t`; all zero accepts any destination, as a zero
 `public_address` does for IPv4.
 
-An IPv6 frame whose next header is an extension header (hop-by-hop 0, routing
-43, fragment 44, destination options 60, AH 51 or ESP 50) passes to the kernel
-stack through one named branch and increments
+RocketNet assumes a 1500-byte MTU path and never sends a datagram the network
+must fragment, so an IP fragment addressed to the server is hostile or
+misconfigured. The first fragment of a datagram to the server's port (the one
+that carries the UDP header: IPv4 with more-fragments set and offset 0, ihl 5,
+protocol UDP; IPv6 whose next header is the fragment header (44) at offset 0
+with more-fragments set and UDP behind it), whose UDP header is in the frame
+and names the configured port and address, is dropped and increments
+`ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT` (surfaced as
+`XDP_KERNEL_DROPPED_FIRST_FRAGMENT`). Every other fragment passes to the kernel
+stack for reassembly and increments
+`ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT` (surfaced as
+`XDP_KERNEL_PASSED_FRAGMENT`): non-first fragments to any port, and first
+fragments to another port or address, to an unconfigured program, or whose
+UDP header is not inside the frame. Why this is enough: without its first
+fragment the kernel can never reassemble the datagram, so the rest wait in
+the reassembly queue and are dropped cheaply at its reassembly timeout, and
+other services' fragmented traffic is untouched. Both checks run before the
+size, epoch, filter and replay checks for both families, so a fragment is never
+counted as any other drop. An IPv6 frame
+whose next header is any other extension header (hop-by-hop 0, routing 43,
+destination options 60, AH 51 or ESP 50) passes to the kernel stack through
+one named branch and increments
 `ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`. The program never walks
-an extension chain and never drops one, so IPv6 fragments pass. Every other
-non-UDP next header, ICMPv6 (neighbor discovery) above all, passes uncounted,
-as non-UDP IPv4 does.
+an extension chain and never drops one. Every other non-UDP next header,
+ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP IPv4
+does.
 
 The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves the
 family of its public address, IPv4 or IPv6, and the ladder offers `xdp` for

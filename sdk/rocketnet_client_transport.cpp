@@ -990,7 +990,6 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             { &client_transport->receive_buffer[0], &client_transport->receive_buffer[1] };
         rocketnet_client_io_init( &client_transport->client_io, &client_transport->io, &views[0], &views[1], buffers,
                                   client_transport->time_callback, client_transport->context );
-        client_transport->client_io.size_drops = &client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE];
 
         // tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys: the protocol
         // publishes the open copy at the challenge and retires it at every
@@ -2027,6 +2026,10 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketn
     if ( !rocketnet_api_null_guard( client_transport ) )
         return NULL;
     rocketnet_assert( client_transport );
+    // SEND_FAILED is the driver's own cumulative count, assigned on read; the
+    // driver's count is atomic, so the I/O thread may be sending meanwhile
+    if ( client_transport->io.operations && client_transport->io.operations->send_failures )
+        client_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = client_transport->io.operations->send_failures( client_transport->io.instance );
     return &client_transport->counters;
 }
 
@@ -2107,14 +2110,11 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         if ( packet_bytes == 0 )
             break;
 
-        // a cheap size sanity on the receive thread, counted; the full
-        // checks and their counters run on the update thread
+        // a cheap size sanity on the receive thread; the full checks and
+        // their counters run on the update thread
 
         if ( packet_bytes < ROCKETNET_PREFILTER_BYTES || packet_bytes > ROCKETNET_RECEIVE_CEILING )
-        {
-            rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE], 1 );
             continue;
-        }
 
         const double receive_time = ( client_transport->step_in_update && rocketnet_client_link_patterns( client_transport ) )
             ? client_transport->time

@@ -876,18 +876,31 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK: Counts fitting unreliable messages that took the queued path instead of being written in place in a packet buffer; one count per message, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
     X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
     \
-    /* A datagram the client drops on its receive thread on size alone: */ \
-    /* shorter than the prefilter (a zero-length datagram included) or */ \
-    /* longer than the receive ceiling (an oversize datagram the socket */ \
-    /* reports truncated or past its buffer). REFUSAL: nothing the server */ \
-    /* sends has that size. appended: indices are the contract. */ \
-    /** @brief ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE: Counts datagrams the client's receive thread drops on size alone, shorter than the prefilter or longer than the receive ceiling; one count per datagram. Unit: datagrams. Class: refusal; family: none. */ \
-    X( CLIENT_RECEIVE_DROPPED_SIZE, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (sdk/rocketnet_platform.cpp:80) and the transport reads the driver's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp:2020, sdk/rocketnet_server_transport.cpp:2764); a driver without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
+    X( SEND_FAILED, REFUSAL, NONE ) \
+    \
+    /* The kernel prefilter's PASSED_FRAGMENT (sdk/rocketnet_wire.h): IP */ \
+    /* fragments the XDP program handed to the kernel stack for */ \
+    /* reassembly, counted before any size, epoch or filter check. */ \
+    /* EXPECTED: a fragment is not a refusal. appended: indices are the */ \
+    /* contract. */ \
+    /** @brief ROCKETNET_COUNTER_XDP_KERNEL_PASSED_FRAGMENT: Counts IP fragments the kernel prefilter passed to the kernel stack. Unit: occurrences. Class: expected; family: none. */ \
+    X( XDP_KERNEL_PASSED_FRAGMENT, EXPECTED, NONE ) \
+    \
+    /* The kernel prefilter's DROPPED_FIRST_FRAGMENT (sdk/rocketnet_wire.h): */ \
+    /* the first IP fragment (the one carrying the UDP header) of a */ \
+    /* datagram to the server's address and port, dropped in XDP before */ \
+    /* any size, epoch or filter check. RocketNet assumes a 1500-byte MTU */ \
+    /* path, so a fragment for the server is hostile or misconfigured; */ \
+    /* without its first fragment the kernel never reassembles the */ \
+    /* datagram. REFUSAL. appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT: Counts first IP fragments of datagrams to the server address and port that the kernel prefilter dropped. Unit: occurrences. Class: refusal; family: none. */ \
+    X( XDP_KERNEL_DROPPED_FIRST_FRAGMENT, REFUSAL, NONE ) \
     \
     /* A datagram from a source other than the server the client dialed: */ \
     /* the client listens to that server alone and drops the datagram */ \
-    /* before any protocol check. REFUSAL. appended: indices are the */ \
-    /* contract. */ \
+    /* before any protocol check (sdk/rocketnet_client_transport.cpp: */ \
+    /* 1106-1110). REFUSAL. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE: Counts datagrams the client drops because their source is not the server it dialed; one count per datagram. Unit: datagrams. Class: refusal; family: none. */ \
     X( CLIENT_RECEIVE_FOREIGN_SOURCE, REFUSAL, NONE )
 

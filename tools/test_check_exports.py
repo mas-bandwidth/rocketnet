@@ -38,9 +38,9 @@ class CheckExportsSourceTest(unittest.TestCase):
 
     def add_header_decl(self, header_text):
         return header_text.replace(
-            "#endif // #ifndef ROCKETNET_H",
+            "#endif /// #ifndef ROCKETNET_H",
             "ROCKETNET_EXPORT_FUNC int rocketnet_fixture_export( void * p );\n"
-            "#endif // #ifndef ROCKETNET_H",
+            "#endif /// #ifndef ROCKETNET_H",
         )
 
     def add_table_entry(self, tests_text):
@@ -86,9 +86,9 @@ class CheckExportsSourceTest(unittest.TestCase):
 
     def test_dev_block_declaration_ignored(self):
         header_text = HEADER.read_text().replace(
-            "#endif // #if ROCKETNET_DEVELOPMENT",
+            "#endif /// #if ROCKETNET_DEVELOPMENT",
             "ROCKETNET_EXPORT_FUNC int rocketnet_fixture_export( void * p );\n"
-            "#endif // #if ROCKETNET_DEVELOPMENT",
+            "#endif /// #if ROCKETNET_DEVELOPMENT",
         )
         header_copy = Path(self.tmp.name) / "rocketnet.h"
         header_copy.write_text(header_text)
@@ -116,13 +116,13 @@ class CheckHeaderExportsTest(unittest.TestCase):
         code, err = run_header_check(HEADER, EXPORTS)
         self.assertEqual(code, 0, err)
         names = check_header_exports.header_export_names(HEADER)
-        self.assertIn("rocketnet_assert_function_pointer", names)
+        self.assertIn("rocketnet_set_assert_callback", names)
 
     def test_extra_header_declaration_fails_naming_it(self):
         header_text = HEADER.read_text().replace(
-            "#endif // #ifndef ROCKETNET_H",
+            "#endif /// #ifndef ROCKETNET_H",
             "ROCKETNET_EXPORT int rocketnet_fixture_export( void * p );\n"
-            "#endif // #ifndef ROCKETNET_H",
+            "#endif /// #ifndef ROCKETNET_H",
         )
         header_copy = Path(self.tmp.name) / "rocketnet.h"
         header_copy.write_text(header_text)

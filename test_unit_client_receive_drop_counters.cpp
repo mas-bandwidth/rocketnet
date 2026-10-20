@@ -7,9 +7,13 @@
 // over a scripted driver (no socket, no thread, a test clock from 1000.0)
 // receives datagrams whose reported sizes are outside [prefilter, receive
 // ceiling], as a socket reports a runt or an oversize datagram, and
-// datagrams from a source other than the dialed server:
-// CLIENT_RECEIVE_DROPPED_SIZE counts the first, on the I/O step, per-packet
-// and batch; CLIENT_RECEIVE_FOREIGN_SOURCE counts the second, on update.
+// datagrams from a source other than the dialed server. The I/O step drops
+// nothing (sdk/rocketnet_client_io.h:390-396): on update, a datagram from
+// another source counts CLIENT_RECEIVE_FOREIGN_SOURCE before any protocol
+// check (sdk/rocketnet_client_transport.cpp:1106-1110), whatever its size,
+// and one from the server reaches the prefilter
+// (sdk/rocketnet_client_protocol.cpp:1248-1253), which counts
+// PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE; per-packet and batch.
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
@@ -140,63 +144,67 @@ static void drop_counters_run( bool batch )
     rocketnet_client_transport_t * transport = drop_counters_create( driver, &operations, &clock );
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
 
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE ) == 0 );
+    const uint64_t short_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
+    const uint64_t large_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
     check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == 0 );
 
-    // from the dialed server, each outside the size bounds: dropped on the
-    // I/O step, each counted once
+    // from the dialed server, each outside the size bounds: passed by the
+    // I/O step, refused by the prefilter on update, each counted once
     const char * server = "127.0.0.1:40000";
-    int size_drops = 0;
+    int too_short = 0;
+    int too_large = 0;
     if ( batch )
     {
         drop_counters_push( driver, server, 0 );
-        size_drops++;
+        too_short++;
     }
-    const int sizes[] = { 1, ROCKETNET_PREFILTER_BYTES - 1, ROCKETNET_RECEIVE_CEILING + 1, 1500, 9000, 65507 };
-    for ( size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++ )
+    const int short_sizes[] = { 1, ROCKETNET_PREFILTER_BYTES - 1 };
+    for ( size_t i = 0; i < sizeof(short_sizes) / sizeof(short_sizes[0]); i++ )
     {
-        drop_counters_push( driver, server, sizes[i] );
-        size_drops++;
+        drop_counters_push( driver, server, short_sizes[i] );
+        too_short++;
+    }
+    const int large_sizes[] = { ROCKETNET_RECEIVE_CEILING + 1, 1500, 9000, 65507 };
+    for ( size_t i = 0; i < sizeof(large_sizes) / sizeof(large_sizes[0]); i++ )
+    {
+        drop_counters_push( driver, server, large_sizes[i] );
+        too_large++;
     }
 
-    // inside the bounds, from other sources: dropped on update before any
-    // protocol check, each counted once
+    // from other sources: dropped on update before any protocol check, each
+    // counted once, a runt among them: the source check comes first
     drop_counters_push( driver, "127.0.0.1:40001", ROCKETNET_PREFILTER_BYTES );
     drop_counters_push( driver, "127.0.0.2:40000", 100 );
     drop_counters_push( driver, "10.0.0.1:40000", ROCKETNET_RECEIVE_CEILING );
-    const int foreign = 3;
-
-    // a runt from another source is a size drop: the size check comes first
     drop_counters_push( driver, "127.0.0.1:40001", 2 );
-    size_drops++;
+    const int foreign = 4;
 
     rocketnet_client_io_step( io, false );
     check( driver->head == driver->count );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE ) == (uint64_t) size_drops );
 
     clock.now = 1000.1;
     rocketnet_client_transport_update( transport, clock.now );
     check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == (uint64_t) foreign );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE ) == (uint64_t) size_drops );
+    check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT ) - short_before == (uint64_t) too_short );
+    check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == (uint64_t) too_large );
 
-    // both are refusals
-    check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    // a refusal
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 
     rocketnet_client_transport_destroy( transport );
     delete driver;
 }
 
-static void client_receive_counts_size_drops_and_foreign_sources_per_packet()
+static void client_receive_counts_prefilter_and_foreign_source_drops_per_packet()
 {
     drop_counters_run( false );
 }
 
-REGISTER_UNIT_TEST( client_receive_counts_size_drops_and_foreign_sources_per_packet );
+REGISTER_UNIT_TEST( client_receive_counts_prefilter_and_foreign_source_drops_per_packet );
 
-static void client_receive_counts_size_drops_and_foreign_sources_batch()
+static void client_receive_counts_prefilter_and_foreign_source_drops_batch()
 {
     drop_counters_run( true );
 }
 
-REGISTER_UNIT_TEST( client_receive_counts_size_drops_and_foreign_sources_batch );
+REGISTER_UNIT_TEST( client_receive_counts_prefilter_and_foreign_source_drops_batch );
