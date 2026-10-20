@@ -125,11 +125,6 @@ def owed_but_cited(rows):
         if row.get("status", "") != "owed":
             continue
         module = row["module"]
-        # Owner CARRY 2026-10-20: the keyed filter epochs are deleted for v1.0
-        # (card rocketnet-delete-keyed-filter-epochs). Leave rn-filter-epochs as it is
-        # at BASE for that card to set to design, no code.
-        if module == "RNFilterEpochs":
-            continue
         forms = (f"tla/{module}.tla", f"{module}.tla")
         for name, text in texts.items():
             cite = next((form for form in forms if form in text), None)
