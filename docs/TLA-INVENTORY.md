@@ -804,7 +804,8 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
 - `INV ReleaseConsumedOnly`: the RX release covers exactly the consumed descriptors.
 - `INV HandoffNoOverwrite`: no publish or acquire overwrites a queued generation;
   `rocketnet_send_handoff_t::publish` keeps the producer generation when no
-  replacement is free (modelled as `RNDriverSendStaging.Publish`).
+  replacement is free. `RNDriverSendStaging.Publish` models the retention but has no
+  buffer identities; `check_send_handoff` in `test_lifecycle.cpp` checks no-overwrite.
 - `INV RetireAfterCopy`: a generation is retired only after its last packet is in UMEM
   (`:2318-2319`).
 - `LIVE FramesReturn`: if the kernel drains the fill and TX rings fairly, every Pending
@@ -1202,7 +1203,9 @@ producer generation while `WorkerRetire` frees the queued generation;
 forbids generation-exhaustion refusal, `RetryFlushPublishes` checks a flush
 retries retained work without a new commit, and
 `XdpStagedEventuallyPublished` requires eventual publication under fair
-publication and retirement. `MCRNDriverSendStagingBrokenRefusesSend.cfg` and `MCRNDriverSendStagingBrokenNoRetry.cfg`
-restores two queued generations and violates `NoRefusedSend` at depth 6.
+publication and retirement. `MCRNDriverSendStagingBrokenRefusesSend.cfg`
+restores two queued generations and violates `NoRefusedSend` at depth 6;
+`MCRNDriverSendStagingBrokenNoRetry.cfg` removes the re-flush and violates
+`RetryFlushPublishes`.
 The existing transport model separately retains packet-capacity drops.
 See `tla/README-RNDriverSendStaging.md` for the hand-checked trace.

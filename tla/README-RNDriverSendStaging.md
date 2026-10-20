@@ -37,8 +37,9 @@ Checked against the code by hand: restoring unconditional publication in
 `rocketnet_server_socket_send_packets` clears `send_flow_index` and cannot
 acquire replacement storage, so `rocketnet_server_socket_start_packet_internal`
 returns NULL on the next send. The deterministic unit check
-`xdp_send_staging_retains_producer` fails at `handoff.acquire() >= 0` for
-that schedule. With retention enabled, the second publish leaves its filling
+`xdp_send_staging_retains_producer` fails at `!handoff.publish()` for
+that schedule (the second publish queues instead of retaining), and
+`check_send_handoff` in `test_lifecycle.cpp` fails at its `!queue.publish()`. With retention enabled, the second publish leaves its filling
 index intact. Repeated flushes preserve the queued index; retirement followed
 by another flush publishes the retained generation. The unit test
 `xdp_send_staging_reflushes_without_commit` separately exercises the actual
