@@ -12,8 +12,7 @@
 #include <inttypes.h>
 #include <stddef.h>
 
-// Layer 1, the region: sdk/rocketnet_allocator.cpp, sized by section 14, the
-// send store checked by the section 4 tests.
+// Layer 1, the region: its carve, its sizing and the send store.
 
 // ----------------------------------------------------------------
 //          the entry sizes, pinned to section 14's figures
@@ -153,7 +152,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
 //                          the send store
 // ----------------------------------------------------------------
 
-// A chunk's link (CHANNELS section 4): free, the next free chunk; allocated,
+// A chunk's link: free, the next free chunk; allocated,
 // IN_USE, HEAD on a chain's first chunk, and the next chunk of its chain.
 
 #define RN_LINK_IN_USE          0x80000000u
@@ -226,7 +225,7 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     const uint32_t needed = rn_send_store_chunks_needed( bytes );
     rn_store_class_t * cls = &store->classes[c];
 
-    // all or none (CHANNELS section 4): a block the class cannot hold whole takes nothing
+    // all or none: a block the class cannot hold whole takes nothing
     if ( cls->free_count < needed )
         return RN_CHUNK_NONE;
 
@@ -269,7 +268,7 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
     if ( i >= cls->num_chunks )
         return false;
 
-    // only a chain's head, still allocated, frees (CHANNELS section 4):
+    // only a chain's head, still allocated, frees:
     // a second free of the same chain finds the flag already cleared and refuses
     if ( ( cls->link[i] & ( RN_LINK_IN_USE | RN_LINK_HEAD ) ) != ( RN_LINK_IN_USE | RN_LINK_HEAD ) )
         return false;
@@ -1255,7 +1254,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
         num_connections = 0;
 
     rn_text_t text = { buffer, buffer_size, 0 };
-    rn_text_append( &text, "message connection sizing (standard/MESSAGES.md m5.4)\n" );
+    rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
     rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, SR = B\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,

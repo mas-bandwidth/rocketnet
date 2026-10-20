@@ -261,7 +261,7 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 // chunk: a free chunk's link is the next free chunk, an allocated chunk's is
 // RN_CHUNK_IN_USE plus the next chunk of its block. So a block's chain costs
 // no extra bytes outside S, and the in-use flag makes a double free a
-// refusal, never a corrupted list (CHANNELS section 4).
+// refusal, never a corrupted list.
 //
 // A message up to 1152 bytes takes one chunk of the smallest class that
 // fits, and only that class; a larger one is a block and takes

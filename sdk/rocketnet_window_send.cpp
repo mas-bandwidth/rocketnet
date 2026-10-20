@@ -6,13 +6,13 @@
 #include "rocketnet_window_send.h"
 #include "rocketnet_platform.h"
 
-// CHANNELS 6.2 len16; RNRing Len16 and PlaceSingle/PlaceBlock.
+// standard/MESSAGES.md m5.1 len16; RNRing Len16 and PlaceSingle/PlaceBlock.
 static uint64_t rn_window_send_round16( uint32_t bytes )
 {
     return ( (uint64_t) bytes + 15 ) & ~(uint64_t) 15;
 }
 
-// CHANNELS 6.2 boundary padding; RNRing Pos and PlaceSingle/PlaceBlock.
+// standard/MESSAGES.md m5.1 boundary padding; RNRing Pos and PlaceSingle/PlaceBlock.
 static uint64_t rn_window_send_position( const rn_window_send_t * send, uint64_t span )
 {
     const uint64_t B = send->region->ring_bytes;
@@ -20,7 +20,7 @@ static uint64_t rn_window_send_position( const rn_window_send_t * send, uint64_t
     return span > remaining ? send->ring_next + remaining : send->ring_next;
 }
 
-// CHANNELS 6.2's count and byte bounds; RNWindow NumberRecord and RNRing
+// standard/MESSAGES.md m5.1's count and byte bounds; RNWindow NumberRecord and RNRing
 // Admits/PlaceSingle/PlaceBlock. Subtraction avoids overflowing U'+W or
 // p+span. A failed first write counts once until U' moves or one succeeds.
 // tla/RNWindow.tla NumberRecord
@@ -55,7 +55,7 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
     return 1;
 }
 
-// CHANNELS 6.1/6.2; RNWindow NumberRecord and RNRing PlaceSingle/PlaceBlock.
+// standard/MESSAGES.md m5.1; RNWindow NumberRecord and RNRing PlaceSingle/PlaceBlock.
 // Code 2 gets a zero-byte ring anchor at p so it can safely be U'.
 // tla/RNWindow.tla NumberRecord
 static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
@@ -75,7 +75,7 @@ static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
     entry->acked = 0;
 }
 
-// CHANNELS 6.1/6.2; RNWindow Init and RNRing Init. Layer 1 already carved
+// standard/MESSAGES.md m5.1; RNWindow Init and RNRing Init. Layer 1 already carved
 // the fixed region; this state has no allocation, clock or socket (R4).
 // tla/RNWindow.tla Init
 void rn_window_send_init( rn_window_send_t * send, rn_region_t * region, uint64_t first_number )
@@ -91,7 +91,7 @@ void rn_window_send_init( rn_window_send_t * send, rn_region_t * region, uint64_
     send->stalled = 0;
 }
 
-// CHANNELS 6.2 I3/I13; RNWindow NumberRecord and RNRing PlaceSingle. This
+// standard/MESSAGES.md m5.1; RNWindow NumberRecord and RNRing PlaceSingle. This
 // is called only at first packet write, never when send_message queues it.
 // tla/RNWindow.tla NumberRecord
 int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t bytes,
@@ -119,10 +119,10 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
     return RN_WINDOW_SEND_NUMBERED;
 }
 
-// CHANNELS 6.2 and 8; RNWindow NumberRecord and RNRing PlaceBlock. Reserve
+// standard/MESSAGES.md m5.1 and m8; RNWindow NumberRecord and RNRing PlaceBlock. Reserve
 // all k consecutive numbers and one span at first fragment write, checking
 // both bounds once. The concrete final fragment uses rounded actual bytes
-// (CHANNELS 13.3 check 8); RNRing abstracts it to a full F stride.
+// (standard/MESSAGES.md m4, check 8); RNRing abstracts it to a full F stride.
 // tla/RNWindow.tla NumberRecord
 uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, uint32_t bytes,
                                             uint32_t descriptor, uint64_t * first_number, uint64_t * ring_start )
@@ -152,7 +152,7 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
     return count;
 }
 
-// CHANNELS 6.2/6.4 (R7); RNWindow ReceiveAck and RNRing Ack. U advances
+// standard/MESSAGES.md m5.1 and m9.1 (R7); RNWindow ReceiveAck and RNRing Ack. U advances
 // only over newly acknowledged contiguous entries; U' stays at a partial
 // block's first fragment until the whole block has been acknowledged.
 // tla/RNWindow.tla ReceiveAck
@@ -186,7 +186,7 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
     return 1;
 }
 
-// CHANNELS 6.2 I13/I3; RNWindow NumberRecord models only reliable records.
+// standard/MESSAGES.md m5.1; RNWindow NumberRecord models only reliable records.
 // A reliable stall never prevents writing an unreliable record with no number.
 // tla/RNWindow.tla NumberRecord
 int rn_window_send_can_write_unreliable( const rn_window_send_t * send )

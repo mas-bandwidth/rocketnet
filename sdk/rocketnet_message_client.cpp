@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The client message object (standard/MESSAGES.md): the object core of
+// The client message object: the object core of
 // sdk/rocketnet_message_server.cpp with one connection, over a
 // rocketnet_client_transport_t. Its one connection is bound at create and never
 // bound again; when its region is exhausted the client disconnects itself with

@@ -647,7 +647,7 @@
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT: Counts cookie-validated requests refused before signature verification because the source exceeded its failure budget. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
-    /* the UNRELIABLE path (standard/MESSAGES.md m3): a code-0 */ \
+    /* the UNRELIABLE path (standard/MESSAGES.md m6.1): a code-0 */ \
     /* record dropped on receive because the per-update unreliable delivery */ \
     /* budget Du was full (section 6.3 step 4), and a code-0 message dropped on */ \
     /* send: because finish_packet refused the packet that carried it (section */ \
@@ -664,12 +664,12 @@
     /* or packet. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE: Counts reliable message numbers received more than once. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_DUPLICATE, PATH_LOSS, NONE ) \
-    /* Numbering met either the count or ring bound (CHANNELS 6.2). Count */ \
+    /* Numbering met either the count or ring bound (standard/MESSAGES.md m5.1). Count */ \
     /* once per stall, even when the scheduler retries the same head. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL: Counts reliable send numbering stalls because the sender's own send window is full (its message count bound or its ring byte bound); counted once per stall, not per retry. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_WINDOW_STALL, REFUSAL, NONE ) \
     \
-    /* Layer 3 sent-packet map and resend FIFO (standard/MESSAGES.md m9.3): */ \
+    /* Layer 3 sent-packet map and resend FIFO (standard/MESSAGES.md m9.1 and m9.3): */ \
     /* a sent-packet ring entry evicted to make room for a new packet (its */ \
     /* referenced numbers stay in the resend FIFO), and a reliable record */ \
     /* resent on the RTO. appended: indices are the contract. */ \
@@ -690,7 +690,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED: Counts the exhaustion of a connection's message memory region once, plus each send refused while the region stays exhausted; an exhausted connection is then disconnected. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_MEMORY_EXHAUSTED, REFUSAL, NONE ) \
     \
-    /* Layer 4's dispatch (standard/MESSAGES.md m4): a send refused */ \
+    /* Layer 4's dispatch (standard/MESSAGES.md m4, check 6, and m11.2): a send refused */ \
     /* because its reliability is outside the enabled mask, a receive of an */ \
     /* application record whose code the mask does not admit, an unreliable */ \
     /* record dropped because the send budget could not pay the packet that */ \
@@ -747,7 +747,7 @@
     /** @brief ROCKETNET_COUNTER_SEND_HISTORY_LOST: Counts send records confirmed lost by the acknowledgement window. Unit: occurrences. Class: path_loss; family: none. */ \
     X( SEND_HISTORY_LOST, PATH_LOSS, NONE ) \
     \
-    /* RELIABLE_ORDERED's receive path (standard/MESSAGES.md m4): each is a */ \
+    /* RELIABLE_ORDERED's receive path (standard/MESSAGES.md m4, check 11, and m7.2): each is a */ \
     /* wire violation, counted once per record, and each ends the */ \
     /* connection with ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION. A record */ \
     /* whose channel is at or past this end's count; a block fragment whose */ \
@@ -824,7 +824,7 @@
     /* Client received a connection challenge or connection denied packet */ \
     /* whose wire length was not ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES */ \
     /* or ROCKETNET_CONNECTION_DENIED_WIRE_BYTES: refused before the state */ \
-    /* gate and before any AEAD open (standard/TRANSPORT.md, Reading packets). */ \
+    /* gate and before any AEAD open (standard/TRANSPORT.md t10). */ \
     /* appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_SIZE: Counts challenge packets refused for the wrong wire length. Unit: occurrences. Class: refusal; family: CLIENT_CHALLENGE_RECEIVED. */ \
     X( CLIENT_CHALLENGE_WRONG_SIZE, REFUSAL, CLIENT_CHALLENGE_RECEIVED ) \
@@ -833,8 +833,8 @@
     \
     /* The two token-time refusals that were merged into */ \
     /* CONNECTION_REQUEST_TOKEN_EXPIRED, split out so each refusal reason has */ \
-    /* its own counter (standard/TRANSPORT.md, Counters: refusal reasons are never */ \
-    /* merged; Processing Connection Requests, the request order). They sit */ \
+    /* its own counter (standard/TRANSPORT.md t18, the counter */ \
+    /* table; t12, the request order). They sit */ \
     /* beside TOKEN_EXPIRED in class and parent, and are appended here because */ \
     /* the indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE: Counts requests refused because the token creation time is in the future. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \

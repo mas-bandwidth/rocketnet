@@ -3110,8 +3110,8 @@ void rocketnet_test_request_path_state_refusals()
     struct rocketnet_counters_t before;
 
     // the used-token history binds the token to the first address whose
-    // response opens under it, never at the request (standard/TRANSPORT.md, Processing
-    // Connection Response Packets): a replay from elsewhere before that is
+    // response opens under it, never at the request (standard/TRANSPORT.md t12,
+    // rule 11): a replay from elsewhere before that is
     // answered with a challenge, and binds nothing
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     uint8_t challenge[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
@@ -3907,7 +3907,7 @@ void rocketnet_test_client_slots()
 
 void rocketnet_test_client_slots_free_list()
 {
-    // standard/TRANSPORT.md's free-list rule (1598-1615): every lookup a server
+    // the client slot table's free list: every lookup a server
     // performs per connection is constant time in the number of client
     // slots, and "a free slot is found from a free list, not a search --
     // a stack of unused indices, popped on connect and pushed on
@@ -5402,7 +5402,7 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
     // Every automatic terminal transition -- connect token expired, a timed
     // out waiting state, connection denied, and the server's disconnect --
     // must release the attempt's secrets: the derived session keys, the
-    // token's keys and the ephemeral secret. standard/TRANSPORT.md requires both sides
+    // token's keys and the ephemeral secret. standard/TRANSPORT.md t7 requires both sides
     // to zero their own ephemeral secret once it is no longer needed for a
     // handshake in progress (1095-1098) and, on a denied, to "release all
     // connection state" (2425-2426); tla/ClientConnection.tla holds the
@@ -5719,9 +5719,9 @@ void rocketnet_test_integrity_limit()
 
         // a response of any size but the wire size is WRONG_SIZE before the
         // mapping lookup, so it never reaches the open and never counts
-        // against the mapping's integrity (standard/TRANSPORT.md: a connection response
-        // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
-        // never a later refusal"; card rnfix-response-wrong-size-counted-r2:
+        // against the mapping's integrity (standard/TRANSPORT.md t10: a connection response
+        // is 50 bytes, and a packet that fails its type's size check counts
+        // that type's WRONG_SIZE; card rnfix-response-wrong-size-counted-r2:
         // "an exact-size check before the lookup"). two such: one too short
         // to carry a tag, one that would open to the wrong size. the class
         // still filed as DID_NOT_OPEN is a response that opens to non-zero
@@ -11595,7 +11595,7 @@ static void rocketnet_test_pass_cookie_gate_from( struct rocketnet_test_server_t
 }
 
 // The token is bound to an address only once that address opens a response
-// (standard/TRANSPORT.md, Processing Connection Response Packets; tla/RNSecurityTables.tla,
+// (standard/TRANSPORT.md t12, rule 11; tla/RNSecurityTables.tla,
 // BoundOnlyToOpener). An on-path attacker copies the real client's
 // cookie-bearing request off the in-memory wire, earns a cookie at its own
 // address, and replays the request from there ahead of the real one. The
@@ -13434,7 +13434,7 @@ void rocketnet_test_suite_environment()
 
 void rocketnet_test_server_transport_entries_carry_connection_id()
 {
-    // standard/TRANSPORT.md (card C0a): a slot released and reassigned
+    // standard/MESSAGES.md m1.4, rule 5 (card C0a): a slot released and reassigned
     // inside one update. Client A holds slot 0; A's payload, whose ack block
     // acknowledges three server packets, then A's disconnect, then client B
     // connecting into the freed slot 0, then B's payload -- with no batch
@@ -13621,7 +13621,7 @@ void rocketnet_test_server_transport_entries_carry_connection_id()
 
 void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 {
-    // P2 (standard/TRANSPORT.md): for an unfragmented payload (type 5),
+    // P2 (standard/MESSAGES.md m1.4, rule 2): for an unfragmented payload (type 5),
     // an acked packet id means the payload was in exactly one delivered
     // batch at the peer. Both directions over the in-memory network
     // simulator with loss, duplication and reordering, ten thousand packets
@@ -13807,7 +13807,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
 void rocketnet_test_transport_reply_opens_a_later_update()
 {
-    // P6 (standard/TRANSPORT.md): if the peer sends anything in reply
+    // P6 (standard/MESSAGES.md m1.4, rule 6): if the peer sends anything in reply
     // to a packet this end opened in update j, this end opens the reply in
     // update j+1 or later. A fixed receive batch per update is what makes
     // the claim: update j's batch is closed before any packet that update

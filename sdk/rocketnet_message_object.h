@@ -18,7 +18,7 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_slots.h"
 
-// Layers 7 and 8 of the message layer (standard/MESSAGES.md), condensed
+// Layers 7 and 8 of the message layer, condensed
 // to what the C API in sdk/rocketnet.h needs: the client and the server message
 // objects over the transports. tla/RNSlots.tla is the spec of the object's
 // update, release and slot rules; tla/RNConnectionMemory.tla of exhaustion and

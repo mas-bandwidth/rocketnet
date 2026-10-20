@@ -116,8 +116,8 @@
 #define ROCKETNET_LOOPBACK_MAX_ENDPOINTS          ( ROCKETNET_MAX_CLIENTS + 1 )
 
 // The packet size: the UDP payload of one datagram on a 1500-byte MTU link,
-// the number every other size limit derives from (standard/TRANSPORT.md _Packet
-// sizes_). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
+// the number every other size limit derives from (standard/TRANSPORT.md
+// t8.11). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
 // over IPv6 it is 1500 - 40 - 8 = 1452 bytes, the send budget, so a maximum
 // packet crosses a 1500-MTU path unfragmented on either family.
 
@@ -279,7 +279,7 @@ enum rocketnet_log_level_t
 // -----------------------------------------
 
 /**
- * @brief Per-send reliability, RakNet's values and numbering (standard/MESSAGES.md m7).
+ * @brief Per-send reliability, RakNet's values and numbering (standard/MESSAGES.md m1.3).
  */
 enum rocketnet_reliability_t
 {
@@ -1214,7 +1214,7 @@ struct rocketnet_server_config_t
 //                           messages
 // -----------------------------------------
 
-// A message is bytes, a pointer and a length (standard/MESSAGES.md). Each client
+// A message is bytes, a pointer and a length (standard/MESSAGES.md m1.2). Each client
 // and each server is one block made at create -- the object, its connections
 // and one message region per connection -- and allocates nothing after
 // create. memory is optional: NULL makes the one allocation, and a caller

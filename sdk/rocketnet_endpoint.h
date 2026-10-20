@@ -17,7 +17,7 @@
 #include "rocketnet_send_budget.h"
 
 // Layer 7 of the message layer: the endpoint, one connection as a pure machine
-// (tla/README-RNEndpoint.md and 16.3). It is the composition of layers 3 to 6 for
+// (tla/README-RNEndpoint.md). It is the composition of layers 3 to 6 for
 // one connection -- the window, the channels, the blocks, the scheduler and the
 // packet builder (rn_ordered_t), the unreliable packet builder and the send
 // budget -- behind one struct that points into the connection's region. Events

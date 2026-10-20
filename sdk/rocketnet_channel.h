@@ -21,14 +21,14 @@
 #include "rocketnet_window_send.h"
 
 // Layer 4 of the message layer: the per-channel state and the dispatch
-// (standard/MESSAGES.md m7). tla/RNChannel.tla is the spec; each function below
+// (standard/MESSAGES.md m6 and m7). tla/RNChannel.tla is the spec; each function below
 // names the action it implements (owner rule R7).
 //
 // The state lives in the connection's region (layer 1): C rn_channel_send_t
 // and C rn_channel_receive_t carved by rn_region_carve, so nothing here
 // allocates (R2). RakNet's four counters and their coupling are present from
 // the first version and run even though no sequenced type is enabled
-// (standard/MESSAGES.md m7.1, RNChannel's OrderedTraceUnchangedBySequenced).
+// (standard/MESSAGES.md m6.1 and m7.3, RNChannel's OrderedTraceUnchangedBySequenced).
 //
 // A record's dispatch is a switch over all eight types. The enabled mask of
 // 7.5 admits a type; a disabled type is refused on send
@@ -41,7 +41,7 @@
 //   sdk/rocketnet_channel_sequenced.cpp   codes 1 and 4
 //   sdk/rocketnet_channel_receipts.cpp    codes 5, 6 and 7
 
-// the eight application types (standard/MESSAGES.md m10): the five wire
+// the eight application types (standard/MESSAGES.md m1.3): the five wire
 // codes, then the three receipt variants, which travel as 0, 2 and 3.
 
 #define ROCKETNET_CHANNEL_TYPE_UNRELIABLE                       0
@@ -62,7 +62,7 @@
 
 #define ROCKETNET_CHANNEL_RECEIPT_BASE( type )                  ( (type) < 5 ? (type) : ( (type) == 5 ? 0 : (type) - 4 ) )
 
-// what a dispatch did with one record (standard/MESSAGES.md m4)
+// what a dispatch did with one record (standard/MESSAGES.md m7.4)
 
 #define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused, counted, or held by a later card
 #define ROCKETNET_CHANNEL_DISPATCH_DELIVERED                    1   // a view into the batch, or a delivery from the ring
@@ -295,7 +295,7 @@ uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * p
 void rn_channels_end_update( struct rn_channels_t * channels );
 
 // ---------------------------------------------------------------
-//        the ordered path of one connection, ends to end (CHANNELS 6.4 to 9.3)
+//        the ordered path of one connection, ends to end (standard/MESSAGES.md m5 to m9)
 // ---------------------------------------------------------------
 
 #define ROCKETNET_ORDERED_MAX_ITEMS     96      // the items one write call plans

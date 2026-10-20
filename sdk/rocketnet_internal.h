@@ -519,7 +519,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte game packet is one SINGLE message, zero copy, unfragmented" );
 
 // The message config table, one declaration deriving struct, defaults and
-// validation, as the transports' tables (standard/MESSAGES.md m2.1). Fields marked
+// validation, as the transports' tables (standard/MESSAGES.md m5.4 and m11.2). Fields marked
 // WIRE must be identical on both ends; CONFIG verifies them (layer 7).
 // Validation applies the ranges here and the cross rules of section 14, and
 // refuses, never clamps.

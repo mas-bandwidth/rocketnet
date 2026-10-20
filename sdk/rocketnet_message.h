@@ -12,18 +12,18 @@
 #include <stddef.h>
 #include "rocketnet_internal.h"
 
-// Layer 2 of the message layer (standard/MESSAGES.md m3): message records
+// Layer 2 of the message layer (standard/MESSAGES.md m2 and m3): message records
 // inside one transport payload, and the zero-copy single-message form. The
-// wire is standard/MESSAGES.md _Messages_, to the byte; this file is its codec and the
-// receiver's checks 1 to 9 and 12, in the standard's order. It is pure: no
+// wire is standard/MESSAGES.md m2 and m3, to the byte; this file is its codec and the
+// receiver's checks 1 to 9 and 12 of m4, in the standard's order. It is pure: no
 // state survives a call, nothing is allocated, and nothing reads a clock.
 // Reliability, ordering and the window are the layers above (standard/MESSAGES.md m5
-// to 8); this layer hands them each record whole, with its fields as the wire
+// to m8); this layer hands them each record whole, with its fields as the wire
 // carries them (24-bit numbers unreconstructed).
 //
 // The form byte is the payload's LAST byte, so a SINGLE message starts at
 // payload offset 0 -- the transport's 16-aligned frame + payload_index -- and
-// is written and read in place with no copy (standard/MESSAGES.md m3).
+// is written and read in place with no copy (standard/MESSAGES.md m2).
 
 #define ROCKETNET_MESSAGE_FORM_SINGLE                       0x00
 #define ROCKETNET_MESSAGE_FORM_RECORDS                      0x01
@@ -57,7 +57,7 @@
 #define ROCKETNET_MESSAGE_MAX_RECORD_BYTES                  65535
 
 // the largest message the SINGLE form carries in one wire frame: the payload
-// capacity less the one form byte (standard/MESSAGES.md m2.1)
+// capacity less the one form byte (standard/MESSAGES.md m2.2)
 
 #define ROCKETNET_MESSAGE_SINGLE_BYTES                      ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )
 
@@ -65,17 +65,17 @@
 
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                    1152
 
-// the 24-bit wire counters: number, sequencing and ordering (standard/MESSAGES.md _Messages_)
+// the 24-bit wire counters: number, sequencing and ordering (standard/MESSAGES.md m3)
 
 #define ROCKETNET_MESSAGE_U24_MASK                          0xFFFFFF
 
-// the CONFIG control record (standard/MESSAGES.md _Messages_, standard/MESSAGES.md m11)
+// the CONFIG control record (standard/MESSAGES.md m11)
 
 #define ROCKETNET_MESSAGE_CONTROL_CONFIG                    1
 #define ROCKETNET_MESSAGE_CONFIG_VERSION                    1
 #define ROCKETNET_MESSAGE_CONFIG_BYTES                      28
 
-// The receiver's violations, one per check of standard/MESSAGES.md _Messages_, in the
+// The receiver's violations, one per check of standard/MESSAGES.md m4, in the
 // standard's order. A parse names exactly one, or none. The window
 // (MESSAGE_NUMBER_OUTSIDE_WINDOW, MESSAGE_SLOT_COLLISION) and ordering
 // (MESSAGE_ORDERING_BEHIND) checks belong to layers 3 and 4, and the
@@ -138,7 +138,7 @@ int rocketnet_message_record_valid( const struct rocketnet_message_record_t * re
 // A RECORDS payload, built in place in the caller's buffer (a transport frame
 // at payload_index). capacity counts every byte the payload may take,
 // including the trailing form byte. add copies the record's data after its
-// header: the one copy from the send store into the frame (standard/MESSAGES.md m3).
+// header: the one copy from the send store into the frame.
 
 struct rocketnet_message_writer_t
 {
@@ -155,7 +155,7 @@ void rocketnet_message_writer_begin( struct rocketnet_message_writer_t * writer,
 int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * writer );
 
 // Appends one valid record. Returns 1, or 0 when it does not fit, leaving the
-// payload unchanged: a record is never split (standard/MESSAGES.md m3).
+// payload unchanged: a record is never split.
 
 int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
 
@@ -245,7 +245,7 @@ int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const s
 //                           CONFIG control
 // -----------------------------------------
 
-// The CONFIG body (standard/MESSAGES.md _Messages_). The record carrying it is code 2
+// The CONFIG body (standard/MESSAGES.md m11.1). The record carrying it is code 2
 // with CONTROL set and its first reliable number; the layers above number and
 // compare it. read refuses an unknown kind, a wrong length, or a version 1
 // body with nonzero reserved bytes (MESSAGE_BAD_CONTROL); a version it does

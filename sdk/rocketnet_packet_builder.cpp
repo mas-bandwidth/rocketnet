@@ -9,7 +9,7 @@
 
 #include "rocketnet_platform.h"
 
-// Layer 6's packet builder (standard/MESSAGES.md m3). tla/RNChannel.tla's
+// Layer 6's packet builder (standard/MESSAGES.md m2, m3 and m9.4). tla/RNChannel.tla's
 // WritePacket is the packet, tla/RNSendBudget.tla's Send, Wait and Drop are
 // the budget's answers, tla/RNScheduler.tla's Write is the order items are
 // taken in; each function names the action it implements.

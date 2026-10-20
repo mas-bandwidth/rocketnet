@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include "rocketnet_internal.h"
 
-// The connect token, per standard/TRANSPORT.md. All layouts are packed little-endian at
+// The connect token, per standard/TRANSPORT.md t6. All layouts are packed little-endian at
 // the exact offsets the standard states; the byte sizes here are the wire
 // format and never change independently of it.
 

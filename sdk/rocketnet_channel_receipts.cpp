@@ -12,7 +12,7 @@
 // tla/RNReceipts.tla WritePacket
 int rn_channels_reliable_receipt_base( int type )
 {
-    // RNReceipts EffectiveKind, CHANNELS 7.4: the send descriptor keeps the
+    // RNReceipts EffectiveKind, standard/MESSAGES.md m12: the send descriptor keeps the
     // receipt intent in a flag; no receipt code reaches wire.
     if ( type == ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT ||
          type == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT )

@@ -1517,7 +1517,7 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
  */
 int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_t * config, int * status );
 
-// The exact bytes of one connection's region (standard/MESSAGES.md m5.4): the
+// The exact bytes of one connection's region: the
 // formula plus the 64-byte alignment of each part. 0 for a refused config;
 // NULL means the defaults. Allocation-free; callable before init or connect.
 // A server holds one region per client slot, a client one.
@@ -1551,8 +1551,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
  */
 uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
 
-// The client and server message objects over the transports (standard/MESSAGES.md
-// 10 to 12): a message is bytes, a pointer and a length. Each object is
+// The client and server message objects over the transports: a message is bytes, a pointer and a length. Each object is
 // one block made at create -- the object, its connections and one region per
 // connection (the client's one, one per server slot) -- and allocates nothing
 // after create. memory is optional: NULL makes the one allocation, and a
@@ -1779,8 +1778,8 @@ void rocketnet_message_server_abort( struct rocketnet_message_server_t * server,
 uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, const uint8_t * data, int bytes );
 
 // Sends data to every connected slot exactly as rocketnet_message_server_send
-// would, one copy per connection: each connection's region holds its own copy
-// (standard/MESSAGES.md, Broadcast). Returns the number of slots it
+// would, one copy per connection: each connection's region holds its own copy.
+// Returns the number of slots it
 // was queued for; a slot that refuses (exhausted, not connected) is skipped.
 // a NULL server or data is a counted no-op that returns 0.
 int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );

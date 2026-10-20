@@ -1,9 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #pragma once
 
-// The published depth bounds (standard/TRANSPORT.md _Replay window sizing_): the message
+// The published depth bounds (standard/TRANSPORT.md t14): the message
 // tier's half-range reconstruction relies on a depth no larger than 32768 and
-// transport sequences that rise in packet write order (standard/TRANSPORT.md _Numbers_).
+// transport sequences that rise in packet write order (standard/MESSAGES.md m1.4, rules 7 and 8).
 #define ROCKETNET_HISTORY_PACKETS_MIN 4096
 #define ROCKETNET_HISTORY_PACKETS_MAX 32768
 

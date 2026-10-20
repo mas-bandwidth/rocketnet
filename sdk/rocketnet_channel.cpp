@@ -9,7 +9,7 @@
 
 #include "rocketnet_platform.h"
 
-// Layer 4's dispatch (standard/MESSAGES.md m7). The spec is tla/RNChannel.tla; each
+// Layer 4's dispatch (standard/MESSAGES.md m6 and m7). The spec is tla/RNChannel.tla; each
 // function names the action it implements. Nothing here allocates, locks or
 // reads a clock (owner rules R2 and R7).
 

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The server message object (standard/MESSAGES.md) and the object core it
+// The server message object and the object core it
 // shares with the client: the client is the same object with one connection
 // (11.3), so the core lives here and sdk/rocketnet_message_client.cpp adds the
 // client's link and C API.
@@ -289,7 +289,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
             rocketnet_client_connection_reset( object );
     }
 
-    // CHANNELS 11.3: the client's one connection is bound at create, because
+    // The client's one connection is bound at create, because
     // the client transport hands it payloads from before CONNECTED is
     // reported, and it is never bound again.
     if ( !is_server )
@@ -380,8 +380,7 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 // for. The transport tags no batch entry with its connection (P9b is a later
 // card), so the entry id is the slot's client id as the transport reports it.
 // A slot bound or dropped by this update cannot identify its entries: they
-// are presented with no tag (0, which no connection carries) and discarded
-// (CHANNELS 10.2, 11.5).
+// are presented with no tag (0, which no connection carries) and discarded.
 
 static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, int k )
 {
@@ -1108,7 +1107,7 @@ int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * serv
     if ( !rocketnet_api_null_guard( data ) )
         return 0;
 
-    // CHANNELS 11.4 Broadcast: a loop over the slots, each send the same copying
+    // Broadcast: a loop over the slots, each send the same copying
     // convenience as rocketnet_message_server_send. The R3 copy is one per
     // connected connection, into that connection's region; there is no new
     // state and no allocation. A slot that refuses (free, kicked or exhausted)

@@ -11,7 +11,8 @@ other six later changes neither the wire nor the per-channel state.
 > [standard/MESSAGES.md](../standard/MESSAGES.md).** This document is the
 > design record behind it; where the two disagree, the standard governs.
 
-The transport facts are cited
+Read it beside [RAKNET-RELIABILITY.md](RAKNET-RELIABILITY.md) (cited "the
+study", with its invariants written I1 to I17). The transport facts are cited
 as `file:line` at origin/main `7314a3d`. `S:n` is a line in the retired
 standard text this design was written against, and `U:n` is USAGE.md line n. Layer 1 is built (`sdk/rocketnet_allocator.h`, section 4)
 and layer 2 is built (`sdk/rocketnet_message.h`, section 5); layer 3's receive
@@ -78,7 +79,8 @@ Each layer section says how it keeps these rules, and section 15 checks them.
   clamps" posture (U:333-335).
 - **R7. Constant shape.** Every table is sized at create from the configuration.
   Per-update work is O(events), never O(table): there are no full-window scans
-  on any hot path. The cost does not depend on load.
+  on any hot path. The cost does not depend on load, as CLAUDE.md's "always be
+  loaded" rule asks.
 - **R8. Every counter is attributable.** Each refusal and drop has its own
   counter. Received records equal the sum of the outcomes for each type, which
   is what the soak harness asserts.
@@ -102,7 +104,7 @@ paired with the test or card that keeps it true.
 
 **F1 blocks RELIABLE_ORDERED.** `sdk/rocketnet_replay.cpp:54-60` still clears
 only 4 of the window's 64 words on a forward jump of 4096 or more
-. The next ack block then names sequences that
+(`docs/TLA-INVENTORY.md:30-73`). The next ack block then names sequences that
 were never opened. To this layer, a false ack is a reliable record marked
 delivered that the peer never received, so a channel hangs for good. The fix
 (a `memset` of the window) is card C0. Nothing reliable ships before it.
@@ -1299,12 +1301,12 @@ object calls `rocketnet_client_disconnect`.
 
 ### 11.4 What the objects do not own
 
-The objects do not own serialization, broadcast, or flows.
+The objects do not own serialization (CLAUDE.md), broadcast, or flows.
 
 - **Broadcast** is a loop over connected clients with start and finish, the
   copy RakNet makes per target (study §5.1). A later send to a flow id
   (`ROCKETNET_FLOW_ID_BIT` set) uses the same start and finish.
-- **Flows** belong to a later layer above this API: a flow
+- **Flows** (REQUIREMENTS.md) belong to a later layer above this API: a flow
   send is a loop over subscribers. Nothing here forecloses that.
 - **The game's own clock:** time is always passed in (`sdk/rocketnet.h:542-544`).
 
@@ -1453,7 +1455,7 @@ covers the following protocol needs:
 
 This section is the design record for the _Messages_ sections of
 [standard/MESSAGES.md](../standard/MESSAGES.md). All integers are little endian and byte aligned; no field is
-narrower than a byte. The subject is the
+narrower than a byte (CLAUDE.md, 2026-08-26 ruling). The subject is the
 transport *payload*, the application data of a type 5 or type 9 packet (S:638).
 
 ### 13.1 Payload forms
@@ -1850,7 +1852,7 @@ rule of 10.2; `FALSE` is the old rule, applying by slot after `observe`.
 
 ```tla
 ---------------------------- MODULE RNSlots ----------------------------
-\* One server slot over the transport's update loop (sections 10.2 and 11.1).
+\* One server slot over the transport's update loop (CHANNELS.md 10.2, 11.1).
 \* The transport may release and reassign the slot many times between two
 \* object updates; every batch entry (payload or acked id) is tagged with the
 \* connection id it was received for. Acked ids may be deferred to a later

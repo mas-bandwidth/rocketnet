@@ -16,7 +16,7 @@
 #include <sodium.h>
 #include <string.h>
 
-// the connection ids, standard/TRANSPORT.md: a slot takes the next id from the
+// the connection ids, standard/MESSAGES.md m1.4, rule 5: a slot takes the next id from the
 // server-wide counter when it is assigned and drops to 0 when it is released
 
 uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index )
@@ -282,8 +282,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
-            // standard/TRANSPORT.md: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
-            mapping->last_receive_time = current_time;     // standard/TRANSPORT.md _Half-open state_: traffic refreshes the idle deadline
+            // standard/TRANSPORT.md t12: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
+            mapping->last_receive_time = current_time;     // standard/TRANSPORT.md t12 and t17: traffic refreshes the idle deadline
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
@@ -347,7 +347,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             if ( token_create_timestamp > current_timestamp + 5 )
             {
                 rocketnet_debug( "server ignored connection request. connect token created in future" );
-                // one counter per refusal reason (standard/TRANSPORT.md, Counters).
+                // one counter per refusal reason (standard/TRANSPORT.md t18).
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
@@ -357,7 +357,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             if ( lifetime > (uint64_t) server->max_token_lifetime_seconds )
             {
                 rocketnet_debug( "server ignored connection request. connect token lifetime exceeds maximum" );
-                // one counter per refusal reason (standard/TRANSPORT.md, Counters).
+                // one counter per refusal reason (standard/TRANSPORT.md t18).
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
@@ -587,8 +587,8 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
     // no used-token history record here: a request proves nothing about who
     // holds the token's keys, so the binding waits for a response that opens
-    // under the handshake key (standard/TRANSPORT.md, Processing Connection Response
-    // Packets; tla/RNSecurityTables.tla, BoundOnlyToOpener)
+    // under the handshake key (standard/TRANSPORT.md t12, rule 11;
+    // tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
         // the server's contribution to the key schedule: a fresh session
@@ -597,8 +597,8 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         randombytes_buf( session_nonce, sizeof(session_nonce) );
 
-        // Cheap refusals come before cryptography (standard/TRANSPORT.md, Reading
-        // packets; ReceiveOrder CheapRefusalsFirst). The handshake keys need
+        // Cheap refusals come before cryptography (standard/TRANSPORT.md t10 and
+        // t12; ReceiveOrder CheapRefusalsFirst). The handshake keys need
         // no ephemeral pair, so derive them alone and check the slots before
         // any keypair or scalar multiplication. A full server seals the same
         // denial as before (same packet, sequence one, nonce in the clear).
@@ -1035,7 +1035,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     }
 
     // session types: the slot gate runs before the replay-window mark, per
-    // standard/TRANSPORT.md _Reading packets_ -- a session packet whose mapping has no
+    // standard/TRANSPORT.md t10 -- a session packet whose mapping has no
     // assigned slot is ignored after the open and before the mark -- and
     // _Processing session packets at the server_. The NoAdvanceBeforeConnect
     // invariant of tla/ReplayWindow.tla: the session window of a mapping
@@ -1342,7 +1342,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
         if ( !mapping->established )
         {
-            // standard/TRANSPORT.md _Half-open state_: the earlier of the idle and handshake deadlines removes the mapping.
+            // standard/TRANSPORT.md t12 and t17: the earlier of the idle and handshake deadlines removes the mapping.
             if ( current_time >= mapping->handshake_deadline )
             {
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );

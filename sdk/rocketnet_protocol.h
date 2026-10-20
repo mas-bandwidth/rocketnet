@@ -22,7 +22,7 @@
 
 void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * filter_value );
 
-// The keyed filter value, from standard/TRANSPORT.md "The keyed filter value":
+// The keyed filter value, from standard/TRANSPORT.md t5.1:
 // SipHash-2-4 under the 16-byte magic over the 7-byte input of packet type,
 // packet length as a little-endian uint16, then the four bytes following the
 // prefilter header; the low 4 bytes of the 64-bit result, little-endian, are
@@ -35,7 +35,7 @@ void rocketnet_keyed_filter_value( const uint8_t * magic,
                                    uint8_t * out_filter_value );
 
 // The receiver's filter epoch window, from tla/RNFilterEpochs.tla and
-// standard/TRANSPORT.md "The keyed filter value": up to four live generations, oldest
+// standard/TRANSPORT.md t5.1: up to four live generations, oldest
 // first. Generations advance 1, 2, 3 and wrap from 255 back to 1; zero is
 // never a generation.
 
