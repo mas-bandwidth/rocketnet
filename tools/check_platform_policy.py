@@ -43,18 +43,6 @@ WILDCARD_ALLOWED = {
     ("functional/rocketnet_functional_tests.cpp",
      'rocketnet_test_server_uring_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 1 );'):
         "io_uring dual-stack case (Linux): an ipv4 peer of the ipv6 wildcard",
-    ("functional/posix_socket_errors.cpp",
-     'rocketnet_address_parse( &bind_address, ipv6 ? "::" : "0.0.0.0" );'):
-        "loopback-only send seam; its loopback bind is owed",
-    ("functional/posix_socket_errors.cpp",
-     'rocketnet_address_parse( &server_bind, "0.0.0.0" );'):
-        "loopback-only send burst; its loopback bind is owed",
-    ("functional/posix_socket_errors.cpp",
-     'rocketnet_address_parse( &probe_bind, "0.0.0.0" );'):
-        "loopback-only send burst; its loopback bind is owed",
-    ("functional/posix_socket_errors.cpp",
-     'rocketnet_address_parse( &sender_bind, "0.0.0.0" );'):
-        "loopback-only send burst; its loopback bind is owed",
 }
 
 TIERS = {"supported", "nightly", "unsupported"}
