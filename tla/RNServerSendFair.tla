@@ -81,6 +81,6 @@ TypeOK ==
 \* under a cap of K frames per update and N clients, every client is served
 \* within ceil(N / K) updates
 FairService ==
-    \A c \in Clients : now - last[c] <= Window
+    \A c \in Clients : now - last[c] < Window
 
 =============================================================================

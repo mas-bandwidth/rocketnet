@@ -78,7 +78,7 @@ struct fair_world_t
     double time;
 };
 
-static void fair_world_create( fair_world_t * world, int num_clients, int capacity )
+static void fair_world_create( fair_world_t * world, int num_clients, int capacity, int max_clients = FAIR_MAX_CLIENTS )
 {
     memset( world, 0, sizeof( *world ) );
     rocketnet_set_quiet( 1 );
@@ -90,12 +90,18 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
     rocketnet_server_config_t server_config;
     check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
     server_config.protocol_id = FAIR_PROTOCOL;
-    server_config.max_clients = FAIR_MAX_CLIENTS;
+    server_config.max_clients = max_clients;
     memcpy( server_config.backend_public_key, world->identity.backend_public, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, world->identity.server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, world->identity.server_secret, sizeof( server_config.server_secret_key ) );
     server_config.transport = "loopback";
     fair_message_config( &server_config, NULL );
+    if ( max_clients >= 256 )
+    {
+        server_config.send_buffer_bytes = 12288;
+        server_config.send_queue_messages = 64;
+        server_config.window_messages = 64;
+    }
 
     rocketnet_server_transport_set_create_send_capacity_for_test( capacity );
     world->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
@@ -111,6 +117,8 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
         client_config.step_driven = true;
         client_config.time_callback = fair_clock;
         fair_message_config( NULL, &client_config );
+        if ( max_clients >= 256 )
+            client_config.window_messages = 64;
         world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
         check( world->clients[i] != NULL );
     }
@@ -370,6 +378,22 @@ static void server_send_cap_two_three_clients()
     fair_run_case( 3, 2 );
 }
 
+static void server_send_capacity_spare_slots_keep_in_place()
+{
+    fair_world_t world;
+    fair_world_create( &world, 1, 0, 256 );
+    fair_connect( &world, 0, 0x9100 );
+    fair_update_clients( &world );
+    fair_send_clients( &world );
+    fair_server_update( &world );
+    rocketnet_message_server_t * messages = rocketnet_server_message_server( world.server );
+    const uint64_t before = rocketnet_counter_value( rocketnet_message_server_counters( messages ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+    check( fair_server_send( &world, 0, FAIR_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, 1 ) != 0 );
+    check( rocketnet_counter_value( rocketnet_message_server_counters( messages ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == before );
+    fair_world_destroy( &world );
+}
+
+REGISTER_UNIT_TEST( server_send_capacity_spare_slots_keep_in_place );
 REGISTER_UNIT_TEST( server_send_cap_two_three_clients );
 REGISTER_UNIT_TEST( server_send_cap_one_two_clients );
 REGISTER_UNIT_TEST( server_send_cap_one_three_clients );

@@ -434,6 +434,6 @@ client, with a minimum of 256 slots. A lower test capacity exercises contention.
 The message send pass starts after the last served connection and offers one
 frame per connection per round. Full capacity leaves queued reliable work due
 for the next update. In-place unreliable writes use only surplus capacity above
-a complete round; otherwise they join the queue so application call order cannot
+a complete round of connected peers; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
 use the transport's separate send path.

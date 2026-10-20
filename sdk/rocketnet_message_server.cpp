@@ -603,8 +603,10 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         // Reserve a complete round for the rotating pass, including this
         // connection's reliable work. In-place writes may use surplus slots,
         // but application call order cannot consume another client's turn.
+        const int send_connections = object->link.send_connected_count ?
+            object->link.send_connected_count( object->link.transport ) : object->num_connections;
         if ( header >= 0 && object->link.send_capacity_available &&
-             object->link.send_capacity_available( object->link.transport ) <= object->num_connections )
+             object->link.send_capacity_available( object->link.transport ) <= send_connections )
             header = RN_ENDPOINT_IN_PLACE_QUEUED;
         if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
             header = RN_ENDPOINT_IN_PLACE_QUEUED;               // the bucket cannot pay it now: the write pass decides
@@ -951,6 +953,11 @@ static void rn_server_link_send_packets( void * transport )
     rocketnet_server_transport_send_packets( (rocketnet_server_transport_t *) transport );
 }
 
+static int rn_server_link_send_connected_count( void * transport )
+{
+    return rocketnet_server_transport_num_connected_clients( (rocketnet_server_transport_t *) transport );
+}
+
 static int rn_server_link_send_capacity_available( void * transport )
 {
     return rocketnet_server_transport_send_capacity_available( (const rocketnet_server_transport_t *) transport );
@@ -1010,6 +1017,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->abort_packet = rn_server_link_abort_packet;
     link->send_packets = rn_server_link_send_packets;
     link->send_capacity_available = rn_server_link_send_capacity_available;
+    link->send_connected_count = rn_server_link_send_connected_count;
     link->connection = rn_server_link_connection;
     link->disconnect = rn_server_link_disconnect;
     link->state = rn_server_link_state;
