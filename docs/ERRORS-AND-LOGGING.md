@@ -23,7 +23,11 @@ The public header is `sdk/rocketnet.h`. A game initializes the library, fills a
 client or server config, creates one client or server, and checks the result.
 Every entry point that can refuse returns a value a caller can test, logs one
 line at `ERROR` when it refuses, and counts the refusal in
-`rocketnet_api_misuse_count`.
+`rocketnet_api_misuse_count`. A message send on a connection that is not
+CONNECTED is no refusal of this kind: it is a normal drop that logs nothing,
+returns `NULL` from start message and `0` from finish message, and counts in
+`ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS` or
+`ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS`, never in the misuse count.
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
@@ -208,6 +212,28 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback(
    `vsnprintf`.
 4. **Last registration wins**: a non-NULL callback replaces the active sink;
    passing `NULL` restores the default sink.
+
+### 3.4 Refused Thread Priority Calls
+
+The library's network-thread priority calls (`docs/CLIENT-IO.md`, Thread
+priority; `DRIVERS.md`, Server network threads) check each result. A refused
+call (`pthread_setschedparam` nonzero, `pthread_setaffinity_np` nonzero on the
+XDP thread, `SetThreadPriority` FALSE, `timeBeginPeriod` or `timeEndPeriod`
+not `TIMERR_NOERROR`) adds one to a process-wide count (`sdk/rocketnet_platform.cpp:118`), read with
+`rocketnet_get_thread_priority_refusals()`, and never fails a create or
+`rocketnet_init`. The first refusal of each call kind logs one warning, and
+that kind never logs again in the process:
+
+```
+thread priority: pthread_setschedparam SCHED_RR 1 refused (Operation not permitted); the thread runs at its default priority
+```
+
+The other kinds read `thread priority: SetThreadPriority THREAD_PRIORITY_TIME_CRITICAL refused (error <n>); ...`, `thread affinity: pthread_setaffinity_np cpu <n> refused (...); the thread runs on any cpu`,
+`timer period: timeBeginPeriod 1 refused (error <n>); the timer keeps its default period` and `timer period: timeEndPeriod 1 refused (...)`. The count
+is updated with a relaxed atomic from whichever thread made the call, so a
+worker thread never writes a transport's counters. An unprivileged Linux
+process is refused `SCHED_RR`; the count and the one line are how a game sees
+that its network threads run at the default priority.
 
 ---
 

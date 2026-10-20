@@ -60,6 +60,9 @@
 #include <string.h>
 #include <time.h>
 
+// defined in functional/harness.inc: the connect token timestamp from the clock that judges it
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -553,8 +556,12 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
 {
     clock->skipped.store( 0, std::memory_order_release );
 
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ),
+    posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
+                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
                                                     token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t config;
