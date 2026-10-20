@@ -7786,7 +7786,12 @@ static void rocketnet_xdp_hard_killed_client( bool ipv6, const char * case_name 
     rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) == 0 );
 
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 10.0 && rocketnet_server_transport_num_connected_clients( server ) < 2 )
+    // until the server holds both and both clients have heard it: the
+    // client reaches CONNECTED only on the server's first keep-alive
+    while ( rocketnet_platform_time() - start < 10.0 &&
+            ( rocketnet_server_transport_num_connected_clients( server ) < 2 ||
+              rocketnet_client_transport_state( live[0] ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
+              rocketnet_client_transport_state( live[1] ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ) )
     {
         for ( int c = 0; c < 2; c++ )
             rocketnet_client_transport_update( live[c], rocketnet_platform_time() );
