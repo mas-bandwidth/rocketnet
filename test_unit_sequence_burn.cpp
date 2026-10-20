@@ -519,15 +519,13 @@ static void sequence_burn_compare( int side, int kind, const char * name )
     rocketnet_unit_check( burned.server_loss == control.server_loss );
 
     // the client's loss stat is receive-side, from gaps in the server's
-    // session sequence (ROCKETNET_CLIENT_STAT_PACKET_LOSS, sdk/rocketnet.h:395;
-    // sdk/rocketnet_client_transport.cpp:1170 feeds the tracker): a sequence
-    // the server burned is a gap and is counted there. A client burn leaves
-    // the server's stat, which is ack-based, untouched.
+    // session sequence (ROCKETNET_CLIENT_STAT_PACKET_LOSS, sdk/rocketnet.h;
+    // sdk/rocketnet_client_transport.cpp:1170 feeds the tracker). A start the
+    // server's ring or arena refuses takes no sequence, so it leaves no gap and
+    // the stat is the control's. A client burn leaves the server's stat, which
+    // is ack-based, untouched.
     rocketnet_unit_check( control.client_loss == 0.0f );
-    if ( side == BURN_SIDE_SERVER )
-        rocketnet_unit_check( burned.client_loss > 0.0f );
-    else
-        rocketnet_unit_check( burned.client_loss == 0.0f );
+    rocketnet_unit_check( burned.client_loss == control.client_loss );
 }
 
 static void sequence_burn_server_ring_full_is_harmless() { sequence_burn_compare( BURN_SIDE_SERVER, BURN_KIND_RING, "server.ring" ); }
