@@ -1032,22 +1032,39 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./bin/functional
-      # A red in this step at BASE is the asan allocator rejecting the glibc
-      # heap-keeping calls in functional/posix_lifecycle_stress.cpp:1045-1046
-      # (posix_heap_keep asserts mallopt(M_MMAP_MAX,...) == 1 and
-      # mallopt(M_TRIM_THRESHOLD,...) == 1, which return 0 under asan's
-      # allocator). Every posix_* cell fails there the same way. The fix is
-      # to tolerate asan there and is carried as a proposed diff on its own
-      # card, not in this file:
+      # RED AT BASE (this member, gcc 15, glibc): every posix_* cell exits 1
+      # at functional/posix_lifecycle_stress.cpp:1045. posix_heap_keep asserts
+      # mallopt(M_MMAP_MAX,...) == 1 and mallopt(M_TRIM_THRESHOLD,...) == 1;
+      # asan's allocator has neither knob and returns 0 for both, so the
+      # heap-keeping hints are refused. The tuning is a performance hint, not
+      # a correctness check, so the fix waits on a diff in that file (its own
+      # card, not this one):
       #
-      #     -#if defined(__GLIBC__)
-      #     +#if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__)
+      #     static void posix_heap_keep( bool keep )
+      #     {
+      #     #if defined(__GLIBC__)
+      #     -    posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
+      #     -    posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
+      #     +    (void) mallopt( M_MMAP_MAX, keep ? 0 : 65536 );
+      #     +    (void) mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 );
+      #     #else
       #
-      # Under tsan the functional step is red in the same file for a second
-      # reason: posix_stable_counts (functional/posix_lifecycle_stress.cpp:196-208)
-      # reads one more thread (1 -> 2) after the sanitizer runtime starts a
-      # thread inside the forked test process, so the before and after counts
-      # do not match. That fix is carried on its own card as well.
+      # A second asan red on this member is a wall-clock bound, not a defect:
+      # live_message_matrix_loopback (functional/live_matrix.cpp:1157) takes
+      # 79 s against the 50 s bound (10 s x the 5x sanitizer scale in
+      # test/time_scale.h). It is reported, not loosened: the Release bound
+      # stays as written and the sanitizer scale is not raised here.
+      #
+      # Under tsan the functional step is red for two reasons in functional
+      # code, both carried as proposed diffs on their own cards:
+      #  - posix_stable_counts (functional/posix_lifecycle_stress.cpp:206-217)
+      #    sees the thread count go 1 -> 2 after the tsan runtime starts a
+      #    thread inside the forked test process, so before and after differ.
+      #    Proposed diff: initialize the sanitizer runtime (spawn and join a
+      #    throwaway thread) before the baseline at posix_case_start.
+      #  - a data race in posix_burst_drain_thread at
+      #    functional/posix_socket_errors.cpp:1002, reported by tsan from the
+      #    posix socket-error cells.
 
       - name: Allocation lifecycle under sanitizers
         if: matrix.leg == 'functional suite'

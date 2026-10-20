@@ -97,6 +97,19 @@ jobs:
         run: |
           set -o pipefail
           ./bin/functional 2>&1 | tee functional.log
+      # RED AT BASE (this member): the unit and portable unit steps are green,
+      # the functional step reports two leaks in functional fixtures that are
+      # not system libraries, so tools/lsan.supp is not the place for them and
+      # nothing is suppressed here:
+      #  - test_server_uring_probe (functional/rocketnet_functional_tests.cpp:5685)
+      #    leaks the server create allocations from
+      #    sdk/rocketnet_server_uring_linux.cpp:729 (77 MB) and :740 (16 MB).
+      #    Proposed diff on its own card: destroy the transport the probe
+      #    creates before returning.
+      #  - control_fragment_packets_each_end
+      #    (functional/channel_control_packets.cpp:108) leaks the reassembly
+      #    set from sdk/rocketnet_fragment.cpp:182. Proposed diff on its own
+      #    card: call rocketnet_reassembly_set_destroy on both ends.
 
       - name: Upload leak logs
         if: failure()
