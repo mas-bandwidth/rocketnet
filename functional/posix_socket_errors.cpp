@@ -795,6 +795,10 @@ static void posix_create_keeps_queued_datagram( int ipv6 )
     rocketnet_platform_set_create_receive_hook( NULL );
     posix_check( socket != NULL );
 
+    // create read nothing: the datagram the hook queued is still waiting, and
+    // the first batch call below is what takes it and decides the pump
+    posix_check( posix_queued_datagrams( socket ) == 1 );
+
     uint8_t data[8][ROCKETNET_RECEIVE_CEILING];
     rocketnet_address_t from[8];
     int bytes[8];
@@ -810,6 +814,7 @@ static void posix_create_keeps_queued_datagram( int ipv6 )
     posix_check( received == 1 );
     posix_check( bytes[0] == (int) ( sizeof(posix_create_probe_message) - 1 ) );
     posix_check( memcmp( data[0], posix_create_probe_message, sizeof(posix_create_probe_message) - 1 ) == 0 );
+    posix_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
 
     rocketnet_platform_socket_destroy( socket );
 }

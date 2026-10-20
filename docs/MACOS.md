@@ -103,7 +103,8 @@ any other errno pauses it and that same call finishes on the portable
 per-packet loop, losing nothing (`rocketnet_msgx_pause`, the receive block in
 `rocketnet_platform_socket_receive_packets`). The functional case
 `test_posix_platform_send_seam` queues one datagram on the bound socket between
-bind and that first batch call and requires the socket to deliver it.
+bind and that first batch call, checks that create left it queued, and requires
+the batch call to deliver it with the pump still `msgx`.
 
 At runtime a send errno that is ordinary UDP weather (`EAGAIN`, `EWOULDBLOCK`,
 `ENOBUFS`, `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EMSGSIZE`,
