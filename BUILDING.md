@@ -162,15 +162,27 @@ allocation turns the check red:
     cmake -B build-release -DCMAKE_BUILD_TYPE=Release
     cmake --build build-release --parallel 4
     python3 tools/macos/leaks_run.py --self-test
-    python3 tools/macos/leaks_run.py --matrix
+    python3 tools/macos/leaks_run.py --matrix --timeout 600
 
 `leaks --atExit` needs Developer Mode. The script prints
 `DevToolsSecurity -status` first and exits 2 when it reports disabled
-(`check_developer_mode`, tools/macos/leaks_run.py:60). Each leaks call runs in
+(`check_developer_mode`, tools/macos/leaks_run.py:81). Each leaks call runs in
 its own process group and is killed with its target after `--timeout` seconds,
-120 by default (`run_leaks`, tools/macos/leaks_run.py:77). The pins are the four
-transport pairs and both ends on auto with `ROCKETNET_PUMP=portable`
-(`PINS`, tools/macos/leaks_run.py:41).
+120 by default (`run_leaks_quiet`, tools/macos/leaks_run.py:118). The pins are
+the four transport pairs and both ends on auto with `ROCKETNET_PUMP=portable`
+(`PINS`, tools/macos/leaks_run.py:53).
+
+leaks reads a target's writable memory and prints allocation stacks only when
+the target is debuggable, so the script ad-hoc signs each binary with the
+`com.apple.security.get-task-allow` entitlement before it runs it
+(`make_debuggable`, tools/macos/leaks_run.py:98), and a run whose output says
+the process is not debuggable fails (tools/macos/leaks_run.py:142).
+`./bin/functional` runs each case in a child process that leaks does not see,
+so the matrix runs every case of the `rocketnet_functional_tests` table on its
+own as `./bin/functional --run <case>` under leaks, `--jobs` at a time, 8 by
+default (`functional_cases` and `run_functional`,
+tools/macos/leaks_run.py:168 and :185). The soak takes longer than the default
+timeout, so the matrix runs with `--timeout 600`.
 
 The `ROCKETNET_SANITIZE` option builds and the unit suite passes green under
 ASan+UBSan (`address`) and under TSan (`thread`) on Linux as well, so the same

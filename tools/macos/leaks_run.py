@@ -15,6 +15,17 @@ So the script prints `DevToolsSecurity -status` first and refuses to run
 process group under a hard timeout (--timeout, default 120 s) that kills
 leaks and its stopped target and fails the run.
 
+leaks reads a target's writable memory, and prints the allocation stacks,
+only when the target is debuggable: the script ad-hoc signs each binary with
+the com.apple.security.get-task-allow entitlement before it runs it, and a
+run whose output says the process "is not debuggable" fails.
+
+./bin/functional runs each case in a child it spawns, and leaks sees only the
+process it launched, so the matrix runs every functional case on its own as
+./bin/functional --run <case> under leaks, --jobs at a time (default 8, the
+suite runner's own cap). The case names are read from the
+rocketnet_functional_tests table in functional/rocketnet_functional_tests.cpp.
+
 Modes:
   --binary PATH [-- arg...]   run one binary once
   --matrix                    run test_lifecycle, functional and a 100000
@@ -25,6 +36,7 @@ Modes:
 """
 
 import argparse
+import concurrent.futures
 import os
 import platform
 import re
@@ -47,6 +59,15 @@ PINS = (
 )
 PIN_VARIABLES = ("ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT", "ROCKETNET_PUMP")
 DEFAULT_TIMEOUT_SECONDS = 120.0
+DEFAULT_JOBS = 8
+FUNCTIONAL_TABLE = REPO_ROOT / "functional" / "rocketnet_functional_tests.cpp"
+CASE_ROW = re.compile(r'^\s*\{\s*"([A-Za-z0-9_]+)"\s*,\s*[A-Za-z0-9_]+\s*\},')
+NOT_DEBUGGABLE = "is not debuggable"
+ENTITLEMENTS = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    '<plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/></dict></plist>\n'
+)
 LEAK_LINE = re.compile(r"Process\s+\d+:\s+(\d+)\s+leaks?\s+for\s+(\d+)\s+total leaked bytes")
 
 
@@ -74,15 +95,38 @@ def leak_counts(text):
     return counts
 
 
+def make_debuggable(binary):
+    # leaks needs the target debuggable to read its writable memory and stacks
+    with tempfile.TemporaryDirectory(prefix="leaks-run-sign-") as tmp:
+        plist = Path(tmp) / "get-task-allow.plist"
+        plist.write_text(ENTITLEMENTS)
+        sign = subprocess.run(["codesign", "-s", "-", "-f", "--entitlements", str(plist), str(binary)],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if sign.returncode != 0:
+        sys.exit("leaks_run.py: codesign could not add get-task-allow to %s: %s"
+                 % (binary, sign.stdout.decode("utf-8", "replace").strip()))
+
+
 def run_leaks(binary, args, env_extra, timeout):
+    lines = []
+    ok = run_leaks_quiet(binary, args, env_extra, timeout, lines)
+    sys.stdout.write("".join(lines))
+    sys.stdout.flush()
+    return ok
+
+
+def run_leaks_quiet(binary, args, env_extra, timeout, lines):
+    def say(text):
+        lines.append(text if text.endswith("\n") else text + "\n")
     env = dict(os.environ)
     for name in PIN_VARIABLES:
         env.pop(name, None)
     env["MallocStackLogging"] = "1"
     env.update(env_extra)
     command = [LEAKS, "--atExit", "--", str(binary)] + list(args)
-    print("leaks_run.py: %s" % " ".join("%s=%s" % item for item in env_extra.items()), flush=True)
-    print("leaks_run.py: %s" % " ".join(command), flush=True)
+    name = " ".join([str(binary)] + list(args))
+    say("leaks_run.py: %s" % " ".join("%s=%s" % item for item in env_extra.items()))
+    say("leaks_run.py: %s" % " ".join(command))
     # its own process group, so a timeout kills leaks and the target it stopped
     proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     try:
@@ -90,24 +134,26 @@ def run_leaks(binary, args, env_extra, timeout):
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
         raw, _ = proc.communicate()
-        sys.stdout.write(raw.decode("utf-8", "replace"))
-        print("leaks_run.py: FAIL %s: leaks did not return within %.0f s; killed it and its target" % (binary, timeout), flush=True)
+        say(raw.decode("utf-8", "replace"))
+        say("leaks_run.py: FAIL %s: leaks did not return within %.0f s; killed it and its target" % (name, timeout))
         return False
     output = raw.decode("utf-8", "replace")
-    sys.stdout.write(output)
-    sys.stdout.flush()
+    say(output)
+    if NOT_DEBUGGABLE in output:
+        say("leaks_run.py: FAIL %s: the target is not debuggable, so leaks could not read its memory" % name)
+        return False
     counts = leak_counts(output)
     leaked = sum(count for count, _ in counts)
     if not counts:
-        print("leaks_run.py: FAIL %s: leaks printed no leak summary" % binary, flush=True)
+        say("leaks_run.py: FAIL %s: leaks printed no leak summary" % name)
         return False
     if leaked:
-        print("leaks_run.py: FAIL %s: %d leak(s) across %d process report(s)" % (binary, leaked, len(counts)), flush=True)
+        say("leaks_run.py: FAIL %s: %d leak(s) across %d process report(s)" % (name, leaked, len(counts)))
         return False
     if proc.returncode != 0:
-        print("leaks_run.py: FAIL %s: binary exited %d" % (binary, proc.returncode), flush=True)
+        say("leaks_run.py: FAIL %s: binary exited %d" % (name, proc.returncode))
         return False
-    print("leaks_run.py: PASS %s: 0 leaks" % binary, flush=True)
+    say("leaks_run.py: PASS %s: 0 leaks" % name)
     return True
 
 
@@ -115,23 +161,69 @@ def binary_path(name):
     path = REPO_ROOT / "bin" / name
     if not path.is_file():
         sys.exit("leaks_run.py: missing binary %s (build Release without sanitizers first)" % path)
+    make_debuggable(path)
     return path
 
 
-def matrix(timeout):
+def functional_cases():
+    names = []
+    inside = False
+    for line in FUNCTIONAL_TABLE.read_text().splitlines():
+        if "rocketnet_functional_tests[] =" in line:
+            inside = True
+            continue
+        if inside and line.startswith("};"):
+            break
+        match = CASE_ROW.match(line) if inside else None
+        if match:
+            names.append(match.group(1))
+    if not names:
+        sys.exit("leaks_run.py: found no case rows in %s" % FUNCTIONAL_TABLE)
+    return names
+
+
+def run_functional(binary, pin, timeout, jobs):
+    # each case in its own leaks run: the suite runner's children are out of leaks' sight
+    cases = functional_cases()
+    failed = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {}
+        for case in cases:
+            lines = []
+            futures[pool.submit(run_leaks_quiet, binary, ["--run", case], pin, timeout, lines)] = (case, lines)
+        for future in concurrent.futures.as_completed(futures):
+            case, lines = futures[future]
+            if future.result():
+                print("leaks_run.py: PASS functional --run %s: 0 leaks" % case, flush=True)
+            else:
+                sys.stdout.write("".join(lines))
+                sys.stdout.flush()
+                failed.append(case)
+    print("leaks_run.py: functional %d case(s), %d failed%s" % (len(cases), len(failed),
+          (": " + " ".join(sorted(failed))) if failed else ""), flush=True)
+    return not failed
+
+
+def matrix(timeout, jobs):
     ok = True
+    lifecycle = binary_path("test_lifecycle")
+    functional = binary_path("functional")
+    soak = binary_path("soak")
     for pin in PINS:
         label = " ".join("%s=%s" % item for item in pin.items())
         print("leaks_run.py: pin %s" % label, flush=True)
-        ok = run_leaks(binary_path("test_lifecycle"), [], pin, timeout) and ok
-        ok = run_leaks(binary_path("functional"), [], pin, timeout) and ok
-        ok = run_leaks(binary_path("soak"), ["100000"], pin, timeout) and ok
+        ok = run_leaks(lifecycle, [], pin, timeout) and ok
+        ok = run_functional(functional, pin, timeout, jobs) and ok
+        ok = run_leaks(soak, ["100000"], pin, timeout) and ok
     return ok
 
 
 def self_test(timeout):
+    # scrub() overwrites the stack lose() used, so no stale copy of the lost
+    # pointer is left for leaks to read as a reference
     source = (
         "#include <stdlib.h>\n"
+        "#include <string.h>\n"
         "static void *volatile held;\n"
         "__attribute__((noinline)) static void lose(void) {\n"
         "    char *p = (char *)malloc(32);\n"
@@ -139,9 +231,14 @@ def self_test(timeout):
         "    p[0] = 1;\n"
         "    held = p;\n"
         "}\n"
+        "__attribute__((noinline)) static void scrub(void) {\n"
+        "    volatile char pad[4096];\n"
+        "    memset((char *)pad, 0, sizeof(pad));\n"
+        "}\n"
         "int main(void) {\n"
         "    lose();\n"
         "    held = 0;\n"
+        "    scrub();\n"
         "    return 0;\n"
         "}\n"
     )
@@ -153,6 +250,7 @@ def self_test(timeout):
         if build.returncode != 0:
             print("leaks_run.py: self-test could not compile the scratch leak", flush=True)
             return False
+        make_debuggable(binary)
         red = not run_leaks(binary, [], {}, timeout)
         if red:
             print("leaks_run.py: PASS self-test: the scratch leak turned the run red", flush=True)
@@ -169,6 +267,8 @@ def main():
     mode.add_argument("--self-test", action="store_true", help="confirm a one-allocation leak turns a run red")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS,
                         help="seconds one leaks run may take before it and its target are killed (default 120)")
+    parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
+                        help="functional cases run under leaks at once in --matrix (default 8)")
     parser.add_argument("args", nargs=argparse.REMAINDER, help="arguments for --binary after --")
     options = parser.parse_args()
     check_platform()
@@ -176,7 +276,7 @@ def main():
     if options.self_test:
         return 0 if self_test(options.timeout) else 1
     if options.matrix:
-        return 0 if matrix(options.timeout) else 1
+        return 0 if matrix(options.timeout, max(1, options.jobs)) else 1
     args = list(options.args)
     if args and args[0] == "--":
         args = args[1:]
