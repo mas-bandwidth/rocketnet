@@ -121,7 +121,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
 
 uint64_t rocketnet_server_uring_leaked_bytes();
 
-uint64_t rocketnet_server_uring_leaked_drivers();
+uint64_t rocketnet_server_uring_leaked_transports();
 
 // for tests: one completion that never arrives, so the next destroy counts
 // its rounds (without waiting) and takes the give-up path

@@ -12,7 +12,7 @@
 # target is that file's name without .sexp (make roadmap, make testing).
 #
 # An area declares :columns transports (a column per server transport, in the
-# order the automatic ladder ranks them in sdk/rocketnet_drivers.inc) or
+# order the automatic ladder ranks them in sdk/rocketnet_transports.inc) or
 # :columns platforms (Linux, macOS, Windows); a list naming one whole set, in
 # any order, is the same declaration with its columns in that order. Any other
 # column is refused. :label names the first column (default "feature").
@@ -72,13 +72,13 @@ CELL = { "y": "✅", "n": "❌", "o": "OWED", "p": "PLANNED", "-": "—" }
 OPEN = ( "n", "o", "p" )
 
 # The server transports in the order the automatic ladder ranks them (server
-# preference in sdk/rocketnet_drivers.inc, lower first; ties in registry
+# preference in sdk/rocketnet_transports.inc, lower first; ties in registry
 # order; loopback is pin-only and last). test_render.py holds this list to the
 # registry.
 TRANSPORTS = [ "xdp", "msgx", "gso", "io_uring", "portable", "iocp", "rio", "loopback" ]
 PLATFORMS = [ "Linux", "macOS", "Windows" ]
 # The transports each platform builds (the platforms column of
-# sdk/rocketnet_drivers.inc); test_render.py holds this to the registry.
+# sdk/rocketnet_transports.inc); test_render.py holds this to the registry.
 PLATFORM_TRANSPORTS = {
     "Linux": [ "xdp", "gso", "io_uring", "portable", "loopback" ],
     "macOS": [ "msgx", "portable", "loopback" ],

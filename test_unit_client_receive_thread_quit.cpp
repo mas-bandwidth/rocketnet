@@ -14,7 +14,7 @@
 // starts at 1000.0 and the token's unix time is supplied.
 
 #include "test_unit_registry.h"
-#include "test/fake_client_driver.h"
+#include "test/fake_client_transport.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -65,7 +65,7 @@ static void client_receive_thread_quit_step_driven_destroy_returns()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token ) );
 
-    rocketnet_fake_client_driver_t fake = {};
+    rocketnet_fake_client_transport_t fake = {};
     const double time = 1000.0;
     for ( int i = 0; i < 4; i++ )
     {

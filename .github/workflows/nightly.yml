@@ -190,16 +190,16 @@ jobs:
 
       - name: Native driver contract and external backend
         run: |
-          ./bin/Debug/test_driver.exe
+          ./bin/Debug/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./bin/Debug/test_transport_control.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/check_driver_extension.py build --config Debug
+          python tools/check_transport_extension.py build --config Debug
 
   # THE OUT-OF-TREE DRIVER BACKEND, UNDER MSVC. Lifted from ci.yml's
   # windows-2025 / Release leg (a) on 2026-09-13.
   #
-  # tools/check_driver_extension.py configures and builds a driver backend
+  # tools/check_transport_extension.py configures and builds a driver backend
   # that lives OUTSIDE this tree against the installed SDK, and fails if the
   # extension surface a consumer compiles against has drifted. It is a
   # contract check on a fixed input -- "does this API still present itself to
@@ -243,7 +243,7 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: External driver backend
-        run: python tools/check_driver_extension.py build --config Release
+        run: python tools/check_transport_extension.py build --config Release
 
   # Windows MSVC AddressSanitizer over unit, lifecycle, IOCP/RIO driver and
   # functional suites (portable, iocp and rio transports) on the native Windows

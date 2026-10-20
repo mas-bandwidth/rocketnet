@@ -13,7 +13,7 @@
 // Every case runs in memory, with no clock, sockets or network.
 
 #include "test_unit_registry.h"
-#include "test/fake_client_driver.h"
+#include "test/fake_client_transport.h"
 
 #include "rocketnet.h"
 #include "rocketnet_client_io.h"
@@ -98,7 +98,7 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     token_with_server_key( token, server_key );
 
-    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * fake = new rocketnet_fake_client_transport_t();
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
 

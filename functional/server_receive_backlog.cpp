@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet_internal.h"
-#include "rocketnet_driver_loopback.h"
+#include "rocketnet_transport_loopback.h"
 #include "rocketnet_platform.h"
 #include "../test/time_scale.h"
 
@@ -91,7 +91,7 @@ static bool server_receive_backlog_all_connected( const std::vector<struct rocke
 
 void rocketnet_test_server_receive_keeps_up_with_max_clients()
 {
-    server_receive_backlog_env_t driver_env( "ROCKETNET_DRIVER" );
+    server_receive_backlog_env_t driver_env( "ROCKETNET_TRANSPORT" );
     server_receive_backlog_env_t server_env( "ROCKETNET_SERVER_TRANSPORT" );
     server_receive_backlog_env_t client_env( "ROCKETNET_CLIENT_TRANSPORT" );
 

@@ -8,7 +8,7 @@
 // update time from 1000.0, and no test sleeps or opens a socket.
 
 #include "test_unit_registry.h"
-#include "test/fake_client_driver.h"
+#include "test/fake_client_transport.h"
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_config.h"
 #include "rocketnet_client_io.h"       // refusal fixture for a driver with no non-blocking step
@@ -244,7 +244,7 @@ static void public_step_driven_client_refused_on_a_threaded_only_transport()
     public_step_identity( &identity );
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     public_step_token( 40000, &identity, token );
-    rocketnet_fake_client_driver_t fake = {};
+    rocketnet_fake_client_transport_t fake = {};
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.step_driven = true;

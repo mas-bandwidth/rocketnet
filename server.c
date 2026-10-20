@@ -204,7 +204,7 @@ static int interface_for_address( const char * address, char * out, size_t out_s
 
 // Section 9: the in-tree i40e reports the running kernel's version (the same
 // string as `uname -r`); the out-of-tree build reports its own release number.
-static int in_tree_driver( const char * nic )
+static int in_tree_transport( const char * nic )
 {
 #if defined(_WIN32)
     (void) nic;
@@ -935,7 +935,7 @@ int main( int argc, char ** argv )
     if ( strcmp( config.driver, "xdp" ) == 0 )
     {
         char nic[64] = {0};
-        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_driver( nic ) )
+        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_transport( nic ) )
         {
             fprintf( stderr, "server: refusing: interface %s reports the in-tree driver\n", nic );
             rocketnet_term();
@@ -957,14 +957,14 @@ int main( int argc, char ** argv )
     }
 
     struct rocketnet_server_transport_t * transport_obj = rocketnet_message_server_transport( server );
-    printf( "server transport %s\n", rocketnet_server_transport_driver( transport_obj ) );
+    printf( "server transport %s\n", rocketnet_server_transport_io_name( transport_obj ) );
     printf( "server max_clients %d\n", config.max_clients );
     if ( results_path )
     {
         g_results = fopen( results_path, "w" );
         if ( g_results )
         {
-            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_driver( transport_obj ) );
+            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_io_name( transport_obj ) );
             results_event( "listening" );
         }
     }

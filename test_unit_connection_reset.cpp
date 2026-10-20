@@ -16,7 +16,7 @@
 #include "sdk/rocketnet_message_object.h"
 #include "sdk/rocketnet_layers.h"
 #include "sdk/rocketnet_client_io.h"
-#include "sdk/rocketnet_driver.h"
+#include "sdk/rocketnet_transport.h"
 #include "sdk/rocketnet_connect_token.h"
 
 #include <stddef.h>
@@ -299,7 +299,7 @@ static void connection_reset_inventory_covers_every_field()
 }
 REGISTER_UNIT_TEST( connection_reset_inventory_covers_every_field );
 
-extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
+extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };
 
@@ -381,7 +381,7 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_CLIENT_TRANSPORT" );
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
-        NULL, token, &config, 0.0, 1000, rocketnet_loopback_driver.client, NULL );
+        NULL, token, &config, 0.0, 1000, rocketnet_loopback_transport.client, NULL );
     reset_env_pin_put_back( &pin );
     check( transport );
     rn_message_link_t link;

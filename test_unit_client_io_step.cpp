@@ -4,11 +4,11 @@
 */
 
 // The I/O step (sdk/rocketnet_client_io.h) against the fake client driver
-// (test/fake_client_driver.h) and the RNClientIo actions of
+// (test/fake_client_transport.h) and the RNClientIo actions of
 // tla/RNClientIo.tla. Single-threaded: no sockets, no real time.
 
 #include "test_unit_registry.h"
-#include "test/fake_client_driver.h"
+#include "test/fake_client_transport.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -23,12 +23,12 @@ static double client_io_step_test_time( void * context )
     return ( (client_io_step_test_clock_t *) context )->now;
 }
 
-static void client_io_step_test_open( rocketnet_fake_client_driver_t * fake,
-    const rocketnet_client_driver_operations_t * operations, rocketnet_client_driver_t * driver )
+static void client_io_step_test_open( rocketnet_fake_client_transport_t * fake,
+    const rocketnet_client_transport_io_operations_t * operations, rocketnet_client_transport_io_t * driver )
 {
-    rocketnet_client_driver_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_unit_check( rocketnet_client_driver_open( operations, fake, &config, &bind, driver ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( operations, fake, &config, &bind, driver ) );
 }
 
 // Three slots, the middle aborted: one step sends the two live slots byte
@@ -36,8 +36,8 @@ static void client_io_step_test_open( rocketnet_fake_client_driver_t * fake,
 // next step is idle. RNClientIo HandOff, IoSend, IoFinishRing.
 static void client_io_step_sends_handed_off_ring()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
 
     uint8_t ring0[3 * ROCKETNET_FRAME_STRIDE] = {};
@@ -91,7 +91,7 @@ static void client_io_step_sends_handed_off_ring()
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }
@@ -101,8 +101,8 @@ REGISTER_UNIT_TEST( client_io_step_sends_handed_off_ring );
 // calls. RNClientIo IoSend with the driver's batch callback.
 static void client_io_step_uses_send_batch_when_set()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_batch, &driver );
 
     uint8_t ring0[2 * ROCKETNET_FRAME_STRIDE] = {};
@@ -149,7 +149,7 @@ static void client_io_step_uses_send_batch_when_set()
     rocketnet_unit_check( memcmp( fake.sent[1].data,
         ring0 + ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET, 13 ) == 0 );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }
@@ -159,8 +159,8 @@ REGISTER_UNIT_TEST( client_io_step_uses_send_batch_when_set );
 // is exposed with receive_time 1000.25. docs/CLIENT-IO.md _The clock_.
 static void client_io_receive_time_from_callback()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
@@ -209,7 +209,7 @@ static void client_io_receive_time_from_callback()
     rocketnet_unit_check( rocketnet_address_equal( &received->from[0], &from ) );
     rocketnet_client_io_return( &io );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }
@@ -221,8 +221,8 @@ REGISTER_UNIT_TEST( client_io_receive_time_from_callback );
 // IoReceive, IoPublish, Expose, Return.
 static void client_io_step_publishes_received()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
@@ -283,7 +283,7 @@ static void client_io_step_publishes_received()
     rocketnet_unit_check( memcmp( received->packet_data[0], datagram, 8 ) == 0 );
     rocketnet_client_io_return( &io );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }
@@ -293,8 +293,8 @@ REGISTER_UNIT_TEST( client_io_step_publishes_received );
 // step with a handed-off ring is worked and does not wait. RNClientIo IoWait.
 static void client_io_step_waits_only_when_idle()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
@@ -336,7 +336,7 @@ static void client_io_step_waits_only_when_idle()
     rocketnet_unit_check( fake.wait_calls == 1 );
     rocketnet_unit_check( fake.num_sent == 1 );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }
@@ -349,8 +349,8 @@ REGISTER_UNIT_TEST( client_io_step_waits_only_when_idle );
 // FullWaitsOnWake.
 static void client_io_step_full_buffer_waits_on_wake_only()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
@@ -424,7 +424,7 @@ static void client_io_step_full_buffer_waits_on_wake_only()
     rocketnet_unit_check( published->num_packets == ROCKETNET_NUM_CLIENT_PACKETS );
 
     rocketnet_client_io_return( &io );
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }

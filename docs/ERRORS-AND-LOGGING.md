@@ -55,7 +55,7 @@ line and the misuse count.
 
 The helper names used later in this document (`rocketnet_error`,
 `rocketnet_assert`, `rocketnet_log_v`, `rocketnet_config_apply_env`,
-`rocketnet_config_validate`, `rocketnet_driver_ladder_parse`,
+`rocketnet_config_validate`, `rocketnet_transport_ladder_parse`,
 `rocketnet_reassembly_memory_allowed`, `rocketnet_address_parse`,
 `rocketnet_server_config_has_keys`, `rocketnet_client_protocol_connect`,
 `rocketnet_platform_socket_create`, `rocketnet_platform_socket_create_with_pump`,

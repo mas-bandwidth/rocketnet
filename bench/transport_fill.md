@@ -40,16 +40,16 @@ Alternate candidate order across repeated process runs. Report median and
 min/max, and treat overlapping ranges as tied. Clear `ROCKETNET_*` environment
 overrides when comparing the same configuration.
 
-`driver_dispatch.cpp` isolates a start/finish pair using the actual native
+`transport_dispatch.cpp` isolates a start/finish pair using the actual native
 operation-record layout against a direct-call control. The callback bodies live
-in `driver_dispatch_fixture.cpp`; build without LTO so the compiler cannot
+in `transport_dispatch_fixture.cpp`; build without LTO so the compiler cannot
 replace the indirect calls. Both paths check every callback executed. This uses
 minimal synthetic callbacks, with no socket, encryption or allocator, and does
 not substitute for measuring a real staged backend on its platform.
 
 ```sh
 c++ -O3 -DNDEBUG -std=c++11 -ffp-contract=off -I sdk \
-  bench/driver_dispatch.cpp bench/driver_dispatch_fixture.cpp -o dispatch
+  bench/transport_dispatch.cpp bench/transport_dispatch_fixture.cpp -o dispatch
 ./dispatch
 ```
 

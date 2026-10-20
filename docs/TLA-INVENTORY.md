@@ -167,7 +167,7 @@ expect this trace as its counterexample. Then decide.
 `rocketnet_server_transport_update` short-circuits only in STOPPING (`:945-951`). In
 STOPPED it runs everything: receive, request processing, mapping creation, keep-alives.
 On the portable and GSO drivers the socket is still open until destroy (`synchronous_stop`,
-`sdk/rocketnet_driver_builtin.cpp:17`). `start_packet` alone checks RUNNING (`:1255`).
+`sdk/rocketnet_transport_builtin.cpp:17`). `start_packet` alone checks RUNNING (`:1255`).
 Separately, `stop` assigns STOPPING unconditionally (`:866-870`), so STOPPED → STOPPING is
 an edge. The documented shutdown is "stop and wait for stopped first" and then destroy
 (`sdk/rocketnet.h:734`), and it never takes either edge. So these matter only if STOPPED
@@ -710,7 +710,7 @@ tests.
 ## M11. The server transport lifecycle
 
 **Files.** `sdk/rocketnet.h:652-654, 734`; `sdk/rocketnet_server_transport.cpp:774, 866-870,
-936-951`; `sdk/rocketnet_driver.cpp:133-136`; `sdk/rocketnet_driver_builtin.cpp:17, 85-99,
+936-951`; `sdk/rocketnet_transport.cpp:133-136`; `sdk/rocketnet_transport_builtin.cpp:17, 85-99,
 117-121`; XDP `sdk/rocketnet_server_socket_linux.cpp:1589-1592, 1672-1686`.
 
 **States.** Transport `RUNNING → STOPPING → STOPPED` (with F6's STOPPED → STOPPING edge).
@@ -892,7 +892,7 @@ and no protocol. Its pure parts are already factored out for direct tests
 
 | Item | Where | Why no module |
 |---|---|---|
-| Driver ladder selection | `sdk/rocketnet_driver.cpp`; S:73-172 | A pure function from a list to a grant; no state survives create. Table tests. |
+| Driver ladder selection | `sdk/rocketnet_transport.cpp`; S:73-172 | A pure function from a list to a grant; no state survives create. Table tests. |
 | Config and env precedence | `sdk/rocketnet_server_transport.cpp:377-397` and around | Pure function. |
 | Library init / term | `sdk/rocketnet.cpp` | Three states and two refusals; a unit test covers it. |
 | Client transport lifecycle (thread start/quit) | `client_transport.cpp:355-386, 1140-1150` | One quit flag, a join; the flip is covered by M12. |

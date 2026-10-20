@@ -60,7 +60,7 @@ The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
 (functional suite; it also runs `test_msgx`, `test_serialize` and
 `test_transport_control` as sibling executables, `functional/main.cpp`),
 `bin/test_msgx` (built only on Apple, `CMakeLists.txt`, the `if(APPLE)` block
-that adds it), `bin/test_lifecycle`, `bin/test_driver`, the
+that adds it), `bin/test_lifecycle`, `bin/test_transport`, the
 `bin/example_*` programs, `bin/soak`, `bin/soak_sim`, `bin/load` and
 `bin/transport_memory`.
 
@@ -85,12 +85,12 @@ equal to `sdk`.
 
 The driver registry has two rows that build on macOS: `portable` (every
 platform, server rank 30, client rank 30) and `msgx` (macOS, server rank 10,
-client rank 10); lower ranks win (`sdk/rocketnet_drivers.inc`, lines 5 and 8).
+client rank 10); lower ranks win (`sdk/rocketnet_transports.inc`, lines 5 and 8).
 So `auto` asks for `msgx` first on both endpoints and falls to `portable` when
 `msgx` refuses. The `loopback` row is pin-only, an in-memory transport for
-tests (`sdk/rocketnet_drivers.inc`, line 10). Both socket transports use the
-same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
-`rocketnet_msgx_driver`); what differs is the pump under the socket.
+tests (`sdk/rocketnet_transports.inc`, line 10). Both socket transports use the
+same operation tables (`sdk/rocketnet_transport_builtin.cpp`,
+`rocketnet_msgx_transport`); what differs is the pump under the socket.
 
 **msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
 (`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").
@@ -136,7 +136,7 @@ refuses the create and the log lists the valid names. A name the registry
 knows but macOS does not build (`gso`, `xdp`, `iocp`, `io_uring`, `rio`) is
 skipped with `transport <name> is not available here. skipped`, and a list
 left with no transport for the endpoint falls to `auto` with a warning
-(`sdk/rocketnet_config.cpp`, `rocketnet_driver_ladder_parse`):
+(`sdk/rocketnet_config.cpp`, `rocketnet_transport_ladder_parse`):
 
 ```sh
 ROCKETNET_SERVER_TRANSPORT=gso ./bin/example_transports
@@ -175,7 +175,7 @@ Every other config field has an overlay named
 `ROCKETNET_<ENDPOINT>_<FIELD>` with `<ENDPOINT>` `CLIENT` or `SERVER`, built by
 `rocketnet_config_env_var_name_for` (`sdk/rocketnet_config.cpp`); the comment
 beside each field in `sdk/rocketnet.h` names its variable. The legacy names
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
+`ROCKETNET_TRANSPORT`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
 `ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied
 (`sdk/rocketnet_config.cpp`).
 
@@ -277,7 +277,7 @@ ICMP: **pending.**
 ## The file-descriptor limit
 
 A socket transport owns one UDP socket: the memory plan for `portable` and for
-`msgx` is one socket (`sdk/rocketnet_driver_builtin.cpp`,
+`msgx` is one socket (`sdk/rocketnet_transport_builtin.cpp`,
 `rocketnet_builtin_server_memory_plan`). A server keeps that one socket for all
 of its clients (up to `ROCKETNET_MAX_CLIENTS`, 1000, `sdk/rocketnet.h`), so
 the descriptor limit is not a limit on how many clients one server accepts. It
@@ -410,7 +410,7 @@ make JOBS=4
 ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
 ./bin/test_msgx
 ./bin/test_lifecycle
-./bin/test_driver
+./bin/test_transport
 ./bin/example_transports
 
 for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loopback; do

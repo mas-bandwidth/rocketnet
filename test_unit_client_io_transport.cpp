@@ -4,7 +4,7 @@
 */
 
 // The client transport's wiring of the I/O core (sdk/rocketnet_client_io.h)
-// against the fake client driver (test/fake_client_driver.h): a driver with
+// against the fake client driver (test/fake_client_transport.h): a driver with
 // wait and wake runs the I/O thread design of docs/CLIENT-IO.md, any other
 // keeps the BASE path. The transport is created step-driven: no I/O thread,
 // no socket, no real time; the test calls rocketnet_client_io_step in place
@@ -12,7 +12,7 @@
 // HandOff, Defer, Reopen, Expose, Return, Stop, IoSend, IoExit).
 
 #include "test_unit_registry.h"
-#include "test/fake_client_driver.h"
+#include "test/fake_client_transport.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -60,8 +60,8 @@ static void client_io_transport_token( uint8_t * token )
     rocketnet_write_signed_connect_data( &signed_fields, token );
 }
 
-static rocketnet_client_transport_t * client_io_transport_create( rocketnet_fake_client_driver_t * fake,
-    const rocketnet_client_driver_operations_t * operations, client_io_transport_clock_t * clock )
+static rocketnet_client_transport_t * client_io_transport_create( rocketnet_fake_client_transport_t * fake,
+    const rocketnet_client_transport_io_operations_t * operations, client_io_transport_clock_t * clock )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     client_io_transport_token( token );
@@ -87,7 +87,7 @@ static void client_io_backend_without_wait_uses_base_path()
     check( !rocketnet_client_transport_uses_io_thread( &rocketnet_fake_client_operations_base ) );
     check( !rocketnet_client_transport_uses_io_thread( NULL ) );
 
-    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * fake = new rocketnet_fake_client_transport_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
     rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_base, &clock );
 
@@ -117,7 +117,7 @@ static void client_io_backend_with_wait_uses_io_thread()
     check( rocketnet_client_transport_uses_io_thread( &rocketnet_fake_client_operations_io ) );
     check( rocketnet_client_transport_uses_io_thread( &rocketnet_fake_client_operations_batch ) );
 
-    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * fake = new rocketnet_fake_client_transport_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
     rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_io, &clock );
 
@@ -156,7 +156,7 @@ REGISTER_UNIT_TEST( client_io_backend_with_wait_uses_io_thread );
 // count each packet once, the deferred one included: three sent, not four.
 static void client_io_handoff_never_waits()
 {
-    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * fake = new rocketnet_fake_client_transport_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
     rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_batch, &clock );
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
@@ -208,7 +208,7 @@ REGISTER_UNIT_TEST( client_io_handoff_never_waits );
 // FreedOnlyAfterJoin).
 static void client_io_destroy_hands_off_deferred_slots()
 {
-    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * fake = new rocketnet_fake_client_transport_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
     rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_io, &clock );
 
@@ -232,7 +232,7 @@ REGISTER_UNIT_TEST( client_io_destroy_hands_off_deferred_slots );
 // nothing Ready processes nothing.
 static void client_io_update_exposes_published_batch()
 {
-    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * fake = new rocketnet_fake_client_transport_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
     rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_io, &clock );
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );

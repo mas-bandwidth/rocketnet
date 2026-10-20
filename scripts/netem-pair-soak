@@ -248,14 +248,14 @@ if command -v ping >/dev/null 2>&1; then
     ip netns exec "$NS_CLIENT" ping -c 3 -W 2 "$SERVER_ADDRESS" | tail -2
 fi
 
-ip netns exec "$NS_SERVER" env -u ROCKETNET_DRIVER ROCKETNET_SERVER_PRINT_COUNTERS=1 ROCKETNET_SERVER_TRANSPORT="$DRIVER" \
+ip netns exec "$NS_SERVER" env -u ROCKETNET_TRANSPORT ROCKETNET_SERVER_PRINT_COUNTERS=1 ROCKETNET_SERVER_TRANSPORT="$DRIVER" \
     "$BIN_DIR/server" "$SERVER_ADDRESS:$PORT" > "$LOG_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 sleep 2
 kill -0 "$SERVER_PID" 2>/dev/null || { cat "$LOG_DIR/server.log" >&2; fail "the server exited at start"; }
 
 for i in $(seq 1 "$CLIENTS"); do
-    ip netns exec "$NS_CLIENT" env -u ROCKETNET_DRIVER ROCKETNET_CLIENT_TRANSPORT="$DRIVER" ROCKETNET_CLIENT_CONNECT_ADDRESS="$SERVER_ADDRESS:$PORT" \
+    ip netns exec "$NS_CLIENT" env -u ROCKETNET_TRANSPORT ROCKETNET_CLIENT_TRANSPORT="$DRIVER" ROCKETNET_CLIENT_CONNECT_ADDRESS="$SERVER_ADDRESS:$PORT" \
         "$BIN_DIR/client" > "$LOG_DIR/client-$i.log" 2>&1 &
     CLIENT_PIDS+=("$!")
     sleep 0.05

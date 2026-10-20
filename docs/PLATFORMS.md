@@ -42,7 +42,7 @@ and checks its exports. Nothing runs on arm64, so its row stays unsupported.
 
 The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
 and verifying on a Mac. The drivers column names the backends the row actually
-exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
+exercises or proves in CI. The registry (`rocketnet_transports.inc`) also lists
 portable on every platform, gso and xdp on Linux, msgx on macOS and iocp and rio
 on Windows. A driver that the row does not name is not part of that row's claim.
 

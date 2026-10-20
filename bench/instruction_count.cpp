@@ -25,7 +25,7 @@
 
 #define ROCKETNET_DEVELOPMENT 1
 #include "rocketnet.h"
-#include "rocketnet_driver_loopback.h"
+#include "rocketnet_transport_loopback.h"
 #include "rocketnet_internal.h"
 #include "sodium.h"
 
@@ -182,7 +182,7 @@ void run_client_frame(bool setup_only)
     rocketnet_server_transport_t * server =
         rocketnet_server_transport_create(NULL, "127.0.0.1:42000", &server_config);
     CHECK(server != NULL);
-    CHECK(strcmp(rocketnet_server_transport_driver(server), "loopback") == 0);
+    CHECK(strcmp(rocketnet_server_transport_io_name(server), "loopback") == 0);
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     CHECK(rocketnet_write_dev_connect_token("127.0.0.1:42000", 1001ULL, 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
@@ -299,7 +299,7 @@ void run_server_tick(bool setup_only)
     rocketnet_server_transport_t * server =
         rocketnet_server_transport_create(NULL, "127.0.0.1:42001", &server_config);
     CHECK(server != NULL);
-    CHECK(strcmp(rocketnet_server_transport_driver(server), "loopback") == 0);
+    CHECK(strcmp(rocketnet_server_transport_io_name(server), "loopback") == 0);
 
     rocketnet_client_transport_t * clients[SERVER_TICK_CLIENTS] = {};
     for (int c = 0; c < SERVER_TICK_CLIENTS; ++c)

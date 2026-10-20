@@ -377,7 +377,7 @@ static void * (*rocketnet_malloc_function)( void * context, size_t bytes ) = roc
 
 // the allocations rocketnet_malloc has refused on this thread, ever: a size
 // past the header overhead or a NULL from the installed allocator. A driver
-// open reads it before and after a create (sdk/rocketnet_driver.cpp), so a
+// open reads it before and after a create (sdk/rocketnet_transport.cpp), so a
 // create that returned NULL after a refusal reports OUT_OF_MEMORY
 static thread_local uint64_t rocketnet_allocation_refusals_on_this_thread = 0;
 

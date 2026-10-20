@@ -135,8 +135,8 @@ struct alignas(64) rocketnet_client_stats_frame_t
     X( packet_leases, rocketnet_packet_leases_t<1024> packet_leases )                                                \
     X( context, void * context )                                                                                     \
     X( bound_port, uint16_t bound_port )                                                                             \
-    X( driver, int driver ) /* the granted driver (ROCKETNET_DRIVER_*), decided by the ladder at create */           \
-    X( io, rocketnet_client_driver_t io )                                                                            \
+    X( driver, int driver ) /* the granted driver (ROCKETNET_TRANSPORT_*), decided by the ladder at create */           \
+    X( io, rocketnet_client_transport_io_t io )                                                                            \
     X( thread, rocketnet_platform_thread_t * thread )                                                                \
     X( mutex, rocketnet_platform_mutex_t mutex )                                                                     \
     X( quit, std::atomic<bool> quit{0} )                                                                             \
@@ -419,7 +419,7 @@ static void rocketnet_client_transport_retire_keys( void * context )
     rocketnet_client_io_retire_keys( (rocketnet_client_io_t *) context );
 }
 
-bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_operations_t * operations )
+bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport_io_operations_t * operations )
 {
     return operations && operations->wait && operations->wake;
 }
@@ -562,7 +562,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context, size_t config_bytes, uint64_t test_timestamp );
+    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
@@ -580,7 +580,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( voi
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context )
+    const rocketnet_client_transport_io_operations_t * operations, void * driver_context )
 {
     if ( !operations )
         return NULL;
@@ -589,7 +589,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( vo
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context )
+    const rocketnet_client_transport_io_operations_t * operations, void * driver_context )
 {
     if ( !operations || current_timestamp == 0 )
         return NULL;
@@ -599,7 +599,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context )
+    const rocketnet_client_transport_io_operations_t * operations, void * driver_context )
 {
     if ( !operations )
         return NULL;
@@ -608,7 +608,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_cur
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context, int * status )
+    const rocketnet_client_transport_io_operations_t * operations, void * driver_context, int * status )
 {
     if ( !operations )
         return NULL;
@@ -621,7 +621,7 @@ rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_t
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_driver_operations_t * step_driven_operations, void * step_driven_driver_context, size_t config_bytes, uint64_t test_timestamp )
+    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -709,11 +709,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the driver candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 
-    int num_available_drivers = 0;
-    const int * available_drivers = rocketnet_client_driver_availability( &num_available_drivers );
+    int num_available_transports = 0;
+    const int * available_transports = rocketnet_client_transport_io_availability( &num_available_transports );
 
-    struct rocketnet_driver_ladder_t ladder;
-    if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
+    struct rocketnet_transport_ladder_t ladder;
+    if ( !rocketnet_transport_ladder_parse( config->driver, available_transports, num_available_transports, &ladder ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
@@ -733,7 +733,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
         return NULL;
     }
-    bool budget_refused[ROCKETNET_NUM_DRIVERS];
+    bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
     memset( budget_refused, 0, sizeof(budget_refused) );
     int budget_refused_total = 0;
     int budget_allowed = 0;
@@ -741,7 +741,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     for ( int i = 0; i < ladder.num_candidates; ++i )
     {
         const int candidate = ladder.candidates[i];
-        const char * name = rocketnet_driver_name( candidate );
+        const char * name = rocketnet_transport_name( candidate );
         rocketnet_client_memory_plan_t plan;
         if ( rocketnet_client_transport_memory_plan( config, name, plan ) )
         {
@@ -926,12 +926,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // rather than falls, and the exhausted list fails loudly naming what
     // was skipped for platform and what refused for grant.
 
-    int granted_driver = -1;
+    int granted_transport = -1;
 
     char refused_names[128];
     refused_names[0] = '\0';
 
-    for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
+    for ( int i = 0; i < ladder.num_candidates && granted_transport < 0; i++ )
     {
         const int candidate = ladder.candidates[i];
 
@@ -941,7 +941,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( budget_refused[candidate] )
         {
             const size_t used = strlen( refused_names );
-            snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
             continue;
         }
 
@@ -974,7 +974,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 return NULL;
             }
 
-            static const rocketnet_client_driver_operations_t seam_driver_ops = {
+            static const rocketnet_client_transport_io_operations_t seam_transport_ops = {
                 NULL,
                 []( void * driver ) {
                     rocketnet_portable_seam_client_t * client = (rocketnet_portable_seam_client_t*) driver;
@@ -993,55 +993,55 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 []( void * ) {},
                 []( void * ) -> uint64_t { return 0; }
             };
-            client_transport->io.operations = &seam_driver_ops;
+            client_transport->io.operations = &seam_transport_ops;
             client_transport->io.instance = seam_client;
-            granted_driver = candidate;
+            granted_transport = candidate;
         }
         else
         {
-            const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
+            const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( candidate );
             int driver_status = ROCKETNET_STATUS_OK;
-            const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config, &driver_status };
+            const rocketnet_client_transport_io_config_t driver_config = { rocketnet_transport_name(candidate), config, &driver_status };
             // the step-driven create (unit tests) opens the caller's operations
             // in place of the candidate's backend
-            const rocketnet_client_driver_operations_t * operations = step_driven_operations ? step_driven_operations :
+            const rocketnet_client_transport_io_operations_t * operations = step_driven_operations ? step_driven_operations :
                 ( definition && definition->backend ? definition->backend->client : NULL );
-            if ( rocketnet_client_driver_open( operations, step_driven_operations ? step_driven_driver_context : client_transport->context,
+            if ( rocketnet_client_transport_io_open( operations, step_driven_operations ? step_driven_transport_context : client_transport->context,
                     &driver_config, &bind_address, &client_transport->io ) )
-                granted_driver = candidate;
+                granted_transport = candidate;
 
             // a rung that failed for want of memory is not a refusal: the create
             // ends with OUT_OF_MEMORY and never falls to the next candidate
-            // (rocketnet_client_driver_config_t.status, sdk/rocketnet_driver.h);
+            // (rocketnet_client_transport_io_config_t.status, sdk/rocketnet_transport.h);
             // any other failed open is a refusal and falls
 
-            if ( granted_driver < 0 && driver_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
+            if ( granted_transport < 0 && driver_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
             {
-                rocketnet_error( "client transport create: the %s transport could not allocate its endpoint", rocketnet_driver_name( candidate ) );
+                rocketnet_error( "client transport create: the %s transport could not allocate its endpoint", rocketnet_transport_name( candidate ) );
                 rocketnet_client_transport_destroy( client_transport );
                 if ( status )
                     *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
                 return NULL;
             }
 
-            if ( granted_driver < 0 )
+            if ( granted_transport < 0 )
             {
-                rocketnet_warn( "client transport %s refused%s", rocketnet_driver_name( candidate ),
+                rocketnet_warn( "client transport %s refused%s", rocketnet_transport_name( candidate ),
                                 i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
                 const size_t used = strlen( refused_names );
-                snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+                snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
             }
         }
     }
 
-    if ( granted_driver < 0 )
+    if ( granted_transport < 0 )
     {
         char skipped_names[128];
         skipped_names[0] = '\0';
         for ( int i = 0; i < ladder.num_skipped; i++ )
         {
             const size_t used = strlen( skipped_names );
-            snprintf( skipped_names + used, sizeof(skipped_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( ladder.skipped[i] ) );
+            snprintf( skipped_names + used, sizeof(skipped_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( ladder.skipped[i] ) );
         }
 
         rocketnet_error( "client transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
@@ -1053,15 +1053,15 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         return NULL;
     }
 
-    client_transport->driver = granted_driver;
+    client_transport->driver = granted_transport;
 
     if ( refused_names[0] != '\0' )
     {
-        rocketnet_info( "client transport ladder granted %s after refusals: %s", rocketnet_driver_name( granted_driver ), refused_names );
+        rocketnet_info( "client transport ladder granted %s after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
     }
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "client bound to %s [%s]", rocketnet_address_to_string( &bind_address, address_string ), rocketnet_driver_name( granted_driver ) );
+    rocketnet_info( "client bound to %s [%s]", rocketnet_address_to_string( &bind_address, address_string ), rocketnet_transport_name( granted_transport ) );
 
     client_transport->bound_port = bind_address.port;
     client_transport->link_simulator_from = bind_address;
@@ -1124,13 +1124,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         // once when drained: the I/O-thread design's wait and wake, or the
         // loopback driver's poll, or a batched receive. A driver without one
         // cannot be stepped on the caller's thread, so the create refuses it.
-        const rocketnet_client_driver_operations_t * operations = client_transport->io.operations;
+        const rocketnet_client_transport_io_operations_t * operations = client_transport->io.operations;
         const bool nonblocking_step = ( operations->wait && operations->wake ) || operations->receive_batch ||
-                                      granted_driver == ROCKETNET_DRIVER_LOOPBACK;
+                                      granted_transport == ROCKETNET_TRANSPORT_LOOPBACK;
         if ( !nonblocking_step )
         {
             rocketnet_error( "client config step_driven requires a transport with a non-blocking I/O step: %s has none",
-                             rocketnet_driver_name( granted_driver ) );
+                             rocketnet_transport_name( granted_transport ) );
             client_transport->step_in_update = false;
             rocketnet_client_transport_destroy( client_transport );
             if ( status )
@@ -1297,7 +1297,7 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
         }
     }
 
-    rocketnet_client_driver_close( &client_transport->io );
+    rocketnet_client_transport_io_close( &client_transport->io );
 
     if ( client_transport->link_simulator )
         rocketnet_network_simulator_destroy( client_transport->link_simulator );
@@ -2162,12 +2162,12 @@ int rocketnet_client_transport_state( rocketnet_client_transport_t * client_tran
 // the granted-tier report: the driver that won the ladder at create, by
 // name -- what performance claims and operator errands attach to
 
-const char * rocketnet_client_transport_driver( rocketnet_client_transport_t * client_transport )
+const char * rocketnet_client_transport_io_name( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
         return NULL;
     rocketnet_assert( client_transport );
-    return rocketnet_driver_name( client_transport->driver );
+    return rocketnet_transport_name( client_transport->driver );
 }
 
 int rocketnet_client_transport_client_index( rocketnet_client_transport_t * client_transport )

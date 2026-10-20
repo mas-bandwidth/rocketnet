@@ -33,7 +33,7 @@ extern "C" {
  * The value includes the terminating NUL byte; a configured string must fit
  * within this many bytes.
  */
-#define ROCKETNET_DRIVER_STRING_LENGTH                     64
+#define ROCKETNET_TRANSPORT_STRING_LENGTH                     64
 
 /** @brief The connect token expired: its expire time was not after the current Unix time when the connect began, or its lifetime (expire minus create) ran out before the handshake reached CONNECTED. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED         -7
@@ -266,7 +266,7 @@ struct rocketnet_client_transport_config_t
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
-    char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
+    char driver[ROCKETNET_TRANSPORT_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief Optional state transition callback; NULL disables it. It receives the create context and previous and current states. */
     void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
     /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
@@ -545,7 +545,7 @@ int rocketnet_client_transport_state( struct rocketnet_client_transport_t * clie
  * @param client_transport Client transport; NULL is a counted no-op returning NULL.
  * @return Transport-owned granted driver name, valid until destroy, or NULL.
  */
-const char * rocketnet_client_transport_driver( struct rocketnet_client_transport_t * client_transport );
+const char * rocketnet_client_transport_io_name( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport is a counted no-op that returns 0.
 /** @brief Read the server-assigned index of the connected client.
@@ -717,7 +717,7 @@ struct rocketnet_server_transport_config_t
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
-    char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
+    char driver[ROCKETNET_TRANSPORT_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief NUL-terminated advertised address; an empty string uses the create address. */
     char public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     /** @brief Maximum client inactivity in seconds; 1 through 3600, default 60. */
@@ -933,7 +933,7 @@ uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * 
  * @param server_transport Server transport; NULL is a counted no-op returning NULL.
  * @return Transport-owned granted driver name, valid until destroy, or NULL.
  */
-const char * rocketnet_server_transport_driver( struct rocketnet_server_transport_t * server_transport );
+const char * rocketnet_server_transport_io_name( struct rocketnet_server_transport_t * server_transport );
 
 // the commit barrier for host processes that must never commit an XDP data
 // plane (test harnesses, smokes): installed once, the xdp driver's create

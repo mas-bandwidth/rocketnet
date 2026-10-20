@@ -213,7 +213,7 @@ static void uring_reap_receive_flood_returns_within_budget()
         return;
     }
 
-    const uint64_t leaked_before = rocketnet_server_uring_leaked_drivers();
+    const uint64_t leaked_before = rocketnet_server_uring_leaked_transports();
 
     for ( int call = 0; call < 4; call++ )
     {
@@ -241,7 +241,7 @@ static void uring_reap_receive_flood_returns_within_budget()
     rocketnet_server_uring_destroy( uring );
     check( !fake->guard_tripped );
     check( fake->cancels_submitted == 2 );
-    check( rocketnet_server_uring_leaked_drivers() == leaked_before );
+    check( rocketnet_server_uring_leaked_transports() == leaked_before );
 
     free( fake );
 }
@@ -264,7 +264,7 @@ static void uring_reap_send_retires_under_receive_pressure()
         return;
     }
 
-    const uint64_t leaked_before = rocketnet_server_uring_leaked_drivers();
+    const uint64_t leaked_before = rocketnet_server_uring_leaked_transports();
 
     for ( int i = 0; i < 2 * ROCKETNET_URING_SEND_BUDGET; i++ )
         uring_fake_push_receive( fake, 0 );
@@ -322,7 +322,7 @@ static void uring_reap_send_retires_under_receive_pressure()
     fake->consumed = 0;
     rocketnet_server_uring_destroy( uring );
     check( !fake->guard_tripped );
-    check( rocketnet_server_uring_leaked_drivers() == leaked_before );
+    check( rocketnet_server_uring_leaked_transports() == leaked_before );
 
     free( fake );
 }
@@ -344,7 +344,7 @@ static void uring_reap_destroy_after_saturation()
         return;
     }
 
-    const uint64_t leaked_before = rocketnet_server_uring_leaked_drivers();
+    const uint64_t leaked_before = rocketnet_server_uring_leaked_transports();
 
     fake->consumed = 0;
     rocketnet_server_uring_receive_packets( uring );
@@ -367,7 +367,7 @@ static void uring_reap_destroy_after_saturation()
     check( !fake->guard_tripped );
     check( fake->cancels_submitted == 2 );
     check( uring_fake_size( fake ) == 0 );
-    check( rocketnet_server_uring_leaked_drivers() == leaked_before );
+    check( rocketnet_server_uring_leaked_transports() == leaked_before );
 
     free( fake );
 }
@@ -391,7 +391,7 @@ static void uring_receive_without_a_buffer_is_counted()
         return;
     }
 
-    const uint64_t leaked_before = rocketnet_server_uring_leaked_drivers();
+    const uint64_t leaked_before = rocketnet_server_uring_leaked_transports();
     const uint64_t recv_tag = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
 
     uring_fake_push( fake, recv_tag, ROCKETNET_URING_RECV_BUFFER_BYTES, IORING_CQE_F_MORE );
@@ -416,7 +416,7 @@ static void uring_receive_without_a_buffer_is_counted()
 
     rocketnet_server_uring_destroy( uring );
     check( !fake->guard_tripped );
-    check( rocketnet_server_uring_leaked_drivers() == leaked_before );
+    check( rocketnet_server_uring_leaked_transports() == leaked_before );
 
     free( fake );
 }

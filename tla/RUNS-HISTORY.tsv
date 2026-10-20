@@ -34,8 +34,8 @@ MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 4, ServerDead
 MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE; checks KeysErasedWhenDown	90342	17569	fail as expected (observation): Invariant KeysErasedWhenDown is violated	vision	2026-10-06
 
 # Additional pre-tlacheck records preserved from carried cookie-rotation commit 4743b16639cd.
-MCRNDriverSendStaging	MCRNDriverSendStaging.cfg (DisconnectAdvancesStaged TRUE; TypeOK, StagedDisconnectFlushed, FlushedNeverAhead, DiscOwedTracked; SpecFair, StagedFramesEventuallySent)	7037	1198	pass (1s)	b1	2026-10-14
-MCRNDriverSendStaging	MCRNDriverSendStagingBrokenDisconnect.cfg (DisconnectAdvancesStaged FALSE, reversed witness)	21	19	fail as expected (1s): StagedDisconnectFlushed violated at depth 3, a disconnect frame still owed after send_packets	b1	2026-10-14
+MCRNTransportSendStaging	MCRNTransportSendStaging.cfg (DisconnectAdvancesStaged TRUE; TypeOK, StagedDisconnectFlushed, FlushedNeverAhead, DiscOwedTracked; SpecFair, StagedFramesEventuallySent)	7037	1198	pass (1s)	b1	2026-10-14
+MCRNTransportSendStaging	MCRNTransportSendStagingBrokenDisconnect.cfg (DisconnectAdvancesStaged FALSE, reversed witness)	21	19	fail as expected (1s): StagedDisconnectFlushed violated at depth 3, a disconnect frame still owed after send_packets	b1	2026-10-14
 MCRNSecurityTables	MCRNSecurityTables.cfg (fixed-code switches; SafetyInvariants, DeniedTokenStaysUsable, RotationWindow)	1025308	249679	pass	b1	2026-10-14
 MCRNSecurityTables	MCRNSecurityTables.cfg with RefuseAdmittedAtResponse FALSE (reversed witness)	287285	97857	fail as expected: SafetyInvariants violated (OneConnectionPerToken), 13-state trace, see README-RNSecurityTables.md	b1	2026-10-14
 MCRNSecurityTables	MCRNSecurityTables.cfg with AdmitExpiredAtResponse TRUE (reversed witness)	1625	1003	fail as expected: SafetyInvariants violated (ExpiredNeverAdmitted), 7-state trace, see README-RNSecurityTables.md	b1	2026-10-14

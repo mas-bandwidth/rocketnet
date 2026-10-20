@@ -212,7 +212,7 @@ public:
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
         clear("ROCKETNET_PUMP");
-        clear("ROCKETNET_DRIVER");
+        clear("ROCKETNET_TRANSPORT");
         clear("ROCKETNET_TRANSPORT");
         clear("ROCKETNET_SERVER_DRIVER");
         clear("ROCKETNET_CLIENT_DRIVER");

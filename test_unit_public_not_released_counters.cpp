@@ -16,7 +16,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
 #include "rocketnet_counters.h"
-#include "rocketnet_driver.h"
+#include "rocketnet_transport.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_message_object.h"
 
@@ -40,7 +40,7 @@ static int public_not_released_unsetenv( const char * name ) { return unsetenv( 
 
 #define check rocketnet_unit_check
 
-extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
+extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 static void public_not_released_assert_hook( const char *, const char *, const char *, int )
 {
@@ -70,11 +70,11 @@ static void public_not_released_wake( void * )
 {
 }
 
-static rocketnet_client_driver_operations_t public_not_released_client_operations;
+static rocketnet_client_transport_io_operations_t public_not_released_client_operations;
 
 static void public_not_released_client_operations_init()
 {
-    public_not_released_client_operations = *rocketnet_loopback_driver.client;
+    public_not_released_client_operations = *rocketnet_loopback_transport.client;
     public_not_released_client_operations.wait = public_not_released_wait;
     public_not_released_client_operations.wake = public_not_released_wake;
 }

@@ -15,7 +15,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_constants.h"
-#include "rocketnet_driver.h"
+#include "rocketnet_transport.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_client_send_rings.h"
 #include "rocketnet_client_receive_handshake.h"
@@ -95,7 +95,7 @@ struct rocketnet_client_io_open_t
 
 struct rocketnet_client_io_t
 {
-    const rocketnet_client_driver_t * driver;
+    const rocketnet_client_transport_io_t * driver;
     rocketnet_client_io_ring_view_t ring_view[2];
     rocketnet_address_t to[2];                  // each ring's destination, bound at its first hand-off attempt
     bool to_held[2];                            // main thread only: the Filling ring's destination is bound (a deferred hand-off)
@@ -113,7 +113,7 @@ struct rocketnet_client_io_t
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
 // receive buffers the transport owns.
-inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketnet_client_driver_t * driver,
+inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketnet_client_transport_io_t * driver,
     const rocketnet_client_io_ring_view_t * view0, const rocketnet_client_io_ring_view_t * view1,
     rocketnet_client_receive_buffer_t * const * buffers,
     double (*time)( void * context ), void * time_context )
@@ -558,7 +558,7 @@ inline void rocketnet_client_io_thread_function( void * data )
 // internal, not exported. True when the operations have both wait and wake:
 // the transport then runs the I/O thread design through rocketnet_client_io_t,
 // and otherwise the BASE path.
-bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_operations_t * operations );
+bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport_io_operations_t * operations );
 
 // Unit tests only: a client transport on the caller's driver operations (the
 // driver's create receives driver_context) with no I/O thread. When the
@@ -568,20 +568,20 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_op
 // and destroy order_). Returns NULL on any create refusal.
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context );
+    const rocketnet_client_transport_io_operations_t * operations, void * driver_context );
 
 // Unit tests only: as create_step_driven, with the Unix timestamp supplied by
 // the test so token expiry is deterministic and no wall clock is read.
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context );
+    const rocketnet_client_transport_io_operations_t * operations, void * driver_context );
 
 // As the step-driven create above, and when status is not NULL it is written
 // with ROCKETNET_STATUS_OK or the refusal's section-2.1 code (a config whose
 // step_driven field asks for a driver with no non-blocking step is refused).
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context, int * status );
+    const rocketnet_client_transport_io_operations_t * operations, void * driver_context, int * status );
 
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );

@@ -228,7 +228,7 @@ def run_benchmark_with_load_checks(
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Check client per-frame main-thread cost budget.")
     parser.add_argument("pos_bin", nargs="?", help="Optional positional path to client_main_thread_cost binary.")
-    parser.add_argument("pos_driver", nargs="?", help="Optional positional driver name.")
+    parser.add_argument("pos_transport", nargs="?", help="Optional positional driver name.")
     parser.add_argument(
         "--bin",
         default=None,
@@ -259,7 +259,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     binary = args.bin or args.pos_bin or "./bin/client_main_thread_cost"
-    driver = args.driver or args.pos_driver or "portable"
+    driver = args.driver or args.pos_transport or "portable"
 
     code, report = run_benchmark_with_load_checks(
         binary=binary,

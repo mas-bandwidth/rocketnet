@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check that every driver row has transport matrix cells in CI.
 
-Reads sdk/rocketnet_drivers.inc and .github/workflows/ci.yml. Each
-ROCKETNET_DRIVER row names its platforms and its server and client
+Reads sdk/rocketnet_transports.inc and .github/workflows/ci.yml. Each
+ROCKETNET_TRANSPORT row names its platforms and its server and client
 preferences (zero: not available for that endpoint). For every OS CI builds
 (Linux, macOS, Windows) the row builds for, a server-capable driver needs a
 cell in that OS's TRANSPORT_MATRIX_<OS> block with it as the server
@@ -26,11 +26,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OSES = ("LINUX", "MACOS", "WINDOWS")
 
 PLATFORMS = {
-    "ROCKETNET_DRIVER_ALL_PLATFORMS": {"LINUX", "MACOS", "WINDOWS"},
-    "ROCKETNET_DRIVER_LINUX": {"LINUX"},
-    "ROCKETNET_DRIVER_IO_URING_PLATFORMS": {"LINUX"},
-    "ROCKETNET_DRIVER_MAC": {"MACOS"},
-    "ROCKETNET_DRIVER_WINDOWS": {"WINDOWS"},
+    "ROCKETNET_TRANSPORT_ALL_PLATFORMS": {"LINUX", "MACOS", "WINDOWS"},
+    "ROCKETNET_TRANSPORT_LINUX": {"LINUX"},
+    "ROCKETNET_TRANSPORT_IO_URING_PLATFORMS": {"LINUX"},
+    "ROCKETNET_TRANSPORT_MAC": {"MACOS"},
+    "ROCKETNET_TRANSPORT_WINDOWS": {"WINDOWS"},
 }
 
 
@@ -46,7 +46,7 @@ XDP_CASES = (
     "xdp_max_size_both_ways_ipv6",
 )
 
-ROW = re.compile(r'^ROCKETNET_DRIVER\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)
+ROW = re.compile(r'^ROCKETNET_TRANSPORT\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)
 
 
 def read(path):
@@ -88,12 +88,12 @@ def matrix_blocks(text):
 
 
 def main():
-    rows = driver_rows(read("sdk/rocketnet_drivers.inc"))
+    rows = driver_rows(read("sdk/rocketnet_transports.inc"))
     blocks = matrix_blocks(read(".github/workflows/ci.yml"))
     problems = []
 
     if not rows:
-        problems.append("no ROCKETNET_DRIVER rows read from sdk/rocketnet_drivers.inc")
+        problems.append("no ROCKETNET_TRANSPORT rows read from sdk/rocketnet_transports.inc")
 
     for os_name in sorted(blocks):
         if os_name not in OSES:

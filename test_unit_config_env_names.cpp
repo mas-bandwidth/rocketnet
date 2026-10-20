@@ -717,7 +717,7 @@ static void config_env_transport_passes_exercise_all_rows()
     }
 
     // 2. Refused legacy and process-wide names:
-    env_names_setenv( "ROCKETNET_DRIVER", "loopback" );
+    env_names_setenv( "ROCKETNET_TRANSPORT", "loopback" );
     env_names_setenv( "ROCKETNET_CLIENT_DRIVER", "loopback" );
     env_names_setenv( "ROCKETNET_FILTER_VALUE", "ESIzRA==" );
 
@@ -726,21 +726,21 @@ static void config_env_transport_passes_exercise_all_rows()
     rocketnet_config_apply_env( "client", &client_transport, client_fields, num_client_fields );
     env_names_capture_end( &capture );
 
-    env_names_unsetenv( "ROCKETNET_DRIVER" );
+    env_names_unsetenv( "ROCKETNET_TRANSPORT" );
     env_names_unsetenv( "ROCKETNET_CLIENT_DRIVER" );
     env_names_unsetenv( "ROCKETNET_FILTER_VALUE" );
 
-    bool refused_driver = false;
+    bool refused_transport = false;
     bool ignored_process_wide = false;
     for ( size_t i = 0; i < capture.log.lines.size(); i++ )
     {
-        if ( capture.log.lines[i].find( "refuses ROCKETNET_DRIVER" ) != std::string::npos ||
+        if ( capture.log.lines[i].find( "refuses ROCKETNET_TRANSPORT" ) != std::string::npos ||
              capture.log.lines[i].find( "refuses ROCKETNET_CLIENT_DRIVER" ) != std::string::npos )
-            refused_driver = true;
+            refused_transport = true;
         if ( capture.log.lines[i].find( "ignores the process-wide ROCKETNET_FILTER_VALUE" ) != std::string::npos )
             ignored_process_wide = true;
     }
-    check( refused_driver );
+    check( refused_transport );
     check( ignored_process_wide );
 }
 REGISTER_UNIT_TEST( config_env_transport_passes_exercise_all_rows );

@@ -31,7 +31,7 @@
 #       until morning is the second configuration -- the asserts Release
 #       compiles out.
 #
-#   check_driver_extension.py, ON WINDOWS ONLY   42-48s on top of a 92s MSVC
+#   check_transport_extension.py, ON WINDOWS ONLY   42-48s on top of a 92s MSVC
 #       floor, and the last thing holding this file above two minutes. It
 #       builds an out-of-tree driver backend against the installed SDK: a
 #       contract check on a fixed input, not a tripwire a commit is likely to
@@ -228,7 +228,7 @@ jobs:
       # runner the linux functional leg is the FALL made real -- xdp refused
       # for missing privilege, gso granted -- so the functional suite runs
       # over the gso driver here (and over the darwin msgx pump on macOS);
-      # the pin tests (test_server_driver_pin_*) go red if a rung stops
+      # the pin tests (test_server_transport_pin_*) go red if a rung stops
       # granting, so a silent fall cannot hollow this leg out. The second
       # functional run pins the portable floor by env.
 
@@ -299,7 +299,7 @@ jobs:
       # server, so a family regression on any one transport fails here.
       # driver_env_pin_is_honoured runs under the same pin and proves the
       # pinned transport is the one granted. tools/check_transport_matrix.py
-      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # refuses a driver row in sdk/rocketnet_transports.inc with no cell on an
       # OS it builds for. A cell line is: server transport, client
       # transport, then case=card for each case expected to fail until that
       # card lands: the case fails, or prints a skip naming that card. An
@@ -491,8 +491,8 @@ jobs:
       - name: "Functional: native driver contract and external backend"
         if: contains(matrix.leg, 'a')
         run: |
-          ./bin/test_driver
-          python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
+          ./bin/test_transport
+          python3 tools/check_transport_extension.py build --config ${{ matrix.build_type }}
 
       # Linux: the embedded server_xdp.o is reproducible and equals a fresh
       # compile of the current sources; elsewhere: the listed inputs exist.
@@ -598,7 +598,7 @@ jobs:
   #                        fourth leg with zero checks would still have landed
   #                        at 92s. Splitting had done all it could.
   #
-  # So the last cut is not a split. `tools/check_driver_extension.py` -- which
+  # So the last cut is not a split. `tools/check_transport_extension.py` -- which
   # configures and builds an out-of-tree backend against the installed SDK, a
   # second MSVC build inside a check, 42-48s of it -- moved to nightly.yml.
   # It is a CONTRACT CHECK ON A FIXED INPUT: it asks whether the driver
@@ -621,7 +621,7 @@ jobs:
   #              source, the serialization surface, memory plans
   #   (b)  ~35s  the library boundary (10s), install and relocate the SDK
   #              (12s), ambient config isolation (12s), the native driver
-  #              contract itself (test_driver; transport control is inside functional)
+  #              contract itself (test_transport; transport control is inside functional)
   #
   # `Functional: native driver contract and external backend` was ONE step
   # running three commands. The two exes stay here as `Functional: native
@@ -753,7 +753,7 @@ jobs:
       - name: "Functional: native driver contract"
         if: matrix.leg == 'b'
         run: |
-          ./bin/Release/test_driver.exe
+          ./bin/Release/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
@@ -761,7 +761,7 @@ jobs:
       # server, so a family regression on any one transport fails here.
       # driver_env_pin_is_honoured runs under the same pin and proves the
       # pinned transport is the one granted. tools/check_transport_matrix.py
-      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # refuses a driver row in sdk/rocketnet_transports.inc with no cell on an
       # OS it builds for. A cell line is: server transport, client
       # transport, then case=card for each case expected to fail until that
       # card lands: the case fails, or prints a skip naming that card. An
@@ -1010,7 +1010,7 @@ jobs:
 
       - name: Build the sanitized functional suite and the lifecycle binaries
         if: matrix.leg == 'functional suite'
-        run: cmake --build build --target functional test_lifecycle test_driver test_sodium --parallel
+        run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
 
       - name: Run unit tests
         if: matrix.leg == 'unit suite'
@@ -1044,7 +1044,7 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/test_lifecycle
-          ./bin/test_driver
+          ./bin/test_transport
 
       - name: Sodium known answers under sanitizers
         if: matrix.leg == 'functional suite'

@@ -99,7 +99,7 @@ int main(int argc, char ** argv)
     rocketnet_forbid_xdp_commit();
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     if (!server) { fprintf(stderr, "memory profile configuration refused\n"); rocketnet_term(); return 1; }
-    const bool same_driver = strcmp(rocketnet_server_transport_driver(server), driver) == 0;
+    const bool same_transport = strcmp(rocketnet_server_transport_io_name(server), driver) == 0;
     printf("{\"live_allocator_bytes\":%zu,\"peak_allocator_bytes\":%zu,\"live_allocations\":%zu,\"process_peak_rss_bytes\":%llu}\n",
         live.load(), peak.load(), count.load(), (unsigned long long)process_peak_rss());
     const uint64_t planned_allocator = plan.total_bytes - plan.umem_bytes;
@@ -109,6 +109,6 @@ int main(int argc, char ** argv)
         planned_allocator - live.load() <= (uint64_t)plan.worker_threads * rocketnet_platform_thread_allocation_bytes();
     rocketnet_server_transport_destroy(server);
     rocketnet_term();
-    if (!same_driver || !matches) { fprintf(stderr, "allocator observation differs from the plan; check ambient config overrides\n"); return 1; }
+    if (!same_transport || !matches) { fprintf(stderr, "allocator observation differs from the plan; check ambient config overrides\n"); return 1; }
     if (live.load() || count.load()) { fprintf(stderr, "memory profile leaked allocations\n"); return 1; }
 }

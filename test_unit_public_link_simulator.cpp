@@ -97,7 +97,7 @@ REGISTER_UNIT_TEST( public_link_simulator_production_refusal );
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_connect_token.h"
-#include "test/fake_client_driver.h"
+#include "test/fake_client_transport.h"
 
 struct public_link_wire_t
 {
@@ -161,7 +161,7 @@ static void public_link_simulator_token( uint8_t * token )
 }
 
 static rocketnet_client_transport_t * public_link_simulator_client(
-    rocketnet_fake_client_driver_t * driver, const rocketnet_client_transport_config_t * config )
+    rocketnet_fake_client_transport_t * driver, const rocketnet_client_transport_config_t * config )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     public_link_simulator_token( token );
@@ -175,7 +175,7 @@ static void public_link_simulator_drops_at_loss()
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
     config.simulated_loss_percent = 100;
-    rocketnet_fake_client_driver_t * dropped = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * dropped = new rocketnet_fake_client_transport_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( dropped, &config );
     check( transport != NULL );
     rocketnet_client_transport_update( transport, 1000.0 );
@@ -185,7 +185,7 @@ static void public_link_simulator_drops_at_loss()
     delete dropped;
 
     config.simulated_loss_percent = 0;
-    rocketnet_fake_client_driver_t * direct = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * direct = new rocketnet_fake_client_transport_t();
     transport = public_link_simulator_client( direct, &config );
     check( transport != NULL );
     rocketnet_client_transport_update( transport, 1000.0 );
@@ -200,7 +200,7 @@ static void public_link_simulator_latency()
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
     config.simulated_latency_ms = 25;
-    rocketnet_fake_client_driver_t * driver = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * driver = new rocketnet_fake_client_transport_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( driver, &config );
     check( transport != NULL );
     rocketnet_client_transport_update( transport, 1000.0 );
@@ -249,7 +249,7 @@ static void public_link_simulator_duplicate()
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
     config.simulated_duplicate_percent = 100;
-    rocketnet_fake_client_driver_t * driver = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_t * driver = new rocketnet_fake_client_transport_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( driver, &config );
     check( transport != NULL );
     rocketnet_client_transport_update( transport, 1000.0 );

@@ -101,7 +101,7 @@ int main(int argc, char ** argv)
     config.max_payload_bytes = 4096;
     strcpy(config.driver, "portable");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
-    CHECK(server && strcmp(rocketnet_server_transport_driver(server), "portable") == 0);
+    CHECK(server && strcmp(rocketnet_server_transport_io_name(server), "portable") == 0);
     const size_t server_bytes = live_bytes.load();
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));

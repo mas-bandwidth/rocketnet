@@ -282,14 +282,14 @@ real time.
 
 ## The interface
 
-`rocketnet_client_driver_operations_t` in `sdk/rocketnet_driver.h` gains four
+`rocketnet_client_transport_io_operations_t` in `sdk/rocketnet_transport.h` gains four
 optional callbacks after the existing four, so every existing initializer
 stays valid and leaves them NULL:
 
 ```c
-struct rocketnet_client_driver_operations_t
+struct rocketnet_client_transport_io_operations_t
 {
-    void * (*create)( void *, const rocketnet_client_driver_config_t *, rocketnet_address_t * );
+    void * (*create)( void *, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * );
     void (*destroy)( void * );
     void (*send)( void *, const rocketnet_address_t *, const uint8_t *, int );
     int (*receive)( void *, rocketnet_address_t *, uint8_t *, int );
@@ -313,7 +313,7 @@ struct rocketnet_client_driver_operations_t
 };
 ```
 
-`rocketnet_client_driver_open` checks once at create that `wait` and `wake`
+`rocketnet_client_transport_io_open` checks once at create that `wait` and `wake`
 are both set or both NULL. A backend with `wait` and `wake` runs the I/O
 thread design; `send_batch` and `receive_batch` are used when set, and the
 per-packet `send` and `receive` otherwise, called from the I/O thread. A
@@ -503,8 +503,8 @@ What the repeated runs show:
 ## Per-platform cards
 
 **rocketnet-client-io-transport (lands first, platform-generic).** PATHS:
-the client transport implementation, `sdk/rocketnet_driver.h`,
-`sdk/rocketnet_driver.cpp` (the open-time check), `sdk/rocketnet.h` and
+the client transport implementation, `sdk/rocketnet_transport.h`,
+`sdk/rocketnet_transport.cpp` (the open-time check), `sdk/rocketnet.h` and
 `sdk/rocketnet_config.cpp` (the `time_callback` field),
 `sdk/rocketnet_counters.h` (`CLIENT_SEND_DEFERRED`), a new
 `test_unit_client_io.cpp`, `tla/COVERAGE.tsv` (client-io to current) and the
@@ -543,7 +543,7 @@ deferred behind a ring still HandedOff),
 `unknown unit test client_io_handoff_sends_ring_once`, exit 2. Needs: this
 card.
 
-**rocketnet-client-io-linux.** PATHS: `sdk/rocketnet_driver_builtin.cpp`,
+**rocketnet-client-io-linux.** PATHS: `sdk/rocketnet_transport_builtin.cpp`,
 `sdk/rocketnet_platform.cpp` (Linux section), `sdk/rocketnet_platform.h`,
 `functional/rocketnet_functional_tests.cpp`, `bench/client_main_thread_cost.md`.
 The portable client on Linux gains `wait` (poll on an eventfd, plus the
@@ -551,7 +551,7 @@ socket with `POLLIN` when `readable` is true),
 `wake` (eventfd write), `send_batch` (`sendmmsg`) and `receive_batch`
 (`recvmmsg`). Tests: a functional loopback case
 `client_io_linux_handoff_round_trip` (real socket, real thread) and the
-transport-contract check in `./bin/test_driver`; the gate rows above from the
+transport-contract check in `./bin/test_transport`; the gate rows above from the
 meter. io_uring is not used: at the measured cost the I/O thread is idle most
 of the frame, `sendmmsg` already makes one syscall per frame, and io_uring is
 often disabled in containers and sandboxes; a card may revisit it with a
@@ -560,7 +560,7 @@ prints `unknown functional test client_io_linux_handoff_round_trip`, exit 2.
 Needs: rocketnet-client-io-transport.
 
 **rocketnet-client-io-apple (macOS and iOS).** PATHS:
-`sdk/rocketnet_driver_builtin.cpp`, `sdk/rocketnet_platform.cpp` (Mac and iOS
+`sdk/rocketnet_transport_builtin.cpp`, `sdk/rocketnet_platform.cpp` (Mac and iOS
 section), `functional/rocketnet_functional_tests.cpp`. The msgx client gains
 `send_batch` and `receive_batch` through the existing pump
 (`rocketnet_platform_socket_send_packets` at line 1997 and
@@ -570,12 +570,12 @@ kqueue holding the socket's `EVFILT_READ` and an `EVFILT_USER` trigger; when
 `readable` changes, the same `kevent` call carries `EV_DISABLE` or
 `EV_ENABLE` for the read filter, so a full buffer waits on the trigger alone.
 Tests: functional `client_io_apple_handoff_round_trip` (SKIPPED twin
-elsewhere), `./bin/test_driver`, the meter gate on a macOS member. Red at
+elsewhere), `./bin/test_transport`, the meter gate on a macOS member. Red at
 BASE: `./bin/functional --run client_io_apple_handoff_round_trip` prints
 `unknown functional test client_io_apple_handoff_round_trip`, exit 2. Needs:
 rocketnet-client-io-transport.
 
-**rocketnet-client-io-windows.** PATHS: `sdk/rocketnet_driver_builtin.cpp`,
+**rocketnet-client-io-windows.** PATHS: `sdk/rocketnet_transport_builtin.cpp`,
 `sdk/rocketnet_platform.cpp` (Windows section), `sdk/rocketnet_platform.h`,
 `functional/rocketnet_functional_tests.cpp`. The portable client on Windows
 gains `wait` (`WSAEventSelect` with `FD_READ` on the socket and

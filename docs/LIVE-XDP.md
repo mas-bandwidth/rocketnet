@@ -15,7 +15,7 @@ at `sprint/rocketnet-proof` `20d8b35`; `client.c`, `server.c`, `soak.c`,
 differ, the rulings win, and section 15 lists each difference. The base tip
 this design lands on, `962e3a4`, has since raised the `max_clients` default
 to 1,000 (`rocketnet-max-clients-defaults-to-1000`, the same line 923) and
-added a Windows server transport row to `sdk/rocketnet_drivers.inc`; no other
+added a Windows server transport row to `sdk/rocketnet_transports.inc`; no other
 cited line moves.
 
 The run's lifecycle is modelled in `tla/RNLiveFleetRun.tla` (section 13).
@@ -60,7 +60,7 @@ choice. The config's `transport` field (`sdk/rocketnet.h`) or
 `ROCKETNET_SERVER_TRANSPORT` gives the candidate list, and a one-element list is
 a pin: that transport or a loud failure, never a silent fall to gso or portable
 (the server transport implementation; registry row
-`sdk/rocketnet_drivers.inc`). The run starts `server` with
+`sdk/rocketnet_transports.inc`). The run starts `server` with
 `ROCKETNET_SERVER_TRANSPORT=xdp`. It also passes `--transport xdp`, so the config
 records the pin. It reads the transport name query
 (`sdk/rocketnet.h`) after create and refuses to continue unless it
@@ -594,7 +594,7 @@ run, on every bench:
   Linux-on-Windows bench (a native build, driven through interop), and on the
   macOS bench. Each client uses its platform's default client transport: gso is
   server-only, so Linux and Windows clients run portable, and the macOS
-  client runs msgx (`sdk/rocketnet_drivers.inc`; `USAGE.md`).
+  client runs msgx (`sdk/rocketnet_transports.inc`; `USAGE.md`).
 - **The inventory.** This document names platform shapes only. Hosts come
   from an inventory file outside the repository, named by
   `ROCKETNET_LIVE_INVENTORY`. It has one row per machine: `label`,

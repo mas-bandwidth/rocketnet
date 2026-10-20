@@ -61,7 +61,7 @@ struct windows_connreset_transport_t
 static void windows_connreset_clear_env()
 {
     // the case pins its own transports: an ambient pin must not override them
-    _putenv_s( "ROCKETNET_DRIVER", "" );
+    _putenv_s( "ROCKETNET_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
 }
@@ -86,7 +86,7 @@ static struct rocketnet_server_transport_t * windows_connreset_server( const win
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, bind, &config );
     rocketnet_server_iocp_test_force_flags( 0 );
     windows_connreset_require( server != NULL );
-    windows_connreset_require( strcmp( rocketnet_server_transport_driver( server ), transport->driver ) == 0 );
+    windows_connreset_require( strcmp( rocketnet_server_transport_io_name( server ), transport->driver ) == 0 );
     return server;
 }
 

@@ -89,7 +89,7 @@ static void unit_transport_pins_ignored()
     struct rocketnet_server_transport_t * server =
         rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     rocketnet_unit_check( server != NULL );
-    rocketnet_unit_check( strcmp( rocketnet_server_transport_driver( server ), "loopback" ) == 0 );
+    rocketnet_unit_check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
@@ -109,7 +109,7 @@ static void unit_transport_pins_ignored()
     struct rocketnet_client_transport_t * client =
         rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), pins_ignored_clock );
     rocketnet_unit_check( client != NULL );
-    rocketnet_unit_check( strcmp( rocketnet_client_transport_driver( client ), "loopback" ) == 0 );
+    rocketnet_unit_check( strcmp( rocketnet_client_transport_io_name( client ), "loopback" ) == 0 );
 
     bool connected = false;
     for ( int i = 0; i < 400 && !connected; i++ )

@@ -28,7 +28,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_frame.h"
-#include "rocketnet_driver.h"
+#include "rocketnet_transport.h"
 #include "rocketnet_hash.h"
 
 #include <ifaddrs.h>
@@ -2189,7 +2189,7 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     // view passes that view's own from[] entry, which names the frame it
     // answers, used only with no gateway. no MAC (no gateway, nothing
     // learned, no frame answered) is a refusal the transport counts
-    // (ROCKETNET_DRIVER_PACKET_UNREACHABLE)
+    // (ROCKETNET_TRANSPORT_PACKET_UNREACHABLE)
 
     const uint8_t * answered_mac = NULL;
     const uintptr_t view_begin = (uintptr_t) &server_socket->process_packets.from[0];
@@ -2202,7 +2202,7 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     const uint8_t * destination_mac = rocketnet_xdp_reply_mac( &server_socket->reply_macs, to, answered_mac, &refused );
     if ( !destination_mac )
     {
-        *packet_id = ROCKETNET_DRIVER_PACKET_UNREACHABLE;
+        *packet_id = ROCKETNET_TRANSPORT_PACKET_UNREACHABLE;
         return NULL;
     }
 

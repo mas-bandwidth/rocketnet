@@ -5,7 +5,7 @@ deterministic instruction-count gate for the client per-frame main-thread path
 and the server tick. Unlike `bench/client_main_thread_cost.cpp`, which uses OS
 sockets, a background receive thread, and `std::chrono::steady_clock` on a
 quiet nightly host, `instruction_count` executes in a single process on the
-in-memory `loopback` driver (`sdk/rocketnet_driver_loopback.h`) with no
+in-memory `loopback` driver (`sdk/rocketnet_transport_loopback.h`) with no
 sockets, no background threads, no wall clock, and a fixed random seed, so it
 can gate every push in CI.
 

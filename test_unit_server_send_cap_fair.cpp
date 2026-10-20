@@ -17,7 +17,7 @@
 #include "rocketnet_internal.h"
 #include "sdk/rocketnet_counters.h"
 #include "sdk/rocketnet_memory.h"
-#include "sdk/rocketnet_driver_loopback.h"
+#include "sdk/rocketnet_transport_loopback.h"
 #include "test/suite_runner.h"
 
 #include <stdio.h>

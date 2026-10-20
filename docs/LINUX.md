@@ -52,34 +52,34 @@ shared libraries into `bin/` (`CMakeLists.txt:34-38`), and `make` reconfigures
 
 The executables this guide runs: `./bin/test` (the unit suite, no sockets,
 `BUILDING.md:23-34`), `./bin/functional` (real sockets and real transports,
-`BUILDING.md:36-48`), `./bin/test_driver` (registry order and driver contract,
+`BUILDING.md:36-48`), `./bin/test_transport` (registry order and driver contract,
 `DRIVERS.md:145-151`), `./bin/test_lifecycle`, `./bin/transport_memory`
 (`BUILDING.md:284-303`) and `./bin/test_xdp_filter` (`DRIVERS.md:256-270`).
 
 ## 2. The transport ladder
 
-`sdk/rocketnet_drivers.inc:5-12` is the registry. Each row carries a name, a
+`sdk/rocketnet_transports.inc:5-12` is the registry. Each row carries a name, a
 platform mask and a server and client preference rank; a lower nonzero rank
 comes first in `auto`, zero means the endpoint does not have that transport
-(`DRIVERS.md:7-11`, `sdk/rocketnet_driver.cpp:84-100`). The Linux rows:
+(`DRIVERS.md:7-11`, `sdk/rocketnet_transport.cpp:84-100`). The Linux rows:
 
 | transport | server rank | client rank | row |
 | --- | ---: | ---: | --- |
-| `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc:7` |
-| `gso` | 20 | 0 | `sdk/rocketnet_drivers.inc:6` |
-| `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc:11` |
-| `portable` | 30 | 30 | `sdk/rocketnet_drivers.inc:5` |
-| `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc:10` |
+| `xdp` | 10 | 0 | `sdk/rocketnet_transports.inc:7` |
+| `gso` | 20 | 0 | `sdk/rocketnet_transports.inc:6` |
+| `io_uring` | 25 | 0 | `sdk/rocketnet_transports.inc:11` |
+| `portable` | 30 | 30 | `sdk/rocketnet_transports.inc:5` |
+| `loopback` | pin only | pin only | `sdk/rocketnet_transports.inc:10` |
 
 So the Linux server `auto` order is **xdp → gso → io_uring → portable**
-(`DRIVERS.md:188-189`), and `./bin/test_driver` fails if it is anything else
-(`test_driver.cpp:111-116`). A build without liburing has no `io_uring` in the
-list: xdp → gso → portable (`test_driver.cpp:115-116`, `DRIVERS.md:183-186`).
+(`DRIVERS.md:188-189`), and `./bin/test_transport` fails if it is anything else
+(`test_transport.cpp:111-116`). A build without liburing has no `io_uring` in the
+list: xdp → gso → portable (`test_transport.cpp:115-116`, `DRIVERS.md:183-186`).
 `loopback` is in-process, never chosen by `auto`, and selected only by name
-(`DRIVERS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
-transport in `auto`, `portable` (`test_driver.cpp:125-130`); on Linux it
+(`DRIVERS.md:18-23`, `sdk/rocketnet_transport.h:13`). The Linux client has one
+transport in `auto`, `portable` (`test_transport.cpp:125-130`); on Linux it
 batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
-(`sdk/rocketnet_driver_builtin.cpp:54`, `:87-100`,
+(`sdk/rocketnet_transport_builtin.cpp:54`, `:87-100`,
 `sdk/rocketnet_platform.cpp:645-668`).
 
 Because `gso` ranks ahead of `io_uring`, `auto` grants `io_uring` only on a
@@ -92,7 +92,7 @@ grant wins (`sdk/rocketnet_server_transport.cpp:1182-1186`,
 (`sdk/rocketnet_server_transport.cpp:1283-1284`), and the driver logs why
 before it (for example the `xdp pre-flight: ...` lines in section 6). A port-0
 public address refuses `xdp`, which binds the port it is given and discovers
-nothing (`sdk/rocketnet_drivers.inc:7` third column,
+nothing (`sdk/rocketnet_transports.inc:7` third column,
 `sdk/rocketnet_server_transport.cpp:1245-1270`). An operator memory budget,
 `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`, refuses any candidate whose plan
 exceeds it (`sdk/rocketnet_server_transport.cpp:1092-1141`).
@@ -133,7 +133,7 @@ Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 (`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`). The process-wide
 spelling `ROCKETNET_<FIELD>` is refused aloud and not applied, naming its
 replacement (`sdk/rocketnet_config.cpp:548-562`); so are the old
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
+`ROCKETNET_TRANSPORT`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
 `ROCKETNET_CLIENT_DRIVER` (`sdk/rocketnet_config.cpp:564-565`,
 `BUILDING.md:332-334`).
 
@@ -153,7 +153,7 @@ needs no capability or privilege (`sdk/rocketnet_server_gso.h:26-29`). It
 binds an `SO_REUSEPORT` group of `num_xdp_queues` sockets, default 4
 (`sdk/rocketnet_server_gso.h:41`, `sdk/rocketnet_server_gso_linux.cpp:558-559`),
 at most 32: a larger count refuses the rung, never clamps
-(`sdk/rocketnet_server_gso.h:44`, `sdk/rocketnet_driver_builtin.cpp:154-158`).
+(`sdk/rocketnet_server_gso.h:44`, `sdk/rocketnet_transport_builtin.cpp:154-158`).
 Each socket has its own receive worker thread
 (`sdk/rocketnet_server_gso_linux.cpp:679-680`).
 
@@ -177,7 +177,7 @@ threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). It binds the same
 `SO_REUSEPORT` group as `gso`: `num_xdp_queues` sockets, default 4, at most
 32 (`sdk/rocketnet_server_uring.h:33-37`,
 `sdk/rocketnet_server_uring_linux.cpp:667-668`,
-`sdk/rocketnet_driver_builtin.cpp:175-180`).
+`sdk/rocketnet_transport_builtin.cpp:175-180`).
 
 **Receive.** Each socket has a provided buffer ring of 4096 buffers of 2048
 bytes and one multishot `RECVMSG` over it; the kernel fills ring buffers and
@@ -275,7 +275,7 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
   IPv6 link-local address is refused by name
   (`sdk/rocketnet_server_socket_linux.cpp:929`).
 - Queues: `num_xdp_queues`, default 7; worker CPUs start at `num_os_cpus`,
-  default 1 (`sdk/rocketnet_driver_builtin.cpp:195-196`, `BUILDING.md:464-466`).
+  default 1 (`sdk/rocketnet_transport_builtin.cpp:195-196`, `BUILDING.md:464-466`).
 - Memory: each queue's UMEM is 65536 frames of 4096 bytes, 256 MiB
   (`sdk/rocketnet_constants.h:50-51`, `sdk/rocketnet_server_socket_linux.cpp:840-848`);
   seven queues are 1,879,048,192 bytes of UMEM inside a plan of roughly 4.2 GiB
@@ -379,7 +379,7 @@ For 1000 clients: `portable` 1, `gso` 4, `io_uring` 4 plus its ring, `xdp` 7
 (the plan output in section 10). The default soft limit of 1024 is ample; the
 section 10 commands create 1000-client `gso` and 32-queue `io_uring` servers
 under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
-(`sdk/rocketnet_driver_builtin.cpp:48`, `:54`,
+(`sdk/rocketnet_transport_builtin.cpp:48`, `:54`,
 `sdk/rocketnet_platform.cpp:668`), so a process that runs N clients needs about
 2N descriptors: raise `ulimit -n` past 2000 for 1000 clients in one process.
 
@@ -437,7 +437,7 @@ ulimit -l
 dpkg-query -W cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 make JOBS=4
 ./bin/test
-./bin/test_driver
+./bin/test_transport
 ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test_lifecycle
 ./bin/functional
 python3 tools/check_memory.py ./bin/transport_memory

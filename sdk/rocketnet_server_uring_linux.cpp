@@ -849,16 +849,16 @@ static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring
 // bytes left allocated by destroys that gave up waiting, and how many did
 
 static std::atomic<uint64_t> rocketnet_server_uring_leaked_bytes_total{0};
-static std::atomic<uint64_t> rocketnet_server_uring_leaked_drivers_total{0};
+static std::atomic<uint64_t> rocketnet_server_uring_leaked_transports_total{0};
 
 uint64_t rocketnet_server_uring_leaked_bytes()
 {
     return rocketnet_server_uring_leaked_bytes_total.load();
 }
 
-uint64_t rocketnet_server_uring_leaked_drivers()
+uint64_t rocketnet_server_uring_leaked_transports()
 {
-    return rocketnet_server_uring_leaked_drivers_total.load();
+    return rocketnet_server_uring_leaked_transports_total.load();
 }
 
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
@@ -1278,7 +1278,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
             }
 
             rocketnet_server_uring_leaked_bytes_total += leaked;
-            rocketnet_server_uring_leaked_drivers_total++;
+            rocketnet_server_uring_leaked_transports_total++;
 
             rocketnet_warn( "io_uring transport: destroy gave up waiting for the receive cancels and the sends; %" PRIu64 " bytes the kernel may still write are leaked, not freed", leaked );
             return;
@@ -1695,7 +1695,7 @@ uint64_t rocketnet_server_uring_leaked_bytes()
     return 0;
 }
 
-uint64_t rocketnet_server_uring_leaked_drivers()
+uint64_t rocketnet_server_uring_leaked_transports()
 {
     return 0;
 }

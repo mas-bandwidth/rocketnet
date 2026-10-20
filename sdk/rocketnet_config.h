@@ -9,7 +9,7 @@
 #define ROCKETNET_CONFIG_H
 
 #include "rocketnet_internal.h"
-#include "rocketnet_driver.h"
+#include "rocketnet_transport.h"
 
 // The config engine (#106): the machinery behind the per-transport config
 // tables declared in rocketnet.h. Each table declares every field once;
@@ -131,7 +131,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_current(
 // the current-size creates with the section-2.1 code written to *status (NULL skips it)
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, int * status );
-struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_driver_operations_t * operations, void * driver_context );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_transport_io_operations_t * operations, void * driver_context );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
 
@@ -175,7 +175,7 @@ void rocketnet_public_link_simulator_test_development( int enabled );
 // stay catchable). An applicable one-element list is a pin: that driver or
 // loud failure.
 
-const char * rocketnet_driver_name( int driver );
+const char * rocketnet_transport_name( int driver );
 
 // #109: does this driver's create discover the port the kernel granted and
 // hand it back? a port-zero public address asks the kernel for an
@@ -184,16 +184,16 @@ const char * rocketnet_driver_name( int driver );
 // answers no, before that rung's create runs, and falls to one that
 // answers yes. an unclassified driver reads false, which fails safe.
 
-bool rocketnet_driver_discovers_bound_port( int driver );
+bool rocketnet_transport_discovers_bound_port( int driver );
 
-#define ROCKETNET_MAX_DRIVER_CANDIDATES 8
+#define ROCKETNET_MAX_TRANSPORT_CANDIDATES 8
 
-struct rocketnet_driver_ladder_t
+struct rocketnet_transport_ladder_t
 {
     int num_candidates;                                     // available candidates, in list order
-    int candidates[ROCKETNET_MAX_DRIVER_CANDIDATES];
+    int candidates[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
     int num_skipped;                                        // known names ignored for this endpoint on this platform
-    int skipped[ROCKETNET_MAX_DRIVER_CANDIDATES];
+    int skipped[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
 };
 
 // parse a candidate list against an explicit availability order --
@@ -203,9 +203,9 @@ struct rocketnet_driver_ladder_t
 // was skipped for this endpoint. whitespace around names is tolerated;
 // names match exactly otherwise. returns false, loudly, on a name in no
 // transport set, an empty list element, "auto" inside a longer list, or a
-// list longer than ROCKETNET_MAX_DRIVER_CANDIDATES.
+// list longer than ROCKETNET_MAX_TRANSPORT_CANDIDATES.
 
-bool rocketnet_driver_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_driver_ladder_t * ladder );
+bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder );
 
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from:
@@ -220,8 +220,8 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 // (the staged linux drivers are server-side machinery; the client is the
 // platform socket everywhere, with the darwin batch pump where granted)
 
-const int * rocketnet_server_driver_availability( int * num_available );
+const int * rocketnet_server_transport_io_availability( int * num_available );
 
-const int * rocketnet_client_driver_availability( int * num_available );
+const int * rocketnet_client_transport_io_availability( int * num_available );
 
 #endif // #ifndef ROCKETNET_CONFIG_H

@@ -2,7 +2,7 @@
 #
 # The per-commit sanitizers job in ci.yml runs ./bin/test and ./bin/functional
 # with ASAN_OPTIONS=detect_leaks=0 and enables LeakSanitizer only for
-# ./bin/test_lifecycle, ./bin/test_driver, and ./bin/test_sodium. This workflow
+# ./bin/test_lifecycle, ./bin/test_transport, and ./bin/test_sodium. This workflow
 # runs the full unit suite (default and portable-pinned) and the full
 # functional suite under ASAN_OPTIONS=detect_leaks=1 with
 # LSAN_OPTIONS=suppressions=tools/lsan.supp:print_suppressions=1.

@@ -13,7 +13,7 @@
 // time.
 
 #include "test_unit_registry.h"
-#include "test/fake_client_driver.h"
+#include "test/fake_client_transport.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -44,8 +44,8 @@ static double client_io_decrypt_test_time( void * context )
 // the same known session key: what update holds after the challenge.
 struct client_io_decrypt_fixture_t
 {
-    rocketnet_fake_client_driver_t fake;
-    rocketnet_client_driver_t driver;
+    rocketnet_fake_client_transport_t fake;
+    rocketnet_client_transport_io_t driver;
     uint8_t ring[2][ROCKETNET_FRAME_STRIDE];
     int counts[2];
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS];
@@ -60,10 +60,10 @@ struct client_io_decrypt_fixture_t
 static void client_io_decrypt_setup( client_io_decrypt_fixture_t * f )
 {
     memset( &f->fake, 0, sizeof( f->fake ) );
-    f->driver = rocketnet_client_driver_t();
-    rocketnet_client_driver_config_t config = { "fake", NULL };
+    f->driver = rocketnet_client_transport_io_t();
+    rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    check( rocketnet_client_driver_open( &rocketnet_fake_client_operations_io, &f->fake, &config, &bind, &f->driver ) );
+    check( rocketnet_client_transport_io_open( &rocketnet_fake_client_operations_io, &f->fake, &config, &bind, &f->driver ) );
 
     memset( f->ring, 0, sizeof( f->ring ) );
     f->counts[0] = 0;
@@ -99,7 +99,7 @@ static void client_io_decrypt_setup( client_io_decrypt_fixture_t * f )
 
 static void client_io_decrypt_teardown( client_io_decrypt_fixture_t * f )
 {
-    rocketnet_client_driver_close( &f->driver );
+    rocketnet_client_transport_io_close( &f->driver );
     delete f->buffers[0];
     delete f->buffers[1];
 }

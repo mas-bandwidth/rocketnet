@@ -4,12 +4,12 @@
 */
 
 // The stop of the client I/O core (sdk/rocketnet_client_io.h) against the
-// fake client driver (test/fake_client_driver.h): RNClientIo Stop, IoExit,
+// fake client driver (test/fake_client_transport.h): RNClientIo Stop, IoExit,
 // Join and the invariant FreedOnlyAfterJoin. Single-threaded: no sockets, no
 // real time.
 
 #include "test_unit_registry.h"
-#include "test/fake_client_driver.h"
+#include "test/fake_client_transport.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -24,15 +24,15 @@ static double client_io_stop_test_time( void * context )
     return ( (client_io_stop_test_clock_t *) context )->now;
 }
 
-static void client_io_stop_test_open( rocketnet_fake_client_driver_t * fake,
-    const rocketnet_client_driver_operations_t * operations, rocketnet_client_driver_t * driver )
+static void client_io_stop_test_open( rocketnet_fake_client_transport_t * fake,
+    const rocketnet_client_transport_io_operations_t * operations, rocketnet_client_transport_io_t * driver )
 {
-    rocketnet_client_driver_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_unit_check( rocketnet_client_driver_open( operations, fake, &config, &bind, driver ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( operations, fake, &config, &bind, driver ) );
 }
 
-static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_client_driver_t * driver,
+static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_client_transport_io_t * driver,
     rocketnet_client_io_ring_view_t * view0, rocketnet_client_io_ring_view_t * view1, uint8_t * ring0,
     uint8_t * ring1, int * counts0, int * counts1, int slots,
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] )
@@ -61,8 +61,8 @@ static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_cli
 // once, stop wakes again. RNClientIo Stop, IoExit.
 static void client_io_stop_sends_in_flight_ring_first()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
 
     uint8_t ring0[2 * ROCKETNET_FRAME_STRIDE] = {};
@@ -94,7 +94,7 @@ static void client_io_stop_sends_in_flight_ring_first()
     rocketnet_unit_check( fake.sent[0].bytes == 5 );
     rocketnet_unit_check( fake.sent[1].bytes == 7 );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }
@@ -105,8 +105,8 @@ REGISTER_UNIT_TEST( client_io_stop_sends_in_flight_ring_first );
 // receive, no publish, no wait).
 static void client_io_stop_exits_with_nothing_new()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
@@ -137,7 +137,7 @@ static void client_io_stop_exits_with_nothing_new()
     rocketnet_unit_check( fake.receive_calls == 0 );
     rocketnet_unit_check( fake.wait_calls == 0 );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }
@@ -165,8 +165,8 @@ static void client_io_hand_off_after_stop_asserts()
     rocketnet_set_assert_callback( client_io_stop_hand_off_assert_hook );
     client_io_stop_hand_off_asserts = 0;
 
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
+    rocketnet_fake_client_transport_t fake = {};
+    rocketnet_client_transport_io_t driver = {};
     client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
@@ -197,7 +197,7 @@ static void client_io_hand_off_after_stop_asserts()
 
     rocketnet_set_assert_callback( saved_assert );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &driver );
     delete buffers[0];
     delete buffers[1];
 }

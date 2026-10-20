@@ -45,12 +45,12 @@ if(ROCKETNET_SANITIZE_ADDRESS)
         add_link_options(-fsanitize=address)
     endif()
 endif()
-set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
-set(ROCKETNET_DRIVER_SOURCES "" CACHE STRING "Additional native driver source files")
-if(ROCKETNET_DRIVER_REGISTRY_HEADER)
-    get_filename_component(ROCKETNET_DRIVER_REGISTRY_HEADER "${ROCKETNET_DRIVER_REGISTRY_HEADER}" ABSOLUTE)
-    if(NOT EXISTS "${ROCKETNET_DRIVER_REGISTRY_HEADER}")
-        message(FATAL_ERROR "Driver registry header does not exist: ${ROCKETNET_DRIVER_REGISTRY_HEADER}")
+set(ROCKETNET_TRANSPORT_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
+set(ROCKETNET_TRANSPORT_SOURCES "" CACHE STRING "Additional native driver source files")
+if(ROCKETNET_TRANSPORT_REGISTRY_HEADER)
+    get_filename_component(ROCKETNET_TRANSPORT_REGISTRY_HEADER "${ROCKETNET_TRANSPORT_REGISTRY_HEADER}" ABSOLUTE)
+    if(NOT EXISTS "${ROCKETNET_TRANSPORT_REGISTRY_HEADER}")
+        message(FATAL_ERROR "Driver registry header does not exist: ${ROCKETNET_TRANSPORT_REGISTRY_HEADER}")
     endif()
 endif()
 set(CMAKE_TARGET_MESSAGES OFF)
@@ -191,9 +191,9 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_client_transport.cpp
     sdk/rocketnet_config.cpp
     sdk/rocketnet_connection_reset.cpp
-    sdk/rocketnet_driver.cpp
-    sdk/rocketnet_driver_builtin.cpp
-    sdk/rocketnet_driver_loopback.cpp
+    sdk/rocketnet_transport.cpp
+    sdk/rocketnet_transport_builtin.cpp
+    sdk/rocketnet_transport_loopback.cpp
     sdk/rocketnet_connect_token.cpp
     sdk/rocketnet_counters.cpp
     sdk/rocketnet_encryption_map.cpp
@@ -226,7 +226,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_server_socket_linux.cpp
     sdk/rocketnet_server_transport.cpp
     sdk/rocketnet_token_tables.cpp
-    ${ROCKETNET_DRIVER_SOURCES}
+    ${ROCKETNET_TRANSPORT_SOURCES}
 )
 
 if(ROCKETNET_HARDEN)
@@ -341,8 +341,8 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
     else()
         target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
     endif()
-    if(ROCKETNET_DRIVER_REGISTRY_HEADER)
-        target_compile_definitions(${target} PRIVATE "ROCKETNET_DRIVER_REGISTRY_HEADER=\"${ROCKETNET_DRIVER_REGISTRY_HEADER}\"")
+    if(ROCKETNET_TRANSPORT_REGISTRY_HEADER)
+        target_compile_definitions(${target} PRIVATE "ROCKETNET_TRANSPORT_REGISTRY_HEADER=\"${ROCKETNET_TRANSPORT_REGISTRY_HEADER}\"")
     endif()
     target_compile_definitions(${target} PRIVATE
         ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
@@ -421,18 +421,18 @@ if(ROCKETNET_BUILD_TESTS)
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
-    # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
+    # test_unit_transport_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
     # into the suite, so its object goes first on the link line. lld-link loads
     # an archive member as soon as an earlier object references one of its
     # symbols, and the library's copy of the transport would then define every
     # transport symbol a second time; link.exe searches archives only after
     # every object, so it links in either order.
-    set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
+    set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_transport_loopback.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
     # Included by the loopback translation unit, which compiles the server
     # transport, so the driver-result cases can swap that transport's
     # receive_batch. Not a second translation unit.
-    set(ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_results_checked.cpp")
+    set(ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_transport_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
@@ -512,11 +512,11 @@ if(ROCKETNET_BUILD_TESTS)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
         rocketnet_use_sodium(test)
     endif()
-    # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
+    # test_unit_transport_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
     # which includes <sodium.h>: the vendored header, as the transport's own
     # targets see it (a host with no system libsodium, such as Windows, has no other)
     if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
-        set_property( SOURCE test_unit_driver_loopback.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/sodium" )
+        set_property( SOURCE test_unit_transport_loopback.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/sodium" )
     endif()
     # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
     # compiled unchanged with the BPF build's defines behind a shadow include
@@ -566,14 +566,14 @@ if(ROCKETNET_BUILD_TESTS)
     # that fallback resolve from any working directory.
     set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
-    # test_lifecycle, test_driver, test_serialize, test_transport_control,
+    # test_lifecycle, test_transport, test_serialize, test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
     # start threads, sleep or read the wall clock, so none of them is a unit
     # test. ./bin/functional runs test_serialize, test_transport_control and
     # the platform's driver binary (the execs table in functional/main.cpp's
-    # main); CI runs test_lifecycle and test_driver in steps named
+    # main); CI runs test_lifecycle and test_transport in steps named
     # "Functional: ...".
-    foreach(test_target test_lifecycle test_driver)
+    foreach(test_target test_lifecycle test_transport)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
         target_link_libraries(${test_target} PRIVATE rocketnet)
@@ -651,7 +651,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/server_receive_backlog.cpp
         functional/thread_priority_timing.cpp
         functional/macos_client_timing.cpp
-        functional/lifecycle_driver.cpp
+        functional/lifecycle_transport.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
         functional/windows_connreset.cpp

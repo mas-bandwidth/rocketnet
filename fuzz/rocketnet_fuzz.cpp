@@ -301,25 +301,25 @@ static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
     rocketnet_config_parse_int_value( value, &parsed );
 
     int num_available = 0;
-    const int * available = rocketnet_server_driver_availability( &num_available );
+    const int * available = rocketnet_server_transport_io_availability( &num_available );
 
-    struct rocketnet_driver_ladder_t ladder;
+    struct rocketnet_transport_ladder_t ladder;
     memset( &ladder, 0, sizeof( ladder ) );
 
-    if ( rocketnet_driver_ladder_parse( value, available, num_available, &ladder ) )
+    if ( rocketnet_transport_ladder_parse( value, available, num_available, &ladder ) )
     {
         // a ladder that parsed is a ladder the transport will walk: every
         // candidate must be a real driver index and the list must fit the
         // array it was written into
-        if ( ladder.num_candidates < 1 || ladder.num_candidates > ROCKETNET_MAX_DRIVER_CANDIDATES )
+        if ( ladder.num_candidates < 1 || ladder.num_candidates > ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             abort();
-        if ( ladder.num_skipped < 0 || ladder.num_skipped > ROCKETNET_MAX_DRIVER_CANDIDATES )
+        if ( ladder.num_skipped < 0 || ladder.num_skipped > ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             abort();
         for ( int i = 0; i < ladder.num_candidates; i++ )
         {
-            if ( ladder.candidates[i] < 0 || ladder.candidates[i] >= ROCKETNET_NUM_DRIVERS )
+            if ( ladder.candidates[i] < 0 || ladder.candidates[i] >= ROCKETNET_NUM_TRANSPORTS )
                 abort();
-            if ( rocketnet_driver_name( ladder.candidates[i] ) == NULL )
+            if ( rocketnet_transport_name( ladder.candidates[i] ) == NULL )
                 abort();
         }
     }
