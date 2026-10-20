@@ -21,10 +21,13 @@
 // it denied ordinary churn (docs/SESSION.md 1.6).
 //
 // The used-token history binds a token identifier to the first source address
-// that presented it. Fixed capacity, oldest-first eviction, entries expire
-// with their tokens. Lookup is constant time in the number of clients: an
-// open-addressed table over a per-run SipHash of the identifier, so an
-// attacker cannot craft identifiers that collide.
+// whose response opens under the token's keys. The shorter request-time claim
+// that stops one token buying many half-open mappings lives in the encryption
+// map, on the mapping it created, and expires with that mapping's handshake
+// deadline (sdk/rocketnet_encryption_map.h). Fixed capacity, oldest-first
+// eviction, entries expire with their tokens. Lookup is constant time in the
+// number of clients: an open-addressed table over a per-run SipHash of the
+// identifier, so an attacker cannot craft identifiers that collide.
 
 struct rocketnet_used_token_history_t;
 

@@ -3113,10 +3113,12 @@ void rocketnet_test_request_path_state_refusals()
     int payload_client_index = -1;
     struct rocketnet_counters_t before;
 
-    // the used-token history binds the token to the first address whose
-    // response opens under it, never at the request (STANDARD.md, Processing
-    // Connection Response Packets): a replay from elsewhere before that is
-    // answered with a challenge, and binds nothing
+    // the token is claimed at the request (STANDARD.md t12 step 7; netcode.io
+    // 1.02 parity): the first address whose valid request gets a challenge
+    // owns the token until that mapping's handshake deadline. The longer
+    // used-token history binding still happens when a response opens under
+    // the token's keys, and outlives the handshake deadline until the token
+    // expires.
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     uint8_t challenge[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
     rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
@@ -3128,15 +3130,33 @@ void rocketnet_test_request_path_state_refusals()
     struct rocketnet_address_t third_address;
     rocketnet_check( rocketnet_address_parse( &third_address, "198.51.100.51:56789" ) );
 
-    // the replayed request needs a cookie for the new address first
+    // a replay from a second address is refused at the request-time claim,
+    // before any crypto, and creates no mapping. The replayed request needs a
+    // cookie for the new address first.
     uint8_t replayed[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     memcpy( replayed, request, sizeof(replayed) );
     memset( replayed + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
     test.client_address = second_address;
     rocketnet_test_pass_cookie_gate( &test, replayed );
-    rocketnet_check( rocketnet_test_process( &test, replayed, sizeof(replayed), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-    uint8_t second_challenge[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
-    memcpy( second_challenge, response, sizeof(second_challenge) );
+    before = test.counters;
+    response_bytes = 0;
+    rocketnet_check( rocketnet_test_process( &test, replayed, sizeof(replayed), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &second_address ) == -1 );
+
+    // a third address is refused the same way while the claim is live
+    memcpy( replayed, request, sizeof(replayed) );
+    memset( replayed + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
+    test.client_address = third_address;
+    rocketnet_test_pass_cookie_gate( &test, replayed );
+    before = test.counters;
+    response_bytes = 0;
+    rocketnet_check( rocketnet_test_process( &test, replayed, sizeof(replayed), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &third_address ) == -1 );
+    test.client_address = real_address;
 
     // the real client opens its challenge and responds: the token is bound
     // to its address and admitted
@@ -3148,44 +3168,36 @@ void rocketnet_test_request_path_state_refusals()
                                                                ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes,
                                                                payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
 
-    // bound now: the same request replayed from a third address is refused
-    // after one hash
-    memcpy( replayed, request, sizeof(replayed) );
-    memset( replayed + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
-    test.client_address = third_address;
-    rocketnet_test_pass_cookie_gate( &test, replayed );
-    before = test.counters;
-    rocketnet_check( rocketnet_test_process( &test, replayed, sizeof(replayed), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
-    test.client_address = real_address;
+    // the response binding is recorded: the token is bound to the opener's
+    // address until the token expires, and no other address holds a mapping
+    const uint8_t * token_identifier = NULL;
+    {
+        int real_mapping = rocketnet_encryption_map_find( test.server.encryption_map, &real_address );
+        rocketnet_check( real_mapping != -1 );
+        token_identifier = rocketnet_encryption_map_entry( test.server.encryption_map, real_mapping )->token_identifier;
+    }
+    rocketnet_check( rocketnet_used_token_history_check( test.server.used_token_history, token_identifier, &real_address, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_check( !rocketnet_used_token_history_check( test.server.used_token_history, token_identifier, &second_address, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &second_address ) == -1 );
 
-    // the second address still holds the mapping its replay created. here
-    // the token keys are the test constants, so it can open its challenge --
-    // the client that moved, or a shared token. while the first connection
-    // lives, its response is refused: one token, one live connection, by the
-    // client id the token carries
-    rocketnet_test_client_derive_from_challenge( second_challenge, sizeof(second_challenge), &keys );
-    rocketnet_test_client_build_response( client_response, &keys );
-    const uint64_t refused_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED];
-    rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &second_address, client_response, sizeof(client_response),
-                                                               ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes,
-                                                               payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] == refused_before + 1 );
-    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
-
-    // once the first connection has closed, its slot is free and the token
-    // may connect again inside its expiry: the accepted residual risk
-    // (docs/SESSION.md, Token reuse)
+    // once the first connection has closed, its slot is free and the same
+    // address may connect again inside the token's expiry: the accepted
+    // residual risk (docs/SESSION.md, Token reuse)
     uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
     int burst_bytes = 0;
     rocketnet_server_protocol_disconnect_client( &test.server, 0, burst, &burst_count, &burst_bytes );
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
 
-    rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &second_address, client_response, sizeof(client_response),
+    response_bytes = 0;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    memcpy( challenge, response, sizeof(challenge) );
+    rocketnet_test_client_derive_from_challenge( challenge, sizeof(challenge), &keys );
+    rocketnet_test_client_build_response( client_response, &keys );
+    rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &real_address, client_response, sizeof(client_response),
                                                                ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes,
                                                                payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] == refused_before + 1 );
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
 
     rocketnet_test_server_teardown( &test );
@@ -11642,17 +11654,19 @@ static void rocketnet_test_pass_cookie_gate_from( struct rocketnet_test_server_t
     memcpy( request + ROCKETNET_PREFILTER_BYTES, response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
 }
 
-// The token is bound to an address only once that address opens a response
-// (STANDARD.md, Processing Connection Response Packets; tla/RNSecurityTables.tla,
-// BoundOnlyToOpener). An on-path attacker copies the real client's
-// cookie-bearing request off the in-memory wire, earns a cookie at its own
-// address, and replays the request from there ahead of the real one. The
-// replay reaches a challenge it cannot open, so it never responds, and binds
-// nothing: the real client connects, the token is bound to the client's
-// address, and a second replay is refused. Before the binding moved, the
-// replay bound the token to the attacker's address at request time and the
-// real client's request was refused as TOKEN_ALREADY_USED until it timed out.
-// Time is an argument throughout; there are no sockets.
+// The token is claimed by its first valid request until that mapping's
+// handshake deadline, and bound to an address until the token expires once
+// that address opens a response (STANDARD.md t12 steps 7 and 11; netcode.io
+// 1.02 parity; tla/RNSecurityTables.tla, BoundOnlyToOpener). An on-path
+// attacker copies the real client's cookie-bearing request off the in-memory
+// wire, earns a cookie at its own address, and replays the request from there
+// ahead of the real one. The replay gets a challenge it cannot open, so it
+// never responds, but it holds the request-time claim: the real client's
+// requests are refused as TOKEN_ALREADY_USED until the attacker's handshake
+// deadline expires. Then the real client proceeds, connects, and the response
+// binding records the token to its address until the token expires. This is
+// the accepted lockout trade-off of claiming at the request. Time is an
+// argument throughout; there are no sockets.
 
 void rocketnet_test_token_bound_at_response_open()
 {
@@ -11691,7 +11705,7 @@ void rocketnet_test_token_bound_at_response_open()
     int replayed = 0;
 
     double time = 100.0;
-    while ( time < 103.0 && client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    while ( time < 108.0 && client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
         rocketnet_check( client.state > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
@@ -11751,14 +11765,15 @@ void rocketnet_test_token_bound_at_response_open()
 
     rocketnet_check( replayed );
 
-    // the real client was never refused for the token, and it connected
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
+    // the replay claimed the token first: the real client was refused for it
+    // while the claim lived, then connected after the handshake deadline
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] > 0 );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
     rocketnet_check( rocketnet_client_slots_client_id( test.server.client_slots, 0 ) == 0xB17DB17DULL );
 
-    // the token is bound to the client's address, and the attacker's mapping
-    // holds no slot: the replay bound nothing
+    // the response binding names the client's address; the attacker's
+    // half-open mapping still holds no slot and expires at its deadline
     const uint8_t * token_identifier = NULL;
     {
         int client_mapping = rocketnet_encryption_map_find( test.server.encryption_map, &client_address );

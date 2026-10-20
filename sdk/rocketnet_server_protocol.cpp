@@ -493,6 +493,29 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // Cheap refusals come before cryptography (STANDARD.md t12 step 7;
+    // tla/ReceiveOrder.tla CheapRefusalsFirst). A full table cannot hold
+    // another mapping, so it refuses before the signature, the seal and the
+    // keypair. A token already claimed by a live half-open mapping from
+    // another address is refused here too: the claim is the mapping's token
+    // identifier, made when the first valid request creates it, and it
+    // expires at that mapping's handshake deadline (netcode.io 1.02 parity).
+
+    if ( rocketnet_encryption_map_full( server->encryption_map ) )
+    {
+        rocketnet_debug( "server ignored connection request. encryption map is full" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+        counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( !rocketnet_encryption_map_token_claim_allows( server->encryption_map, token_identifier, from, current_time ) )
+    {
+        rocketnet_debug( "server ignored connection request. connect token claimed by a different address" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     // the authenticity check: the signature, and only the signature. the
     // per-source failed-verify budget gates it, so one valid cookie cannot
     // buy unlimited Ed25519 verifies from one address.
@@ -566,10 +589,11 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // no used-token history record here: a request proves nothing about who
-    // holds the token's keys, so the binding waits for a response that opens
-    // under the handshake key (STANDARD.md, Processing Connection Response
-    // Packets; tla/RNSecurityTables.tla, BoundOnlyToOpener)
+    // no used-token history record here: the request-time claim above already
+    // binds this half-open mapping to its first address until the handshake
+    // deadline, while the longer binding waits for a response that opens under
+    // the handshake key (STANDARD.md, Processing Connection Response Packets;
+    // tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
         // the server's contribution to the key schedule: a fresh session
@@ -713,10 +737,12 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     (void) current_time;
 
-    // the binding: this address has proven it holds the token's keys, which a
-    // request never proves, so a replayed request from another address binds
-    // nothing. a no-op when the token is already bound; an expired token is
-    // not recorded, as the request path never recorded one
+    // the longer binding: this address has proven it holds the token's keys,
+    // which a request never proves. The request-time claim expires at the
+    // handshake deadline; this record keeps the token bound to the opener
+    // until the token expires, and refuses every other address at the request
+    // before the claim check. A no-op when the token is already bound; an
+    // expired token is not recorded
     // (tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     if ( mapping->token_expire_timestamp > current_timestamp )
