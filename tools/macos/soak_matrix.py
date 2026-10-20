@@ -55,7 +55,7 @@ How to read the verdicts. A row passes only when every column passes:
            access enabled for the user running it.
   refusals soak fails a run on any REFUSAL counter, except the
            <FAMILY>_ALREADY_RECEIVED refusals of the duplicates an impaired
-           cell plants (soak.c:142); soak
+           cell plants (soak.c:171); soak
            prints those as "planted duplicates refused at ...". The server
            socket is bound on the wildcard address, so on a machine shared with other
            suites a foreign packet sent to its port is refused and counted
