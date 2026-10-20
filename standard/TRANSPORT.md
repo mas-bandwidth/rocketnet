@@ -3932,6 +3932,15 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_PASSED_FRAGMENT` | `expected` | `none` |
 | `XDP_KERNEL_DROPPED_FIRST_FRAGMENT` | `refusal` | `none` |
 | `MESSAGE_SEND_NOT_CONNECTED` | `expected` | `none` |
+| `MESSAGE_BAD_FORM` | `refusal` | `none` |
+| `MESSAGE_TRUNCATED` | `refusal` | `none` |
+| `MESSAGE_BAD_FLAGS` | `refusal` | `none` |
+| `MESSAGE_BAD_LENGTH` | `refusal` | `none` |
+| `MESSAGE_BAD_SIZE` | `refusal` | `none` |
+| `MESSAGE_BAD_CONTROL` | `refusal` | `none` |
+| `MESSAGE_NUMBER_OUTSIDE_WINDOW` | `refusal` | `none` |
+| `MESSAGE_SLOT_COLLISION` | `refusal` | `none` |
+| `MESSAGE_DUPLICATE_ORDERING` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4049,7 +4058,10 @@ b1 00 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00
 9b 86 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84
 f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
 01 00 00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00
-00
+00 ab 9f e2 5c 00 00 00 7d 98 4f 4e 00 00 00 58
+b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
+f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
+00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

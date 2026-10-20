@@ -204,7 +204,8 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     uint32_t number_slot = RN_DESCRIPTOR_NONE;
     if ( reliable && !rn_sequenced_descriptor( channels, record, &number_slot ) )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        // the slot is live for another number (check 10, SLOT_COLLISION)
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 

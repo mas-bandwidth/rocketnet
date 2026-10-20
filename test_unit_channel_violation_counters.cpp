@@ -334,11 +334,94 @@ static void violation_reader_and_window_checks_move_their_own_counters()
 
 REGISTER_UNIT_TEST( violation_reader_and_window_checks_move_their_own_counters );
 
-// SLOT_COLLISION (check 10) is a defensive window state a live receive path
-// cannot reach with crafted wire records (the descriptor slot it guards is
-// released by delivery before a later number can land on it); its counter is a
-// distinct index, tied to its violation by the SDK's rn_violation_counter.
-static_assert( ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION != ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION,
-               "SLOT_COLLISION has its own counter" );
-static_assert( ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION != ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW,
-               "the two window violations have distinct counters" );
+// Append one code 3 (RELIABLE_ORDERED) record: flags, length 1, number, ring 0,
+// ordering, channel, then its one data byte.
+static int violation_put_ordered( uint8_t * p, uint32_t number, uint32_t ordering, uint8_t channel, uint8_t data )
+{
+    uint8_t * start = p;
+    rocketnet_write_uint8( &p, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
+    rocketnet_write_uint16( &p, 1 );
+    rocketnet_write_uint8( &p, (uint8_t) ( number & 0xff ) );
+    rocketnet_write_uint8( &p, (uint8_t) ( ( number >> 8 ) & 0xff ) );
+    rocketnet_write_uint8( &p, (uint8_t) ( ( number >> 16 ) & 0xff ) );
+    rocketnet_write_uint16( &p, 0 );
+    rocketnet_write_uint8( &p, (uint8_t) ( ordering & 0xff ) );
+    rocketnet_write_uint8( &p, (uint8_t) ( ( ordering >> 8 ) & 0xff ) );
+    rocketnet_write_uint8( &p, (uint8_t) ( ( ordering >> 16 ) & 0xff ) );
+    rocketnet_write_uint8( &p, channel );
+    rocketnet_write_uint8( &p, data );
+    return (int) ( p - start );
+}
+
+static int violation_finish_records( uint8_t * p )
+{
+    *p = ROCKETNET_MESSAGE_FORM_RECORDS;
+    return 1;
+}
+
+// A hostile peer sends two RELIABLE_ORDERED records with one channel and
+// ordering index but different numbers: the second is refused at the held
+// index (rn_channels_dispatch, sdk/rocketnet_channel.cpp), counted
+// MESSAGE_DUPLICATE_ORDERING and, once for the ended connection,
+// MESSAGE_PROTOCOL_VIOLATION.
+static void violation_two_ordered_records_with_one_ordering_index_get_their_own_counter()
+{
+    rocketnet_message_config_t config;
+    violation_config( &config, 8 );
+    violation_node_t receiver;
+    violation_init( &receiver, &config );
+
+    uint8_t payload[64];
+    uint8_t * p = payload;
+    p += violation_put_ordered( p, 0, 5, 0, 0xaa );
+    p += violation_put_ordered( p, 1, 5, 0, 0xbb );
+    p += violation_finish_records( p );
+
+    check( rn_ordered_receive( &receiver.ordered, payload, (int) ( p - payload ) ) == ROCKETNET_CHANNEL_VIOLATION );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING] == 1 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == 0 );
+    check( rn_ordered_decide( &receiver.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( violation_two_ordered_records_with_one_ordering_index_get_their_own_counter );
+
+// SLOT_COLLISION (check 10) is reachable from the wire: a held record keeps its
+// descriptor live after the receive cursor passes its number, so a later
+// number one window above lands on the same slot. Record 0 delivers on channel
+// 0 and advances R; record 1 waits on channel 1 and keeps slot 1 live; number
+// W+1 on channel 2 maps to slot 1 and is refused as SLOT_COLLISION.
+static void violation_slot_collision_is_reachable_from_the_wire()
+{
+    rocketnet_message_config_t config;
+    violation_config( &config, 8 );
+    violation_node_t receiver;
+    violation_init( &receiver, &config );
+
+    const uint32_t W = receiver.region->window;
+
+    uint8_t payload[64];
+    uint8_t * p = payload;
+    p += violation_put_ordered( p, 0, 0, 0, 0x11 );
+    p += violation_finish_records( p );
+    check( rn_ordered_receive( &receiver.ordered, payload, (int) ( p - payload ) ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+
+    p = payload;
+    p += violation_put_ordered( p, 1, 5, 1, 0x22 );
+    p += violation_finish_records( p );
+    check( rn_ordered_receive( &receiver.ordered, payload, (int) ( p - payload ) ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+
+    p = payload;
+    p += violation_put_ordered( p, 1 + W, 0, 2, 0x33 );
+    p += violation_finish_records( p );
+    check( rn_ordered_receive( &receiver.ordered, payload, (int) ( p - payload ) ) == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == 1 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+    check( rn_ordered_decide( &receiver.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( violation_slot_collision_is_reachable_from_the_wire );

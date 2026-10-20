@@ -317,6 +317,7 @@ static const char * const counters_appended_names[] =
     "MESSAGE_BAD_CONTROL",
     "MESSAGE_NUMBER_OUTSIDE_WINDOW",
     "MESSAGE_SLOT_COLLISION",
+    "MESSAGE_DUPLICATE_ORDERING",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

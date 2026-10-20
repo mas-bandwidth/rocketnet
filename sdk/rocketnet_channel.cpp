@@ -536,7 +536,8 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     rn_receive_descriptor_t * descriptor = rn_channels_descriptor( channels, record, &slot );
     if ( !descriptor )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        // the slot is live for another number (check 10, SLOT_COLLISION)
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
@@ -546,7 +547,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
         // with one ordering index, as on the held path below.
         if ( rn_held_find( region, rn_held_key( record->channel, ordering ) ) != RN_DESCRIPTOR_NONE )
         {
-            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING );
             return ROCKETNET_CHANNEL_DISPATCH_NONE;
         }
 
@@ -584,7 +585,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     const uint64_t key = rn_held_key( record->channel, ordering );
     if ( rn_held_find( region, key ) != RN_DESCRIPTOR_NONE )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );     // two messages with one ordering index
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING );     // two messages with one ordering index
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
@@ -648,7 +649,8 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     rn_receive_descriptor_t * descriptor = rn_channels_descriptor( channels, record, &slot );
     if ( !descriptor )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        // the slot is live for another number (check 10, SLOT_COLLISION)
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
