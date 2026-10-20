@@ -13,7 +13,7 @@
     using test/live_verify.h (sections 3 to 5). It runs at the max_clients
     the run sets, dumps counters and resident memory each minute, exits when
     its controlling ssh or stdin closes, and refuses to start when the XDP
-    driver is pinned and the interface reports the in-tree driver (section 9).
+    transport is pinned and the interface reports the in-tree transport (section 9).
 */
 
 #include "rocketnet.h"
@@ -75,7 +75,7 @@ static void usage( void )
         "  --counters-every S      snapshot counters, RSS and transport stats every S seconds\n"
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
-        "  --transport T           pin the transport (e.g. xdp); the in-tree driver refuses\n"
+        "  --transport T           pin the transport (e.g. xdp); the in-tree transport refuses\n"
         "  --self-test-result FILE write a sample result file without any socket and exit\n"
         "  --help                  this message\n"
         "environment:\n"
@@ -126,7 +126,7 @@ static void results_event( const char * fmt, ... )
 }
 
 // The live XDP fleet run's helpers below (resident memory, the stdin watch,
-// the NIC driver check) read Linux and POSIX facilities. On Windows the
+// the NIC transport check) read Linux and POSIX facilities. On Windows the
 // out-of-the-box server builds without them: resident memory reads 0 (as on
 // macOS, which has no /proc), stdin is not watched, and no interface is found.
 static uint64_t resident_bytes( void )
@@ -204,19 +204,19 @@ static int interface_for_address( const char * address, char * out, size_t out_s
 
 // Section 9: the in-tree i40e reports the running kernel's version (the same
 // string as `uname -r`); the out-of-tree build reports its own release number.
-static int in_tree_driver( const char * nic )
+static int in_tree_transport( const char * nic )
 {
 #if defined(_WIN32)
     (void) nic;
     return 0;
 #else
     char cmd[256];
-    snprintf( cmd, sizeof cmd, "ethtool -i %s 2>/dev/null | awk '/^driver:/{d=$2} /^version:/{v=$2} END{print d, v}'", nic );
+    snprintf( cmd, sizeof cmd, "ethtool -i %s 2>/dev/null | awk '/^transport:/{d=$2} /^version:/{v=$2} END{print d, v}'", nic );
     FILE * f = popen( cmd, "r" );
     if ( !f )
         return 1;
-    char driver[64] = {0}, version[64] = {0};
-    if ( fscanf( f, "%63s %63s", driver, version ) != 2 )
+    char transport[64] = {0}, version[64] = {0};
+    if ( fscanf( f, "%63s %63s", transport, version ) != 2 )
     {
         pclose( f );
         return 1;
@@ -927,17 +927,17 @@ int main( int argc, char ** argv )
 
     const char * env_transport = getenv( "ROCKETNET_SERVER_TRANSPORT" );
     if ( transport )
-        snprintf( config.driver, sizeof config.driver, "%s", transport );
+        snprintf( config.transport, sizeof config.transport, "%s", transport );
     else if ( env_transport )
-        snprintf( config.driver, sizeof config.driver, "%s", env_transport );
+        snprintf( config.transport, sizeof config.transport, "%s", env_transport );
 
-    // section 9: when xdp is pinned, refuse the in-tree driver
-    if ( strcmp( config.driver, "xdp" ) == 0 )
+    // section 9: when xdp is pinned, refuse the in-tree transport
+    if ( strcmp( config.transport, "xdp" ) == 0 )
     {
         char nic[64] = {0};
-        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_driver( nic ) )
+        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_transport( nic ) )
         {
-            fprintf( stderr, "server: refusing: interface %s reports the in-tree driver\n", nic );
+            fprintf( stderr, "server: refusing: interface %s reports the in-tree transport\n", nic );
             rocketnet_term();
             return 1;
         }
@@ -957,14 +957,14 @@ int main( int argc, char ** argv )
     }
 
     struct rocketnet_server_transport_t * transport_obj = rocketnet_message_server_transport( server );
-    printf( "server transport %s\n", rocketnet_server_transport_driver( transport_obj ) );
+    printf( "server transport %s\n", rocketnet_server_transport_io_name( transport_obj ) );
     printf( "server max_clients %d\n", config.max_clients );
     if ( results_path )
     {
         g_results = fopen( results_path, "w" );
         if ( g_results )
         {
-            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_driver( transport_obj ) );
+            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_io_name( transport_obj ) );
             results_event( "listening" );
         }
     }

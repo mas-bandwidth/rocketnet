@@ -4,7 +4,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
 
-// Shared receive view. The historic type name is retained for native driver
+// Shared receive view. The historic type name is retained for native transport
 // source compatibility; this layout is independent of the XDP implementation.
 struct rocketnet_server_socket_process_packets_t
 {

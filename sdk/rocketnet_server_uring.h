@@ -13,9 +13,9 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
-// The io_uring server driver: one io_uring per driver, used only on the main
+// The io_uring server transport: one io_uring per transport, used only on the main
 // thread, and no worker thread. An SO_REUSEPORT socket group (bound the way
-// the gso driver binds its group) shards receives across queues; each queue
+// the gso transport binds its group) shards receives across queues; each queue
 // has a provided buffer ring and one multishot RECVMSG, so the kernel fills
 // receive buffers with no syscall per datagram, and send_packets submits one
 // SENDMSG per staged slot in chunks no larger than the free submission queue
@@ -25,13 +25,13 @@
 // per-call budget and destroy; the functions that implement a model action
 // cite it.
 //
-// The driver is built only when the library is configured with liburing
+// The transport is built only when the library is configured with liburing
 // (ROCKETNET_IO_URING, Linux). Without it, create logs the refusal and
 // returns NULL, and rocketnet_server_uring_available() is false.
 
 struct rocketnet_server_uring_t;
 
-// the driver's geometry, all compile time:
+// the transport's geometry, all compile time:
 
 #ifndef ROCKETNET_URING_DEFAULT_QUEUES
 #define ROCKETNET_URING_DEFAULT_QUEUES                                       4
@@ -43,7 +43,7 @@ struct rocketnet_server_uring_t;
 
 #define ROCKETNET_URING_ENTRIES                                           4096
 
-// send staging: one phase's worth of frame-stride slots, the gso driver's
+// send staging: one phase's worth of frame-stride slots, the gso transport's
 // budget
 
 #define ROCKETNET_URING_SEND_QUEUE_SIZE                                   2048
@@ -95,7 +95,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_
 #define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 13
 
 // true when the library was built with liburing and this kernel accepts the
-// ring, the opcodes and the provided buffer ring the driver needs. the probe
+// ring, the opcodes and the provided buffer ring the transport needs. the probe
 // runs once and its answer is kept.
 
 bool rocketnet_server_uring_available();
@@ -115,13 +115,13 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 // outstanding completion (the sends a send_packets left included) before
 // freeing. a destroy that gives up waiting
 // closes the ring and the sockets but leaks the memory the kernel may still
-// write, and counts it here: bytes, and drivers so leaked, since the start.
+// write, and counts it here: bytes, and transports so leaked, since the start.
 
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
 
 uint64_t rocketnet_server_uring_leaked_bytes();
 
-uint64_t rocketnet_server_uring_leaked_drivers();
+uint64_t rocketnet_server_uring_leaked_transports();
 
 // for tests: one completion that never arrives, so the next destroy counts
 // its rounds (without waiting) and takes the give-up path
@@ -139,19 +139,19 @@ void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * u
 #endif
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
-// unit suite only (the test hook library): a driver over a fake completion
+// unit suite only (the test hook library): a transport over a fake completion
 // source, with no kernel ring and no socket. the source stands in for the
 // completion queue: peek copies at most max completions, oldest first, and
 // consumes none; advance consumes the count peek returned; ready is how many
 // it holds. submitted is called with the user_data of every queued
-// submission entry when the driver submits (each send, each multishot arm,
+// submission entry when the transport submits (each send, each multishot arm,
 // each cancel). a receive completion names its buffer in flags the way the
 // kernel does (IORING_CQE_F_BUFFER, the id above IORING_CQE_BUFFER_SHIFT);
-// every buffer of a fake driver holds one datagram of
+// every buffer of a fake transport holds one datagram of
 // ROCKETNET_URING_TEST_PAYLOAD_BYTES from 127.0.0.1, which a completion with
 // res ROCKETNET_URING_RECV_BUFFER_BYTES delivers. a wait returns at once.
-// rocketnet_server_uring_destroy destroys a fake driver. NULL when the
-// driver is not built.
+// rocketnet_server_uring_destroy destroys a fake transport. NULL when the
+// transport is not built.
 
 #define ROCKETNET_URING_TEST_PAYLOAD_BYTES                                 100
 
@@ -173,7 +173,7 @@ struct rocketnet_server_uring_test_source_t
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * context, int num_queues, const struct rocketnet_server_uring_test_source_t * source );
 
-// the no-kernel-ring seam of the re-arm cases: a fake driver with queues and
+// the no-kernel-ring seam of the re-arm cases: a fake transport with queues and
 // no ring, whose receive_packets runs only the re-arm loop and whose next
 // count arm calls find no submission entry. destroy_wait_rounds runs the
 // end condition destroy's wait uses (rocketnet_server_uring_destroy_wait_over)
@@ -200,7 +200,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 // without its completion keeps its slot, and the reservation index, until a
 // later call reaps it (SEND_DEFERRED counts each call that returns so).
 // the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
-// bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other drivers.
+// bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other transports.
 
 uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to, uint64_t * packet_id );
 

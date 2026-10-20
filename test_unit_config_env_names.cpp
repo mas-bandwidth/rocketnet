@@ -444,7 +444,7 @@ static std::vector<std::string> env_names_set_candidates()
 // every name an environment pass reads: the message and transport config
 // tables under each endpoint prefix, the two budget names, the memory budget
 // that apply_env_uint64 reads, and the process-wide names read at init and in
-// the platform. The transport table's driver row is read as TRANSPORT.
+// the platform. The transport table's transport row is read as TRANSPORT.
 static std::string env_names_read_file( const char * relative_path )
 {
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
@@ -508,7 +508,7 @@ static std::vector<std::string> env_names_pass_reads()
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
     for ( int i = 0; i < num_client_fields; i++ )
     {
-        if ( strcmp( client_fields[i].name, "driver" ) == 0 )
+        if ( strcmp( client_fields[i].name, "transport" ) == 0 )
             continue;
         char name[128];
         check( rocketnet_config_env_var_name_for( "client", client_fields[i].name, name, sizeof( name ) ) );
@@ -519,7 +519,7 @@ static std::vector<std::string> env_names_pass_reads()
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
     for ( int i = 0; i < num_server_fields; i++ )
     {
-        if ( strcmp( server_fields[i].name, "driver" ) == 0 )
+        if ( strcmp( server_fields[i].name, "transport" ) == 0 )
             continue;
         char name[128];
         check( rocketnet_config_env_var_name_for( "server", server_fields[i].name, name, sizeof( name ) ) );

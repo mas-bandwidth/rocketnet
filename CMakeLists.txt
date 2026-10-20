@@ -34,7 +34,7 @@ option(ROCKETNET_HARDEN "Enable hardening flags for release builds" ON)
 option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
-option(ROCKETNET_IO_URING "Build the io_uring server driver against liburing when it is found (Linux)" ON)
+option(ROCKETNET_IO_URING "Build the io_uring server transport against liburing when it is found (Linux)" ON)
 option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF)
 if(ROCKETNET_SANITIZE_ADDRESS)
     if(MSVC)
@@ -45,12 +45,12 @@ if(ROCKETNET_SANITIZE_ADDRESS)
         add_link_options(-fsanitize=address)
     endif()
 endif()
-set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
-set(ROCKETNET_DRIVER_SOURCES "" CACHE STRING "Additional native driver source files")
-if(ROCKETNET_DRIVER_REGISTRY_HEADER)
-    get_filename_component(ROCKETNET_DRIVER_REGISTRY_HEADER "${ROCKETNET_DRIVER_REGISTRY_HEADER}" ABSOLUTE)
-    if(NOT EXISTS "${ROCKETNET_DRIVER_REGISTRY_HEADER}")
-        message(FATAL_ERROR "Driver registry header does not exist: ${ROCKETNET_DRIVER_REGISTRY_HEADER}")
+set(ROCKETNET_TRANSPORT_REGISTRY_HEADER "" CACHE FILEPATH "Additional native transport registry rows (.inc)")
+set(ROCKETNET_TRANSPORT_SOURCES "" CACHE STRING "Additional native transport source files")
+if(ROCKETNET_TRANSPORT_REGISTRY_HEADER)
+    get_filename_component(ROCKETNET_TRANSPORT_REGISTRY_HEADER "${ROCKETNET_TRANSPORT_REGISTRY_HEADER}" ABSOLUTE)
+    if(NOT EXISTS "${ROCKETNET_TRANSPORT_REGISTRY_HEADER}")
+        message(FATAL_ERROR "Transport registry header does not exist: ${ROCKETNET_TRANSPORT_REGISTRY_HEADER}")
     endif()
 endif()
 set(CMAKE_TARGET_MESSAGES OFF)
@@ -226,7 +226,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_server_socket_linux.cpp
     sdk/rocketnet_server_transport.cpp
     sdk/rocketnet_token_tables.cpp
-    ${ROCKETNET_DRIVER_SOURCES}
+    ${ROCKETNET_TRANSPORT_SOURCES}
 )
 
 if(ROCKETNET_HARDEN)
@@ -269,7 +269,7 @@ add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The test hook library: the same source with the unit suite's seams compiled
 # in (the message layer's payload copy count, the public link simulator's
-# development switch, and the io_uring driver's fake completion source). Only
+# development switch, and the io_uring transport's fake completion source). Only
 # the unit suite links it, so the installed rocketnet library carries no test hook.
 set(rocketnet_test_hook_targets)
 if(ROCKETNET_BUILD_TESTS)
@@ -341,8 +341,8 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
     else()
         target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
     endif()
-    if(ROCKETNET_DRIVER_REGISTRY_HEADER)
-        target_compile_definitions(${target} PRIVATE "ROCKETNET_DRIVER_REGISTRY_HEADER=\"${ROCKETNET_DRIVER_REGISTRY_HEADER}\"")
+    if(ROCKETNET_TRANSPORT_REGISTRY_HEADER)
+        target_compile_definitions(${target} PRIVATE "ROCKETNET_TRANSPORT_REGISTRY_HEADER=\"${ROCKETNET_TRANSPORT_REGISTRY_HEADER}\"")
     endif()
     target_compile_definitions(${target} PRIVATE
         ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
@@ -430,10 +430,10 @@ if(ROCKETNET_BUILD_TESTS)
     set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
     # Included by the loopback translation unit, which compiles the server
-    # transport, so the driver-result cases can swap that transport's
+    # transport, so the transport-result cases can swap that transport's
     # receive_batch. Not a second translation unit.
-    set(ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_results_checked.cpp")
-    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE}")
+    set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_results_checked.cpp")
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
     if(WIN32)
@@ -566,19 +566,23 @@ if(ROCKETNET_BUILD_TESTS)
     # that fallback resolve from any working directory.
     set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
-    # test_lifecycle, test_driver, test_serialize, test_transport_control,
+    # test_lifecycle, test_transport, test_serialize, test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
     # start threads, sleep or read the wall clock, so none of them is a unit
     # test. ./bin/functional runs test_serialize, test_transport_control and
-    # the platform's driver binary (the execs table in functional/main.cpp's
-    # main); CI runs test_lifecycle and test_driver in steps named
+    # the platform's transport binary (the execs table in functional/main.cpp's
+    # main); CI runs test_lifecycle and test_transport in steps named
     # "Functional: ...".
-    foreach(test_target test_lifecycle test_driver)
+    foreach(test_target test_lifecycle)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
         target_link_libraries(${test_target} PRIVATE rocketnet)
         rocketnet_warning_floor(${test_target})
     endforeach()
+    add_executable(test_transport test_driver.cpp)
+    target_include_directories(test_transport PRIVATE test)
+    target_link_libraries(test_transport PRIVATE rocketnet)
+    rocketnet_warning_floor(test_transport)
     add_executable(test_serialize test_serialize.cpp)
     target_include_directories(test_serialize PRIVATE test)
     target_link_libraries(test_serialize PRIVATE rocketnet_dev)
@@ -628,7 +632,7 @@ if(ROCKETNET_BUILD_TESTS)
         rocketnet_warning_floor(test_msgx)
     endif()
     if(WIN32)
-        # Isolate the test-instrumented drivers: never link another copy from
+        # Isolate the test-instrumented transports: never link another copy from
         # the production archive. Only their ordinary runtime dependencies
         # enter. The IOCP and RIO fault seams (ROCKETNET_IOCP_TESTS,
         # ROCKETNET_RIO_TESTS) compile only here, never into a library.
@@ -713,7 +717,7 @@ if(ROCKETNET_BUILD_TOOLS)
     target_link_libraries(lease_cost PRIVATE Threads::Threads)
     rocketnet_use_sodium(soak_sim)
     rocketnet_use_sodium(keygen)
-    # The corpus replay drivers: fuzz/replay_main.cpp provides the main the
+    # The corpus replay transports: fuzz/replay_main.cpp provides the main the
     # libFuzzer runtime would provide, reading each named file whole and
     # calling the harness's LLVMFuzzerTestOneInput once, so the committed
     # corpora replay on platforms with no libFuzzer runtime. Built against

@@ -36,7 +36,7 @@
 #include <windows.h>
 
 // test seams (sdk/rocketnet_server_transport.cpp, sdk/rocketnet_client_transport.cpp)
-void * rocketnet_server_transport_driver_for_testing( struct rocketnet_server_transport_t * server_transport );
+void * rocketnet_server_transport_transport_for_testing( struct rocketnet_server_transport_t * server_transport );
 uint16_t rocketnet_client_transport_test_bound_port( struct rocketnet_client_transport_t * client_transport );
 
 #define WINDOWS_SOCKET_ERRORS_TICK ( 1.0 / 60.0 )
@@ -57,7 +57,7 @@ static void windows_socket_errors_check( bool condition, const char * expression
 
 struct windows_socket_errors_transport_t
 {
-    const char * driver;
+    const char * transport;
     bool ipv6;
 };
 
@@ -69,7 +69,7 @@ static const char * windows_socket_errors_host( bool ipv6 )
 static void windows_socket_errors_clear_env()
 {
     // the case pins its own transports: an ambient pin must not override them
-    _putenv_s( "ROCKETNET_DRIVER", "" );
+    _putenv_s( "ROCKETNET_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
 }
@@ -242,12 +242,12 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", transport->driver );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", transport->transport );
     char bind[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( bind, sizeof( bind ), "%s:0", windows_socket_errors_host( transport->ipv6 ) );
     session->server = rocketnet_server_transport_create( NULL, bind, &server_config );
     windows_socket_errors_require( session->server != NULL );
-    windows_socket_errors_require( strcmp( rocketnet_server_transport_driver( session->server ), transport->driver ) == 0 );
+    windows_socket_errors_require( strcmp( rocketnet_server_transport_transport( session->server ), transport->transport ) == 0 );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "%s:%d", windows_socket_errors_host( transport->ipv6 ), rocketnet_server_transport_port( session->server ) );
@@ -255,7 +255,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     windows_socket_errors_require( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "portable" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
     session->client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     windows_socket_errors_require( session->client != NULL );
 
@@ -286,7 +286,7 @@ static void windows_socket_errors_session_finish( windows_socket_errors_session_
 
 // ---------------------------------------------------------------------------
 // what the server transport counts: every refusal of the transport's own
-// counters, plus the drops its driver counts before the transport sees them
+// counters, plus the drops its transport counts before the transport sees them
 
 static uint64_t windows_socket_errors_refusals( const struct rocketnet_counters_t * counters )
 {
@@ -297,16 +297,16 @@ static uint64_t windows_socket_errors_refusals( const struct rocketnet_counters_
     return sum;
 }
 
-static uint64_t windows_socket_errors_driver_drops( windows_socket_errors_session_t * session )
+static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_session_t * session )
 {
-    void * instance = rocketnet_server_transport_driver_for_testing( session->server );
-    if ( strcmp( session->transport.driver, "iocp" ) == 0 )
+    void * instance = rocketnet_server_transport_transport_for_testing( session->server );
+    if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
         uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
         rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) instance, counters );
         return counters[ROCKETNET_IOCP_RECEIVE_DROPPED];
     }
-    if ( strcmp( session->transport.driver, "rio" ) == 0 )
+    if ( strcmp( session->transport.transport, "rio" ) == 0 )
     {
         uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
         rocketnet_server_rio_counters( (rocketnet_server_rio_t*) instance, counters );
@@ -318,18 +318,18 @@ static uint64_t windows_socket_errors_driver_drops( windows_socket_errors_sessio
 static uint64_t windows_socket_errors_server_counted( windows_socket_errors_session_t * session )
 {
     return windows_socket_errors_refusals( rocketnet_server_transport_counters( session->server ) ) +
-           windows_socket_errors_driver_drops( session );
+           windows_socket_errors_transport_drops( session );
 }
 
-// the driver's posted operations: receives in flight plus sends the kernel
+// the transport's posted operations: receives in flight plus sends the kernel
 // has not completed; -1 for the synchronous portable transport, which posts
 // nothing
 static int windows_socket_errors_pending( windows_socket_errors_session_t * session )
 {
-    void * instance = rocketnet_server_transport_driver_for_testing( session->server );
-    if ( strcmp( session->transport.driver, "iocp" ) == 0 )
+    void * instance = rocketnet_server_transport_transport_for_testing( session->server );
+    if ( strcmp( session->transport.transport, "iocp" ) == 0 )
         return rocketnet_server_iocp_pending( (rocketnet_server_iocp_t*) instance );
-    if ( strcmp( session->transport.driver, "rio" ) == 0 )
+    if ( strcmp( session->transport.transport, "rio" ) == 0 )
         return rocketnet_server_rio_pending( (rocketnet_server_rio_t*) instance );
     return -1;
 }
@@ -366,7 +366,7 @@ static void windows_socket_errors_inject( windows_socket_errors_session_t * sess
 static const char * windows_socket_errors_label( const windows_socket_errors_transport_t * transport )
 {
     static char label[64];
-    snprintf( label, sizeof( label ), "%s %s", transport->driver, transport->ipv6 ? "ipv6" : "ipv4" );
+    snprintf( label, sizeof( label ), "%s %s", transport->transport, transport->ipv6 ? "ipv6" : "ipv4" );
     return label;
 }
 
@@ -458,7 +458,7 @@ static void windows_socket_errors_prefilter_read( struct rocketnet_client_transp
 }
 
 // the client: the same datagrams at a connected client's bound port, twice.
-// First from the server's own socket (the portable server transport's driver
+// First from the server's own socket (the portable server transport's transport
 // instance is its platform socket, sdk/rocketnet_driver_builtin.cpp:14-16),
 // the one source the client listens to: every datagram reaches the client's
 // prefilter (sdk/rocketnet_client_protocol.cpp:1248-1253) and lands on the
@@ -490,7 +490,7 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     char client_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( client_string, sizeof( client_string ), "%s:%d", windows_socket_errors_host( ipv6 ), (int) port );
     windows_socket_errors_require( rocketnet_address_parse( &client_address, client_string ) );
-    rocketnet_platform_socket_t * server_socket = (rocketnet_platform_socket_t*) rocketnet_server_transport_driver_for_testing( session.server );
+    rocketnet_platform_socket_t * server_socket = (rocketnet_platform_socket_t*) rocketnet_server_transport_transport_for_testing( session.server );
     windows_socket_errors_require( server_socket != NULL );
 
     // leg 1: from the server's socket, to the prefilter

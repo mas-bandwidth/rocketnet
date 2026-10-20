@@ -11,7 +11,7 @@
 (* transport walks its client slots, FORGETs the address of every slot     *)
 (* that held a mark and is no longer connected, then MARKs every connected *)
 (* slot whose session replay window's highest_opened is nonzero and        *)
-(* differs from what it last marked; the driver applies the forgets, then  *)
+(* differs from what it last marked; the transport applies the forgets, then  *)
 (* the marks, in one commit.                                               *)
 (*                                                                         *)
 (* A client slot is identified with its address here: one live session    *)
@@ -257,7 +257,7 @@ Walk ==
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, kmap, net,
                    dropped>>
 
-(* Commit: the driver applies all forgets, then all marks, in one commit.  *)
+(* Commit: the transport applies all forgets, then all marks, in one commit.  *)
 (* The only action that writes kmap in the design.                         *)
 Commit ==
     /\ phase = "flush"

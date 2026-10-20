@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The Windows Registered I/O (RIO) driver's region layout and request
+// The Windows Registered I/O (RIO) transport's region layout and request
 // contexts (sdk/rocketnet_rio_layout.h): pure, no sockets, no ring, no wall
 // clock. Every expected value is written as a literal, never computed by the
 // code under test.

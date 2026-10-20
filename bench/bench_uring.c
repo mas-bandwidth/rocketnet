@@ -1,5 +1,5 @@
 /*
-    rocketnet driver bench: io_uring (#81)
+    rocketnet transport bench: io_uring (#81)
 
     The headline non-root candidate. Batched submission on the send
     side (BENCH_BATCH_SIZE sends per io_uring_enter), multishot receive

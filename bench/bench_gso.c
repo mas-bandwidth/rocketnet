@@ -1,5 +1,5 @@
 /*
-    rocketnet driver bench: UDP GSO / GRO (#81)
+    rocketnet transport bench: UDP GSO / GRO (#81)
 
     First fast path, least gated. The sender hands the kernel one
     contiguous buffer of BENCH_BATCH_SIZE equal-size segments with a
@@ -16,7 +16,7 @@
 
     On a host without UDP_SEGMENT the sender's sendmsg refuses every
     batch with EINVAL. Before #98 it spun on that silently and the run
-    reported pps=0, which reads exactly like a very slow driver; it now
+    reported pps=0, which reads exactly like a very slow transport; it now
     aborts with the errno named, because a GSO-less host has nothing for
     this harness to measure. The receiver's UDP_GRO setsockopt has always
     aborted, and its recvmmsg now aborts on any errno that is not an

@@ -128,13 +128,13 @@ cmd_preflight()
 
     ip -o link
 
-    local driver_line version kernel
-    driver_line=$( ethtool -i "$nic" 2>/dev/null ) || fail "preflight: ethtool -i $nic failed"
-    echo "nic driver: $( echo "$driver_line" | tr '\n' ' ' )"
-    version=$( echo "$driver_line" | awk '/^version:/ { print $2 }' )
+    local transport_line version kernel
+    transport_line=$( ethtool -i "$nic" 2>/dev/null ) || fail "preflight: ethtool -i $nic failed"
+    echo "nic transport: $( echo "$transport_line" | tr '\n' ' ' )"
+    version=$( echo "$transport_line" | awk '/^version:/ { print $2 }' )
     kernel=$( uname -r )
     if [ -n "$version" ] && [ "$version" = "$kernel" ]; then
-        fail "preflight: $nic runs the in-tree driver (version $version equals uname -r); XDP SAFETY 4 refuses the run"
+        fail "preflight: $nic runs the in-tree transport (version $version equals uname -r); XDP SAFETY 4 refuses the run"
     fi
 
     if ip -d link show dev "$nic" | grep -q 'prog/xdp'; then
@@ -243,15 +243,15 @@ cmd_start_server()
 
     echo "xdp-safety: loading; the dead-man timer is armed"
     systemd-run --unit=rn-live-server --collect \
-        --setenv=ROCKETNET_SERVER_DRIVER=xdp \
+        --setenv=ROCKETNET_SERVER_TRANSPORT=xdp \
         --setenv=ROCKETNET_SERVER_PRINT_COUNTERS=1 \
-        "$bin" --matrix --driver xdp --address "$address" --label "$label" \
+        "$bin" --matrix --transport xdp --address "$address" --label "$label" \
         --seed "$seed" --send-kbps "$kbps" --max-clients "$max_clients" \
         --update-hz "$update_hz" --counters-every "$counters_every" \
         --num-xdp-queues "$queues" --results "$results" --status "$status" \
         || fail "start server: systemd-run rn-live-server failed"
 
-    echo "started: rn-live-server with driver pinned to xdp"
+    echo "started: rn-live-server with transport pinned to xdp"
 }
 
 cmd_stop_server()

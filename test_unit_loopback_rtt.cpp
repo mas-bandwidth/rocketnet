@@ -5,7 +5,7 @@
 
 // The message layer's RTT and reliable resends on a zero-latency link.
 //
-// A message server and client on the in-memory loopback driver, no socket,
+// A message server and client on the in-memory loopback transport, no socket,
 // time from 1000.0, both sides updated every step of LOOPBACK_RTT_DT. One side
 // sends one small reliable message per step; the other side sends nothing of
 // its own. The sender's link seam records each packet's send time
@@ -127,7 +127,7 @@ static bool loopback_rtt_pair_setup( struct loopback_rtt_pair_t * pair )
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
 
     pair->server = rocketnet_message_server_create( NULL, "127.0.0.1:0", &server_config, NULL, NULL, 0, 0 );
     rocketnet_unit_check( pair->server != NULL );
@@ -146,7 +146,7 @@ static bool loopback_rtt_pair_setup( struct loopback_rtt_pair_t * pair )
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.step_driven = 1;
     client_config.time_callback = loopback_rtt_time_callback;
 

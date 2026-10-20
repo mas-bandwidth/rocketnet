@@ -12,7 +12,7 @@
 //
 // The oracle plants a 0xA5 canary in each secret buffer, drives one terminal
 // path through the protocol functions (time is an argument; no socket, no
-// clock, no driver), then scans the struct and the scratch for a surviving
+// clock, no transport), then scans the struct and the scratch for a surviving
 // canary. A wiped field is all zero and cannot hold the canary; an unwiped
 // field is exactly the canary, so the scan is deterministic -- it never
 // depends on a random key happening to contain the byte.

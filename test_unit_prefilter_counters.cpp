@@ -6,7 +6,7 @@
 // The kernel prefilter counters (sdk/rocketnet_wire.h
 // ROCKETNET_SERVER_XDP_COUNTER_*) surface through the transport counter
 // surface via rocketnet_counters_apply_prefilter. Every case runs in memory:
-// no transport, no driver, no kernel.
+// no transport, no transport, no kernel.
 
 #include "test_unit_registry.h"
 

@@ -125,7 +125,7 @@ jobs:
             cell=$1; want=$2; line=$3
             echo "LOAD cell=$cell $line"
             case "$line" in *verdict=PASS*) ;; *) echo "LOAD cell=$cell FAIL"; return 1 ;; esac
-            case "$line" in *"server_driver=$want "*) ;; *) echo "LOAD cell=$cell wrong server transport (want $want)"; return 1 ;; esac
+            case "$line" in *"server_transport_io=$want "*) ;; *) echo "LOAD cell=$cell wrong server transport (want $want)"; return 1 ;; esac
             fs=$(echo "$line" | sed -E "s/.*fds_start=([0-9]+).*/\1/"); fe=$(echo "$line" | sed -E "s/.*fds_end=([0-9]+).*/\1/")
             ts=$(echo "$line" | sed -E "s/.*threads_start=([0-9]+).*/\1/"); te=$(echo "$line" | sed -E "s/.*threads_end=([0-9]+).*/\1/")
             [ "$fs" = "$fe" ] && [ "$ts" = "$te" ] || { echo "LOAD cell=$cell fd or thread growth"; return 1; }

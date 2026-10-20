@@ -18,7 +18,7 @@
     Measured and printed per condition (p50, p99, max):
       wake      the client receive thread's wake intervals: the time callback
                 (config time_callback, the receive stamp clock) runs on the I/O
-                thread once per driver receive call, and calls closer than
+                thread once per transport receive call, and calls closer than
                 200 us apart are one wake
       latency   receive-to-update: from the server's send to the client update
                 that returns the payload (the loopback wire is microseconds)

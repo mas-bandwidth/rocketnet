@@ -290,7 +290,7 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     return true;
 }
 
-// RNRioDriver RetireSend: one send completion; the slot is the driver's
+// RNRioDriver RetireSend: one send completion; the slot is the transport's
 // again. A failed status counts SEND_FAILED.
 static void rocketnet_rio_retire_send( rocketnet_server_rio_t * rio, const RIORESULT * result )
 {

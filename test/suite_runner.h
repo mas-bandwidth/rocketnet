@@ -55,7 +55,7 @@ extern char **environ;
 
 // The largest peak resident set one case process may reach, in MiB: the larger
 // of 256 and 1.5 times the largest case measured on a Linux Release build
-// (465 MiB, test_server_driver_pin_gso, 2026-10-19), so 698; never over 1024.
+// (465 MiB, test_server_transport_io_pin_gso, 2026-10-19), so 698; never over 1024.
 // A case over it fails the suite. The environment variable of the same name
 // overrides it with a positive value.
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698

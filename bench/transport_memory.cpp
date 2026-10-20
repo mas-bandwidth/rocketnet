@@ -66,32 +66,32 @@ int main(int argc, char ** argv)
 {
     if (argc < 4 || argc > 7)
     {
-        fprintf(stderr, "usage: transport_memory clients payload_bytes reassembly_slots [driver [queues [--plan-only]]]\n");
+        fprintf(stderr, "usage: transport_memory clients payload_bytes reassembly_slots [transport [queues [--plan-only]]]\n");
         return 1;
     }
-    const char * driver = argc >= 5 ? argv[4] : "portable";
+    const char * transport = argc >= 5 ? argv[4] : "portable";
     const bool plan_only = argc == 7 && strcmp(argv[6], "--plan-only") == 0;
     if (argc == 7 && !plan_only) return 1;
     rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
-    if (strlen(driver) >= sizeof(config.driver)) return 1;
-    strcpy(config.driver, driver);
+    if (strlen(transport) >= sizeof(config.transport)) return 1;
+    strcpy(config.transport, transport);
     config.max_clients = number(argv[1]);
     config.max_payload_bytes = number(argv[2]);
     config.num_reassembly_slots = number(argv[3]);
     config.num_xdp_queues = argc >= 6 ? number(argv[5]) : 0;
     rocketnet_server_memory_plan_t plan;
-    if (!rocketnet_server_transport_memory_plan(&config, driver, plan))
-    { fprintf(stderr, "memory plan unavailable for this geometry/driver/platform\n"); return 1; }
-    printf("{\"driver\":\"%s\",\"clients\":%d,\"payload_bytes\":%d,\"reassembly_slots\":%d,"
+    if (!rocketnet_server_transport_memory_plan(&config, transport, plan))
+    { fprintf(stderr, "memory plan unavailable for this geometry/transport/platform\n"); return 1; }
+    printf("{\"transport\":\"%s\",\"clients\":%d,\"payload_bytes\":%d,\"reassembly_slots\":%d,"
         "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,\"reassembly_bytes\":%llu,"
-        "\"send_arena_bytes\":%llu,\"driver_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
+        "\"send_arena_bytes\":%llu,\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
         "\"worker_threads\":%d,\"sockets\":%d,\"os_and_application_bytes\":null}\n",
-        driver, config.max_clients, config.max_payload_bytes, config.num_reassembly_slots,
+        transport, config.max_clients, config.max_payload_bytes, config.num_reassembly_slots,
         (unsigned long long)plan.total_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.protocol_bytes, (unsigned long long)plan.reassembly_bytes,
-        (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.driver_bytes,
+        (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
     if (plan_only) return 0; // No init, sockets, worker threads or UMEM registration.
     rocketnet_set_allocator(allocate, release);
@@ -99,7 +99,7 @@ int main(int argc, char ** argv)
     rocketnet_forbid_xdp_commit();
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     if (!server) { fprintf(stderr, "memory profile configuration refused\n"); rocketnet_term(); return 1; }
-    const bool same_driver = strcmp(rocketnet_server_transport_driver(server), driver) == 0;
+    const bool same_transport = strcmp(rocketnet_server_transport_io_name(server), transport) == 0;
     printf("{\"live_allocator_bytes\":%zu,\"peak_allocator_bytes\":%zu,\"live_allocations\":%zu,\"process_peak_rss_bytes\":%llu}\n",
         live.load(), peak.load(), count.load(), (unsigned long long)process_peak_rss());
     const uint64_t planned_allocator = plan.total_bytes - plan.umem_bytes;
@@ -109,6 +109,6 @@ int main(int argc, char ** argv)
         planned_allocator - live.load() <= (uint64_t)plan.worker_threads * rocketnet_platform_thread_allocation_bytes();
     rocketnet_server_transport_destroy(server);
     rocketnet_term();
-    if (!same_driver || !matches) { fprintf(stderr, "allocator observation differs from the plan; check ambient config overrides\n"); return 1; }
+    if (!same_transport || !matches) { fprintf(stderr, "allocator observation differs from the plan; check ambient config overrides\n"); return 1; }
     if (live.load() || count.load()) { fprintf(stderr, "memory profile leaked allocations\n"); return 1; }
 }

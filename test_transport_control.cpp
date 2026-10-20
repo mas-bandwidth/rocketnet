@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Compile the actual transport here to seed protocol state and substitute a
-// deterministic driver. No test hook or additional export enters the SDK.
+// deterministic transport. No test hook or additional export enters the SDK.
 #include "sdk/rocketnet_server_protocol.h"
 #include "sdk/rocketnet_replay.h"
 #include "sdk/rocketnet_fragment.h"
@@ -110,7 +110,7 @@ static int receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, i
 static uint8_t * start_packet(void * p, const rocketnet_address_t * to, uint64_t * id)
 {
     auto * f = (control_fixture_t*)p;
-    if (f->unreachable) { *id = ROCKETNET_DRIVER_PACKET_UNREACHABLE; return NULL; }
+    if (f->unreachable) { *id = ROCKETNET_TRANSPORT_PACKET_UNREACHABLE; return NULL; }
     if (f->lease_frames)
     {
         if (f->lease_starts == f->capacity) return NULL;
@@ -160,7 +160,7 @@ static rocketnet_server_socket_process_packets_t * receive(void * p)
     return &f->received;
 }
 
-static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_driver_operations_t * operations, int clients, bool staged, int payload_limit = ROCKETNET_MAX_PAYLOAD_BYTES)
+static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_transport_io_operations_t * operations, int clients, bool staged, int payload_limit = ROCKETNET_MAX_PAYLOAD_BYTES)
 {
     f->staged = staged;
     rocketnet_server_transport_config_t config;
@@ -168,16 +168,16 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
     config.num_reassembly_slots = 1;
-    strcpy(config.driver, "portable");
+    strcpy(config.transport, "portable");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
-    rocketnet_server_driver_close(&server->io);
+    rocketnet_server_transport_io_close(&server->io);
     *operations = {};
     operations->destroy = fixture_destroy; operations->stop = fixture_stop;
     operations->send_batch = send_batch; operations->receive_batch = receive_batch;
     if (staged)
     {
-        operations->flags = ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE;
+        operations->flags = ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE;
         operations->start_packet = start_packet; operations->finish_packet = finish_packet;
         operations->abort_packet = abort_packet; operations->flush = flush; operations->receive = receive;
     }
@@ -211,7 +211,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
 static void test_buffered_control_pressure(int clients = 300)
 {
     auto * f = new control_fixture_t();
-    rocketnet_server_driver_operations_t operations;
+    rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, clients, false);
     f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
     const double begin = rocketnet_time();
@@ -243,7 +243,7 @@ static void test_buffered_control_pressure(int clients = 300)
 static void test_disconnect_burst_next_send(bool staged)
 {
     auto * f = new control_fixture_t(); f->capacity = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS + 1;
-    rocketnet_server_driver_operations_t operations;
+    rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, 1, staged);
     rocketnet_server_transport_update(server, 1.0);
     const int stats_index = server->current_stats_index;
@@ -265,7 +265,7 @@ static void test_disconnect_burst_next_send(bool staged)
 static void test_staged_control_fairness()
 {
     auto * f = new control_fixture_t(); f->capacity = 2;
-    rocketnet_server_driver_operations_t operations;
+    rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, 12, true);
     // Every slot remains due, but only two frames are available per update.
     for (int step = 0; step < 6; ++step) rocketnet_server_transport_update(server, 1.0 + step);
@@ -283,7 +283,7 @@ static void test_single_frame_arena()
     for (int staged = 0; staged < 2; ++staged)
     {
         auto * f = new control_fixture_t(); f->capacity = 1;
-        rocketnet_server_driver_operations_t operations;
+        rocketnet_server_transport_io_operations_t operations;
         auto * server = make_server(f, &operations, 1, staged != 0, 5000);
         checked_seals = 0; check_arena_copy = true;
         for (int attempt = 0; attempt < 2; ++attempt)
@@ -306,7 +306,7 @@ static void test_single_frame_arena()
             }
             else if (attempt == 0) CHECK(server->payload_ring.info[0].wire_bytes == 0);
             rocketnet_server_transport_send_packets(server);
-            CHECK(f->payloads == attempt); // Failed seal never reached the driver.
+            CHECK(f->payloads == attempt); // Failed seal never reached the transport.
         }
         CHECK(checked_seals == 2);
         check_arena_copy = false; fail_seal = false;
@@ -324,7 +324,7 @@ static void test_staged_lease_table_full()
     f->capacity = lease_limit + 1;
     f->lease_frames = (uint8_t*) rocketnet_malloc(NULL, (size_t) f->capacity * ROCKETNET_FRAME_STRIDE);
     CHECK(f->lease_frames);
-    rocketnet_server_driver_operations_t operations;
+    rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, 1, true);
     for (int i = 0; i < lease_limit; ++i)
     {
@@ -354,7 +354,7 @@ static void test_entries_carry_connection_id(bool staged)
     // transport's payload append sites (buffered or staged); the payload id
     // checks go red. Time is an argument; the clock starts at 1000.0.
     auto * f = new control_fixture_t(); f->capacity = 16;
-    rocketnet_server_driver_operations_t operations;
+    rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, 2, staged);
     auto * protocol = &server->protocol;
     const double time = 1000.0;
@@ -484,17 +484,17 @@ static void test_entries_carry_connection_id(bool staged)
 
 static void test_staged_link_address_hooks()
 {
-    // DRIVERS.md, xdp (the reply-MAC rule), from the transport's side. Fed
+    // TRANSPORTS.md, xdp (the reply-MAC rule), from the transport's side. Fed
     // one update holding a packet from an unknown address (dropped) and a
     // payload that opens under client 0's keys (view index 1), the transport
-    // tells the driver about the accepted packet only. Then the driver
+    // tells the transport about the accepted packet only. Then the transport
     // refuses every start for want of a link-layer destination: the
     // transport counts SEND_NO_LINK_ADDRESS, never SEND_RING_FULL, and sends
     // nothing. Mutation that must bite: drop the peer_accepted call, or the
     // unreachable test in the start wrapper; a check below goes red. Time
     // is an argument; the clock starts at 1000.0.
     auto * f = new control_fixture_t(); f->capacity = 16;
-    rocketnet_server_driver_operations_t operations;
+    rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, 1, true);
     operations.peer_accepted = peer_accepted;
     auto * protocol = &server->protocol;

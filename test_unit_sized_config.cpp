@@ -91,10 +91,10 @@ static void sized_config_accepts_every_known_size()
     }
 
     // a caller compiled against an older revision: simulated as a client
-    // config that ended before the driver field. the defaults write only the
+    // config that ended before the transport field. the defaults write only the
     // old prefix; the read takes the caller's prefix and defaults the rest.
 
-    const size_t older = offsetof( struct rocketnet_client_transport_config_t, driver );
+    const size_t older = offsetof( struct rocketnet_client_transport_config_t, transport );
     const size_t simulated_known[] = { older, sizeof( struct rocketnet_client_transport_config_t ) };
 
     struct rocketnet_client_transport_config_t defaults;
@@ -122,7 +122,7 @@ static void sized_config_accepts_every_known_size()
         check( read.max_payload_bytes == 4096 );
         check( read.num_reassembly_slots == 3 );
         check( memcmp( read.filter_value, defaults.filter_value, sizeof( read.filter_value ) ) == 0 );
-        check( strcmp( read.driver, defaults.driver ) == 0 );
+        check( strcmp( read.transport, defaults.transport ) == 0 );
         check( read.state_change_callback == NULL );
         check( read.time_callback == NULL );
     }
@@ -261,7 +261,7 @@ static void sized_config_refuses_unknown_size()
 
     struct rocketnet_client_transport_config_t defaults;
     rocketnet_client_transport_default_config( &defaults );
-    const size_t older = offsetof( struct rocketnet_client_transport_config_t, driver );
+    const size_t older = offsetof( struct rocketnet_client_transport_config_t, transport );
     const size_t simulated_known[] = { older, client_current };
     {
         struct rocketnet_client_transport_config_t caller = defaults;

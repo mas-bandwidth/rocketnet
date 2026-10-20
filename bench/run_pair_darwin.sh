@@ -1,5 +1,5 @@
 #!/bin/sh
-# rocketnet driver bench runner, darwin (#100): one sender/receiver pair over
+# rocketnet transport bench runner, darwin (#100): one sender/receiver pair over
 # loopback, the run_pair.sh protocol minus core pinning -- macOS has no
 # userspace CPU affinity API, so both sides run at nice 10 unpinned and the
 # report says so. Loopback magnitudes are loopback; ordering is the product.

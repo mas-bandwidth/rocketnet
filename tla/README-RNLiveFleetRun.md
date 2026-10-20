@@ -2,7 +2,7 @@
 
 `tla/RNLiveFleetRun.tla` models the live XDP fleet run of `docs/LIVE-XDP.md`.
 One orchestrator drives the run over ssh: one server on the test server with
-the xdp driver, and one client per bench. The model is written before the
+the xdp transport, and one client per bench. The model is written before the
 code. The runner card (`rocketnet-live-xdp-fleet-runner`) builds
 `scripts/rocketnet-live-xdp` and the remote steps under `scripts/live-xdp/`.
 It names their steps after the actions below and cites this module. Until

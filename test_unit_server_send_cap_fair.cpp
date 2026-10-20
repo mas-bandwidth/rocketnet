@@ -6,7 +6,7 @@
 // The server send pass at a cap below the client count: sdk/rocketnet_
 // message_server.cpp rotates the first connection served, so a cap of one
 // packet per tick serves two or three clients in turn instead of starving
-// all but the first. The server runs on the in-memory loopback driver with
+// all but the first. The server runs on the in-memory loopback transport with
 // step-driven clients and a test clock starting at 1000.0; no socket, no
 // thread, no sleep and no real time. Each client sends one reliable and one
 // unreliable message per tick for 60 s of test time at 10 Hz, and the
@@ -461,7 +461,7 @@ REGISTER_UNIT_TEST( server_send_cap_one_two_clients );
 REGISTER_UNIT_TEST( server_send_cap_one_three_clients );
 
 // The configuration server_send_capacity_default_covers_clients creates: the
-// default, at ROCKETNET_MAX_CLIENTS clients, on the loopback driver. The case
+// default, at ROCKETNET_MAX_CLIENTS clients, on the loopback transport. The case
 // and its bound read it, so they cannot drift apart.
 static void send_capacity_default_config( rocketnet_server_transport_config_t * config )
 {
@@ -475,8 +475,8 @@ static void send_capacity_default_config( rocketnet_server_transport_config_t * 
 // allocated up front by design, and the Windows Debug CRT fills every block
 // it returns, so the whole plan is resident there. The bound is
 // rocketnet_server_transport_memory_plan's total for the case's
-// configuration, planned with the portable driver because the plan has no
-// row for the loopback driver, plus one loopback endpoint's create-time queue
+// configuration, planned with the portable transport because the plan has no
+// row for the loopback transport, plus one loopback endpoint's create-time queue
 // (rocketnet_loopback_queue_bytes at ROCKETNET_LOOPBACK_QUEUE_PACKETS),
 // plus a stated 32 MiB margin for the process itself. A regression above the
 // plan fails the case.
@@ -503,7 +503,7 @@ static void server_send_capacity_default_covers_clients()
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( config.backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( config.server_public_key, config.server_secret_key ) == ROCKETNET_STATUS_OK );
-    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     struct rocketnet_server_transport_t * transport = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
     check( transport != NULL );
     check( rocketnet_server_transport_send_capacity( transport ) >= config.max_clients );

@@ -166,7 +166,7 @@ expect this trace as its counterexample. Then decide.
 
 `rocketnet_server_transport_update` short-circuits only in STOPPING (`:945-951`). In
 STOPPED it runs everything: receive, request processing, mapping creation, keep-alives.
-On the portable and GSO drivers the socket is still open until destroy (`synchronous_stop`,
+On the portable and GSO transports the socket is still open until destroy (`synchronous_stop`,
 `sdk/rocketnet_driver_builtin.cpp:17`). `start_packet` alone checks RUNNING (`:1255`).
 Separately, `stop` assigns STOPPING unconditionally (`:866-870`), so STOPPED → STOPPING is
 an edge. The documented shutdown is "stop and wait for stopped first" and then destroy
@@ -723,8 +723,8 @@ worker threads are quiescent, because they are joined only in destroy (`:1635-16
 |---|---|---|---|
 | — | create succeeds | RUNNING | `server_transport.cpp:774` |
 | any | _App(stop)_ | STOPPING | `:866-870` |
-| STOPPING | _App(update)_, driver stop granted | STOPPED | `:945-950` |
-| STOPPING | _App(update)_, driver stop pending (IOCP draining) | STOPPING | `:947-948`; `driver_builtin.cpp:117-121` |
+| STOPPING | _App(update)_, transport stop granted | STOPPED | `:945-950` |
+| STOPPING | _App(update)_, transport stop pending (IOCP draining) | STOPPING | `:947-948`; `transport_builtin.cpp:117-121` |
 | STOPPED | _App(update)_ | **full update (F6)** | `:953-1190` |
 | XDP STOPPING | socket update | STOPPED at once, no drain | `server_socket_linux.cpp:1676-1679` |
 | any | destroy | threads quit and are joined | `:1635-1647`; IOCP `server_iocp_windows.cpp:267-283` |
@@ -734,7 +734,7 @@ worker threads are quiescent, because they are joined only in destroy (`:1635-16
 - `INV NoProtocolAfterStopped` — assert it and expect F6's trace, unless the maintainer
   rules that STOPPED is not absorbing.
 - `LIVE StopCompletes`: repeated `update` after `stop` reaches STOPPED, given fair
-  driver progress.
+  transport progress.
 
 **Verdict: model it, small, with M14 as one module.** Alone it is three states and F6.
 Its value is as the frame M14 runs inside.
@@ -892,7 +892,7 @@ and no protocol. Its pure parts are already factored out for direct tests
 
 | Item | Where | Why no module |
 |---|---|---|
-| Driver ladder selection | `sdk/rocketnet_driver.cpp`; S:73-172 | A pure function from a list to a grant; no state survives create. Table tests. |
+| Transport ladder selection | `sdk/rocketnet_driver.cpp`; S:73-172 | A pure function from a list to a grant; no state survives create. Table tests. |
 | Config and env precedence | `sdk/rocketnet_server_transport.cpp:377-397` and around | Pure function. |
 | Library init / term | `sdk/rocketnet.cpp` | Three states and two refusals; a unit test covers it. |
 | Client transport lifecycle (thread start/quit) | `client_transport.cpp:355-386, 1140-1150` | One quit flag, a join; the flip is covered by M12. |

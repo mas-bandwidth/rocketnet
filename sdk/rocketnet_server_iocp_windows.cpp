@@ -778,7 +778,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
     if ( error == WSAEINVAL || error == WSAEOPNOTSUPP )
     {
-        // As the GSO driver does for a refused live UDP_SEGMENT send:
+        // As the GSO transport does for a refused live UDP_SEGMENT send:
         // degrade the tier and resend losslessly, never drop the run.
         rocketnet_warn( "iocp transport: live USO send refused (Winsock %d). degrading to WSASendTo per datagram", error );
         iocp->features.fetch_and( ~ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );

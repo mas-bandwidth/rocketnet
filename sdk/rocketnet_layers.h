@@ -28,12 +28,12 @@ extern "C" {
 /** @brief Address-family value for IPv6. */
 #define ROCKETNET_ADDRESS_IPV6                             2
 
-/** @brief Sets the storage capacity for a transport driver candidate list.
+/** @brief Sets the storage capacity for a transport transport candidate list.
  *
  * The value includes the terminating NUL byte; a configured string must fit
  * within this many bytes.
  */
-#define ROCKETNET_DRIVER_STRING_LENGTH                     64
+#define ROCKETNET_TRANSPORT_STRING_LENGTH                     64
 
 /** @brief The connect token expired: its expire time was not after the current Unix time when the connect began, or its lifetime (expire minus create) ran out before the handshake reached CONNECTED. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED         -7
@@ -195,30 +195,30 @@ void rocketnet_clear_and_free( void * context, void * p, size_t p_size );
 // DEFAULT < CONFIG STRUCT < ENVIRONMENT: the app ships what it means in code,
 // and an operator standing at an already-built binary overrides any field with
 // an environment variable, no rebuild -- the ROCKETNET_ prefix plus the
-// endpoint and field name uppercased (cfg.driver -> ROCKETNET_SERVER_TRANSPORT or
+// endpoint and field name uppercased (cfg.transport -> ROCKETNET_SERVER_TRANSPORT or
 // ROCKETNET_CLIENT_TRANSPORT). Every env override is logged loudly at create with
 // the variable name and the value it displaced (secret fields log redacted).
 // Validation refuses loudly at create on any out-of-range value -- never
 // clamps, never silently corrects.
 //
 // Env encodings: integers are decimal; byte fields are base64 of exactly
-// the field's length (keygen prints keys in base64); the driver field is
+// the field's length (keygen prints keys in base64); the transport field is
 // the ordered candidate list below. An env var set to the empty string is
 // ignored as if unset, with a log line. The pointer fields (the client's
 // callbacks) have no env form.
 //
-// The driver field: an ORDERED CANDIDATE LIST, comma separated, tried left
+// The transport field: an ORDERED CANDIDATE LIST, comma separated, tried left
 // to right at create -- first grant wins, and a list exhausted by REFUSAL
 // fails loudly. "auto" (the default, also the empty string) expands to
 // this platform's recommended order for the endpoint: linux server
 // xdp,gso,portable; macOS msgx,portable; everywhere else portable
 // (clients: portable everywhere, plus msgx on macOS). A one-element list
-// is a pin: that driver or loud failure, never a silent fall. A name in
+// is a pin: that transport or loud failure, never a silent fall. A name in
 // the known transport set (xdp, gso, msgx, portable) but absent on this
 // platform -- or not applicable to this endpoint, like xdp for a client --
 // is IGNORED with one soft log line, so one fleet-wide config line deploys
 // unmodified to heterogeneous boxes; a list whose EVERY name is ignored
-// names no driver for this endpoint at all and falls to the endpoint's own
+// names no transport for this endpoint at all and falls to the endpoint's own
 // auto order, loudly, rather than bricking an endpoint the line was not
 // addressing. A name in no transport set anywhere is a typo and fails
 // loudly at parse, listing the valid names.
@@ -248,7 +248,7 @@ const char * rocketnet_client_transport_state_name( int state );
 // payload this client sends and reassembles, and the per-connection
 // reassembly slot count, zero meaning the defaults above; the client's
 // delivered mirror sizes itself to the client's own drain bound, about
-// 8.4MB at the default maximum -- the driver candidate list, and an
+// 8.4MB at the default maximum -- the transport candidate list, and an
 // optional state-change callback. NULL config is the development posture:
 // the published test filter, the defaults, no callback.
 
@@ -266,7 +266,7 @@ struct rocketnet_client_transport_config_t
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
-    char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
+    char transport[ROCKETNET_TRANSPORT_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief Optional state transition callback; NULL disables it. It receives the create context and previous and current states. */
     void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
     /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
@@ -288,21 +288,21 @@ struct rocketnet_client_transport_config_t
  */
 void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config );
 
-// Allocation-free constructor memory plan for one built-in driver name.
+// Allocation-free constructor memory plan for one built-in transport name.
 // Includes SDK allocator requests (alignment/ownership overhead). Excludes OS
 // stacks, kernel/libc resources and application memory; this is not a host RAM
 // limit. Uses the supplied numeric config exactly (NULL means defaults); no
 // environment overlay, key validation, socket probe or budget refusal. Zero
-// means invalid geometry, overflow, unknown/custom driver, or driver not built
-// for this platform. Query each candidate separately: "auto" and driver lists
+// means invalid geometry, overflow, unknown/custom transport, or transport not built
+// for this platform. Query each candidate separately: "auto" and transport lists
 // are not concrete plans.
-/** @brief Measure SDK allocator bytes for one client transport driver.
+/** @brief Measure SDK allocator bytes for one client transport transport.
  * @param[in] config Numeric settings to measure, or NULL for defaults. Environment overrides are not applied.
- * @param[in] driver One concrete built-in driver name; `auto` and comma-separated candidate lists are not plans.
- * @return The planned SDK allocator bytes, including its alignment and ownership overhead, or 0 for invalid geometry, overflow, an unknown/custom driver, or a driver not built for this platform.
- * @details This is allocation-free and does not validate keys, inspect the environment, probe a socket, or enforce a host memory budget. It excludes OS stacks, kernel, libc, and application memory. Query each candidate separately before choosing a driver. The result is a plan, not a reservation or grant.
+ * @param[in] transport One concrete built-in transport name; `auto` and comma-separated candidate lists are not plans.
+ * @return The planned SDK allocator bytes, including its alignment and ownership overhead, or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
+ * @details This is allocation-free and does not validate keys, inspect the environment, probe a socket, or enforce a host memory budget. It excludes OS stacks, kernel, libc, and application memory. Query each candidate separately before choosing a transport. The result is a plan, not a reservation or grant.
  */
-uint64_t rocketnet_client_transport_required_memory( const struct rocketnet_client_transport_config_t * config, const char * driver );
+uint64_t rocketnet_client_transport_required_memory( const struct rocketnet_client_transport_config_t * config, const char * transport );
 
 // the defaults for a caller whose struct is config_bytes long, a known size of
 // the struct. 1 written; 0 refused, nothing written. a NULL config is a
@@ -340,7 +340,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * 
  * @param config [in] Optional full config; NULL selects defaults.
  * @param time [in] Finite, monotonic time in seconds for the initial update clock.
  * @param status [out] Optional status destination; receives OK on success or the specific failure code on every failure.
- * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport driver whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp:882); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
+ * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp:882); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
  * @code
  * // token, context, config, time, and status are supplied by the game.
  * rocketnet_init(NULL);
@@ -534,18 +534,18 @@ void rocketnet_client_transport_send_packets( struct rocketnet_client_transport_
  */
 int rocketnet_client_transport_state( struct rocketnet_client_transport_t * client_transport );
 
-// the granted driver, request-vs-granted style: the name of the candidate
+// the granted transport, request-vs-granted style: the name of the candidate
 // that won the ladder at create ("portable", "msgx"), never the requested
 // list. any performance claim attaches to what this returns.
 
 // a NULL client_transport is a counted no-op that returns NULL.
 /**
- * @brief Returns the client driver granted at creation.
+ * @brief Returns the client transport granted at creation.
  *
  * @param client_transport Client transport; NULL is a counted no-op returning NULL.
- * @return Transport-owned granted driver name, valid until destroy, or NULL.
+ * @return Transport-owned granted transport name, valid until destroy, or NULL.
  */
-const char * rocketnet_client_transport_driver( struct rocketnet_client_transport_t * client_transport );
+const char * rocketnet_client_transport_io_name( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport is a counted no-op that returns 0.
 /** @brief Read the server-assigned index of the connected client.
@@ -658,13 +658,13 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // how every deployment of a protocol ends up sharing one identity.
 // rocketnet_server_transport_dev_config fills the published
 // development keys and test filter for local work, loudly. NULL config is
-// the default shape. num_xdp_queues is the staged drivers' queue count -- XDP
-// queues on the xdp driver, reuseport sockets on the gso driver -- kept under
+// the default shape. num_xdp_queues is the staged transports' queue count -- XDP
+// queues on the xdp transport, reuseport sockets on the gso transport -- kept under
 // its historic name for ABI stability with the language bindings; num_os_cpus
-// configures the XDP driver's core layout. zero means the driver default, and
-// the portable driver ignores both. The tighter num_xdp_queues bounds are per
-// driver and refused loudly at create, never clamped: the xdp driver takes any
-// count from 1, the gso driver refuses past 32.
+// configures the XDP transport's core layout. zero means the transport default, and
+// the portable transport ignores both. The tighter num_xdp_queues bounds are per
+// transport and refused loudly at create, never clamped: the xdp transport takes any
+// count from 1, the gso transport refuses past 32.
 //
 // The fragmentation shape rides max_payload_bytes and
 // num_reassembly_slots: the largest payload this server sends and
@@ -678,8 +678,8 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 //
 // public_address, empty by default, displaces the create call's address
 // parameter when set -- struct or ROCKETNET_PUBLIC_ADDRESS (deprecated alias:
-// ROCKETNET_SERVER_PUBLIC_ADDRESS) -- so the address the driver ladder
-// verifies, the address the driver binds, and the address connect tokens
+// ROCKETNET_SERVER_PUBLIC_ADDRESS) -- so the address the transport ladder
+// verifies, the address the transport binds, and the address connect tokens
 // validate against are always the same one. the ENV form is scoped to the
 // first server create in the process and then consumed, loudly: the
 // deployed binary's one server gets its redirect, and a multi-transport
@@ -708,16 +708,16 @@ struct rocketnet_server_transport_config_t
     uint8_t server_public_key[32];
     /** @brief 32-byte server secret key; override logs redact it. */
     uint8_t server_secret_key[32];                  // secret: logged redacted
-    /** @brief Requested XDP/GSO queue count; zero selects the driver default, otherwise 1 through 1024. */
-    int num_xdp_queues;                             // 1 .. 1024; 0 is the driver default
-    /** @brief Cores reserved for the operating system by XDP; zero selects the driver default, otherwise 1 through 256. */
-    int num_os_cpus;                                // 1 .. 256; 0 is the driver default
+    /** @brief Requested XDP/GSO queue count; zero selects the transport default, otherwise 1 through 1024. */
+    int num_xdp_queues;                             // 1 .. 1024; 0 is the transport default
+    /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
+    int num_os_cpus;                                // 1 .. 256; 0 is the transport default
     /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PAYLOAD_BYTES through 305408. */
     int max_payload_bytes;                          // ROCKETNET_MAX_PAYLOAD_BYTES .. 305,408; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
     int num_reassembly_slots;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
-    char driver[ROCKETNET_DRIVER_STRING_LENGTH];    // the candidate list; default "auto"
+    char transport[ROCKETNET_TRANSPORT_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief NUL-terminated advertised address; an empty string uses the create address. */
     char public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     /** @brief Maximum client inactivity in seconds; 1 through 3600, default 60. */
@@ -760,34 +760,34 @@ int rocketnet_server_transport_default_config_sized( struct rocketnet_server_tra
  */
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
 
-// Allocation-free constructor memory plan for one built-in driver name.
+// Allocation-free constructor memory plan for one built-in transport name.
 // Includes SDK allocator requests (alignment/ownership overhead and transient
 // worker shims) plus XDP UMEM. Excludes OS stacks, kernel/libbpf/libxdp resources,
 // loader/libc bookkeeping and application memory; this is not a host RAM limit.
 // Uses the supplied numeric config exactly (NULL means defaults); no environment
 // overlay, key validation, socket probe or budget refusal. Zero means invalid
-// geometry, overflow, unknown/custom driver, or driver not built for this platform.
-// Query each candidate separately: "auto" and driver lists are not concrete plans.
-/** @brief Measure SDK allocator bytes for one server transport driver.
+// geometry, overflow, unknown/custom transport, or transport not built for this platform.
+// Query each candidate separately: "auto" and transport lists are not concrete plans.
+/** @brief Measure SDK allocator bytes for one server transport transport.
  * @param[in] config Numeric server settings to measure, or NULL for defaults. Environment overrides are not applied.
- * @param[in] driver One concrete built-in driver name; `auto` and candidate lists are not plans.
- * @return The planned SDK allocator bytes, including XDP UMEM where applicable, or 0 for invalid geometry, overflow, an unknown/custom driver, or a driver not built for this platform.
- * @details This is allocation-free and does not validate keys, inspect environment overrides, probe sockets, or enforce a host memory budget. It excludes OS stacks, kernel/libbpf/libxdp resources, libc bookkeeping, and application memory. It measures one driver candidate; the result is not a reservation or grant.
+ * @param[in] transport One concrete built-in transport name; `auto` and candidate lists are not plans.
+ * @return The planned SDK allocator bytes, including XDP UMEM where applicable, or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
+ * @details This is allocation-free and does not validate keys, inspect environment overrides, probe sockets, or enforce a host memory budget. It excludes OS stacks, kernel/libbpf/libxdp resources, libc bookkeeping, and application memory. It measures one transport candidate; the result is not a reservation or grant.
  */
-uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * driver );
+uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * transport );
 
-// Allocation-free whole-host memory estimate for one built-in driver name: the
-// required_memory plan plus the kernel-facing memory the driver requests. Each
+// Allocation-free whole-host memory estimate for one built-in transport name: the
+// required_memory plan plus the kernel-facing memory the transport requests. Each
 // component is a request, never a grant: allocator_bytes is the SDK allocator
 // plan (required_memory minus UMEM); umem_bytes is XDP UMEM, the frame memory,
 // equal to the plan's; the socket buffer fields sum the SO_SNDBUF and SO_RCVBUF
-// sizes asked of every socket the driver opens; xdp_ring_bytes is the AF_XDP
+// sizes asked of every socket the transport opens; xdp_ring_bytes is the AF_XDP
 // RX and TX descriptor rings asked of every XDP socket; thread_stack_bytes is
-// worker_threads x thread_stack_bytes_per_thread, the stack each driver thread
-// is created with (the platform default: the driver passes no stack size), as
+// worker_threads x thread_stack_bytes_per_thread, the stack each transport thread
+// is created with (the platform default: the transport passes no stack size), as
 // reserved address space. total_bytes is the sum of the six byte components
 // and is at least required_memory. exclusions names, in static strings, what
-// the library cannot know and does not count. Same config and driver rules as
+// the library cannot know and does not count. Same config and transport rules as
 // required_memory: NULL config means defaults; false (and a zeroed estimate)
 // means no plan. A NULL estimate is a counted misuse that returns false.
 
@@ -822,20 +822,20 @@ struct rocketnet_host_memory_estimate_t
     const char * exclusions[ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS];
 };
 
-/** @brief Estimate memory requests made by one server transport driver.
+/** @brief Estimate memory requests made by one server transport transport.
  * @param[in] config Numeric server settings, or NULL for defaults; environment overrides are not applied.
- * @param[in] driver One concrete built-in driver name; NULL or an unsupported driver makes the call fail.
+ * @param[in] transport One concrete built-in transport name; NULL or an unsupported transport makes the call fail.
  * @param[out] estimate Receives the estimate; NULL is counted misuse and returns false. On failure the struct remains zeroed.
- * @return true with a populated estimate, or false when the driver/config has no valid plan, arithmetic overflows, or estimate is NULL.
+ * @return true with a populated estimate, or false when the transport/config has no valid plan, arithmetic overflows, or estimate is NULL.
  * @details This allocation-free estimate separates SDK allocator bytes, UMEM, requested socket buffers or XDP rings, and worker stack address space. They are requests, not grants. Exclusions point to static strings whose storage remains valid for the process lifetime. This is not a host RAM limit.
  */
-bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config, const char * driver, struct rocketnet_host_memory_estimate_t * estimate );
+bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config, const char * transport, struct rocketnet_host_memory_estimate_t * estimate );
 
 // a NULL public_address_string is a counted no-op that returns NULL; a NULL
 // config is the default shape.
 /** @brief Create a server transport using the standard NULL-or-pointer result.
  * @param context [in] Caller-provided allocator context passed to allocations for this transport; NULL is allowed if supported by the configured allocator.
- * @param public_address_string [in] Non-NULL numeric address; port zero requests dynamic binding when supported by the selected driver.
+ * @param public_address_string [in] Non-NULL numeric address; port zero requests dynamic binding when supported by the selected transport.
  * @param config [in] Optional full configuration; NULL selects defaults and does not supply production keys.
  * @return A caller-owned transport or NULL on any creation failure. Use create_ex to obtain the specific refusal status.
  */
@@ -849,11 +849,11 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 // the non-_ex form passes NULL.
 /** @brief Create a server transport and report the exact refusal status.
  * @param context [in] Caller-provided allocator context passed to allocations for this transport; NULL is allowed if supported by the configured allocator.
- * @param public_address_string [in] Non-NULL numeric bind/public address with optional port; port zero requests a dynamically assigned port when the selected driver supports it.
+ * @param public_address_string [in] Non-NULL numeric bind/public address with optional port; port zero requests a dynamically assigned port when the selected transport supports it.
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport driver whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init(NULL);
@@ -906,23 +906,23 @@ int rocketnet_server_transport_state( struct rocketnet_server_transport_t * serv
 // build their token address from it instead of hardcoding a port;
 // production servers know their public address already.
 //
-// Port-zero discovery is a per-driver property: a driver whose create binds
-// the port it is given and discovers nothing -- the XDP driver -- refuses a
+// Port-zero discovery is a per-transport property: a transport whose create binds
+// the port it is given and discovers nothing -- the XDP transport -- refuses a
 // port-zero address at create, loudly, before it binds anything. An "auto"
-// ladder falls past it to a driver that does discover, and only a pin on a
-// non-discovering driver refuses the create outright. The portable, msgx and
-// GSO drivers discover; the XDP driver does not. So this returns either the
-// port the public address carried, or the port a discovering driver was
+// ladder falls past it to a transport that does discover, and only a pin on a
+// non-discovering transport refuses the create outright. The portable, msgx and
+// GSO transports discover; the XDP transport does not. So this returns either the
+// port the public address carried, or the port a discovering transport was
 // granted.
 
 // a NULL server_transport is a counted no-op that returns 0.
 /** @brief Return the port the server transport bound.
  * @param server_transport [in] Created server transport; NULL is a counted no-op.
- * @return The bound port in host byte order; zero for NULL. A configured port of zero is supported only by drivers that can discover the bound port.
+ * @return The bound port in host byte order; zero for NULL. A configured port of zero is supported only by transports that can discover the bound port.
  */
 uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
 
-// the granted driver, request-vs-granted style: the name of the candidate
+// the granted transport, request-vs-granted style: the name of the candidate
 // that won the ladder at create ("xdp", "gso", "msgx", "portable"), never
 // the requested list. the 1000s-of-players claims attach to the granted
 // tier this returns, not the requested one -- one log line at create names
@@ -930,20 +930,20 @@ uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * 
 
 // a NULL server_transport is a counted no-op that returns NULL.
 /**
- * @brief Returns the server driver granted at creation.
+ * @brief Returns the server transport granted at creation.
  *
  * @param server_transport Server transport; NULL is a counted no-op returning NULL.
- * @return Transport-owned granted driver name, valid until destroy, or NULL.
+ * @return Transport-owned granted transport name, valid until destroy, or NULL.
  */
-const char * rocketnet_server_transport_driver( struct rocketnet_server_transport_t * server_transport );
+const char * rocketnet_server_transport_io_name( struct rocketnet_server_transport_t * server_transport );
 
 // the commit barrier for host processes that must never commit an XDP data
-// plane (test harnesses, smokes): installed once, the xdp driver's create
+// plane (test harnesses, smokes): installed once, the xdp transport's create
 // refuses before its first act; the non-mutating pre-flight stays
-// reachable. a no-op on platforms without the xdp driver.
+// reachable. a no-op on platforms without the xdp transport.
 
 /**
- * @brief Prevents XDP drivers from committing a data plane in this process.
+ * @brief Prevents XDP transports from committing a data plane in this process.
  *
  * @return No value. Install before XDP server creation; XDP create refuses before commit while preflight remains available.
  */
@@ -1076,9 +1076,9 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
 // synchronizing operation (a join or a barrier), not a wall-clock wait.
 // Call send_packets after each joined fill phase. There is no required frame,
 // update, send or ACK rate. When staged packets actually leave is per
-// driver, and a caller owns only the guarantee: everything staged before
+// transport, and a caller owns only the guarantee: everything staged before
 // send_packets is sent by it, and nothing is guaranteed sent without it.
-// Code against the guarantee, not a driver's eagerness. Calling
+// Code against the guarantee, not a transport's eagerness. Calling
 // send_packets again without newly staged packets is a no-op. The fields of the
 // context are read-only to the caller. The transport privately owns and checks
 // all metadata; a copy can be consumed once, and stale, modified or wrong-owner
@@ -1185,7 +1185,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
 
 // Disconnects one connected client deliberately: the redundant disconnect
-// burst is staged and the slot frees immediately. Buffered drivers may send
+// burst is staged and the slot frees immediately. Buffered transports may send
 // full batches during this call; remaining packets leave on the next flush.
 // Why is the game's decision; this is only the mechanism. Main thread only, never
 // while a fill phase is open -- it tears down the connection state the
@@ -1195,7 +1195,7 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
 /** @brief Disconnect a connected client and release its slot.
  * The slot frees within this call. The redundant disconnect burst is queued for
  * the client's address and leaves on the next rocketnet_server_transport_send_packets
- * or rocketnet_server_transport_update, whichever comes first; a buffered driver
+ * or rocketnet_server_transport_update, whichever comes first; a buffered transport
  * may send a full batch during this call. When send staging is full the rest of
  * the burst is dropped, and the slot is still released.
  * @param server_transport [in,out] Created server transport; NULL is a counted no-op.

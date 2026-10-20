@@ -26,29 +26,29 @@ static double percentile(std::vector<double> samples, double p)
 
 int main(int argc, char ** argv)
 {
-    const char * driver = argc > 1 ? argv[1] : "portable";
+    const char * transport = argc > 1 ? argv[1] : "portable";
     const int packets_per_frame = argc > 2 ? atoi(argv[2]) : 8;
     const int frames = argc > 3 ? atoi(argv[3]) : 2000;
     const bool plant = argc > 4 && strcmp(argv[4], "plant") == 0;
     CHECK(packets_per_frame >= 1);
     CHECK(frames > 0);
-    CHECK(strlen(driver) < sizeof(rocketnet_server_transport_config_t().driver));
+    CHECK(strlen(transport) < sizeof(rocketnet_server_transport_config_t().transport));
     rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = 2;
-    strcpy(config.driver, driver);
+    strcpy(config.transport, transport);
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
-    CHECK(server && strcmp(rocketnet_server_transport_driver(server), driver) == 0);
+    CHECK(server && strcmp(rocketnet_server_transport_io_name(server), transport) == 0);
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
-    strcpy(client_config.driver, driver);
+    strcpy(client_config.transport, transport);
     auto * client = rocketnet_client_transport_create(NULL, token, &client_config, rocketnet_time());
     CHECK(client);
     int client_index = -1;
@@ -154,12 +154,12 @@ int main(int argc, char ** argv)
     CHECK(!send_us.empty());
     CHECK(received > 0);
 
-    printf("client_main_thread_cost driver=%s packets_per_frame=%d frames=%d"
+    printf("client_main_thread_cost transport=%s packets_per_frame=%d frames=%d"
            " send_us_p50=%.3f send_us_p99=%.3f send_us_max=%.3f"
            " update_us_p50=%.3f update_us_p99=%.3f update_us_max=%.3f"
            " total_us_p50=%.3f total_us_p99=%.3f total_us_max=%.3f"
            " received=%llu\n",
-           driver, packets_per_frame, frames,
+           transport, packets_per_frame, frames,
            percentile(send_us, 50.0), percentile(send_us, 99.0), *std::max_element(send_us.begin(), send_us.end()),
            percentile(update_us, 50.0), percentile(update_us, 99.0), *std::max_element(update_us.begin(), update_us.end()),
            percentile(total_us, 50.0), percentile(total_us, 99.0), *std::max_element(total_us.begin(), total_us.end()),

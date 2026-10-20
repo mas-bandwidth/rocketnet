@@ -4,7 +4,7 @@
 */
 
 // A server names one family or both. Refusals, the one-family path and the
-// two-client exchange run on the loopback driver. The arrival-family token
+// two-client exchange run on the loopback transport. The arrival-family token
 // rule runs on the protocol object, with time passed in. No test sleeps,
 // opens a socket, or reads a clock. The clock starts at 1000.0.
 

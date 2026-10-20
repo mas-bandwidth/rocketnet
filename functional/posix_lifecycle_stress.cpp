@@ -35,7 +35,7 @@
     anywhere else. Its server binds the near end of the pair on a fixed port,
     its clients open their sockets in the far end's namespace, and its
     1000-count loops run 100 times, since every create attaches to the pair.
-    ROCKETNET_POSIX_LIFECYCLE_CELLS, a comma list of server driver names, runs
+    ROCKETNET_POSIX_LIFECYCLE_CELLS, a comma list of server transport names, runs
     only those cells. On Linux every case is registered once per server cell
     (posix_<case>_<cell>), so each run covers one cell.
 
@@ -244,9 +244,9 @@ static posix_resource_counts_t posix_settled_counts( const posix_resource_counts
 struct posix_cell_t
 {
     const char * name;
-    const char * server_driver;
+    const char * server_transport_io;
     const char * server_granted;
-    const char * client_driver;
+    const char * client_transport_io;
     const char * client_granted;
     bool xdp;
 };
@@ -408,18 +408,18 @@ static bool posix_io_uring_offered()
 #endif
 }
 
-// ROCKETNET_POSIX_LIFECYCLE_CELLS, when set, names the server drivers whose
+// ROCKETNET_POSIX_LIFECYCLE_CELLS, when set, names the server transports whose
 // cells run
-static const char * posix_only_server_driver = NULL;
+static const char * posix_only_server_transport_io = NULL;
 
 static bool posix_cell_selected( const posix_cell_t * cell )
 {
-    if ( posix_only_server_driver && strcmp( posix_only_server_driver, cell->server_driver ) != 0 )
+    if ( posix_only_server_transport_io && strcmp( posix_only_server_transport_io, cell->server_transport_io ) != 0 )
         return false;
     const char * list = getenv( "ROCKETNET_POSIX_LIFECYCLE_CELLS" );
     if ( !list || list[0] == '\0' )
         return true;
-    const char * label = cell->server_driver;
+    const char * label = cell->server_transport_io;
     const size_t length = strlen( label );
     const char * cursor = list;
     while ( *cursor )
@@ -441,7 +441,7 @@ static bool posix_cell_runs( const char * name, const posix_cell_t * cell )
 {
     if ( !posix_cell_selected( cell ) )
         return false;
-    if ( strcmp( cell->server_driver, "io_uring" ) == 0 && !posix_io_uring_offered() )
+    if ( strcmp( cell->server_transport_io, "io_uring" ) == 0 && !posix_io_uring_offered() )
     {
         printf( "%s [%s]: SKIPPED this kernel disables io_uring\n", name, cell->name );
         fflush( stdout );
@@ -533,13 +533,13 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
         config.num_xdp_queues = 1;
         config.num_os_cpus = 1;
     }
-    snprintf( config.driver, sizeof( config.driver ), "%s", cell->server_driver );
+    snprintf( config.transport, sizeof( config.transport ), "%s", cell->server_transport_io );
     int status = ROCKETNET_STATUS_OK;
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, rocketnet_platform_time(), &status );
     if ( !server )
         printf( "server create [%s] at %s failed: %s\n", cell->name, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
     posix_check( server != NULL );
-    posix_check( strcmp( rocketnet_server_transport_driver( server ), cell->server_granted ) == 0 );
+    posix_check( strcmp( rocketnet_server_transport_io_name( server ), cell->server_granted ) == 0 );
     return server;
 }
 
@@ -582,7 +582,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof( config.driver ), "%s", cell->client_driver );
+    snprintf( config.transport, sizeof( config.transport ), "%s", cell->client_transport_io );
     config.time_callback = posix_client_clock_callback;
     int status = ROCKETNET_STATUS_OK;
     rocketnet_client_transport_t * client = NULL;
@@ -608,7 +608,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
     if ( !client )
         printf( "client create [%s] to %s failed: %s\n", cell->name, server_address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
     posix_check( client != NULL );
-    posix_check( strcmp( rocketnet_client_transport_driver( client ), cell->client_granted ) == 0 );
+    posix_check( strcmp( rocketnet_client_transport_io_name( client ), cell->client_granted ) == 0 );
     return client;
 }
 
@@ -875,7 +875,7 @@ void rocketnet_test_posix_client_create_destroy_1000()
 // before the next rebind. On Linux a failing run saw the io_uring rung refuse
 // a discovered 127.0.0.1:44960 with errno 98 (EADDRINUSE), then exhaust the
 // ladder, because the port had gone to a socket that does not share the
-// driver's SO_REUSEPORT. Take a port below the kernel's ephemeral range
+// transport's SO_REUSEPORT. Take a port below the kernel's ephemeral range
 // instead, in a slice this cell alone scans.
 static unsigned posix_reserved_restart_port( int cell_index )
 {
@@ -897,7 +897,7 @@ static unsigned posix_reserved_restart_port( int cell_index )
     if ( last_port < first_port )
         return 0;
 
-    // the restart_same_port driver cases run concurrently in the suite and
+    // the restart_same_port transport cases run concurrently in the suite and
     // each reserves its own port. seeding every reservation on the same
     // getpid() starts them all at the same port, so their probe-then-release
     // reservations can pick the same port and one rebind fails with
@@ -1124,7 +1124,7 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 
 // one registered case per Linux server cell: the case runs that cell alone
 
-// The server transport and the gso driver are single allocations of 56 MB
+// The server transport and the gso transport are single allocations of 56 MB
 // and 116 MB (strace of one create: two anonymous mmaps of those sizes),
 // past glibc's largest mmap threshold, so every create maps them fresh and
 // the value-initialising placement new (sdk/rocketnet_server_transport.cpp:1163,
@@ -1155,14 +1155,14 @@ static void posix_heap_keep( bool keep )
 #endif
 }
 
-#define POSIX_LINUX_CELL_CASE( case_name, driver )                                                                    \
-void rocketnet_test_##case_name##_##driver()                                                                        \
+#define POSIX_LINUX_CELL_CASE( case_name, transport )                                                                    \
+void rocketnet_test_##case_name##_##transport()                                                                        \
 {                                                                                                                   \
-    posix_only_server_driver = #driver;                                                                             \
+    posix_only_server_transport_io = #transport;                                                                             \
     posix_heap_keep( true );                                                                                        \
     rocketnet_test_##case_name();                                                                                   \
     posix_heap_keep( false );                                                                                       \
-    posix_only_server_driver = NULL;                                                                                \
+    posix_only_server_transport_io = NULL;                                                                                \
 }
 
 #define POSIX_LINUX_CELL_CASES( case_name )                                                                           \

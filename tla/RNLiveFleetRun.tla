@@ -3,7 +3,7 @@
 (* rocketnet: the lifecycle of one live fleet run (docs/LIVE-XDP.md).      *)
 (*                                                                         *)
 (* One orchestrator on the coordinator's machine drives, over ssh, one     *)
-(* server on the test server (the xdp driver, so loading the server        *)
+(* server on the test server (the xdp transport, so loading the server        *)
 (* attaches the XDP program to the NIC) and one client per bench.  Before  *)
 (* the load it arms a dead-man timer on the test server; with the server   *)
 (* it starts a watchdog that detaches XDP and kills the server when the    *)

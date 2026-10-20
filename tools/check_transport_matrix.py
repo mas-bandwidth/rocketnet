@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Check that every driver row has transport matrix cells in CI.
+"""Check that every transport row has transport matrix cells in CI.
 
 Reads sdk/rocketnet_drivers.inc and .github/workflows/ci.yml. Each
-ROCKETNET_DRIVER row names its platforms and its server and client
+ROCKETNET_TRANSPORT row names its platforms and its server and client
 preferences (zero: not available for that endpoint). For every OS CI builds
-(Linux, macOS, Windows) the row builds for, a server-capable driver needs a
+(Linux, macOS, Windows) the row builds for, a server-capable transport needs a
 cell in that OS's TRANSPORT_MATRIX_<OS> block with it as the server
-transport, and a client-capable driver needs a cell with it as the client
-transport. No driver is exempt.
+transport, and a client-capable transport needs a cell with it as the client
+transport. No transport is exempt.
 
 Each matrix block must also sit in a step that runs the three family cases
-and driver_env_pin_is_honoured, and every expected-fail mark must name a
+and transport_env_pin_is_honoured, and every expected-fail mark must name a
 case it runs and a card. An xdp cell needs root, a namespace and a veth
 pair, so its step must run the xdp family cases inside a virtme-ng guest
 (vng). Exits 0 with one OK line, or 1 naming each gap.
@@ -26,11 +26,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OSES = ("LINUX", "MACOS", "WINDOWS")
 
 PLATFORMS = {
-    "ROCKETNET_DRIVER_ALL_PLATFORMS": {"LINUX", "MACOS", "WINDOWS"},
-    "ROCKETNET_DRIVER_LINUX": {"LINUX"},
-    "ROCKETNET_DRIVER_IO_URING_PLATFORMS": {"LINUX"},
-    "ROCKETNET_DRIVER_MAC": {"MACOS"},
-    "ROCKETNET_DRIVER_WINDOWS": {"WINDOWS"},
+    "ROCKETNET_TRANSPORT_ALL_PLATFORMS": {"LINUX", "MACOS", "WINDOWS"},
+    "ROCKETNET_TRANSPORT_LINUX": {"LINUX"},
+    "ROCKETNET_TRANSPORT_IO_URING_PLATFORMS": {"LINUX"},
+    "ROCKETNET_TRANSPORT_MAC": {"MACOS"},
+    "ROCKETNET_TRANSPORT_WINDOWS": {"WINDOWS"},
 }
 
 
@@ -38,7 +38,7 @@ CASES = (
     "test_transport_udp_loopback",
     "test_transport_ipv6_loopback",
     "test_transport_dual_stack_ipv4_client",
-    "driver_env_pin_is_honoured",
+    "transport_env_pin_is_honoured",
 )
 
 XDP_CASES = (
@@ -46,7 +46,7 @@ XDP_CASES = (
     "xdp_max_size_both_ways_ipv6",
 )
 
-ROW = re.compile(r'^ROCKETNET_DRIVER\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)
+ROW = re.compile(r'^ROCKETNET_TRANSPORT\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)
 
 
 def read(path):
@@ -54,7 +54,7 @@ def read(path):
         return f.read()
 
 
-def driver_rows(text):
+def transport_rows(text):
     rows = []
     for symbol, name, platforms, server, client in ROW.findall(text):
         rows.append((name, platforms, server != "0", client != "0"))
@@ -88,12 +88,12 @@ def matrix_blocks(text):
 
 
 def main():
-    rows = driver_rows(read("sdk/rocketnet_drivers.inc"))
+    rows = transport_rows(read("sdk/rocketnet_drivers.inc"))
     blocks = matrix_blocks(read(".github/workflows/ci.yml"))
     problems = []
 
     if not rows:
-        problems.append("no ROCKETNET_DRIVER rows read from sdk/rocketnet_drivers.inc")
+        problems.append("no ROCKETNET_TRANSPORT rows read from sdk/rocketnet_drivers.inc")
 
     for os_name in sorted(blocks):
         if os_name not in OSES:
@@ -121,20 +121,20 @@ def main():
 
     for name, platforms, serves, connects in rows:
         if platforms not in PLATFORMS:
-            problems.append(f"driver {name}: platform set {platforms} is unknown to this check")
+            problems.append(f"transport {name}: platform set {platforms} is unknown to this check")
             continue
         for os_name in sorted(PLATFORMS[platforms]):
             cells = [cell for cells, _ in blocks.get(os_name, []) for cell in cells if len(cell) >= 2]
             if serves and not any(cell[0] == name for cell in cells):
-                problems.append(f"driver {name}: no TRANSPORT_MATRIX_{os_name} cell with server transport {name}")
+                problems.append(f"transport {name}: no TRANSPORT_MATRIX_{os_name} cell with server transport {name}")
             if connects and not any(cell[1] == name for cell in cells):
-                problems.append(f"driver {name}: no TRANSPORT_MATRIX_{os_name} cell with client transport {name}")
+                problems.append(f"transport {name}: no TRANSPORT_MATRIX_{os_name} cell with client transport {name}")
 
     for line in problems:
         print(f"TRANSPORT-MATRIX-MISSING {line}")
     if problems:
         return 1
-    print(f"TRANSPORT-MATRIX OK drivers={len(rows)} cells={sum(len(c) for b in blocks.values() for c, _ in b)}")
+    print(f"TRANSPORT-MATRIX OK transports={len(rows)} cells={sum(len(c) for b in blocks.values() for c, _ in b)}")
     return 0
 
 

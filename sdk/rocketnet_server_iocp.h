@@ -8,8 +8,8 @@
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
 
-// Windows server driver. The public transport API is unchanged. Fill threads
-// acquire and seal directly into driver-owned frames. Flush posts overlapped
+// Windows server transport. The public transport API is unchanged. Fill threads
+// acquire and seal directly into transport-owned frames. Flush posts overlapped
 // UDP sends; only their completions return those frames to the free pool.
 // Receive workers dequeue completions in batches and publish private double
 // buffers, following the existing GSO/XDP receive ownership contract.

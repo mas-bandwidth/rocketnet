@@ -311,13 +311,11 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 //                          the env engine
 // ----------------------------------------------------------------
 
-// the public name of a config field's env var: the table row "driver" is
-// the public config's "transport" (the candidate list), so its variable is
-// ROCKETNET_<ENDPOINT>_TRANSPORT. every other row is its own name.
+// the public name of a config field's env var: every row is its own name.
 
 static const char * rocketnet_config_env_field_name( const char * field_name )
 {
-    return strcmp( field_name, "driver" ) == 0 ? "transport" : field_name;
+    return field_name;
 }
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size )
@@ -785,27 +783,27 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 }
 
 // ----------------------------------------------------------------
-//                        the driver ladder
+//                        the transport ladder
 // ----------------------------------------------------------------
 
-static int rocketnet_driver_id_from_name( const char * name, int name_length )
+static int rocketnet_transport_id_from_name( const char * name, int name_length )
 {
-    for ( int i = 0; i < ROCKETNET_NUM_DRIVERS; i++ )
+    for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; i++ )
     {
-        if ( (int) strlen( rocketnet_driver_name( i ) ) == name_length && memcmp( rocketnet_driver_name( i ), name, (size_t) name_length ) == 0 )
+        if ( (int) strlen( rocketnet_transport_name( i ) ) == name_length && memcmp( rocketnet_transport_name( i ), name, (size_t) name_length ) == 0 )
             return i;
     }
     return -1;
 }
 
-bool rocketnet_driver_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_driver_ladder_t * ladder )
+bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder )
 {
     rocketnet_assert( available );
     rocketnet_assert( num_available > 0 );
-    rocketnet_assert( num_available <= ROCKETNET_MAX_DRIVER_CANDIDATES );
+    rocketnet_assert( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
     rocketnet_assert( ladder );
 
-    memset( ladder, 0, sizeof(struct rocketnet_driver_ladder_t) );
+    memset( ladder, 0, sizeof(struct rocketnet_transport_ladder_t) );
 
     // auto -- explicitly, or as the zero value -- expands to the
     // platform's recommended order for this endpoint
@@ -826,9 +824,9 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
     if ( is_auto )
     {
-        // Pin-only drivers are never chosen by auto; a pin selects them.
+        // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_driver_pin_only( available[i] ) )
+            if ( !rocketnet_transport_pin_only( available[i] ) )
                 ladder->candidates[ladder->num_candidates++] = available[i];
         return true;
     }
@@ -851,7 +849,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
         if ( name_length == 0 )
         {
-            rocketnet_error( "empty transport name in transport list \"%s\" (valid names: %s)", value, rocketnet_driver_names() );
+            rocketnet_error( "empty transport name in transport list \"%s\" (valid names: %s)", value, rocketnet_transport_names() );
             return false;
         }
 
@@ -861,31 +859,31 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
             return false;
         }
 
-        const int driver = rocketnet_driver_id_from_name( name, name_length );
-        if ( driver < 0 )
+        const int transport = rocketnet_transport_id_from_name( name, name_length );
+        if ( transport < 0 )
         {
-            rocketnet_error( "unknown transport \"%.*s\" in transport list \"%s\" (valid names: %s)", name_length, name, value, rocketnet_driver_names() );
+            rocketnet_error( "unknown transport \"%.*s\" in transport list \"%s\" (valid names: %s)", name_length, name, value, rocketnet_transport_names() );
             return false;
         }
 
-        bool driver_available = false;
+        bool transport_available = false;
         for ( int i = 0; i < num_available; i++ )
         {
-            if ( available[i] == driver )
+            if ( available[i] == transport )
             {
-                driver_available = true;
+                transport_available = true;
                 break;
             }
         }
 
-        if ( driver_available )
+        if ( transport_available )
         {
-            if ( ladder->num_candidates >= ROCKETNET_MAX_DRIVER_CANDIDATES )
+            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
-                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
                 return false;
             }
-            ladder->candidates[ladder->num_candidates++] = driver;
+            ladder->candidates[ladder->num_candidates++] = transport;
         }
         else
         {
@@ -894,12 +892,12 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
             // skip list is bounded like the candidate list -- overflowing
             // it silently would under-name the exhausted report.
 
-            if ( ladder->num_skipped >= ROCKETNET_MAX_DRIVER_CANDIDATES )
+            if ( ladder->num_skipped >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
-                rocketnet_error( "transport list \"%s\" has too many skipped names (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
+                rocketnet_error( "transport list \"%s\" has too many skipped names (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
                 return false;
             }
-            ladder->skipped[ladder->num_skipped++] = driver;
+            ladder->skipped[ladder->num_skipped++] = transport;
             rocketnet_info( "transport %.*s is not available here. skipped", name_length, name );
         }
 
@@ -909,7 +907,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
         cursor = comma + 1;
     }
 
-    // a list whose every name was skipped names no driver for this endpoint
+    // a list whose every name was skipped names no transport for this endpoint
     // at all -- a fleet-wide line read by an endpoint it was not addressing
     // (ROCKETNET_SERVER_TRANSPORT=gso and ROCKETNET_CLIENT_TRANSPORT=gso on a box that also runs a client). bricking
     // that endpoint would break the one-line-deploys-everywhere guarantee
@@ -924,16 +922,16 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
         auto_names[0] = '\0';
         for ( int i = 0; i < num_available; i++ )
         {
-            if ( rocketnet_driver_pin_only( available[i] ) ) continue;
+            if ( rocketnet_transport_pin_only( available[i] ) ) continue;
             const size_t used = strlen( auto_names );
-            snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_driver_name( available[i] ) );
+            snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_transport_name( available[i] ) );
         }
 
         rocketnet_warn( "transport list \"%s\" names no transport for this endpoint on this platform. using auto (%s)", value, auto_names );
 
-        // Pin-only drivers are never chosen by auto; a pin selects them.
+        // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_driver_pin_only( available[i] ) )
+            if ( !rocketnet_transport_pin_only( available[i] ) )
                 ladder->candidates[ladder->num_candidates++] = available[i];
     }
 

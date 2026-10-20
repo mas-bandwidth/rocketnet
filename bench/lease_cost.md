@@ -2,7 +2,7 @@
 
 This measures the valid public packet API with the current ownership checks and
 a diagnostic control that bypasses only `insert` and `resolve`. Both variants
-retain the same table storage, allocation/lifetime code, history, driver,
+retain the same table storage, allocation/lifetime code, history, transport,
 protocol, crypto, calls and workload. The control does not issue process-unique
 leases or enforce ownership. It is never a supported build configuration and
 must not be used by an application. Its sole use is isolating the cost of the

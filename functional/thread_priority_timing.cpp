@@ -6,7 +6,7 @@
     client connects to a server over loopback; a server thread sends one small
     unreliable payload every 10 ms; the case records the gaps between the
     client's receive wakes. The client time_callback is the receive stamp
-    clock and runs on the I/O thread once per driver receive call; calls closer
+    clock and runs on the I/O thread once per transport receive call; calls closer
     than 200 us apart are one wake. Printed: wake gap p50, p99 and max in ms,
     the I/O thread's scheduling as read from inside the thread, and the
     process-wide priority refusal count.

@@ -648,7 +648,7 @@ ROCKETNET_EXPORT void rocketnet_set_log_level( enum rocketnet_log_level_t level 
 ///
 /// The setting is process-wide. Set it before rocketnet_init to skip the timer
 /// period. Threads created after a change follow the new value; a thread
-/// already running keeps what it got. docs/CLIENT-IO.md and DRIVERS.md list the
+/// already running keeps what it got. docs/CLIENT-IO.md and TRANSPORTS.md list the
 /// threads.
 /// @param enabled true (the default) makes the calls; false makes none.
 ROCKETNET_EXPORT void rocketnet_set_thread_priority( bool enabled );

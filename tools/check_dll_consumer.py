@@ -7,7 +7,7 @@ only sdk/rocketnet.h and that one library into a fresh empty directory,
 compiles tools/dll_consumer/main.c as C99 or main.cpp as C++11 with the
 directory as the only RocketNet include path, links the library alone (plus
 system libraries and the C++ runtime), and runs the program. The program
-creates a message server on 127.0.0.1 through the portable driver, connects a
+creates a message server on 127.0.0.1 through the portable transport, connects a
 client with a development connect token, exchanges one message each way inside
 five seconds of wall clock, and exits 0.
 

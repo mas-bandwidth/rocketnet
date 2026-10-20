@@ -288,7 +288,7 @@ remote_path="~/rocketnet-live/live-xdp-fleet-remote"
 server_results="~/rocketnet-live/results/$run_id/server.tsv"
 server_status="~/rocketnet-live/results/$run_id/server.status"
 
-server_command="ROCKETNET_SERVER_DRIVER=xdp ROCKETNET_SERVER_PRINT_COUNTERS=1 ~/rocketnet-live/$commit/bin/server --matrix --driver xdp --address $server_address --label $server_label --seed $seed --send-kbps $min_each --max-clients 1000 --update-hz 1000 --counters-every 60 --num-xdp-queues $server_queues --results $server_results --status $server_status"
+server_command="ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_PRINT_COUNTERS=1 ~/rocketnet-live/$commit/bin/server --matrix --transport xdp --address $server_address --label $server_label --seed $seed --send-kbps $min_each --max-clients 1000 --update-hz 1000 --counters-every 60 --num-xdp-queues $server_queues --results $server_results --status $server_status"
 
 client_command()
 {
@@ -311,14 +311,14 @@ print_host_common "$server_ssh"
 echo "  XDP SAFETY 1: server_xdp/server_xdp.c returns XDP_PASS for every packet that is not the server's UDP port and address (server_xdp.c:126-128); it is never edited or reloaded by this run"
 echo "  preflight (read-only, before anything is attached): ssh $server_ssh $remote_path preflight $commit $server_nic $server_queues $server_address"
 echo "  root check: ssh $server_ssh sudo -n true   (a failure stops the run with not-done; no password is ever supplied)"
-echo "  XDP SAFETY 2: arm the dead-man timer before load: ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path arm $server_nic"
+echo "  XDP SAFETY 2: arm the dead-man timer before load: ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path arm $server_nic"
 echo "  XDP SAFETY 4: the preflight records ethtool -i $server_nic and refuses the in-tree i40e version (the one that equals uname -r)"
-echo "  start:   ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path start server $commit $server_label $server_address $seed $min_each 1000 1000 60 $server_queues $server_results $server_status"
+echo "  start:   ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path start server $commit $server_label $server_address $seed $min_each 1000 1000 60 $server_queues $server_results $server_status"
 echo "  command: $server_command"
 echo "  XDP SAFETY 3: within 10 s of the load, a fresh ssh connection (no control master) proves ssh still works: ssh -o ControlMaster=no -o BatchMode=yes $server_ssh true"
 echo "  listen:  ssh $server_ssh grep -q '^listening' $server_status"
 echo "  heartbeat: ssh $server_ssh touch ~/rocketnet-live/heartbeat   (every 5 s until teardown)"
-echo "  stop:    ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path stop server $server_label"
+echo "  stop:    ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path stop server $server_label"
 echo "  XDP SAFETY 5: teardown detaches and records the link: ssh $server_ssh sudo -n $remote_path restore $commit $server_nic"
 echo "  command: ip link set dev $server_nic xdp off; ip link set dev $server_nic xdpgeneric off; ip -d link show dev $server_nic; xdp-loader status; rocketnet-provision sweep"
 echo "  collect: ssh $server_ssh $remote_path collect $server_results > $run_dir/server.tsv"
@@ -390,7 +390,7 @@ teardown()
     while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
         [ "$started_clients" -eq 1 ] && ssh_run "$ssh_name" "$remote_path" stop client "$label" >/dev/null 2>&1
     done < "$tmp/sorted.tsv"
-    ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" stop server "$server_label" >/dev/null 2>&1
+    ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" stop server "$server_label" >/dev/null 2>&1
     ssh_run "$server_ssh" sudo -n "$remote_path" restore "$commit" "$server_nic" >/dev/null 2>&1
 }
 
@@ -436,8 +436,8 @@ done < "$tmp/sorted.tsv"
 # 4. server pre-flight, dead-man timer, watchdog, load, ssh check, listen.
 ssh_run "$server_ssh" sudo -n true || fail "sudo -n true failed on $server_ssh; stop with not-done (RULINGS (c))"
 ssh_run "$server_ssh" "$remote_path" preflight "$commit" "$server_nic" "$server_queues" "$server_address" || fail "server pre-flight refused"
-ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" arm "$server_nic" || fail "cannot arm the dead-man timer"
-ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_DRIVER,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" start server "$commit" "$server_label" "$server_address" "$seed" "$min_each" 1000 1000 60 "$server_queues" "$server_results" "$server_status" || fail "cannot start the server"
+ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" arm "$server_nic" || fail "cannot arm the dead-man timer"
+ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" start server "$commit" "$server_label" "$server_address" "$seed" "$min_each" 1000 1000 60 "$server_queues" "$server_results" "$server_status" || fail "cannot start the server"
 
 # the fresh ssh connection within 10 s of the load
 if ! ssh -o BatchMode=yes -o ControlMaster=no -o ConnectTimeout=10 "$server_ssh" true; then

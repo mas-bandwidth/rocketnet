@@ -16,9 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_frame_budget as cfb
 
 
-def make_stdout(p32_total_p99: float, driver: str = "portable") -> str:
+def make_stdout(p32_total_p99: float, transport: str = "portable") -> str:
     return (
-        f"client_main_thread_cost driver={driver} packets_per_frame=32 frames=2000 "
+        f"client_main_thread_cost transport={transport} packets_per_frame=32 frames=2000 "
         f"send_us_p50=18.200 send_us_p99=34.500 send_us_max=51.000 "
         f"update_us_p50=12.400 update_us_p99=24.100 update_us_max=40.000 "
         f"total_us_p50=30.600 total_us_p99={p32_total_p99:.3f} total_us_max=91.000 "
@@ -30,7 +30,7 @@ class TestCheckFrameBudget(unittest.TestCase):
     def test_median_at_or_below_100_passes(self) -> None:
         outputs = [make_stdout(62.4), make_stdout(58.1), make_stdout(65.9)]
         code, report = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=outputs,
             load1=1.0,
             cores=16,
@@ -48,7 +48,7 @@ class TestCheckFrameBudget(unittest.TestCase):
         # Exact boundary 100.0 also passes:
         outputs_boundary = [make_stdout(100.0), make_stdout(95.0), make_stdout(112.0)]
         code_b, report_b = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=outputs_boundary,
             load1=4.0,
             cores=16,
@@ -60,7 +60,7 @@ class TestCheckFrameBudget(unittest.TestCase):
     def test_median_above_100_fails_naming_value(self) -> None:
         outputs = [make_stdout(101.25), make_stdout(118.40), make_stdout(92.00)]
         code, report = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=outputs,
             load1=1.5,
             cores=16,
@@ -72,7 +72,7 @@ class TestCheckFrameBudget(unittest.TestCase):
 
         # In report-only mode, verdict stays FAIL and names the value, exit is 0:
         code_ro, report_ro = cfb.evaluate_gate(
-            driver="msgx",
+            transport="msgx",
             run_outputs=outputs,
             load1=1.5,
             cores=16,
@@ -85,11 +85,11 @@ class TestCheckFrameBudget(unittest.TestCase):
 
     def test_malformed_or_missing_line_fails(self) -> None:
         missing_p32 = (
-            "client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 "
+            "client_main_thread_cost transport=portable packets_per_frame=1 frames=2000 "
             "total_us_p50=3.100 total_us_p99=6.200 total_us_max=10.000 received=2000\n"
         )
         code_missing, report_missing = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=[make_stdout(50.0), missing_p32, make_stdout(52.0)],
             load1=0.5,
             cores=16,
@@ -98,9 +98,9 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("verdict=FAIL", report_missing)
         self.assertNotIn("verdict=PASS", report_missing)
 
-        malformed_p32 = "client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 total_us_p99=notanumber\n"
+        malformed_p32 = "client_main_thread_cost transport=portable packets_per_frame=32 frames=2000 total_us_p99=notanumber\n"
         code_malformed, report_malformed = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=[malformed_p32, make_stdout(50.0), make_stdout(52.0)],
             load1=0.5,
             cores=16,
@@ -113,7 +113,7 @@ class TestCheckFrameBudget(unittest.TestCase):
         outputs = [make_stdout(40.0), make_stdout(41.0), make_stdout(42.0)]
         # 16 cores -> threshold is 4.0; load 4.25 exceeds cores/4 on run 1
         code, report = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=outputs,
             load1=4.25,
             cores=16,
@@ -125,7 +125,7 @@ class TestCheckFrameBudget(unittest.TestCase):
 
         # Load spike before run 2 also voids:
         code_r2, report_r2 = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=outputs,
             load1=1.0,
             cores=16,
@@ -138,7 +138,7 @@ class TestCheckFrameBudget(unittest.TestCase):
 
         # Even in --report-only mode, a void is NEVER reported as PASS:
         code_ro, report_ro = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=outputs,
             load1=4.25,
             cores=16,
@@ -151,7 +151,7 @@ class TestCheckFrameBudget(unittest.TestCase):
 
         # Windows (load1=None) prints load=unavailable and does not void:
         code_win, report_win = cfb.evaluate_gate(
-            driver="portable",
+            transport="portable",
             run_outputs=outputs,
             load1=None,
             cores=16,

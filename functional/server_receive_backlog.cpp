@@ -95,7 +95,7 @@ static bool server_receive_backlog_all_connected( const std::vector<struct rocke
 // Debug CRT. The plans currently accept portable, not loopback; using portable
 // conservatively retains its small socket/wake allocation, then adds each
 // actual loopback queue. The 32 MiB margin covers the executable, CRT bookkeeping,
-// process-wide driver table and page rounding. The native Windows Debug
+// process-wide transport table and page rounding. The native Windows Debug
 // negative control must catch an extra touched 64 MiB server allocation.
 // All other functional cases retain the default RSS bound.
 static const int server_receive_backlog_max_clients = 48;
@@ -142,7 +142,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = max_clients;
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
 
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
@@ -154,7 +154,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
 
     std::vector<struct rocketnet_client_transport_t*> clients;
     clients.reserve( max_clients );
