@@ -99,6 +99,16 @@ uint64_t rocketnet_server_uring_leaked_drivers();
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
 
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+// development library only. fail_receive cancels the queue's multishot
+// receive and hands its terminating CQE to the reap with error (negative
+// errno) in place of -ECANCELED, the path a kernel-side receive failure
+// takes. fail_sends prepares the next count send SQEs with no destination,
+// so the kernel completes each with a failed CQE.
+void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error );
+void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
+#endif
+
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
 
 void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, uint64_t * counters );

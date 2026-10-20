@@ -258,7 +258,7 @@ static void public_not_released_counter_client()
     check( bytes == 16 );
     check( rocketnet_client_counter( pair.client, ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
 
-    void ( *saved_assert )( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( public_not_released_assert_hook );
 
     pair.time += 0.01;
@@ -293,7 +293,7 @@ static void public_not_released_counter_server()
     check( bytes == 16 );
     check( rocketnet_server_counter( pair.server, ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
 
-    void ( *saved_assert )( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( public_not_released_assert_hook );
 
     pair.time += 0.01;
