@@ -137,18 +137,47 @@ static int rocketnet_server_request_cookie_mac( uint8_t * mac,
     return rocketnet_generate_cookie_mac( mac, from, connection_salt, cookie_expire_timestamp, cookie_key );
 }
 
-// whether the token's server address is one this server advertises. on a
-// dual-stack server -- bound to the IPv6 wildcard, so it also advertises its
-// IPv4 wildcard -- a v4-mapped token address normalises to native IPv4 and
-// matches as the loopback or wildcard the IPv4 client addressed.
+// whether an address is one this server advertises. on a dual-stack server
+// -- bound to the IPv6 wildcard, so it also advertises its IPv4 wildcard --
+// a v4-mapped token address normalises to native IPv4 and matches as the
+// loopback or wildcard the IPv4 client addressed.
+
+static int rocketnet_server_address_is_advertised( const struct rocketnet_server_protocol_t * server,
+                                                   struct rocketnet_address_t * addr )
+{
+    const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
+                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6;
+
+    if ( addr->type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( addr ) )
+        rocketnet_address_convert_ipv6_to_ipv4( addr );
+
+    if ( addr->type == ROCKETNET_ADDRESS_IPV6 )
+        return server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
+               rocketnet_address_equal( addr, &server->advertised_ipv6 );
+
+    if ( server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
+         rocketnet_address_equal( addr, &server->advertised_ipv4 ) )
+        return 1;
+
+    // on a dual-stack server the loopback is an IPv4 address the socket
+    // serves too
+    if ( dual_stack && addr->data.ipv4[0] == 127 && addr->data.ipv4[1] == 0 &&
+         addr->data.ipv4[2] == 0 && addr->data.ipv4[3] == 1 &&
+         addr->port == server->advertised_ipv4.port )
+        return 1;
+
+    return 0;
+}
+
+// whether the token names an address this server advertises: either flagged
+// address matches, so a token naming both families reaches a server that
+// serves one of them (tla/ServerConnection.tla TokenAddressAdvertised).
 
 static int rocketnet_server_token_address_is_advertised( const struct rocketnet_server_protocol_t * server,
                                                          uint8_t address_flags,
                                                          const uint8_t * signed_connect_data )
 {
     struct rocketnet_address_t addr;
-    const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6;
 
     if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
     {
@@ -158,10 +187,11 @@ static int rocketnet_server_token_address_is_advertised( const struct rocketnet_
         for ( int i = 0; i < 8; i++ )
             addr.data.ipv6[i] = rocketnet_read_uint16( &p );
         addr.port = rocketnet_read_uint16( &p );
-        if ( rocketnet_address_is_ipv4_in_ipv6( &addr ) )
-            rocketnet_address_convert_ipv6_to_ipv4( &addr );
+        if ( rocketnet_server_address_is_advertised( server, &addr ) )
+            return 1;
     }
-    else
+
+    if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 )
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV4;
         memset( &addr, 0, sizeof(addr) );
@@ -169,22 +199,9 @@ static int rocketnet_server_token_address_is_advertised( const struct rocketnet_
         for ( int i = 0; i < 4; i++ )
             addr.data.ipv4[i] = *p++;
         addr.port = rocketnet_read_uint16( &p );
+        if ( rocketnet_server_address_is_advertised( server, &addr ) )
+            return 1;
     }
-
-    if ( addr.type == ROCKETNET_ADDRESS_IPV6 )
-        return server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
-               rocketnet_address_equal( &addr, &server->advertised_ipv6 );
-
-    if ( server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-         rocketnet_address_equal( &addr, &server->advertised_ipv4 ) )
-        return 1;
-
-    // on a dual-stack server the loopback is an IPv4 address the socket
-    // serves too
-    if ( dual_stack && addr.data.ipv4[0] == 127 && addr.data.ipv4[1] == 0 &&
-         addr.data.ipv4[2] == 0 && addr.data.ipv4[3] == 1 &&
-         addr.port == server->advertised_ipv4.port )
-        return 1;
 
     return 0;
 }

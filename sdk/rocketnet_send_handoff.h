@@ -7,6 +7,8 @@
 // before publish; the worker retires only after copying its final packet.
 // tla/RNDriverSendStaging.tla Publish: retain producer storage until a replacement
 // is free; a later flush retries after the worker retires a generation.
+// reopen remains the defensive recovery for a preexisting fully queued state:
+// it hands back the newest generation, never the front.
 template<int NumBuffers> struct rocketnet_send_handoff_t
 {
     bool free[NumBuffers];
@@ -35,6 +37,20 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         ++count;
         filling = -1;
         return true;
+    }
+    // tla/SendHandoff.tla: reopen takes the newest queued generation, never
+    // the front. The producer asks for storage while every generation is
+    // queued (two flushes inside one worker latency). The newest queued
+    // generation is not the front, so the worker has not started it: hand it
+    // back to the producer, which stages after its packets until the next
+    // publish. -1 when only the front is queued. The caller tries acquire
+    // first.
+    int reopen()
+    {
+        if (filling >= 0) return filling;
+        if (count < 2) return -1;
+        --count;
+        return filling = queued[(head + count) % NumBuffers];
     }
     int front() const { return count ? queued[head] : -1; }
     void retire()
