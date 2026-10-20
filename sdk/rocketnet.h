@@ -1640,7 +1640,7 @@ ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_client_disconnect_
 // the name of a disconnect reason ("none", "reliable timeout"), or "unknown" for a value that is not one.
 ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_t reason );
 
-// the client's index on the server, valid while connected. a NULL client is a counted no-op that returns 0.
+// the client's index on the server while CONNECTED. a client in any other state returns 0, which is not a server slot it holds. a NULL client is a counted no-op that returns 0.
 ROCKETNET_EXPORT uint64_t rocketnet_client_index( const struct rocketnet_client_t * client );
 
 // the transport that won the candidate list at connect ("portable", "msgx"), NULL while DISCONNECTED. a NULL client is a counted no-op that returns NULL.
