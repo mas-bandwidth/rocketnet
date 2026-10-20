@@ -58,6 +58,18 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
 #endif
 
+// The unix timestamp a functional case stamps on a connect token, from the
+// clock that judges the token. The server transport reads game_clock_epoch
+// plus its update time when the epoch is set, else the wall clock
+// (sdk/rocketnet_server_transport.cpp:1711), and the client transport reads
+// its own config's epoch the same way (sdk/rocketnet_client_transport.cpp:762).
+// A case passes the epoch it configures and the time it drives the server
+// with; an epoch of zero returns the wall clock both ends then read.
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time )
+{
+    return game_clock_epoch != 0 ? game_clock_epoch + (uint64_t) time : (uint64_t) ::time( NULL );
+}
+
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINES 32
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES 1024
 
@@ -217,4 +229,28 @@ void rocketnet_test_config_out_of_range_refuses_create()
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
     rocketnet_test_env_restore( &guard );
+}
+
+// A free loopback port from the OS, for an address that must carry a real
+// port (a rung that refuses port zero) without binding a fixed one: a scratch
+// UDP socket binds 127.0.0.1:0, rocketnet_platform_socket_create writes the
+// port the OS gave into the address, and the socket is closed before the
+// port is returned. Two suites on one machine then never name the same port.
+
+uint16_t rocketnet_test_free_port()
+{
+    rocketnet_address_t address;
+    rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * scratch = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
+    rocketnet_check( scratch );
+    rocketnet_check( address.port != 0 );
+    rocketnet_platform_socket_destroy( scratch );
+    return address.port;
+}
+
+// "127.0.0.1:<port>" with a port from rocketnet_test_free_port
+
+void rocketnet_test_free_loopback_address( char * buffer, size_t buffer_size )
+{
+    snprintf( buffer, buffer_size, "127.0.0.1:%d", (int) rocketnet_test_free_port() );
 }

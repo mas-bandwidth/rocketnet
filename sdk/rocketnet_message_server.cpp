@@ -291,7 +291,10 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
 
     // CHANNELS 11.3: the client's one connection is bound at create, because
     // the client transport hands it payloads from before CONNECTED is
-    // reported, and it is never bound again.
+    // reported, and it is never bound again. Its CONFIG control record is
+    // announced here and waits in the queue for CONNECTED (RN-2 m11); an
+    // application send before CONNECTED is dropped at start, never queued
+    // (rn_message_object_start).
     if ( !is_server )
     {
         object->connections[0].state = RN_MESSAGE_CONNECTION_CONNECTED;
@@ -463,8 +466,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
     object->link.update( object->link.transport, time - object->clock_origin );
 
-    // The client message connection is bound before the handshake so sends
-    // can queue while its transport connects. Once that transport reaches a
+    // The client message connection is bound before the handshake so its
+    // CONFIG record waits while its transport connects (application sends
+    // before CONNECTED are dropped at start). Once that transport reaches a
     // terminal state, the binding has ended: release its channel/region state
     // before any ack or payload from the ended connection can be admitted.
     // Explicit message kicks were reset at the start of this update.
@@ -472,6 +476,10 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
          object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED &&
          object->link.state( object->link.transport ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
     {
+        // the transport's end reason (SERVER_DISCONNECTED once it accepted
+        // the server's disconnect) is recorded before the reset, which keeps it
+        if ( object->link.end_reason )
+            object->connections[0].disconnect_reason = object->link.end_reason( object->link.transport );
         rocketnet_client_connection_reset( object );
         rn_slots_observe( &object->slots, 0, 0 );
     }
@@ -576,7 +584,21 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         return NULL;
 
     rn_message_connection_t * connection = &object->connections[index];
-    if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED || object->pending_connection >= 0 )
+
+    // standard/MESSAGES.md m1.5 (tla/ClientSession.tla DropSend,
+    // tla/ServerSession.tla ServerDropSend): an application message is sent
+    // only on a CONNECTED connection. A client whose transport is not
+    // CONNECTED, or a slot with no connection, drops the start: NULL, counted
+    // once, nothing queued for later. A link with no connection query (a bare
+    // object with no transport) has no transport state to wait on.
+    const bool connected = connection->state == RN_MESSAGE_CONNECTION_CONNECTED &&
+                           ( object->is_server || !object->link.connection || object->link.connection( object->link.transport, 0 ) != 0 );
+    if ( !connected )
+    {
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
+        return NULL;
+    }
+    if ( object->pending_connection >= 0 )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
         return NULL;
@@ -601,9 +623,8 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         if ( header >= 0 )
         {
             const int request = header + bytes + 1;
-            const bool can_send = object->is_server || object->link.connection( object->link.transport, 0 ) != 0;
             rocketnet_packet_context_t context;
-            uint8_t * frame = can_send ? object->link.start_packet( object->link.transport, index, request, &context ) : NULL;
+            uint8_t * frame = object->link.start_packet( object->link.transport, index, request, &context );
             if ( frame && context.payload_capacity < request )
             {
                 object->link.abort_packet( object->link.transport, &context );
@@ -784,7 +805,8 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
         if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
         // the client transport accepts sends only while CONNECTED (11.3):
-        // until then the queue waits, unnumbered
+        // until then the queue holds only the CONFIG control record, which
+        // waits unnumbered; application sends were dropped at start
         if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
             continue;
         rn_message_connection_write( object, i );
