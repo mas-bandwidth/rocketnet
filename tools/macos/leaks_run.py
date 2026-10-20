@@ -250,6 +250,14 @@ def matrix(timeout, jobs):
     return ok
 
 
+def scratch_leak_reported(ok, lines):
+    # Only the detector's positive leak result proves the planted defect.
+    # A timeout, target error or missing summary is an infrastructure failure.
+    return (not ok and bool(lines) and
+            re.search(r": [1-9][0-9]* leak\(s\) across [1-9][0-9]* process report\(s\)\s*$", lines[-1]) is not None and
+            any(count > 0 for count, _ in leak_counts("".join(lines))))
+
+
 def self_test(timeout):
     # scrub() overwrites the stack lose() used, so no stale copy of the lost
     # pointer is left for leaks to read as a reference
@@ -283,11 +291,14 @@ def self_test(timeout):
             print("leaks_run.py: self-test could not compile the scratch leak", flush=True)
             return False
         make_debuggable(binary)
-        red = not run_leaks(binary, [], {}, timeout)
+        lines = []
+        ok = run_leaks_quiet(binary, [], {}, timeout, lines)
+        sys.stdout.write("".join(lines))
+        red = scratch_leak_reported(ok, lines)
         if red:
             print("leaks_run.py: PASS self-test: the scratch leak turned the run red", flush=True)
         else:
-            print("leaks_run.py: FAIL self-test: the scratch leak was not reported", flush=True)
+            print("leaks_run.py: FAIL self-test: the scratch leak was not positively reported (including infrastructure failure)", flush=True)
         return red
 
 
