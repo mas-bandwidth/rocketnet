@@ -857,6 +857,14 @@ struct rocketnet_server_config_t
 /// nonzero; a NULL start message is a refused send, 0. The pointer is valid
 /// until finish message or abort message; abort message gives the room back.
 /// One start message is pending per object at a time.
+/// Channel is 0 through the config's num_channels - 1. RELIABLE, UNRELIABLE,
+/// UNRELIABLE_WITH_ACK_RECEIPT and RELIABLE_WITH_ACK_RECEIPT use channel 0
+/// only: their wire records (codes 0 and 2) carry no channel and are received
+/// on channel 0 (standard/MESSAGES.md m6.1). Start message refuses any other
+/// channel for them before anything is written: it returns NULL and adds 1 to
+/// MESSAGE_SEND_REFUSED in the internal counter set
+/// (sdk/rocketnet_endpoint.cpp, rn_endpoint_start). The other four types keep
+/// the channel they are sent on.
 /// Reliability is a rocketnet_reliability_t. An unreliable send too
 /// big for one packet's record is promoted to its reliable twin, as RakNet's
 /// ReliabilityLayer does, and counted in the internal counter set, not the
@@ -1101,7 +1109,7 @@ ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_clie
 /// A NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
 
-/// 1 with the next message on channel, 0 when there is none. A NULL client, data or bytes is a counted no-op that returns 0.
+/// 1 with the next message on channel, 0 when there is none. RELIABLE, UNRELIABLE and both receipt types are received on channel 0 only, the one channel they can be sent on. A NULL client, data or bytes is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes );
 
 /// A NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
@@ -1290,7 +1298,7 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// A NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_t destination_id );
 
-/// 1 with the next message on channel, 0 when there is none. A NULL server, data or bytes is a counted no-op that returns 0.
+/// 1 with the next message on channel, 0 when there is none. RELIABLE, UNRELIABLE and both receipt types are received on channel 0 only, the one channel they can be sent on. A NULL server, data or bytes is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t client_index, int channel, const uint8_t ** data, int * bytes );
 
 /// A NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.

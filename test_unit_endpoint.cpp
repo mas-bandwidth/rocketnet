@@ -43,8 +43,8 @@
 
 #define EP_MESSAGES             300         // each end sends this many
 #define EP_ORDERED_CHANNELS     2           // channels 0 and 1 carry RELIABLE_ORDERED
-#define EP_RELIABLE_CHANNEL     2           // RELIABLE
-#define EP_UNRELIABLE_CHANNEL   3           // UNRELIABLE
+#define EP_RELIABLE_CHANNEL     0           // RELIABLE: channel 0 only (MESSAGES.md m6.1)
+#define EP_UNRELIABLE_CHANNEL   0           // UNRELIABLE: channel 0 only (MESSAGES.md m6.1)
 #define EP_STEP                 0.01        // seconds per loop step
 #define EP_MAX_STEPS            40000
 
@@ -642,6 +642,100 @@ static void endpoint_uncapped_large_sequenced_skips_the_bucket()
     rn_arena_destroy( arena );
 }
 
+// Codes 0 and 2 carry no channel field (standard/MESSAGES.md m6.1 item 2), so
+// RELIABLE, UNRELIABLE and both receipt types travel and deliver on channel 0
+// only. rn_endpoint_start refuses any other channel for them before anything
+// is written, and counts MESSAGE_SEND_REFUSED once; a channel-0 send of the
+// same type is delivered on channel 0. No socket, time from 1000.0.
+
+// the sender's packets, written now, opened by the receiver with no loss;
+// returns the receiver's deliveries
+static int ep_pass( ep_side_t * a, ep_side_t * b, double now, uint64_t * packet_id, rn_delivery_t * out, int capacity )
+{
+    int total = 0;
+    rn_endpoint_begin_update( &a->endpoint );
+    rn_endpoint_begin_update( &b->endpoint );
+    rn_endpoint_tick( &a->endpoint, now );
+    rn_endpoint_config_tick( &a->endpoint, 1, now );
+    for ( int i = 0; i < 16; i++ )
+    {
+        const int request = rn_endpoint_next_packet_bytes( &a->endpoint, now );
+        if ( request == 0 )
+            break;
+        static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
+        const int written = rn_endpoint_write_packet( &a->endpoint, frame, (int) sizeof( frame ), *packet_id, now );
+        if ( written <= 0 )
+            continue;
+        rn_endpoint_packet_sent( &a->endpoint, *packet_id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, written ), now );
+        int count = 0;
+        rn_endpoint_on_payload( &b->endpoint, frame, written, out + total, capacity - total, &count, now );
+        total += count;
+        ( *packet_id )++;
+    }
+    return total;
+}
+
+static void endpoint_channel_zero_types_refuse_other_channels()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    check( config.num_channels > 5 );
+
+    const int types[4] = { ROCKETNET_RELIABILITY_RELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE,
+                           ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT };
+    for ( int t = 0; t < 4; t++ )
+    {
+        ep_side_t * a = new ep_side_t();
+        ep_side_t * b = new ep_side_t();
+        ep_side_create( a, &config );
+        ep_side_create( b, &config );
+        double now = 1000.0;
+        rn_endpoint_reset( &a->endpoint, now );
+        rn_endpoint_reset( &b->endpoint, now );
+        uint64_t packet_id = 1;
+        rn_delivery_t out[64];
+
+        // channel 5: refused at start, counted once, nothing written or queued
+        const uint64_t refused = ep_counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+        uint8_t * p = rn_endpoint_start( &a->endpoint, 5, types[t], 32, ROCKETNET_MAX_PAYLOAD_BYTES );
+        const bool accepted = p != NULL;
+        if ( accepted )
+        {
+            // the defect, shown: where the message the caller put on channel 5 lands
+            memset( p, 0x55, 32 );
+            check( rn_endpoint_finish( &a->endpoint, 32, 0 ) != 0 );
+            const int count = ep_pass( a, b, now, &packet_id, out, 64 );
+            for ( int i = 0; i < count; i++ )
+                printf( "type %d sent on channel 5 was accepted and delivered on channel %d\n", types[t], (int) out[i].channel );
+            now += EP_STEP;
+        }
+        check( !accepted );
+        check( ep_counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
+        check( a->endpoint.pending_type == -1 );
+        check( a->endpoint.unreliable_count == 0 );
+        check( a->endpoint.ordered.channels.ready_head == RN_DESCRIPTOR_NONE );
+        check( rn_endpoint_next_packet_bytes( &a->endpoint, now ) == 0 );
+        check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+        // channel 0: the same type is taken and delivered on channel 0
+        p = rn_endpoint_start( &a->endpoint, 0, types[t], 32, ROCKETNET_MAX_PAYLOAD_BYTES );
+        check( p != NULL );
+        memset( p, 0x30, 32 );
+        check( rn_endpoint_finish( &a->endpoint, 32, 0 ) != 0 );
+        const int count = ep_pass( a, b, now, &packet_id, out, 64 );
+        check( count == 1 );
+        check( out[0].channel == 0 );
+        check( out[0].bytes == 32 && out[0].data[0] == 0x30 );
+        check( ep_counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
+
+        ep_side_destroy( a );
+        ep_side_destroy( b );
+        delete a;
+        delete b;
+    }
+}
+
 REGISTER_UNIT_TEST( endpoint_back_to_back_over_lossy_array );
 REGISTER_UNIT_TEST( endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( endpoint_never_allocates_or_reads_a_clock );
+REGISTER_UNIT_TEST( endpoint_channel_zero_types_refuse_other_channels );
