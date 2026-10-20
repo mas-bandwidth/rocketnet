@@ -48,9 +48,8 @@ jobs:
   # both suites, so a warning, an error or a behavior that only clang shows
   # has a gate. Debug keeps the asserts, which Release compiles out.
   #
-  # A clean clang build takes about two minutes, the unit suite about 15s,
-  # and the functional suite about 6 minutes with the 1000-client
-  # create/destroy cases.
+  # Measured with 16 build jobs: a clean clang Debug build takes under a
+  # minute, the unit suite about 20s and the functional suite about 90s.
 
   linux-clang:
     name: linux / clang

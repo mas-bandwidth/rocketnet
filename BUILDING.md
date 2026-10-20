@@ -12,9 +12,13 @@ Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, th
 
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
 CMake 4.2 or later (the Windows block below says why). On Linux the build is
-tested with gcc 15.2.0 and clang 21.1.8 in Debug and Release: with each compiler
-the static and shared libraries, `./bin/test` and `./bin/functional` build, and
-both suites pass. On Linux and macOS the Makefile is the front door:
+tested with gcc 13.3.0 and 15.2.0 and with clang 18.1.3 and 21.1.8, in Debug and
+Release: with each compiler the static and shared libraries, `./bin/test` and
+`./bin/functional` build, and both suites pass. The `linux / clang` job in
+`.github/workflows/nightly.yml` builds and runs both suites with clang; the
+Linux build-and-test rows in `.github/workflows/ci.yml` configure with the
+default compiler (gcc), and ci.yml uses clang only for the fuzz harnesses. On
+Linux and macOS the Makefile is the front door:
 
     make
 
