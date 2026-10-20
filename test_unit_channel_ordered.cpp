@@ -1596,11 +1596,9 @@ static uint64_t cm_calls()
     return cm_mallocs + cm_frees;
 }
 
-// The card names this test no_allocation_after_create. Three other unit files
-// register that name already (test_unit_connection_memory.cpp,
-// test_unit_send_budget.cpp, test_unit_packet_builder.cpp), and the registry
-// runs the first test it finds by name, so only one test of that name ever runs
-// in the suite. This test is registered under its own name as well, so it runs.
+// Registered as ordered_no_allocation_after_create: unit test names are unique
+// across the suite, and the registrar aborts on a duplicate
+// (test_unit_registry.h, rocketnet_unit_file_registrar_t).
 
 static void ordered_no_allocation_after_create()
 {
@@ -2076,11 +2074,5 @@ REGISTER_UNIT_TEST( hostile_reliable_chunks_are_refused );
 REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused );
 REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused_sim );
 REGISTER_UNIT_TEST( start_pointer_is_the_frame_source );
-static void no_allocation_after_create()
-{
-    ordered_no_allocation_after_create();
-}
-
 REGISTER_UNIT_TEST( ordered_no_allocation_after_create );
-REGISTER_UNIT_TEST( no_allocation_after_create );
 REGISTER_UNIT_TEST( rnchannel_witness_replays_ordered );

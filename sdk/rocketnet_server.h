@@ -19,17 +19,21 @@
 //
 // It is a windowed global cap on failed verifies plus a per-source table that
 // remembers which sources have already failed this window. Once the global cap
-// is spent, a request is refused before the verify if its source has already
-// failed this window, or if the table is full and the source is one it could
-// not remember; a first-time source with no failures is still verified while
-// a free table slot can remember it, so one source's failures never refuse a
-// validly signed request from another source. A source's count is durable for
-// the window: when the table is full no counted source is displaced to make
-// room, so a source cannot be reset and re-verified by churning fresh
-// addresses. The whole budget decays when the window rolls over, so a source
-// that exhausted it is not refused forever, and because the table is a fixed
-// part of the server struct (not file-scope), two servers in one process each
-// have their own budget.
+// is spent, a request is refused before the verify only if its source is in
+// the table with a recorded failure this window. A source with no recorded
+// failure is always verified, even when the table is full, so forging sources
+// that fill the table never refuse a validly signed request from another
+// source: there is no global lockout. A source's count is durable for the
+// window: when the table is full no counted source is displaced to make room,
+// so a counted source cannot be reset by churning fresh addresses. A failing
+// source the full table cannot record is verified again on its next request;
+// the verifies of all such sources are bounded by the per-update handshake
+// work budget (ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE), which runs before
+// this budget, and each source needs a valid cookie for its own address. The
+// whole budget decays when the window rolls over, so a source that exhausted
+// it is not refused forever, and because the table is a fixed part of the
+// server struct (not file-scope), two servers in one process each have their
+// own budget.
 
 #define ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET        90
 #define ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS 10
@@ -49,8 +53,9 @@ struct rocketnet_signature_verify_budget_t
 };
 
 // Returns nonzero when this source may run one more signature verify. Zero
-// means the source has already failed this window and the global budget is
-// spent: refuse before the verify.
+// means the global budget is spent and the table holds a failure from this
+// source this window: refuse before the verify. A source with no recorded
+// failure is never refused.
 int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_budget_t * budget,
                                              const struct rocketnet_address_t * source,
                                              uint64_t current_timestamp );

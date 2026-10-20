@@ -317,7 +317,6 @@ enum rocketnet_disconnect_reason_t
 {
     ROCKETNET_DISCONNECT_REASON_NONE                            = 0,   ///< No connection has ended, or the connection is up
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH                 = 1,   ///< The two ends' WIRE config fields differ
-    ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT                  = 2,   ///< The config exchange did not finish in time
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = 3,   ///< The peer sent what the protocol forbids
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT                = 4,   ///< A reliable message went unacknowledged past reliable_timeout_ms
     ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED        = 5,   ///< The connection's region had no room for an operation it must not drop
@@ -662,7 +661,7 @@ ROCKETNET_EXPORT uint64_t rocketnet_protocol_version( void );
 /// @brief Returns monotonic elapsed time in seconds from an unspecified process-local origin. @return Nondecreasing platform clock value; use the same clock for all time-taking calls.
 ROCKETNET_EXPORT double rocketnet_time( void );
 
-/// @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; provide a finite nonnegative value representable by the platform. This blocks the calling thread.
+/// @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; a negative, zero or NaN value returns at once, and a value above 2000 seconds sleeps 2000 seconds. This blocks the calling thread.
 ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 
 /// -----------------------------------------
@@ -935,7 +934,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint
 /// is ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES long, or NULL for all zeros. The
 /// output is ROCKETNET_CONNECT_TOKEN_BYTES long and connect_token_bytes is its
 /// size; a short buffer is refused with ROCKETNET_STATUS_INVALID_ARGUMENT and
-/// nothing is written. Reads no clock.
+/// nothing is written. A timeout_seconds of zero or below, or an
+/// expire_timestamp at or before create_timestamp, is refused with
+/// ROCKETNET_STATUS_INVALID_ARGUMENT and nothing is written. Reads no clock.
 /// Returns ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT,
 /// ROCKETNET_STATUS_INVALID_PROTOCOL_ID, ROCKETNET_STATUS_INVALID_ADDRESS or
 /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. Secret keys are never logged.
@@ -983,8 +984,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config( struct
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config_sized( struct rocketnet_client_config_t * config, size_t config_bytes );
 
 /// ROCKETNET_STATUS_OK when create would accept the config's own values, else
-/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule. The
-/// environment is not read. NULL means the defaults.
+/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule. It
+/// runs the one check create runs: every field's range, the transport list's
+/// parse, the simulated_* fields (nonzero is refused by a production library),
+/// and the message rules. The environment is not read. Safe before init. NULL
+/// means the defaults.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config );
 /// Validates a known-size client config; an unknown non-NULL size logs and
 /// returns ROCKETNET_STATUS_INVALID_ARGUMENT.
@@ -1009,7 +1013,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_write_dev_connect_token( cons
 #endif /// #if ROCKETNET_DEVELOPMENT
 
 /// A DISCONNECTED client. Create reads no clock and opens no socket. NULL
-/// config is the defaults; NULL on a refused config or memory block.
+/// config is the defaults. Returns NULL on a config validate_config refuses, on
+/// a refused memory block, and before rocketnet_init (logged, and counted in
+/// rocketnet_api_misuse_count).
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes );
 
 /// Create with a config config_bytes long; an unknown size is refused with a
@@ -1164,8 +1170,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config( struct roc
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /// ROCKETNET_STATUS_OK when create would accept the config's own values, else
-/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule. The
-/// environment is not read and the keys are not checked. NULL means the
+/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule. It
+/// runs the one check create runs: every field's range, the transport list's
+/// parse, the simulated_* fields (nonzero is refused by a production library),
+/// and the message rules. The environment is not read and the keys are not
+/// checked (start refuses a config with none). Safe before init. NULL means the
 /// defaults.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config );
 /// Validates a known-size server config; an unknown non-NULL size logs and
@@ -1181,8 +1190,10 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory_sized( const struct roc
 /// Address is where clients reach the server, "a.b.c.d:port" or "[v6]:port"; a
 /// port of 0 takes an ephemeral port (read it back with rocketnet_server_port
 /// once started). The server is created stopped and binds nothing. NULL config
-/// is the defaults, which start refuses until keys are given. A NULL address
-/// is a counted no-op that returns NULL.
+/// is the defaults, which start refuses until keys are given. Returns NULL on a
+/// config validate_config refuses, on a refused memory block, and before
+/// rocketnet_init (logged, and counted in rocketnet_api_misuse_count). A NULL
+/// address is a counted no-op that returns NULL.
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes );
 
 /// Create with a config config_bytes long; an unknown size is refused with a

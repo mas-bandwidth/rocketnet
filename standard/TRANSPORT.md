@@ -2665,7 +2665,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 4. A server MUST refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
 5. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 6. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request from a source that has spent the failed-signature budget in the current window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`.
+7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and, once the failed-signature budget of the current window is spent, a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
 8. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 9. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 10. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
@@ -2701,7 +2701,7 @@ list is ignored in that state.
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
-| no mapping | request | failed-signature budget spent | ignore, count | no mapping |
+| no mapping | request | failed-signature budget spent and the source has a recorded failure in the window | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
 | no mapping | request | no free slot | send connection denied | no mapping |
@@ -3617,7 +3617,11 @@ an input ([t1.4 Conventions](#t1.4)).
 11. A server SHOULD apply the failed-signature budget before the signature
     verification. When it does, a request from a source that has already
     failed in the current failed-signature window MUST be refused before the
-    verification runs and counted as a refusal.
+    verification runs and counted as a refusal. The budget MUST NOT refuse a
+    request from a source with no recorded failure in the window, even when
+    the budget is spent and the server can record no further sources; the
+    verifications such requests cost are bounded by the handshake work budget
+    of item 10.
 
 The values this section introduces are:
 
@@ -3897,7 +3901,6 @@ The registry of counters, in index order, is:
 | `MESSAGE_RECEIPT_ACKED` | `expected` | `none` |
 | `MESSAGE_RECEIPT_LOSS` | `path_loss` | `none` |
 | `CONNECTION_RESPONSE_INTERNAL_ERROR` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
-| `CONNECTION_REQUEST_MAPPING_SALT_MISMATCH` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `SEND_HISTORY_LOST` | `path_loss` | `none` |
 | `MESSAGE_BAD_CHANNEL` | `refusal` | `none` |
 | `MESSAGE_BAD_BLOCK` | `refusal` | `none` |
@@ -3914,7 +3917,6 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_DROPPED_INVALID_TYPE` | `refusal` | `none` |
 | `XDP_KERNEL_DROPPED_WRONG_EPOCH` | `refusal` | `none` |
 | `XDP_KERNEL_PASSED_IPV6_EXTENSION` | `expected` | `none` |
-| `CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CLIENT_SEND_DEFERRED` | `expected` | `none` |
 | `XDP_KERNEL_DROPPED_REPLAYED` | `refusal` | `none` |
 | `CLIENT_CHALLENGE_WRONG_SIZE` | `refusal` | `CLIENT_CHALLENGE_RECEIVED` |
@@ -4033,21 +4035,21 @@ c9 35 a9 56 00 00 00 95 84 42 e9 00 4a 00 87 ed
 d2 8a a7 48 00 00 00 fe a3 8f b7 02 00 00 fd 92
 bd 5f 02 00 00 bc 11 09 05 00 00 00 2a 62 77 0c
 00 00 00 28 65 77 12 01 00 00 9f ad 65 96 02 00
-00 c2 2f db 2c 00 21 00 30 f6 52 fc 00 08 00 6b
-c6 a4 41 02 00 00 88 ed b1 56 00 00 00 d6 92 db
-95 00 00 00 d7 6a 4d f9 00 00 00 eb 03 7f 49 00
-00 00 11 1a 37 e1 00 00 00 9c 47 5e e7 00 00 00
-8c 5c 05 26 01 00 00 44 5b fe 0f 00 00 00 ff 64
-f7 fa 01 00 00 75 4f 7d 3a 00 00 00 b1 eb 07 8c
-00 00 00 e9 53 9e 77 00 00 00 b9 17 2c 07 00 00
-00 34 b4 85 d8 00 00 00 b0 cb 42 af 01 00 00 00
-d9 df bc 00 21 00 bd b0 38 5c 01 00 00 9f 8d 1d
-fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
-54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00 08 00
-8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00 9b 86
-1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84 f0 6e
-01 00 00 25 11 95 dc 00 00 00 df ff a1 97 01 00
-00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00 00
+00 c2 2f db 2c 00 21 00 6b c6 a4 41 02 00 00 88
+ed b1 56 00 00 00 d6 92 db 95 00 00 00 d7 6a 4d
+f9 00 00 00 eb 03 7f 49 00 00 00 11 1a 37 e1 00
+00 00 9c 47 5e e7 00 00 00 8c 5c 05 26 01 00 00
+44 5b fe 0f 00 00 00 ff 64 f7 fa 01 00 00 75 4f
+7d 3a 00 00 00 b1 eb 07 8c 00 00 00 e9 53 9e 77
+00 00 00 b9 17 2c 07 00 00 00 34 b4 85 d8 00 00
+00 b0 cb 42 af 01 00 00 bd b0 38 5c 01 00 00 9f
+8d 1d fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f
+b1 00 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00
+08 00 8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00
+9b 86 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84
+f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
+01 00 00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00
+00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
