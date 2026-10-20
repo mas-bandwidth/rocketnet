@@ -38,6 +38,8 @@ rocketnet_generate_backend_keypair
 rocketnet_generate_backend_keypair_from_seed
 rocketnet_generate_server_keypair
 rocketnet_get_log_level
+rocketnet_get_thread_priority
+rocketnet_get_thread_priority_refusals
 rocketnet_init
 rocketnet_log_level_name
 rocketnet_num_status_codes
@@ -83,6 +85,7 @@ rocketnet_set_allocator
 rocketnet_set_assert_callback
 rocketnet_set_log_callback
 rocketnet_set_log_level
+rocketnet_set_thread_priority
 rocketnet_sleep
 rocketnet_status_name
 rocketnet_term
