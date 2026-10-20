@@ -22,9 +22,11 @@
 (* ghost `received` is that truth, trimmed to the range, and every rule    *)
 (* below is the window agreeing with it.                                   *)
 (*                                                                         *)
-(* This model checks two rules from fix cards. The committed instance uses  *)
-(* corrected code values; reversed configs preserve witnesses for F1 (fixed *)
-(* by commit 5ab9e5c8ea4d31d385d19e5d3178e38ff6591d27) and OV-34.          *)
+(* This model checks two rules from fix cards.  The committed instances    *)
+(* use the current code's values; MCReplayWindowBrokenLongSkip.cfg is the  *)
+(* reversed witness for F1 (fixed by commit                                *)
+(* 5ab9e5c8ea4d31d385d19e5d3178e38ff6591d27).  OV-34 has no committed      *)
+(* reversed config: GateBeforeAdvance = FALSE is the order it would check. *)
 (*                                                                         *)
 (*   F1: on a skip of a full window or more, the current implementation   *)
 (*   clears the whole ring in rocketnet_replay_advance. The reversed        *)
@@ -34,7 +36,7 @@
 (*   advances the session window only for a mapping that holds a slot.    *)
 (*   The code checks client_index before rocketnet_replay_advance in       *)
 (*   sdk/rocketnet_server_protocol.cpp. GateBeforeAdvance = TRUE models   *)
-(*   the current order; FALSE is the reversed witness.                    *)
+(*   the current order; FALSE would be the reversed order.                *)
 (*                                                                         *)
 (* This is replay_session only.  The handshake window (replay_handshake)  *)
 (* is the same struct, but handshake packets are exempt from replay        *)
@@ -55,7 +57,7 @@ CONSTANTS
     ClearedWords,      \* words the long-skip branch clears; current code uses Words.
     MaxSeq,            \* the highest sequence this instance explores
     GateBeforeAdvance  \* BOOLEAN: check the slot before advance (current code)
-                       \* or after advance (the reversed witness)
+                       \* or after advance (the reversed order)
 
 W == Words * WordBits  \* ROCKETNET_REPLAY_WINDOW_BITS (sdk/rocketnet_replay.h)
 

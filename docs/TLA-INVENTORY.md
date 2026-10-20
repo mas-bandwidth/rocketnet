@@ -8,8 +8,8 @@ Every state machine in rocketnet, read from the code at `5cb7613` (origin/main).
 section gives the states, the state the machine owns (the variables a module would
 declare), the transitions that move it (each with the `file:line` that makes it), the
 rules it must keep (each traced to a sentence in STANDARD.md, USAGE.md or a code
-comment), and a verdict: model it or not, and why. The last part is the ordered list of
-modules the sibling cards write, with the small instance each one checks.
+comment), and a verdict: model it or not, and why. The last parts list the module files
+that exist in `tla/` today and the provenance and limits of this review.
 
 Conventions. Paths are relative to the repository root. `S:n` is STANDARD.md line n,
 `U:n` is USAGE.md line n. All line numbers are at `5cb7613`. Outside events are written
@@ -297,7 +297,8 @@ response, 4 connected}` (S:2028-2040).
 
 **Verdict: model it.** It is the first machine the request names. The standard's case
 for it is that the invariants exist only because it never moves sideways. It is joined
-with M2 and M3 as one module (`RNHandshake`), because the climb's properties are
+with M2 and M3 as one handshake model (built as `ClientConnection.tla` and
+`ServerConnection.tla`), because the climb's properties are
 properties of both ends and the wire.
 
 ## M2. The server's per-address handshake: encryption mappings
@@ -367,7 +368,7 @@ than raised.
 - `LIVE HalfBounded`: every Half mapping leaves Half by its deadline, whatever the peer
   sends (S:2511-2516).
 
-**Verdict: model it**, inside `RNHandshake`. This is the security half of connection
+**Verdict: model it**, inside the handshake model. This is the security half of connection
 setup: zombie slots, half-open floods, and key recurrence across replays. A `Replay`
 attacker action (re-inject any packet seen, from a spoofed source) shows F7 directly.
 
@@ -399,7 +400,7 @@ attacker action (re-inject any packet seen, from a spoofed source) shows F7 dire
 - `INV ReleaseZeroes`: a released slot's mapping keys are zero (S:2925-2930;
   `encryption_map.cpp:199`). In the model a released mapping leaves the domain.
 
-**Verdict: model it, inside `RNHandshake`.** Alone it is a small allocator. Its risk is
+**Verdict: model it, inside the handshake model.** Alone it is a small allocator. Its risk is
 the slot↔mapping binding under index reuse, which shows only alongside M2's removal
 paths. F3 (cost) is outside what a model can see.
 
@@ -888,7 +889,7 @@ and no protocol. Its pure parts are already factored out for direct tests
 | Backend connected set | S:889-981 | A deployment property outside the library. |
 | Darwin `msgx` pump's live-refusal pause | `sdk/rocketnet_platform.cpp:1139-2000` | Outside this card's START list; not read. It deserves its own line in the next inventory. |
 | Stats windows, loss and jitter trackers | `rocketnet_stats_window.h`, `rocketnet_packet_loss_tracker.h`, `rocketnet_jitter_tracker.h` | Measurement, not control: nothing reads them to decide a transition. |
-| Integrity limit | `client_protocol.cpp:55-67`; `server_protocol.cpp:597-617` | A counter to 2^36 with one edge; folded into `RNHandshake` as an action guarded by a small `IntegrityLimit` constant. |
+| Integrity limit | `client_protocol.cpp:55-67`; `server_protocol.cpp:597-617` | A counter to 2^36 with one edge; folded into the handshake model as an action guarded by a small `IntegrityLimit` constant. |
 
 ---
 
