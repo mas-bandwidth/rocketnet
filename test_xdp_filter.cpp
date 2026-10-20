@@ -1270,7 +1270,7 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     }
     if ( xdp_server )
     {
-        setenv( "ROCKETNET_SERVER_DRIVER", "xdp", 1 );
+        setenv( "ROCKETNET_SERVER_TRANSPORT", "xdp", 1 );
         setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "1", 1 );
         setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 );
     }
@@ -1552,6 +1552,189 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
     return ok;
 }
 
+// A create that fails part way tears down what it built and nothing else.
+// The example server runs with two XDP queues on a two-queue veth and the
+// development-only seam ROCKETNET_TEST_XDP_FAIL_AT_QUEUE=1
+// (sdk/rocketnet_server_socket_linux.cpp, the top of the create queue loop):
+// queue 0 is fully built, queue 1 fails before its mutexes exist, and create
+// calls destroy. The server must report the injected failure and exit on its
+// own, never die on a signal (a Debug build aborts on the mutex assert when
+// destroy destroys a mutex create never made).
+
+#define TEARDOWN_NEAR "rnteardown0"
+#define TEARDOWN_PEER "rnteardown1"
+#define TEARDOWN_SERVER_ADDRESS "10.78.1.1:40000"
+#define TEARDOWN_SECONDS 30.0
+
+// the cpus in /sys/devices/system/cpu/isolated ("1-2,5" counts 3)
+
+static int isolated_cpu_count()
+{
+    FILE * file = fopen( "/sys/devices/system/cpu/isolated", "r" );
+    if ( !file )
+        return 0;
+    char line[1024];
+    const bool read = fgets( line, sizeof(line), file ) != NULL;
+    fclose( file );
+    if ( !read )
+        return 0;
+    int count = 0;
+    const char * p = line;
+    while ( *p >= '0' && *p <= '9' )
+    {
+        char * end = NULL;
+        const long first = strtol( p, &end, 10 );
+        long last = first;
+        p = end;
+        if ( *p == '-' )
+        {
+            last = strtol( p + 1, &end, 10 );
+            p = end;
+        }
+        count += (int) ( last - first + 1 );
+        if ( *p == ',' )
+            p++;
+    }
+    return count;
+}
+
+static bool xdp_create_fails_part_way_tears_down( filter_t * )
+{
+    if ( !inside_virtme_guest() )
+    {
+        case_skip_reason = "not inside a virtme-ng guest: this case attaches XDP to a veth pair and runs only in the VM";
+        return true;
+    }
+
+    // the xdp pre-flight wants one isolated cpu per queue (R4 scales with B1)
+
+    if ( isolated_cpu_count() < 2 )
+    {
+        case_skip_reason = "fewer than 2 isolated cpus: two queues need a guest booted with --cpus 3 --append \"irqaffinity=0 isolcpus=1-2 nohz_full=1-2\"";
+        return true;
+    }
+
+    char exe[4096];
+    const ssize_t exe_bytes = readlink( "/proc/self/exe", exe, sizeof(exe) - 1 );
+    if ( exe_bytes <= 0 )
+        return false;
+    exe[exe_bytes] = '\0';
+    char * slash = strrchr( exe, '/' );
+    if ( !slash )
+        return false;
+    *slash = '\0';
+    char server_path[4200];
+    snprintf( server_path, sizeof(server_path), "%s/server", exe );
+
+    char server_log[64] = "/tmp/rocketnet_teardown_server_XXXXXX";
+    {
+        const int server_log_fd = mkstemp( server_log );
+        if ( server_log_fd < 0 )
+            return false;
+        close( server_log_fd );
+    }
+
+    struct statfs bpffs;
+    if ( statfs( "/sys/fs/bpf", &bpffs ) != 0 || (uint64_t) bpffs.f_type != (uint64_t) BPF_FS_MAGIC )
+    {
+        if ( !onlink_run( "mount -t bpf bpf /sys/fs/bpf" ) )
+        {
+            unlink( server_log );
+            return false;
+        }
+    }
+
+    if ( system( "ip link del " TEARDOWN_NEAR " 2>/dev/null" ) != 0 )
+    {
+        // nothing left from an earlier run
+    }
+
+    bool ok = onlink_run( "ip link add " TEARDOWN_NEAR " numtxqueues 2 numrxqueues 2 type veth peer name " TEARDOWN_PEER " numtxqueues 2 numrxqueues 2" ) &&
+              onlink_run( "ip addr add 10.78.1.1/24 dev " TEARDOWN_NEAR ) &&
+              onlink_run( "ip link set " TEARDOWN_NEAR " up" ) &&
+              onlink_run( "echo 2 > /sys/class/net/" TEARDOWN_NEAR "/napi_defer_hard_irqs" ) &&
+              onlink_run( "echo 200000 > /sys/class/net/" TEARDOWN_NEAR "/gro_flush_timeout" ) &&
+              onlink_run( "ip link set " TEARDOWN_PEER " up" );
+
+    int status = 0;
+    bool exited = false;
+    if ( ok )
+    {
+        const pid_t pid = fork();
+        if ( pid == 0 )
+        {
+            const int log_fd = open( server_log, O_WRONLY | O_TRUNC, 0600 );
+            if ( log_fd >= 0 )
+            {
+                dup2( log_fd, 1 );
+                dup2( log_fd, 2 );
+                close( log_fd );
+            }
+            setenv( "ROCKETNET_SERVER_TRANSPORT", "xdp", 1 );
+            setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
+            setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2", 1 );
+            setenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", "1", 1 );
+            execl( server_path, server_path, TEARDOWN_SERVER_ADDRESS, "--max-clients", ONLINK_MAX_CLIENTS, (char*) NULL );
+            _exit( 127 );
+        }
+        if ( pid < 0 )
+        {
+            printf( "  FAIL could not fork the example server\n" );
+            ok = false;
+        }
+        else
+        {
+            const double deadline = onlink_now() + TEARDOWN_SECONDS;
+            while ( onlink_now() < deadline )
+            {
+                if ( waitpid( pid, &status, WNOHANG ) == pid )
+                {
+                    exited = true;
+                    break;
+                }
+                usleep( 10000 );
+            }
+            if ( !exited )
+            {
+                onlink_stop( pid );
+                printf( "  FAIL the server was still running %.0f seconds after a create that should have failed\n", TEARDOWN_SECONDS );
+                ok = false;
+            }
+        }
+    }
+
+    const bool injected = onlink_log_has( server_log, "server xdp create failed at queue 1 (injected" );
+
+    if ( ok && exited )
+    {
+        if ( WIFSIGNALED( status ) )
+        {
+            printf( "  FAIL the server died on signal %d tearing down a create that failed at queue 1 of 2\n", WTERMSIG( status ) );
+            ok = false;
+        }
+        else if ( !injected )
+        {
+            printf( "  FAIL the server never reached the injected failure at queue 1 (exit %d)\n", WIFEXITED( status ) ? WEXITSTATUS( status ) : -1 );
+            ok = false;
+        }
+        else if ( !WIFEXITED( status ) || WEXITSTATUS( status ) == 0 )
+        {
+            printf( "  FAIL the server did not exit non-zero after its create failed\n" );
+            ok = false;
+        }
+    }
+
+    if ( !ok )
+        onlink_print_tail( "server", server_log );
+
+    if ( system( "ip link del " TEARDOWN_NEAR " 2>/dev/null" ) != 0 )
+    {
+        // already gone
+    }
+    unlink( server_log );
+    return ok;
+}
+
 struct case_t
 {
     const char * name;
@@ -1575,6 +1758,7 @@ static const case_t cases[] =
     { "replay_never_writes_the_map", replay_never_writes_the_map },
     { "replay_key_layout_matches_header", replay_key_layout_matches_header },
     { "xdp_on_link_reply_reaches_the_peer", xdp_on_link_reply_reaches_the_peer },
+    { "xdp_create_fails_part_way_tears_down", xdp_create_fails_part_way_tears_down },
     { "xsk_bind_falls_back_to_copy", xsk_bind_falls_back_to_copy },
 };
 
