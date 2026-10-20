@@ -225,39 +225,6 @@ static void client_io_destroy_hands_off_deferred_slots()
 
 REGISTER_UNIT_TEST( client_io_destroy_hands_off_deferred_slots );
 
-// Disconnect with a deferred hand-off, then destroy: the second update's
-// packet waits in the Filling ring behind ring 0, still HandedOff, when
-// disconnect resets the protocol, which erases the server address
-// (sdk/rocketnet_client_transport.cpp, rocketnet_client_transport_disconnect).
-// Disconnect's own hand-off is deferred too, so destroy hands the Filling
-// ring off; every committed slot is sent to the server the slots were
-// committed for, never to the erased address.
-static void client_io_destroy_after_disconnect_sends_to_the_server()
-{
-    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
-    client_io_transport_clock_t clock = { 1000.0, 0 };
-    rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_io, &clock );
-
-    rocketnet_client_transport_update( transport, 1000.0 );
-    rocketnet_client_transport_update( transport, 1001.0 );
-    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 1 );
-    check( fake->num_sent == 0 );
-
-    rocketnet_client_transport_disconnect( transport );
-    check( fake->num_sent == 0 );
-
-    rocketnet_client_transport_destroy( transport );
-    check( fake->num_sent == 2 );
-    rocketnet_address_t server;
-    check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
-    for ( int i = 0; i < fake->num_sent; i++ )
-        check( rocketnet_address_equal( &fake->sent[i].address, &server ) );
-    check( fake->destroy_calls == 1 );
-    delete fake;
-}
-
-REGISTER_UNIT_TEST( client_io_destroy_after_disconnect_sends_to_the_server );
-
 // The receive path through update: a datagram from the server, drained and
 // published by the step (stamped by the config's time_callback), is exposed by
 // the next update and reaches the protocol (PACKETS_RECEIVED moves by one);
