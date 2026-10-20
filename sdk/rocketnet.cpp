@@ -85,6 +85,16 @@ void rocketnet_set_quiet( bool flag )
    log_quiet.store( flag, std::memory_order_relaxed );
 }
 
+// a C caller may pass any int where the header names an enum, but C++ may not
+// load an enum value outside the enum's range (clang's -fsanitize=enum stops
+// on it), so the public lookups below read the argument's bits as an int.
+static int rocketnet_enum_argument_value( const void * argument )
+{
+    int value;
+    memcpy( &value, argument, sizeof( value ) );
+    return value;
+}
+
 static std::atomic<int> log_level{ ROCKETNET_LOG_LEVEL_INFO };
 
 void rocketnet_set_log_level( enum rocketnet_log_level_t level )
@@ -93,9 +103,10 @@ void rocketnet_set_log_level( enum rocketnet_log_level_t level )
     // range is refused, leaving the level already in force. a caller that
     // hands over a typo or a parsed-out-of-range number must not silence the
     // library by accident.
-    if ( level < ROCKETNET_LOG_LEVEL_NONE || level > ROCKETNET_LOG_LEVEL_SPAM )
+    const int value = rocketnet_enum_argument_value( &level );
+    if ( value < ROCKETNET_LOG_LEVEL_NONE || value > ROCKETNET_LOG_LEVEL_SPAM )
         return;
-    log_level.store( level, std::memory_order_relaxed );
+    log_level.store( value, std::memory_order_relaxed );
 }
 
 // test_xdp and test_iocp compile this file without rocketnet_config.cpp, so
@@ -163,7 +174,7 @@ enum rocketnet_log_level_t rocketnet_get_log_level( void )
 
 const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
 {
-    switch ( (int) level )
+    switch ( rocketnet_enum_argument_value( &level ) )
     {
         case ROCKETNET_LOG_LEVEL_NONE:  return "none";
         case ROCKETNET_LOG_LEVEL_ERROR: return "error";
@@ -220,7 +231,7 @@ static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names
 // NULL, without asserting) for a value that is not a code.
 const char * rocketnet_status_name( enum rocketnet_status_t status )
 {
-    const int value = (int) status;
+    const int value = rocketnet_enum_argument_value( &status );
     if ( value < 0 || value >= ROCKETNET_STATUS_COUNT )
         return "unknown";
     return rocketnet_status_names[value];
