@@ -9,11 +9,26 @@ if(ROCKETNET_USE_SYSTEM_SODIUM AND NOT TARGET RocketNet::Sodium)
         set_target_properties(RocketNet::Sodium PROPERTIES
             INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_SODIUM_INCLUDE_DIR}"
             INTERFACE_LINK_LIBRARIES "${ROCKETNET_SODIUM_LIBRARY}")
+        set(ROCKETNET_SODIUM_VERSION "")
+        if(EXISTS "${ROCKETNET_SODIUM_INCLUDE_DIR}/sodium/version.h")
+            file(STRINGS "${ROCKETNET_SODIUM_INCLUDE_DIR}/sodium/version.h" ROCKETNET_SODIUM_VERSION_LINE
+                REGEX "^#define SODIUM_VERSION_STRING \"[0-9.]+\"")
+            string(REGEX REPLACE ".*\"([0-9.]+)\".*" "\\1" ROCKETNET_SODIUM_VERSION "${ROCKETNET_SODIUM_VERSION_LINE}")
+        endif()
     else()
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(ROCKETNET_SODIUM REQUIRED IMPORTED_TARGET libsodium)
         set_target_properties(RocketNet::Sodium PROPERTIES
             INTERFACE_LINK_LIBRARIES PkgConfig::ROCKETNET_SODIUM)
+    endif()
+    # The external libsodium floor; the vendored copy is 1.0.22 (sodium/sodium.h:1972).
+    if(NOT ROCKETNET_SODIUM_VERSION OR ROCKETNET_SODIUM_VERSION VERSION_LESS 1.0.20)
+        if(NOT ROCKETNET_SODIUM_VERSION)
+            set(ROCKETNET_SODIUM_VERSION "of unknown version")
+        endif()
+        message(FATAL_ERROR "ROCKETNET_USE_SYSTEM_SODIUM: found libsodium ${ROCKETNET_SODIUM_VERSION}; "
+            "rocketnet requires libsodium 1.0.20 or later. Install a newer libsodium, or "
+            "configure with -DROCKETNET_USE_SYSTEM_SODIUM=OFF to build the vendored 1.0.22.")
     endif()
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

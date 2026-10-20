@@ -781,7 +781,7 @@ void rocketnet_test_posix_client_receive_weather()
 static void posix_send_seam_socket( int ipv6, const char * pump )
 {
     rocketnet_address_t bind_address;
-    rocketnet_address_parse( &bind_address, ipv6 ? "::" : "0.0.0.0" );
+    rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
                                                                                       ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, pump );
     posix_check( socket != NULL );
@@ -1031,7 +1031,7 @@ static void posix_burst_drain_thread( void * context )
 void rocketnet_test_posix_send_burst()
 {
     rocketnet_address_t server_bind;
-    rocketnet_address_parse( &server_bind, "0.0.0.0" );
+    rocketnet_address_parse( &server_bind, "127.0.0.1" );
     rocketnet_platform_socket_t * server = rocketnet_platform_socket_create( NULL, &server_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
                                                                              ROCKETNET_SOCKET_SEND_BUFFER_SIZE, 8 * 1024 * 1024 );
     posix_check( server != NULL );
@@ -1049,7 +1049,7 @@ void rocketnet_test_posix_send_burst()
     for ( int candidate = POSIX_BURST_BYTES; candidate <= 64 * 1024 && send_buffer == 0; candidate += 64 )
     {
         rocketnet_address_t probe_bind;
-        rocketnet_address_parse( &probe_bind, "0.0.0.0" );
+        rocketnet_address_parse( &probe_bind, "127.0.0.1" );
         rocketnet_platform_socket_t * probe = rocketnet_platform_socket_create( NULL, &probe_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, candidate, 4096 );
         posix_check( probe != NULL );
         memset( packet[0], 0xff, POSIX_BURST_BYTES );
@@ -1087,7 +1087,7 @@ void rocketnet_test_posix_send_burst()
     for ( uint32_t sender_index = 0; sender_index < POSIX_BURST_SENDERS; sender_index++ )
     {
         rocketnet_address_t sender_bind;
-        rocketnet_address_parse( &sender_bind, "0.0.0.0" );
+        rocketnet_address_parse( &sender_bind, "127.0.0.1" );
         rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, send_buffer, 4096 );
         posix_check( sender != NULL );
         pump = rocketnet_platform_socket_pump( sender );
