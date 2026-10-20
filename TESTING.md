@@ -11,8 +11,8 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Unit suite (./bin/test) | ✅ | ✅ | ✅ |
 | Functional suite (./bin/functional) | ✅ | ✅ | ✅ |
 | Functional suite repeated, zero flakes | OWED | OWED | OWED |
-| Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows) | ✅ | ❌ | ❌ |
-| Leaks (LSan, the leaks tool, App Verifier's leak layer) | ✅ | ❌ | ❌ |
+| Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows) | ✅ | ❌ | OWED |
+| Leaks (LSan, the leaks tool, App Verifier's leak layer) | ✅ | ❌ | OWED |
 | libFuzzer (corpus replay and fuzz runs) | ❌ | ❌ | ✅ |
 | Lifecycle stress (init/term, create/destroy, restart, destroy under traffic) | ❌ | ❌ | ✅ |
 | Hard-killed peer never stalls receive | ❌ | ❌ | ❌ |

@@ -28,7 +28,7 @@
 ; no nightly has run on this branch's code as scheduled. A Linux cell for CI
 ; or a nightly comes from the cards that ran those jobs' steps by hand.
 ;
-; Recorded 2026-10-20 at sprint/rocketnet-proof c13e1408.
+; Recorded 2026-10-20 at sprint/rocketnet-proof ac4cae3c20550ee4315c0f9ee3e9f95915a8fe9f.
 (:title "RocketNet v1.0.0 testing"
  :all-cells-apply t
  :tables-only t
@@ -48,14 +48,16 @@
      :pending ((Windows "rocketnet-windows-suite-stable (working): 20 of 20 runs")
                (macOS "rocketnet-macos-transport-matrix-repeat (waiting): every cell fifty times")
                (Linux "rocketnet-linux-transport-matrix-repeat (waiting): every cell fifty times")))
-    (:feature "Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows)" :cells (y n n)
-     :evidence "Windows: MSVC ASan, test.exe, test_lifecycle.exe, test_iocp.exe and functional.exe on the default transport, iocp and rio, zero reports, rocketnet-win-msvc-asan e2ed2a4b"
+    (:feature "Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows)" :cells (y n o)
+     :evidence ((Windows "MSVC ASan, test.exe, test_lifecycle.exe, test_iocp.exe and functional.exe on the default transport, iocp and rio, zero reports, rocketnet-win-msvc-asan e2ed2a4b")
+                (Linux "ASan/UBSan CI unit and LSan unit on default and portable, plus focused fragment tests green, rocketnet-linux-sanitizers-green-at-base 1452058ca852940c2311d63a57e82cbcf262fbed"))
      :pending ((macOS "rocketnet-macos-sanitizers-and-leaks (working)")
-               (Linux "rocketnet-linux-sanitizers-green-at-base (working): ci.yml's asan + ubsan and tsan jobs")))
-    (:feature "Leaks (LSan, the leaks tool, App Verifier's leak layer)" :cells (y n n)
-     :evidence "Windows: App Verifier with the Leak layer, 0 stops on test_lifecycle, test_iocp and functional per transport, rocketnet-win-app-verifier 7457d35b"
+               (Linux "no card: full functional ASan/UBSan, LSan and TSan matrices are OWED under the two-minute rule")))
+    (:feature "Leaks (LSan, the leaks tool, App Verifier's leak layer)" :cells (y n o)
+     :evidence ((Windows "App Verifier with the Leak layer, 0 stops on test_lifecycle, test_iocp and functional per transport, rocketnet-win-app-verifier 7457d35b")
+                (Linux "LSan unit suite on default and portable green, rocketnet-linux-sanitizers-green-at-base 1452058ca852940c2311d63a57e82cbcf262fbed"))
      :pending ((macOS "rocketnet-macos-sanitizers-and-leaks (working)")
-               (Linux "rocketnet-linux-sanitizers-green-at-base (working): nightly-leaks; ./bin/functional under ASan and LSan already shows 0 leaks, rocketnet-r1-fuzz-and-sanitized-functional-clean-e 1c581f5d")))
+               (Linux "no card: full functional LSan matrix is OWED under the two-minute rule")))
     (:feature "libFuzzer (corpus replay and fuzz runs)" :cells (n n y)
      :evidence "Linux: fuzz-smoke and fuzz-smoke-ndebug green, rocketnet-linux-ci-green-at-base 32c4ff08; fuzz-nightly.yml's fuzz job green with its own time budget, rocketnet-linux-nightlies-green-at-base 381203ba"
      :pending ((Windows "rocketnet-win-libfuzzer-clang-cl (working)")
@@ -70,13 +72,13 @@
                (Linux "rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")))
     (:feature "Socket error paths (oversize, runt, garbage, zero-length, failed sends)" :cells (n y y)
      :evidence "macOS: rocketnet-macos-socket-errors-and-enobufs-t 7ea06926, 20 of 20; Linux: rocketnet-linux-socket-error-paths ce98ebd1, 20 of 20, xdp cells in a guest"
-     :pending ((Windows "rocketnet-win-socket-error-paths-t (working)")))
+     :pending ((Windows "rocketnet-win-socket-error-paths-t-t (working)")))
     (:feature "Network thread priority" :cells (y y y)
      :evidence "Windows, macOS and Linux: test_unit_thread_priority cases run by name in ./bin/test on each, rocketnet-network-thread-priority-as-space 92e729dd")
     (:feature "Examples (run_examples.py)" :cells (n n n)
-     :pending ((Windows "rocketnet-example-ack-receipts-debug-assert (working): example_budgets fails at this branch since sends drop until connected")
-               (macOS "rocketnet-example-ack-receipts-debug-assert (working)")
-               (Linux "rocketnet-example-ack-receipts-debug-assert (working)")))
+     :pending ((Windows "rocketnet-example-ack-receipts-debug-assert (review): example_budgets fails at this branch since sends drop until connected")
+               (macOS "rocketnet-example-ack-receipts-debug-assert (review)")
+               (Linux "rocketnet-example-ack-receipts-debug-assert (review)")))
     (:feature "1000 clients, load harness" :cells (o o y)
      :evidence "Linux: ./bin/load 1000 60 passes all five criteria three times on portable, gso, gso plain and io_uring, once on xdp in a guest, rocketnet-linux-load-1000-clients 33f45ea9"
      :pending ((Windows "rocketnet-win-load-1000-clients (waiting)")
@@ -90,13 +92,13 @@
      :pending ((Windows "rocketnet-win-soak-per-transport (waiting)")
                (Linux "rocketnet-linux-soak-per-transport (working)")))
     (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (n n n)
-     :pending ((Windows "rocketnet-r1-windows-nightlies-all-run (working); rocketnet-example-ack-receipts-debug-assert (working) for the examples job; build-and-test-windows-debug ran step by step green, rocketnet-win-nightlies-on-fleet-runner f2dae0dc")
+     :pending ((Windows "rocketnet-r1-windows-nightlies-all-run (working); rocketnet-example-ack-receipts-debug-assert (review) for the examples job; build-and-test-windows-debug ran step by step green, rocketnet-win-nightlies-on-fleet-runner f2dae0dc")
                (macOS "rocketnet-macos-nightlies-green-at-base (review) and rocketnet-macos-nightly-soak-green-at-base (waiting)")
-               (Linux "rocketnet-linux-nightly-soak-green-at-base (working) for nightly-soak, rocketnet-linux-sanitizers-green-at-base (working) for nightly-leaks, rocketnet-example-ack-receipts-debug-assert (working) for the examples job; fuzz, frame budget and channel seeds are green, rocketnet-linux-nightlies-green-at-base 381203ba")))
+               (Linux "rocketnet-linux-nightly-soak-green-at-base (working) for nightly-soak; nightly-leaks green in rocketnet-linux-sanitizers-green-at-base 1452058ca852940c2311d63a57e82cbcf262fbed; rocketnet-example-ack-receipts-debug-assert (review) for the examples job; fuzz, frame budget and channel seeds are green, rocketnet-linux-nightlies-green-at-base 381203ba")))
     (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n)
      :pending ((Windows "rocketnet-windows-ci-green-at-base (working)")
                (macOS "rocketnet-macos-ci-green-at-base (working)")
-               (Linux "rocketnet-linux-sanitizers-green-at-base (working) for the sanitizer and tsan jobs; big endian: no card; every other Linux step is green, rocketnet-linux-ci-green-at-base 32c4ff08")))))
+               (Linux "big endian: no card; sanitizer and TSan unit checks green in rocketnet-linux-sanitizers-green-at-base 1452058ca852940c2311d63a57e82cbcf262fbed; full functional sanitizer and TSan matrices are OWED under the two-minute rule; every other Linux step is green, rocketnet-linux-ci-green-at-base 32c4ff08")))))
   (:id "platform-specific" :title "Platform-specific tests"
    :text "The tests that apply to only some platforms: one row per platform a test applies to."
    :label "test"
@@ -168,7 +170,7 @@
     (:feature "Hard-killed peer or ICMP error never stalls receive" :on io_uring :cell n
      :pending "rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")
     (:feature "Hard-killed peer or ICMP error never stalls receive" :on portable :cell n
-     :pending "rocketnet-windows-udp-connreset-never-stalls-receive, rocketnet-macos-hard-killed-peer-never-stalls-receive and rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")
+     :pending "rocketnet-windows-udp-connreset-never-stalls-receive (working), rocketnet-macos-hard-killed-peer-never-stalls-receive (working) and rocketnet-linux-hard-killed-peer-never-stalls-receive (working)")
     (:feature "Hard-killed peer or ICMP error never stalls receive" :on iocp :cell n
      :pending "rocketnet-windows-udp-connreset-never-stalls-receive (working)")
     (:feature "Hard-killed peer or ICMP error never stalls receive" :on rio :cell n
@@ -182,11 +184,11 @@
     (:feature "Socket error paths" :on io_uring :cell y
      :evidence "io_uring: rocketnet-linux-socket-error-paths ce98ebd1")
     (:feature "Socket error paths" :on portable :cell n
-     :pending "Windows: rocketnet-win-socket-error-paths-t (working); macOS and Linux are green, rocketnet-macos-socket-errors-and-enobufs-t 7ea06926 and rocketnet-linux-socket-error-paths ce98ebd1")
+     :pending "Windows: rocketnet-win-socket-error-paths-t-t (working); macOS and Linux are green, rocketnet-macos-socket-errors-and-enobufs-t 7ea06926 and rocketnet-linux-socket-error-paths ce98ebd1")
     (:feature "Socket error paths" :on iocp :cell n
-     :pending "rocketnet-win-socket-error-paths-t (working)")
+     :pending "rocketnet-win-socket-error-paths-t-t (working)")
     (:feature "Socket error paths" :on rio :cell n
-     :pending "rocketnet-win-socket-error-paths-t (working)")
+     :pending "rocketnet-win-socket-error-paths-t-t (working)")
     (:feature "Lifecycle stress" :on xdp :cell y
      :evidence "xdp: in a guest, rocketnet-linux-lifecycle-stress-t 8a68c102")
     (:feature "Lifecycle stress" :on msgx :cell n
