@@ -624,7 +624,8 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SERVER_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
-    check( documented.size() == 69 );
+    check( documented.size() == 70 );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_LOG_LEVEL" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_LATENCY_MS" ) );

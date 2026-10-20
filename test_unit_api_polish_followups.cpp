@@ -22,7 +22,7 @@
 #define check rocketnet_unit_check
 
 static_assert( std::is_same<decltype( &rocketnet_set_quiet ), void (*)( bool )>::value, "set_ naming: rocketnet_set_quiet( bool )" );
-static_assert( ROCKETNET_STATUS_COUNT == ROCKETNET_STATUS_FLOW_ID_RESERVED + 1, "ROCKETNET_STATUS_COUNT follows the last code" );
+static_assert( ROCKETNET_STATUS_COUNT == ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED + 1, "ROCKETNET_STATUS_COUNT follows the last code" );
 
 static int api_polish_followups_count = 0;
 
@@ -57,9 +57,9 @@ static void test_api_polish_followups()
     rocketnet_set_log_level( saved );
 
     // ROCKETNET_STATUS_COUNT counts every code, OK included
-    check( ROCKETNET_STATUS_COUNT == 26 );
+    check( ROCKETNET_STATUS_COUNT == 27 );
     check( rocketnet_num_status_codes() == ROCKETNET_STATUS_COUNT );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) ( ROCKETNET_STATUS_COUNT - 1 ) ), "FLOW_ID_RESERVED" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) ( ROCKETNET_STATUS_COUNT - 1 ) ), "TRANSPORT_FAMILIES_UNSUPPORTED" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
 
     // every level name matches its enum: WARN is "warn"
