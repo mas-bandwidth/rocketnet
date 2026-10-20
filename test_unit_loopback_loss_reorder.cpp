@@ -253,11 +253,11 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 }
 
 // Repinned because every eliciting packet now gets a standalone ACK on the next update;
-// both runs keep the same 24/25 connected steps.
+// simulator latency adds two connected steps (24 without it, 26 with it).
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
     { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xa8da9261b1f204a7 ), UINT64_C( 0x5004c4f6d4f35505 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 68, 67, 5775, 4389, 67, 67, 4389, 5714, UINT64_C( 0xb9546d8e4b2d7706 ), UINT64_C( 0xc6ba621e11a56244 ), 25 };
+    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x5cddcfdb9c7304e7 ), UINT64_C( 0x5004c4f6d4f35505 ), 26 };
 
 static void loopback_patterns_off_same_trace()
 {
