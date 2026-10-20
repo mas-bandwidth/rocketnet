@@ -11,7 +11,7 @@ over the in-memory `loopback` transport, which needs no socket and no network.
 3. Mint a development connect token for that server address.
 4. Create a client pinned to `loopback`, then update both ends until the
    client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
-5. Send one `ROCKETNET_RELIABLE_ORDERED` message from the client to the
+5. Send one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message from the client to the
    server with `rocketnet_client_start_message`, a `memcpy` into the returned buffer,
    and `rocketnet_client_finish_message`.
 6. Receive and print it on the server, release the view, disconnect the

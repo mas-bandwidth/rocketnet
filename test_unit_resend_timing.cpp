@@ -164,7 +164,7 @@ static void no_backoff_between_resends()
         }
     }
     check( resends >= 17 );                                        // 2 s of 100 ms gaps rounded to 60 Hz ticks
-    check( f.ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
     resend_timing_close( &f );
 }
 
@@ -270,7 +270,7 @@ static void resend_timing_witness_replays()
 
     check( sampled );
     check( timed_out );                                            // every send lost: the timeout ends it
-    check( f.ack.error == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+    check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
     check( attempts >= 4 );                                        // ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS
     resend_timing_close( &f );
 }
@@ -381,7 +381,7 @@ static void chunk_resend_paced_by_rtt_not_interval()
     resend_timing_send( &f, t2, &small );
     resent = resend_timing_pass_numbers( &f, t2 + 0.101, out );
     check( resent == 1 && out[0] == small );
-    check( f.ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
     resend_timing_close( &f );
 }
 

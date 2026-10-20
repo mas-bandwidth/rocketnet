@@ -14,7 +14,11 @@ Makefile is the front door:
 
     make
 
-Binaries and libraries land in `bin/`. Run the unit suite with:
+Binaries and libraries land in `bin/`. On macOS, [docs/MACOS.md](docs/MACOS.md)
+is the guide: the build, the two transports and how to pin them, the client's
+threads and App Nap, socket errors, the file-descriptor limit, the application
+firewall prompt, lldb, fuzz corpus replay, and the commands that verify a Mac.
+Run the unit suite with:
 
     ./bin/test
 
@@ -366,7 +370,7 @@ suite, `./bin/test`, does not start a transport, so a transport pin does not cha
 what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
-config tables and their legacy aliases, then restores them on return.
+config tables and their older aliases, then restores them on return.
 `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
 test pins, and the old transport names are cleared; `ROCKETNET_TEST_VERBOSE`
 keeps its diagnostic meaning. Passing ordinary runs print test names and
