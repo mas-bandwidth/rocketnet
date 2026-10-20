@@ -113,7 +113,7 @@ static bool rocketnet_rio_test_fault( rocketnet_server_rio_t * rio, int fault, i
 }
 #define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) rocketnet_rio_test_fault( rio, fault, status )
 #else
-#define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) false
+#define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) ( (void) (status), false )
 #endif
 
 #if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)

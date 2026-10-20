@@ -28,6 +28,8 @@
 #include <string.h>
 #include <time.h>
 
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -38,8 +40,6 @@
 #include "rocketnet_server_gso.h"
 #include "rocketnet_server_uring.h"
 #endif
-
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // darwin declares IPV6_DONTFRAG only under __APPLE_USE_RFC_3542, which the
 // platform layer defines for itself; the option number is the RFC 3542 one
