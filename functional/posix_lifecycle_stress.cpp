@@ -1170,27 +1170,25 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 
 /*
     macOS record (Darwin arm64, macOS 27.0.1, Apple clang 21.0.0, Debug
-    build, the tree with posix_fixed_loopback_port). Each run is one
-    ./bin/functional --run <case> over the six macOS cells
-    (posix_cells); every cell of every run
-    printed fds 4 -> 4 and threads 1 -> 1. Seconds per run, all PASS:
+    build, ROCKETNET_TEST_VERBOSE=1 so the suite prints the lines of a
+    passing case). Each run is one ./bin/functional --run <case> over the six
+    macOS cells (posix_cells). Seconds per run:
 
         case                                 r1    r2    r3    r4    r5
-        posix_init_term_1000                 8     9     9     8     9
-        posix_server_create_destroy_1000     156   150   149   149   149
-        posix_client_create_destroy_1000     24    24    24    24    24
-        posix_server_restart_same_port_100   20    19    20    20    20
-        posix_connect_disconnect_1000        50    51    50    51    50
-        posix_destroy_under_traffic_100      75    72    73    72    73
+        posix_init_term_1000                 11    11    10    8     10
+        posix_server_create_destroy_1000     owed: a run takes about 150 s
+        posix_client_create_destroy_1000     28    28    27    25    24 FAIL
+        posix_server_restart_same_port_100   20    21    20    19    24
+        posix_connect_disconnect_1000        52    51    50    51    55
+        posix_destroy_under_traffic_100      74    81    78    75    75
 
-    On the same tree and host ./bin/test is rc=0 (18 s) and ./bin/functional
-    is rc=0 (161 s). Before posix_fixed_loopback_port, a full ./bin/functional
-    on that host went red in posix_server_restart_same_port_100 [server msgx,
-    client portable]: its fixed port, 50920, came from a port 0 bind and so
-    from the ephemeral range, and the next server create there was refused
-    with TRANSPORT_LADDER_EXHAUSTED while the suite's other cases bound port 0
-    sockets. Five earlier runs of all six cases on macOS 27.2 (the tree
-    before that change) passed with the same flat counts.
+    Every cell of every run printed fds 4 -> 4 and threads 1 -> 1 except one:
+    run 5 of posix_client_create_destroy_1000, [server msgx forced portable,
+    client msgx], printed threads 1 -> 5 (fds 4 -> 4) and failed in
+    posix_case_result, with the host's load average near 15. Twelve more
+    runs of that case over the msgx server cells
+    (ROCKETNET_POSIX_LIFECYCLE_CELLS=msgx) passed with flat counts. The
+    four extra threads are not explained yet.
 
     The red proof, each a scratch build that is not kept, each run as
     ./bin/functional --run posix_client_create_destroy_1000 and failing at
