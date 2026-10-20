@@ -194,7 +194,7 @@ several threads.
 - An in-place packet can leave before reliable records queued earlier in the
   same update (above, ordering against reliable messages).
 - A message that does not take the in-place path, because the transport
-  gave no frame (a client not yet connected, a full send ring), because
+  gave no frame (a full send ring), because
   unreliable messages already wait in the queue, because the update's packet
   allowance is spent (one slot kept while reliable work is due), or because
   the budget cannot pay it now, takes the queued path as today and is counted

@@ -14,14 +14,22 @@
 \* disconnect reason of each slot is kept through its reset and cleared when
 \* the slot's next client is established.
 \*
+\* A message send to a slot that is not CONNECTED, on a running or a stopped
+\* server, is dropped (ServerDropSend): it changes no slot field and nothing
+\* of it is held for a later send (standard/MESSAGES.md m1.5). The ghost
+\* droppedIn holds the slot state of the drop the last step made, {} after
+\* any other step.
+\*
 \* Reversed witnesses, one constant: Defect = "unresetslot" makes Reset(i)
 \* skip the field UnresetField; "stopleavesclient" makes stop skip the last
-\* slot; "touchesotherslot" makes Reset(i) also clear slot i+1.
+\* slot; "touchesotherslot" makes Reset(i) also clear slot i+1;
+\* "sendbeforeconnected" lets ServerSend(i) write a slot that is not
+\* CONNECTED, a send held for a client not yet connected.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS SlotCount, MaxSessions, MaxTokens, MaxStarts, MaxCreates, Defect, UnresetField
 
-ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot"}
+ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot", "sendbeforeconnected"}
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0}
 
 \* One field per row of the per-connection reset inventory; on the server
@@ -70,7 +78,7 @@ Reset(v, i, why) ==
 
 VARIABLES state, slot, kept, draining, link, nextSess, home, tokOf, starts, creates,
           lastEnd, established, estTokens, doubleTok, observed, crossDelivered,
-          collateral, silentEnd, startFrom, queuedIn
+          collateral, silentEnd, startFrom, queuedIn, droppedIn
 \* state, slot, kept, draining: the server object (draining is a
 \*   disconnect_all_clients in progress)
 \* link: the session tags of client packets in flight to the server (lossy)
@@ -79,7 +87,7 @@ VARIABLES state, slot, kept, draining, link, nextSess, home, tokOf, starts, crea
 \* the rest: ghosts
 vars == <<state, slot, kept, draining, link, nextSess, home, tokOf, starts, creates,
           lastEnd, established, estTokens, doubleTok, observed, crossDelivered,
-          collateral, silentEnd, startFrom, queuedIn>>
+          collateral, silentEnd, startFrom, queuedIn, droppedIn>>
 env == <<link, nextSess, home, tokOf, starts, creates>>
 ghosts == <<estTokens, doubleTok, observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn>>
 
@@ -91,7 +99,7 @@ Init ==
     /\ tokOf = [s \in Sessions |-> 0] /\ starts = 0 /\ creates = 0
     /\ lastEnd = [i \in Slots |-> "NONE"] /\ established = 0 /\ estTokens = {}
     /\ doubleTok = FALSE /\ observed = {} /\ crossDelivered = {} /\ collateral = {}
-    /\ silentEnd = FALSE /\ startFrom = {} /\ queuedIn = {}
+    /\ silentEnd = FALSE /\ startFrom = {} /\ queuedIn = {} /\ droppedIn = {}
 
 \* Every path out of a slot's connection: the one Reset(i). sendDisc says
 \* whether the path sends the disconnect burst to a connected client.
@@ -147,6 +155,7 @@ DisconnectAll ==
 \* One slot of a stop or a disconnect_all_clients: the disconnect burst to a
 \* connected client, then Reset(i).
 DrainStep(i) ==
+    /\ droppedIn' = {}
     /\ state = "STOPPING" \/ (state = "RUNNING" /\ draining)
     /\ slot[i].st # "FREE"
     /\ ~(Defect = "stopleavesclient" /\ state = "STOPPING" /\ i = SlotCount)
@@ -156,12 +165,14 @@ DrainStep(i) ==
                    observed, crossDelivered, startFrom, queuedIn>>
 
 StopComplete ==
+    /\ droppedIn' = {}
     /\ state = "STOPPING"
     /\ \A i \in Slots : slot[i].st = "FREE" \/ (Defect = "stopleavesclient" /\ i = SlotCount)
     /\ state' = "STOPPED"
     /\ UNCHANGED <<slot, kept, draining, env, lastEnd, established, ghosts>>
 
 DrainDone ==
+    /\ droppedIn' = {}
     /\ state = "RUNNING" /\ draining
     /\ \A i \in Slots : slot[i].st = "FREE"
     /\ draining' = FALSE
@@ -185,6 +196,7 @@ ClientConnects(i, t) ==
 \* The response opens: the token is bound in the used-token history, the
 \* slot is established, and its disconnect reason is cleared.
 Establish(i) ==
+    /\ droppedIn' = {}
     /\ state = "RUNNING" /\ slot[i].st = "HANDSHAKE"
     /\ LET s == slot[i].sess
            t == tokOf[s]
@@ -201,12 +213,14 @@ Establish(i) ==
 \* A denial during the handshake (the token taken meanwhile, no slot, a
 \* refused response): no disconnect burst, a denied packet.
 Deny(i) ==
+    /\ droppedIn' = {}
     /\ slot[i].st = "HANDSHAKE"
     /\ EndSlot(slot, i, "DENIED", FALSE)
     /\ UNCHANGED <<state, kept, draining, env, established, estTokens, doubleTok,
                    observed, crossDelivered, startFrom, queuedIn>>
 
 SlotTimeout(i) ==
+    /\ droppedIn' = {}
     /\ slot[i].st \in {"HANDSHAKE", "CONNECTED"}
     /\ EndSlot(slot, i, "TIMED_OUT", FALSE)
     /\ UNCHANGED <<state, kept, draining, env, established, estTokens, doubleTok,
@@ -227,9 +241,10 @@ DisconnectClient(i) ==
     /\ UNCHANGED <<state, kept, draining, env, established, estTokens, doubleTok,
                    observed, crossDelivered, startFrom, queuedIn>>
 
-\* Message start/finish to slot i: only while it is connected.
+\* Message start/finish to slot i: only while it is connected. The defect
+\* lets a send to a FREE or HANDSHAKE slot write the slot's send state.
 ServerSend(i) ==
-    /\ state = "RUNNING" /\ slot[i].st = "CONNECTED"
+    /\ state = "RUNNING" /\ (slot[i].st = "CONNECTED" \/ Defect = "sendbeforeconnected")
     /\ LET s == slot[i].sess
        IN /\ observed' = observed \cup {[slot |-> i, field |-> f] :
                                          f \in StaleIn(slot[i].rec, SendReads, s)}
@@ -237,6 +252,18 @@ ServerSend(i) ==
     /\ queuedIn' = queuedIn \cup {slot[i].st}
     /\ UNCHANGED <<state, kept, draining, env, lastEnd, established, estTokens, doubleTok,
                    crossDelivered, collateral, silentEnd, startFrom>>
+
+\* Message start to slot i when it is not CONNECTED, or on a stopped server
+\* (rocketnet_server_start_message returns NULL, counted in
+\* NOT_CONNECTED_DROPS): dropped, never queued. No slot field changes; the
+\* slot's state is recorded in the ghost. stop is one call, so the
+\* application never sends while STOPPING.
+ServerDropSend(i) ==
+    /\ \/ state = "STOPPED"
+       \/ state = "RUNNING" /\ slot[i].st # "CONNECTED"
+    /\ droppedIn' = {slot[i].st}
+    /\ UNCHANGED <<state, slot, kept, draining, env, lastEnd, established, estTokens, doubleTok,
+                   observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn>>
 
 \* The client of any session ever started may still send, also after its
 \* connection ended.
@@ -273,12 +300,16 @@ Lose(s) ==
     /\ UNCHANGED <<state, slot, kept, draining, nextSess, home, tokOf, starts, creates,
                    lastEnd, established, ghosts>>
 
+\* Every step but a drop clears droppedIn (the fair actions also say so
+\* themselves, so that their fairness conditions name a whole step).
 Next ==
-    \/ Create \/ Destroy \/ Start \/ Stop \/ DisconnectAll \/ StopComplete \/ DrainDone
-    \/ \E i \in Slots : \/ DrainStep(i) \/ Establish(i) \/ Deny(i) \/ SlotTimeout(i)
-                        \/ ClientLeaves(i) \/ DisconnectClient(i) \/ ServerSend(i)
-                        \/ \E t \in Tokens : ClientConnects(i, t)
-    \/ \E s \in Sessions : ClientSend(s) \/ Deliver(s) \/ Lose(s)
+    \/ /\ \/ Create \/ Destroy \/ Start \/ Stop \/ DisconnectAll \/ StopComplete \/ DrainDone
+          \/ \E i \in Slots : \/ DrainStep(i) \/ Establish(i) \/ Deny(i) \/ SlotTimeout(i)
+                              \/ ClientLeaves(i) \/ DisconnectClient(i) \/ ServerSend(i)
+                              \/ \E t \in Tokens : ClientConnects(i, t)
+          \/ \E s \in Sessions : ClientSend(s) \/ Deliver(s) \/ Lose(s)
+       /\ droppedIn' = {}
+    \/ \E i \in Slots : ServerDropSend(i)
 
 Spec == Init /\ [][Next]_vars
 \* Fair delivery of the handshake's response, the timers, and the update
@@ -301,6 +332,7 @@ TypeOK ==
     /\ crossDelivered \subseteq [from : Sessions, to : Tags]
     /\ collateral \subseteq Slots /\ silentEnd \in BOOLEAN
     /\ startFrom \subseteq ServerStates /\ queuedIn \subseteq SlotStates
+    /\ droppedIn \subseteq SlotStates
 
 \* An occupied slot holds its session; a free one holds none.
 SlotOwnsItsSession == \A i \in Slots :
@@ -311,6 +343,14 @@ StartOnlyFromStopped == startFrom \subseteq {"STOPPED"}
 
 NoSendUnlessConnected ==
     /\ queuedIn \subseteq {"CONNECTED"}
+    /\ \A i \in Slots : slot[i].st # "CONNECTED" =>
+           \A f \in SendFields \ RecvFields : slot[i].rec[f] = 0
+
+\* A drop happens only to a slot that is not CONNECTED and leaves nothing: a
+\* slot that is not CONNECTED holds no send state, so nothing dropped is sent
+\* to the client that connects into it.
+DropLeavesNothing ==
+    /\ droppedIn \subseteq {"FREE", "HANDSHAKE"}
     /\ \A i \in Slots : slot[i].st # "CONNECTED" =>
            \A f \in SendFields \ RecvFields : slot[i].rec[f] = 0
 
