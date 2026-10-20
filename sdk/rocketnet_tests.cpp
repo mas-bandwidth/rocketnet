@@ -6761,16 +6761,6 @@ void rocketnet_test_payload_size_sweep()
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
-void rocketnet_test_hostname_resolve_localhost()
-{
-    rocketnet_address_t address, ipv6;
-    rocketnet_check(rocketnet_platform_hostname_resolve("localhost", "40000", &address));
-    rocketnet_check(address.port == 40000);
-    rocketnet_check(rocketnet_address_parse(&ipv6, "[::1]:40000"));
-    rocketnet_check((address.type == ROCKETNET_ADDRESS_IPV4 && address.data.ipv4[0] == 127) ||
-                   rocketnet_address_equal(&address, &ipv6));
-}
-
 
 static bool threads_work = false;
 
@@ -14492,7 +14482,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
     { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
     { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
-    { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
     { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },

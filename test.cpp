@@ -47,6 +47,29 @@ static const char * rocketnet_suite_test_name( int index )
     return rocketnet_unit_tests_name( cindex - channels );
 }
 
+// the unit suite opens no socket: the platform's network lookups read these
+// instead of getifaddrs, the netlink route dump and the IPv6 probe socket
+// (rocketnet_platform_set_network_lookups_for_testing, rocketnet_internal.h;
+// read at sdk/rocketnet_platform.cpp:391 and :4352). UNKNOWN is what
+// get_connection_type returns when a lookup fails (sdk/rocketnet_platform.cpp:1777),
+// and true is the probe's answer on a host with an IPv6 stack (:4361).
+
+static int rocketnet_unit_fake_connection_type()
+{
+    return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+}
+
+static bool rocketnet_unit_fake_ipv6_available()
+{
+    return true;
+}
+
+static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lookups =
+{
+    rocketnet_unit_fake_connection_type,
+    rocketnet_unit_fake_ipv6_available,
+};
+
 static int rocketnet_unit_worker( const char * name )
 {
 #if defined(_WIN32)
@@ -79,6 +102,8 @@ static int rocketnet_unit_worker( const char * name )
 
     // allocator cases install their hooks here: replacement is refused after init
     rocketnet_channels_prepare( name );
+
+    rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
 
     if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
