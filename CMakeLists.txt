@@ -429,6 +429,10 @@ if(ROCKETNET_BUILD_TESTS)
     # the counter audit does.
     set_property( SOURCE test_unit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    # The env names audit (test_unit_config_env_names.cpp) reads sdk/rocketnet.h
+    # through ROCKETNET_SOURCE_DIR for the variable names it documents.
+    set_property( SOURCE test_unit_config_env_names.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     rocketnet_warning_floor(test)
