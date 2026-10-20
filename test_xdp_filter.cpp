@@ -520,12 +520,12 @@ static bool ipv6_fragment_passes( filter_t * filter )
     bool ok = write_config( filter, NULL, server_ipv6 );
     spec_t spec = spec_default( true );
     spec.next_header = IPV6_FRAGMENT;
-    ok &= run_frame( filter, "ipv6 fragment header", spec, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION );
+    ok &= run_frame( filter, "ipv6 fragment header", spec, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
 
     // fragments of other ports pass the same way, counted the same way
 
     spec.destination_port = 53;
-    ok &= run_frame( filter, "ipv6 fragment header, other port", spec, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION );
+    ok &= run_frame( filter, "ipv6 fragment header, other port", spec, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
     return ok;
 }
 
