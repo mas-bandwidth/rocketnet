@@ -3,7 +3,7 @@
   "valgrind_version": "valgrind-3.26.0",
   "build_type": "Release",
   "commit": "790a1c2265a14833e5b1131e7842a40ef2a0c466",
-  "reason": "repin for member gcc-15.2.0/valgrind-3.26.0",
+  "reason": "repin after 39d2b7fc wire-bytes-per-family, 61c89055 loopback-dual-stack and 90431735 per-connection-reset, correctness changes that move wire byte counts and reset paths: client_frame +2.58% over the 700044 pin, server_tick -7.72%",
   "threshold_pct": 2.0,
   "regions": {
     "client_frame": {
