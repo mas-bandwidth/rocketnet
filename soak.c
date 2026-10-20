@@ -30,8 +30,10 @@
     which. Every REFUSAL counter must read 0, with one exception: when the
     link simulator duplicates packets (ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT
     or ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT nonzero), the duplicates
-    it plants are refused as already received, so PAYLOAD_ALREADY_RECEIVED and
-    CLIENT_PAYLOAD_ALREADY_RECEIVED are counted and printed, not failed. ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
+    it plants are refused as already received, so every <FAMILY>_ALREADY_RECEIVED
+    refusal (payload, keep-alive, ack, fragment and disconnect, on the client
+    and the server) is counted and printed, not failed.
+    ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
     uses as its negative control.
 */
@@ -132,12 +134,17 @@ static int soak_duplicates_planted( void )
     return 0;
 }
 
-// a planted duplicate is refused as already received; only that refusal is
+// a planted duplicate of any sealed packet (payload, keep-alive, ack,
+// fragment, disconnect) is refused as already received, counted by the
+// family's <FAMILY>_ALREADY_RECEIVED refusal; only those refusals are
 // expected, and only when the simulator plants duplicates
 
 static int soak_refusal_planted_by_duplicates( const char * counter_name )
 {
-    return strcmp( counter_name, "PAYLOAD_ALREADY_RECEIVED" ) == 0 || strcmp( counter_name, "CLIENT_PAYLOAD_ALREADY_RECEIVED" ) == 0;
+    const char suffix[] = "_ALREADY_RECEIVED";
+    const size_t length = strlen( counter_name );
+    const size_t suffix_length = sizeof(suffix) - 1;
+    return length > suffix_length && strcmp( counter_name + length - suffix_length, suffix ) == 0;
 }
 
 // The counter discipline, computed from the counter list. Conservation: every
