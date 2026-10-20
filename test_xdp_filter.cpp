@@ -1,6 +1,8 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 
-// The XDP receive filter, judged by the kernel.
+// Functional test: the XDP receive filter, judged by the kernel. It needs the
+// kernel, root or CAP_BPF and CAP_NET_ADMIN, and usleep, so it is a functional
+// sibling binary, never a ./bin/test case.
 //
 // Loads server_xdp/server_xdp.c through the verifier and runs crafted frames
 // through it with BPF_PROG_TEST_RUN: the kernel returns the program's verdict
