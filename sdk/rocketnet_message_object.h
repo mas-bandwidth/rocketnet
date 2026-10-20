@@ -77,6 +77,11 @@ struct rn_message_link_t
     // ROCKETNET_SERVER_TRANSPORT_*
     int (*state)( void * transport );
 
+    // the reason the client's transport ended its connection with, a
+    // ROCKETNET_DISCONNECT_REASON_*, read once the transport is terminal.
+    // NULL (the server's link, the unit suite's): the transport names none.
+    int (*end_reason)( void * transport );
+
     // NULL: the object does not own the transport
     void (*destroy)( void * transport );
 

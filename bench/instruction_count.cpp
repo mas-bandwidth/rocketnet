@@ -167,7 +167,7 @@ void init_deterministic_runtime()
     g_sim_time = INITIAL_TIME;
     CHECK(randombytes_set_implementation(&g_fixed_rng) == 0);
     CHECK(rocketnet_init(NULL) == ROCKETNET_STATUS_OK);
-    rocketnet_quiet(1);
+    rocketnet_set_quiet(1);
 }
 
 void run_client_frame(bool setup_only)

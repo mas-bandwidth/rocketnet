@@ -229,7 +229,7 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
 // move.
 static void destroy_connected_client_sends_disconnect()
 {
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
 
@@ -304,7 +304,7 @@ REGISTER_UNIT_TEST( destroy_connected_client_sends_disconnect );
 // it for at least two clients.
 static void destroy_server_sends_disconnect_to_every_connected_client()
 {
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
 
@@ -346,7 +346,7 @@ static void destroy_server_sends_disconnect_to_every_connected_client()
     {
         check( rocketnet_client_update( clients[i], time ) == ROCKETNET_UPDATE_OK );
         check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
-        check( rocketnet_client_disconnect_reason( clients[i] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( rocketnet_client_disconnect_reason( clients[i] ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
         const uint64_t * cc = destroy_disconnect_client_counters( clients[i] );
         const uint64_t rx_delta = rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED ) - client_rx_before[i];
@@ -410,7 +410,7 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
 // nothing (a case counts datagrams handed to the fake transport: zero).
 static void destroy_without_live_connection_sends_nothing()
 {
-    rocketnet_quiet( 1 );
+    rocketnet_set_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
 

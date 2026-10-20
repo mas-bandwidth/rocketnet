@@ -171,7 +171,8 @@ static_assert( ROCKETNET_RELIABILITY_UNRELIABLE == 0 && ROCKETNET_RELIABILITY_UN
 static_assert( ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == 2, "ruling 3: receipt values" );
 static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == 1 &&
                ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT == 2 && ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == 3 &&
-               ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT == 4 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == 5, "ruling 3: disconnect reason values" );
+               ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT == 4 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == 5 &&
+               ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == 6, "ruling 3: disconnect reason values" );
 static_assert( ROCKETNET_UPDATE_OK == 0 && ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED == -1, "ruling 3: update values" );
 static_assert( rn_same<decltype( rocketnet_client_update( NULL, 1000.0 ) ), rocketnet_update_result_t>::value, "ruling 3: client update" );
 static_assert( rn_same<decltype( rocketnet_server_update( NULL, 1000.0 ) ), rocketnet_update_result_t>::value, "ruling 3: server update" );
@@ -255,11 +256,11 @@ static void api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( ROCKETNET_NUM_STATUS_CODES ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) -1 ), "unknown" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "none" ) == 0 );
-    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "warning" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "warn" ) == 0 );
     check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) 6 ), "unknown" ) == 0 );
     check( strcmp( rocketnet_log_level_name( (rocketnet_log_level_t) -1 ), "unknown" ) == 0 );
 
@@ -270,7 +271,8 @@ static void api_polish_lookups_say_unknown()
 
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "none" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT ), "reliable timeout" ) == 0 );
-    check( strcmp( rocketnet_disconnect_reason_name( (rocketnet_disconnect_reason_t) 6 ), "unknown" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ), "server disconnected" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( (rocketnet_disconnect_reason_t) 7 ), "unknown" ) == 0 );
 }
 REGISTER_UNIT_TEST( api_polish_lookups_say_unknown );
 
