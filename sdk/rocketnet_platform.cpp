@@ -2042,6 +2042,9 @@ static uint64_t time_start;
 
 bool rocketnet_platform_init()
 {
+    if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
+        return false;
+
     mach_timebase_info( &timebase_info );
 
     time_start = mach_absolute_time();
