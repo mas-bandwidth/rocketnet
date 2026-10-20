@@ -78,3 +78,5 @@ ROCKETNET_PUMP=portable ./bin/load 1000 60                                      
 ```
 
 The msgx-degraded cell runs the auto ladder (`msgx,portable`) under the `ROCKETNET_PUMP=portable` override: the msgx rung refuses and the ladder falls to portable, so the summary names `server_driver=portable`. A pinned `msgx` under that override refuses at create by design, so `load` exits `1` with `failed to create message server`.
+
+A shell that denies `bind(2)` on loopback (a sandboxed shell, for example) also exits `1` before any client exists, with `load: failed to create message server on 127.0.0.1: Operation not permitted`; run the gate in a shell permitted to bind loopback.

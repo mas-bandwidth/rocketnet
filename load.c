@@ -484,11 +484,14 @@ int main( int argc, char ** argv )
     msg_cfg.receipt_ring = 64;
     msg_cfg.reliable_timeout_ms = 3000;
 
+    errno = 0;
     struct rocketnet_message_server_t * server = rocketnet_message_server_create(
         NULL, "127.0.0.1", &server_tcfg, &msg_cfg, NULL, 0, 0 );
     if ( !server )
     {
-        fprintf( stderr, "load: failed to create message server\n" );
+        const int saved_errno = errno;
+        fprintf( stderr, "load: failed to create message server on 127.0.0.1: %s\n",
+                 saved_errno ? strerror( saved_errno ) : "no errno from create" );
         rocketnet_term();
         return 1;
     }

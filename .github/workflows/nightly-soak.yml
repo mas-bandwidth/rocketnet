@@ -180,8 +180,11 @@ jobs:
           ulimit -n 65536 || ulimit -n "$(ulimit -Hn)"
           run_cell() {
             cell=$1; want=$2; shift 2
-            line=$(env "$@" ./bin/load 1000 60 | tail -n 1) || true
+            rc=0
+            out=$(env "$@" ./bin/load 1000 60 2>&1) || rc=$?
+            line=$(printf '%s\n' "$out" | tail -n 1)
             echo "LOAD cell=$cell $line"
+            [ "$rc" -eq 0 ] || { echo "LOAD cell=$cell exit=$rc"; return 1; }
             case "$line" in *verdict=PASS*) ;; *) echo "LOAD cell=$cell FAIL"; return 1 ;; esac
             case "$line" in *"server_driver=$want "*) ;; *) echo "LOAD cell=$cell wrong server driver (want $want)"; return 1 ;; esac
             fs=$(echo "$line" | sed -E "s/.*fds_start=([0-9]+).*/\1/"); fe=$(echo "$line" | sed -E "s/.*fds_end=([0-9]+).*/\1/")
