@@ -180,6 +180,21 @@ def system_libraries(build):
     return libraries + ["-lstdc++", "-lm", "-lpthread"]
 
 
+def universal_arch_flags(library):
+    """The -arch flags that make a consumer match a universal library."""
+    if sys.platform != "darwin":
+        return []
+    try:
+        output = subprocess.check_output(["lipo", "-archs", str(library)],
+                                         text=True, errors="replace")
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    flags = []
+    for arch in output.split():
+        flags += ["-arch", arch]
+    return flags
+
+
 def compile_and_run(language, linkage, source, link_library, staging_library, build, config, cc, cxx):
     with tempfile.TemporaryDirectory(prefix="rocketnet dll consumer ") as directory_name:
         directory = Path(directory_name)
@@ -214,7 +229,8 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
         else:
             compiler = cc if language == "C" else cxx
             standard = ["-std=c99"] if language == "C" else ["-std=c++11"]
-            flags = standard + ["-pedantic", "-Wall", "-Wextra", "-Werror", "-I", str(directory)]
+            flags = standard + ["-pedantic", "-Wall", "-Wextra", "-Werror", "-I", str(directory)] + \
+                    universal_arch_flags(staging_library)
             if linkage == "shared":
                 flags += ["-DROCKETNET_SHARED=1"]
             executable = directory / ("dll_consumer_%s_%s" % (language.lower(), linkage))

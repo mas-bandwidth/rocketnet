@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
+# 11.0 is the first macOS release on Apple silicon, so it is the lowest target
+# a universal arm64+x86_64 library can run on. Set before project() so the
+# compiler and linker carry it on both slices; -D overrides it.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum supported macOS version" FORCE)
+endif()
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)
