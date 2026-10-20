@@ -107,6 +107,11 @@ void rocketnet_platform_set_priority_calls_for_testing( const rocketnet_platform
     rocketnet_platform_priority_calls_override.store( calls, std::memory_order_release );
 }
 
+const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_current()
+{
+    return rocketnet_platform_priority_calls();
+}
+
 void rocketnet_platform_thread_priority_reset_logged_for_testing()
 {
     for ( int i = 0; i < ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT; ++i )
@@ -167,6 +172,32 @@ static void rocketnet_platform_real_timer_frequency( void * frequency )
     (void) frequency;
 }
 
+static int rocketnet_platform_real_mutex_init( rocketnet_platform_mutex_t * mutex )
+{
+    rocketnet_assert( mutex );
+    memset( mutex, 0, sizeof(rocketnet_platform_mutex_t) );
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init( &attr );
+    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_NORMAL );
+    int result = pthread_mutex_init( &mutex->handle, &attr );
+    pthread_mutexattr_destroy( &attr );
+    if ( result != 0 )
+        return result;
+    mutex->ok = true;
+    return 0;
+}
+
+static int rocketnet_platform_real_platform_start( void )
+{
+    return 0;
+}
+
+static void* rocketnet_platform_real_create_waitable_timer( unsigned flags )
+{
+    (void) flags;
+    return (void*) 1;
+}
+
 static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table =
 {
     rocketnet_platform_real_set_sched,
@@ -174,6 +205,9 @@ static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_cal
     rocketnet_platform_real_time_period,
     rocketnet_platform_real_time_period,
     rocketnet_platform_real_timer_frequency,
+    rocketnet_platform_real_mutex_init,
+    rocketnet_platform_real_platform_start,
+    rocketnet_platform_real_create_waitable_timer,
 };
 
 const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real()
@@ -385,6 +419,8 @@ static double time_start;
 
 bool rocketnet_platform_init()
 {
+    if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
+        return false;
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
     time_start = ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
@@ -1454,24 +1490,7 @@ void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * th
 bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
-
-    memset( mutex, 0, sizeof(rocketnet_platform_mutex_t) );
-    
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init( &attr );
-    // PTHREAD_MUTEX_NORMAL by name: it is 0 on linux (the old literal here),
-    // but 3 on freebsd, where settype( 0 ) stores the invalid type and
-    // pthread_mutex_init then refuses with EINVAL
-    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_NORMAL );
-    int result = pthread_mutex_init( &mutex->handle, &attr );
-    pthread_mutexattr_destroy( &attr );
-
-    if ( result != 0 )
-        return false;
-
-    mutex->ok = true;
-
-    return true;
+    return rocketnet_platform_priority_calls()->mutex_init( mutex ) == 0;
 }
 
 void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
@@ -2026,6 +2045,9 @@ static uint64_t time_start;
 
 bool rocketnet_platform_init()
 {
+    if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
+        return false;
+
     mach_timebase_info( &timebase_info );
 
     time_start = mach_absolute_time();
@@ -3164,23 +3186,7 @@ void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * th
 bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
-
-    memset( mutex, 0, sizeof(rocketnet_platform_mutex_t) );
-
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype( &attr, 0 );
-    int result = pthread_mutex_init( &mutex->handle, &attr );
-    pthread_mutexattr_destroy( &attr );
-
-    if ( result != 0 )
-    {
-        return false;
-    }
-
-    mutex->ok = true;
-
-    return true;
+    return rocketnet_platform_priority_calls()->mutex_init( mutex ) == 0;
 }
 
 void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
@@ -3407,6 +3413,27 @@ static void rocketnet_platform_real_timer_frequency( void * frequency )
     QueryPerformanceFrequency( (LARGE_INTEGER*) frequency );
 }
 
+static int rocketnet_platform_real_mutex_init( rocketnet_platform_mutex_t * mutex )
+{
+    rocketnet_assert( mutex );
+    memset( mutex, 0, sizeof(rocketnet_platform_mutex_t) );
+    if ( !InitializeCriticalSectionAndSpinCount( (LPCRITICAL_SECTION)&mutex->handle, 0xFF ) )
+        return 1;
+    mutex->ok = true;
+    return 0;
+}
+
+static int rocketnet_platform_real_platform_start( void )
+{
+    WSADATA WsaData;
+    return WSAStartup( MAKEWORD(2,2), &WsaData ) == NO_ERROR ? 0 : 1;
+}
+
+static void* rocketnet_platform_real_create_waitable_timer( unsigned flags )
+{
+    return CreateWaitableTimerExW( NULL, NULL, flags, TIMER_ALL_ACCESS );
+}
+
 static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table =
 {
     rocketnet_platform_real_set_sched,
@@ -3414,6 +3441,9 @@ static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_cal
     rocketnet_platform_real_time_begin_period,
     rocketnet_platform_real_time_end_period,
     rocketnet_platform_real_timer_frequency,
+    rocketnet_platform_real_mutex_init,
+    rocketnet_platform_real_platform_start,
+    rocketnet_platform_real_create_waitable_timer,
 };
 
 const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real()
@@ -3474,8 +3504,7 @@ bool rocketnet_platform_init()
     rocketnet_platform_priority_calls()->timer_frequency( &timer_frequency );
     QueryPerformanceCounter( &timer_start );
 
-    WSADATA WsaData;
-    if ( WSAStartup( MAKEWORD(2,2), &WsaData ) != NO_ERROR )
+    if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
     {
         rocketnet_error( "WSAStartup failed" );
         rocketnet_platform_timer_period_end();
@@ -3593,17 +3622,7 @@ void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * th
 bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
-
-    memset( mutex, 0, sizeof(rocketnet_platform_mutex_t) );
-
-    if ( !InitializeCriticalSectionAndSpinCount( (LPCRITICAL_SECTION)&mutex->handle, 0xFF ) )
-    {
-        return false;
-    }
-
-    mutex->ok = true;
-
-    return true;
+    return rocketnet_platform_priority_calls()->mutex_init( mutex ) == 0;
 }
 
 void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
