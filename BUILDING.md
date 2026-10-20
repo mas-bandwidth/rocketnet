@@ -63,6 +63,34 @@ exception is the root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`), which
 makes a fixed namespace and veth pair and binds port 40411 on it
 (functional/rocketnet_functional_tests.cpp:7213); it skips without root.
 
+### Test binaries and their tiers
+
+Every test binary is in exactly one tier. A unit binary opens no socket,
+starts no thread, never sleeps and reads time only as an argument (the test
+clock starts at 1000.0). A binary that opens a real socket, starts a thread,
+sleeps or reads the wall clock is functional, and CI runs it only in a step
+named functional, never as a unit step.
+
+| Binary | Tier | Why | Where it runs |
+| --- | --- | --- | --- |
+| `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
+| `test_wide` | unit | `test.cpp` built with 512 channels (CMakeLists.txt:386) | by hand |
+| `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
+| `fuzz_replay_*` | unit | corpus replay, no init (CMakeLists.txt:618) | CI `Replay the fuzz corpora without libFuzzer` |
+| `functional` | functional | real sockets and transports | CI `Run functional suite` |
+| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:55) | `./bin/functional` (functional/main.cpp:69-97) |
+| `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
+| `test_xdp` | functional | the AF_XDP driver | `./bin/functional` on Linux |
+| `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
+| `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp:31-44,59) | `./bin/functional` on macOS |
+| `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp:96,293,360) | `functional.exe` on Windows |
+| `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp:155,546,590,618) | CI `Functional: lifecycle binary` |
+| `test_driver` | functional | netlink route reads, and the portable driver on loopback sockets with sleep-wait loops (test_driver.cpp:193-217) | CI `Functional: native driver contract` |
+
+The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
+`rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
+simulator and the test clock, with no socket and no sleep.
+
 Dependencies, per platform, as CI installs them:
 
     # Linux -- the build links the XDP dataplane, and liburing is the bench

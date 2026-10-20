@@ -462,6 +462,13 @@ if(ROCKETNET_BUILD_TESTS)
     # probes the release library; the connect-token vectors load the dev
     # library's token writer through dev_connect_token_timeout_is_the_named_constant.
     add_dependencies(test rocketnet_shared rocketnet_shared_dev)
+    # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
+    # test_lifecycle, test_driver, test_serialize, test_transport_control,
+    # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
+    # start threads, sleep or read the wall clock, so none of them is a unit
+    # test. ./bin/functional runs test_serialize, test_transport_control and
+    # the platform's driver binary (functional/main.cpp:69-97); CI runs
+    # test_lifecycle and test_driver in steps named "Functional: ...".
     foreach(test_target test_lifecycle test_driver)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
