@@ -85,9 +85,9 @@ The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
 
 | Driver | Send budget | Receive capacity |
 | --- | --- | --- |
-| portable | `ROCKETNET_SERVER_MAX_SEND_PACKETS` 256 (`sdk/rocketnet_constants.h`) | `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` 16000 per update (`sdk/rocketnet_constants.h`) |
-| msgx | portable batch 256 (`sdk/rocketnet_constants.h`) | per-update 16000 (`sdk/rocketnet_constants.h`) |
-| loopback | portable batch 256 (`sdk/rocketnet_constants.h`) | `ROCKETNET_LOOPBACK_QUEUE_PACKETS` 1024 per endpoint (`sdk/rocketnet_driver_loopback.h`) |
+| portable | `ROCKETNET_SERVER_MAX_SEND_PACKETS` 1000 (`sdk/rocketnet_constants.h`) | `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` 16000 per update (`sdk/rocketnet_constants.h`) |
+| msgx | portable batch up to1000 (`sdk/rocketnet_constants.h`) | per-update 16000 (`sdk/rocketnet_constants.h`) |
+| loopback | portable batch up to1000 (`sdk/rocketnet_constants.h`) | `ROCKETNET_LOOPBACK_QUEUE_PACKETS` 2048 per endpoint (`sdk/rocketnet_driver_loopback.h`) |
 | gso | `ROCKETNET_GSO_SEND_QUEUE_SIZE` 4096 (`sdk/rocketnet_server_gso.h`) | `ROCKETNET_GSO_RECV_QUEUE_SIZE` 8192 per queue (`sdk/rocketnet_server_gso.h`) |
 | io_uring | `ROCKETNET_URING_SEND_QUEUE_SIZE` 2048, reap `ROCKETNET_URING_SEND_BUDGET` 10240 (`sdk/rocketnet_server_uring.h`) | `ROCKETNET_URING_RECV_BUFFERS` 4096 per queue and bank 16000 (`sdk/rocketnet_server_uring.h`) |
 | xdp | `ROCKETNET_XDP_SEND_QUEUE_SIZE` 4096 (`sdk/rocketnet_constants.h`) | `ROCKETNET_XDP_RECV_QUEUE_SIZE` 16384 (`sdk/rocketnet_constants.h`) |
@@ -448,3 +448,14 @@ The Linux connection-type label is an IPv4 main-table heuristic. It does not
 model policy routing or multipath entries without a direct output-interface
 attribute, and may report the wired fallback for those configurations. This
 label does not choose the transport route or limit IPv6 endpoint support.
+
+## Bounded server payload sends
+
+Unstaged server transports reserve at least one payload slot per configured
+client, with a minimum of 256 slots. A lower test capacity exercises contention.
+The message send pass starts after the last served connection and offers one
+frame per connection per round. Full capacity leaves queued reliable work due
+for the next update. In-place unreliable writes use only surplus capacity above
+a complete round of connected peers; otherwise they join the queue so application call order cannot
+starve another connection or that connection's reliable work. Control packets
+use the transport's separate send path.
