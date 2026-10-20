@@ -471,11 +471,6 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
     rocketnet_server_destroy( server );
 }
 
-// The two fake drivers are static: each holds 512 datagrams
-// (test/fake_client_driver.h:28, :39 and :42), and an AddressSanitizer build
-// keeps both frames apart, past the default 1 MB main-thread stack. Each block
-// zeroes its fake before use, as the = {} it replaces did.
-
 // DONE-WHEN (4): destroying a client or server with no live connection sends
 // nothing (a case counts datagrams handed to the fake transport: zero).
 static void destroy_without_live_connection_sends_nothing()
