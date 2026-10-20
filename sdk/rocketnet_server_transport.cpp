@@ -2103,14 +2103,12 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         return NULL;
     }
 
-    // the frame is acquired before the sequence is taken: a start the arena,
-    // the staged driver or the payload ring refuses spends no sequence, so the
-    // client's receive-side loss stat sees no gap for it. The fill phase keeps
-    // connections stable, so the address resolved here is the mapping
-    // start_payload then reads.
+    // Reserve the frame and packet lease here, but leave the session sequence
+    // untouched. finish_packet assigns it only after the caller's size is
+    // accepted and every wire frame is reserved, so an abort or refusal does
+    // not leave a gap in the client's receive-side loss stat.
 
     rocketnet_address_t to;
-    uint64_t sequence = 0;
     if ( !rocketnet_server_protocol_client_address( &server_transport->protocol, client_index, &to ) )
         return NULL;
 
@@ -2131,17 +2129,13 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
             return NULL;
         }
 
-        // an arena slot needs no undo: the flush reclaims the whole arena
-        if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
-            return NULL;
-
         rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
 
         context->frame = frame;
         context->payload_index = 0;
         context->payload_capacity = server_transport->max_payload_bytes;
         context->packet_id = 0; // private lease supplies the public identifier
-        context->sequence = sequence;
+        context->sequence = 0;
         context->client_index = client_index;
 
         if ( !server_transport->packet_leases.insert(*context) )
@@ -2163,11 +2157,6 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
                 rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return NULL;
         }
-        if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
-        {
-            rocketnet_server_driver_abort_packet( server_transport, packet_id, frame );
-            return NULL;
-        }
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         context->packet_id = packet_id;
     }
@@ -2187,10 +2176,6 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         ring->info[slot].client_index = client_index;
         ring->info[slot].wire_bytes = 0;
 
-        // an unwritten slot (wire_bytes zero) is skipped by the flush
-        if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
-            return NULL;
-
         frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
 
         // the packet id is the join key the acked batch surfaces: unique and
@@ -2205,7 +2190,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     context->frame = frame;
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
     context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
-    context->sequence = sequence;
+    context->sequence = 0;
     context->client_index = client_index;
 
     if ( !server_transport->packet_leases.insert(*context) )
@@ -2401,6 +2386,13 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
 
         memcpy( frame.data + ROCKETNET_FRAME_PAYLOAD_OFFSET, context->frame, (size_t) payload_bytes );
 
+        if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, context->client_index, &to, &context->sequence ) )
+        {
+            rocketnet_server_abort_fill_frame( server_transport, &frame );
+            context->frame = NULL;
+            return 0;
+        }
+
         int wire_bytes = rocketnet_server_protocol_seal_payload_frame( &server_transport->protocol, context->client_index,
                                                                        context->sequence, context->packet_id,
                                                                        frame.data + ROCKETNET_FRAME_WIRE_OFFSET,
@@ -2439,12 +2431,12 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
         }
     }
 
-    // fragment 0 rides the sequence start_packet burned; the rest reserve
-    // a block. the payload's one packet id lives in the aggregate, and
-    // surfaces when every fragment's wire packet is acknowledged.
+    // Reserve the whole sequence block only after every wire frame is ready.
+    // Fragment 0 uses the first sequence, preserving the wire order without
+    // spending any sequence when start or finish cannot complete.
 
     uint64_t base_sequence = 0;
-    if ( !rocketnet_server_protocol_start_fragments( &server_transport->protocol, context->client_index, fragment_count - 1, &base_sequence ) )
+    if ( !rocketnet_server_protocol_start_fragments( &server_transport->protocol, context->client_index, fragment_count, &base_sequence ) )
     {
         for ( int i = 0; i < fragment_count; i++ )
             rocketnet_server_abort_fill_frame( server_transport, &frames[i] );
@@ -2459,7 +2451,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     int total_wire_bytes = 0;
     for ( int i = 0; i < fragment_count; i++ )
     {
-        const uint64_t sequence = i == 0 ? context->sequence : base_sequence + (uint64_t) ( i - 1 );
+        const uint64_t sequence = base_sequence + (uint64_t) i;
         const int fragment_bytes = i < fragment_count - 1 ? fragment_stride : payload_bytes - fragment_stride * ( fragment_count - 1 );
         int wire_bytes = rocketnet_server_protocol_seal_fragment( &server_transport->protocol, context->client_index,
                                                                   sequence, payload_id, i, fragment_count,
@@ -2504,6 +2496,13 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
 
     if ( rocketnet_send_arena_owns( server_transport->send_arena, context->frame ) )
         return rocketnet_server_transport_finish_arena_packet( server_transport, context, payload_bytes );
+
+    rocketnet_address_t to;
+    if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, context->client_index, &to, &context->sequence ) )
+    {
+        rocketnet_server_transport_abort_packet_unchecked( server_transport, context, backend_id );
+        return 0;
+    }
 
     int wire_bytes = rocketnet_server_protocol_seal_payload_frame( &server_transport->protocol, context->client_index,
                                                                    context->sequence, context->packet_id,
