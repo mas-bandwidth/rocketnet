@@ -352,6 +352,52 @@ static void check_send_handoff()
     }
 }
 
+static void check_send_handoff_reopen()
+{
+    // Two flushes inside one worker latency queue both generations, so
+    // acquire has no storage: the producer starves until the worker retires
+    // one. reopen hands back the newest queued generation, never the front
+    // the worker may be draining, and only while two are queued.
+    rocketnet_send_handoff_t<2> queue;
+    check(queue.reopen() == -1);
+    const int first = queue.acquire();
+    queue.publish();
+    check(queue.reopen() == -1); // only the front is queued
+    const int second = queue.acquire();
+    check(second >= 0 && second != first);
+    queue.publish();
+    check(queue.acquire() == -1 && queue.front() == first); // the starvation
+    check(queue.reopen() == second);
+    check(queue.front() == first);
+    check(queue.reopen() == second && queue.acquire() == second); // held until publish
+    queue.publish();
+    check(queue.front() == first);
+    queue.retire();
+    check(queue.front() == second);
+    check(queue.reopen() == -1);
+    check(queue.acquire() == first);
+    queue.retire();
+    check(queue.front() == -1);
+    // the worker's turn order is kept across many reopen cycles
+    for (int i = 0; i < 10000; ++i)
+    {
+        queue.publish();
+        const int front = queue.front();
+        const int tail = queue.acquire();
+        check(tail >= 0 && tail != front);
+        queue.publish();
+        check(queue.acquire() == -1);
+        check(queue.reopen() == tail);
+        queue.publish();
+        check(queue.front() == front);
+        queue.retire();
+        check(queue.front() == tail);
+        check(queue.acquire() == front);
+        queue.retire();
+        check(queue.front() == -1);
+    }
+}
+
 static void check_memory_geometry(allocator_state & state)
 {
     uint64_t total = UINT64_MAX - 3;
@@ -697,6 +743,7 @@ int main()
     check_stats_cadence();
     check_frame_conservation();
     check_send_handoff();
+    check_send_handoff_reopen();
     check_memory_geometry(state);
     check_component_create_sweeps( state );
     check_server_memory_budget( state );
