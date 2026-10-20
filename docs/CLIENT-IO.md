@@ -359,12 +359,17 @@ timers are what a napped or background-policy process stretches (the measured
 numbers below).
 
 **What the library sets.** `rocketnet_platform_thread_create`
-(`sdk/rocketnet_platform.cpp`) sets the thread's quality-of-service class with
-`pthread_set_qos_class_self_np` at thread start on macOS and iOS, before the
-thread's loop runs. The class is `QOS_CLASS_USER_INTERACTIVE`, so the
-library's threads never run at a lower class than the work needs, whatever
-class the creating thread has. The frame-sync path separately asks for `THREAD_TIME_CONSTRAINT_POLICY`
-(`sdk/rocketnet_frame_sync.cpp`) on the waiting thread.
+(`sdk/rocketnet_platform.cpp:2730`) starts each thread through
+`thread_function_shim`, which calls `pthread_set_qos_class_self_np` with
+`QOS_CLASS_USER_INTERACTIVE` on macOS and iOS before the thread's loop runs
+(`sdk/rocketnet_platform.cpp:2715`), whatever class the creating thread has.
+That class request is the only scheduling change the library makes on its
+I/O threads: it sets no Mach thread policy on them. The frame-sync path's
+`THREAD_TIME_CONSTRAINT_POLICY` request (`sdk/rocketnet_frame_sync.cpp:180`)
+is on the frame-sync waiting thread, not on the I/O threads. The repeated
+runs below show why the class request is not a protection: under a background
+task policy macOS throttles the whole process and does not honour a thread's
+request for a higher class.
 
 **What the game must do itself.** Setting a thread class is not enough for a
 game whose whole process is napped. While connected, the game holds an
@@ -426,24 +431,39 @@ What the numbers show:
   connection timed out in any run: the I/O thread kept the session alive. The
   process activity above is what keeps the game's own frame loop on time.
 
-**What the case asserts.** In every condition the client stays connected for
-the whole 60 s with zero timeouts. At the default class, receive-to-update p99
-is at most two update intervals plus 10 ms (43.3 ms at 60 Hz), the receive
-handoff's floor. Under `taskpolicy -b` and with a background game thread the
-game loop's own sleep is coalesced, so those conditions assert the I/O
-thread's wake p99 under 5 ms instead of end-to-end latency.
+**What the case asserts.** Two conditions are gated
+(`functional/macos_client_timing.cpp:366` to `:371`): at the default class and
+with a background game thread, the client stays connected for the whole 60 s
+with zero timeouts and the I/O thread's wake p99 is under 5 ms
+(`MACOS_TIMING_WAKE_BOUND`, `functional/macos_client_timing.cpp:70`). At the
+default class receive-to-update p99 is also at most two update intervals plus
+10 ms (43.3 ms at 60 Hz, `functional/macos_client_timing.cpp:337`), the
+receive handoff's floor. With a background game thread the game loop's own
+sleep is coalesced, so its end-to-end latency is printed and not asserted.
+
+Under `taskpolicy -b` the case is measured only: it prints the same line with
+`status=MEASURED`, `wake_within` and `latency_within`, and returns before the
+checks (`functional/macos_client_timing.cpp:364`). Its numbers are a report
+of what a throttled process sees, never a pass or a fail.
+
+There is no planted-class red proof. The I/O thread's bounded wait is a
+kevent timeout (`sdk/rocketnet_platform.cpp:2967`), and its wakes are not
+coalesced by the thread's own class: with the I/O thread planted at
+`QOS_CLASS_BACKGROUND` the wake p99 stays at 1.33 to 1.74 ms and the gate stays
+green (the planted rows above and below). The wake bound goes red when the
+wait itself stretches, not when the class is lowered.
 
 **Repeated runs.** Twenty sequential 60 s runs of each case at head, and four
 of `taskpolicy -b` with the I/O thread planted at `QOS_CLASS_BACKGROUND`, on
 the same machine while it carried other work (1-minute load average 2 to 237
 across the runs):
 
-| condition | build | pass | wake p99 (ms) | latency p99 (ms) | timeouts |
-|---|---|---|---|---|---|
-| default QoS | head | 20 / 20 | 1.36 to 1.43 | 36.0 to 37.9 | 0 |
-| `taskpolicy -b` | head | 10 / 20 | passes 1.36 to 1.90, fails 5.9 to 2418 | 381 to 10700 | 1 (one run) |
-| game thread background | head | 20 / 20 | 1.34 to 1.44 | 372 to 1314 | 0 |
-| `taskpolicy -b` | I/O thread planted background | 4 / 4 | 1.37 to 1.74 | 378 to 973 | 0 |
+| condition | build | gated | within the wake bound | wake p99 (ms) | latency p99 (ms) | timeouts |
+|---|---|---|---|---|---|---|
+| default QoS | head | yes | 20 / 20 | 1.36 to 1.43 | 36.0 to 37.9 | 0 |
+| `taskpolicy -b` | head | no, measured | 10 / 20 | within 1.36 to 1.90, outside 5.9 to 2418 | 381 to 10700 | 1 (one run) |
+| game thread background | head | yes | 20 / 20 | 1.34 to 1.44 | 372 to 1314 | 0 |
+| `taskpolicy -b` | I/O thread planted background | no, measured | 4 / 4 | 1.37 to 1.74 | 378 to 973 | 0 |
 
 What the repeated runs show:
 

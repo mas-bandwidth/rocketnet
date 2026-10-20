@@ -27,14 +27,18 @@
                 time for the next update
       frame     the game thread's measured update interval
 
-    Asserted in every condition: connected for the whole 60 s with zero
-    timeouts. At the default class, receive-to-update p99 at most two update
-    intervals plus 10 ms: the receive handoff's floor, where a datagram can
-    wait for the update that returns the buffer the I/O thread needs and then
-    for the next update. Under `taskpolicy -b` and with a background game
-    thread the game loop's own sleep is coalesced, so end-to-end latency there
-    measures the game thread; those conditions assert the library's own
-    contract instead, the I/O thread's wake p99 under 5 ms.
+    Asserted at the default class and with a background game thread:
+    connected for the whole 60 s with zero timeouts, and the I/O thread's wake
+    p99 under 5 ms. At the default class also receive-to-update p99 at most two
+    update intervals plus 10 ms: the receive handoff's floor, where a datagram
+    can wait for the update that returns the buffer the I/O thread needs and
+    then for the next update. With a background game thread the game loop's
+    own sleep is coalesced, so end-to-end latency there measures the game
+    thread and is printed, not asserted.
+
+    Under `taskpolicy -b` the whole process is throttled and no thread class
+    lifts it, so that condition is measured only: it prints the same line with
+    status=MEASURED and the bounds it met, and asserts nothing about timing.
 */
 
 #include "rocketnet_internal.h"
@@ -196,7 +200,7 @@ static void macos_timing_server_thread( macos_timing_server_t * s )
     }
 }
 
-static void macos_timing_run( const char * condition, bool lower_game_thread, bool coalesced_game_loop )
+static void macos_timing_run( const char * condition, bool lower_game_thread, bool coalesced_game_loop, bool gated )
 {
     memset( &macos_timing_wakes, 0, sizeof( macos_timing_wakes ) );
     std::vector<double> wake_storage( MACOS_TIMING_MAX_WAKES );
@@ -233,7 +237,7 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
     client_config.time_callback = macos_timing_time_callback;
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    macos_timing_require( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, token ) != 0 );
+    macos_timing_require( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, macos_timing_game_time( start ) );
     macos_timing_require( client != NULL );
 
@@ -254,7 +258,10 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
         if ( wait > 0.0 )
             rocketnet_platform_sleep( wait );
     }
-    macos_timing_require( connected );
+    // a measured-only run that never connects prints final_state; the loop
+    // below ends on its first frame that is not connected
+    if ( gated )
+        macos_timing_require( connected );
 
     std::vector<double> latency;
     std::vector<double> late;
@@ -328,20 +335,20 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
     const macos_timing_stats_t k = macos_timing_stats( late );
     const macos_timing_stats_t f = macos_timing_stats( frame );
     const double latency_bound = MACOS_TIMING_LATENCY_INTERVALS * MACOS_TIMING_UPDATE_INTERVAL + MACOS_TIMING_BOUND_SLACK;
-    const double bound = coalesced_game_loop ? MACOS_TIMING_WAKE_BOUND : latency_bound;
 
-    const bool stayed = not_connected_frames == 0 && final_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && measured_seconds >= MACOS_TIMING_SECONDS;
-    // a coalesced game loop's own sleep sets the end-to-end latency there, so
-    // the library's contract in that condition is the I/O thread's wake p99
-    const bool within = coalesced_game_loop
-        ? ( macos_timing_wakes.num_intervals > 0 && w.p99 < bound )
-        : ( num_latency > 0 && l.p99 <= bound );
+    const bool stayed = connected && not_connected_frames == 0 && final_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && measured_seconds >= MACOS_TIMING_SECONDS;
+    // the I/O thread's wake p99 is the library's own contract in every gated
+    // condition; a coalesced game loop's own sleep sets the end-to-end latency,
+    // so latency is bounded only where the game loop runs at its cadence
+    const bool wake_within = macos_timing_wakes.num_intervals > 0 && w.p99 < MACOS_TIMING_WAKE_BOUND;
+    const bool latency_within = num_latency > 0 && l.p99 <= latency_bound;
+    const bool within = coalesced_game_loop ? wake_within : ( wake_within && latency_within );
     printf( "macos_client_timing condition=%s seconds=%.1f game_qos=%s io_qos=%s io_calls=%llu wakes=%llu wake_dropped=%llu "
             "wake_ms p50=%.3f p99=%.3f max=%.3f "
             "latency_ms n=%llu p50=%.3f p99=%.3f max=%.3f "
             "late_ms p50=%.3f p99=%.3f max=%.3f "
             "frame_ms p50=%.3f p99=%.3f max=%.3f "
-            "server_sent=%llu final_state=%d timeouts=%llu bound=%s bound_ms=%.3f status=%s\n",
+            "server_sent=%llu final_state=%d timeouts=%llu wake_bound_ms=%.3f wake_within=%d latency_bound_ms=%.3f latency_within=%d status=%s\n",
             condition, measured_seconds, macos_timing_qos_name( game_qos ), macos_timing_qos_name( macos_timing_wakes.io_qos ),
             (unsigned long long) macos_timing_wakes.calls, (unsigned long long) macos_timing_wakes.wakes,
             (unsigned long long) macos_timing_wakes.dropped,
@@ -350,30 +357,35 @@ static void macos_timing_run( const char * condition, bool lower_game_thread, bo
             k.p50 * 1000.0, k.p99 * 1000.0, k.max * 1000.0,
             f.p50 * 1000.0, f.p99 * 1000.0, f.max * 1000.0,
             (unsigned long long) server_state.sent, final_state, (unsigned long long) timeouts,
-            coalesced_game_loop ? "wake_p99" : "latency_p99", bound * 1000.0,
-            stayed && within ? "PASS" : "FAIL" );
+            MACOS_TIMING_WAKE_BOUND * 1000.0, wake_within ? 1 : 0, latency_bound * 1000.0, latency_within ? 1 : 0,
+            !gated ? "MEASURED" : ( stayed && within ? "PASS" : "FAIL" ) );
     fflush( stdout );
+
+    if ( !gated )
+        return;
 
     macos_timing_require( stayed );
     macos_timing_require( timeouts == 0 );
-    macos_timing_require( within );
+    macos_timing_require( wake_within );
+    if ( !coalesced_game_loop )
+        macos_timing_require( latency_within );
 }
 
 void macos_client_timing_default_qos()
 {
-    macos_timing_run( "default_qos", false, false );
+    macos_timing_run( "default_qos", false, false, true );
 }
 
 void macos_client_timing_background_thread_qos()
 {
-    macos_timing_run( "background_thread_qos", true, true );
+    macos_timing_run( "background_thread_qos", true, true, true );
 }
 
 void macos_client_timing_taskpolicy_background()
 {
     if ( getenv( MACOS_TIMING_CHILD_ENV ) )
     {
-        macos_timing_run( "taskpolicy_background", false, true );
+        macos_timing_run( "taskpolicy_background", false, true, false );
         return;
     }
 
@@ -392,6 +404,8 @@ void macos_client_timing_taskpolicy_background()
     macos_timing_require( spawned == 0 );
     int child_status = 0;
     macos_timing_require( waitpid( pid, &child_status, 0 ) == pid );
+    // measured only: the child asserts nothing about timing, so a nonzero exit
+    // here is a setup failure (server create, connect token, spawn)
     macos_timing_require( WIFEXITED( child_status ) && WEXITSTATUS( child_status ) == 0 );
 }
 
