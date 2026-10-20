@@ -363,22 +363,26 @@ static void create_reports_status_config_refusals()
 
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
     check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
-    const char * prior_client = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    const char * prior_client_value = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    const bool prior_client_present = prior_client_value != NULL;
+    const std::string prior_client = prior_client_present ? prior_client_value : "";
     check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "not-a-number" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, NULL, 0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    if ( prior_client ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client ) == 0 );
+    if ( prior_client_present ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client.c_str() ) == 0 );
     else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
 
     check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
-    const char * prior_server = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    const char * prior_server_value = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    const bool prior_server_present = prior_server_value != NULL;
+    const std::string prior_server = prior_server_present ? prior_server_value : "";
     check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    if ( prior_server ) check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server ) == 0 );
+    if ( prior_server_present ) check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
     else check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
 }
 REGISTER_UNIT_TEST( create_reports_status_config_refusals );
