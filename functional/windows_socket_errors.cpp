@@ -370,20 +370,6 @@ static const char * windows_socket_errors_label( const windows_socket_errors_tra
     return label;
 }
 
-// datagrams a transport drops before any counter: on the portable server
-// path the platform receive skips a zero-length datagram without counting it
-// (sdk/rocketnet_platform.cpp, the portable receive), so it is reported, not
-// counted
-static uint64_t windows_socket_errors_server_uncounted( const windows_socket_errors_transport_t * transport, const std::vector<windows_socket_errors_datagram_t> & datagrams )
-{
-    uint64_t uncounted = 0;
-    if ( strcmp( transport->driver, "portable" ) == 0 )
-        for ( size_t i = 0; i < datagrams.size(); i++ )
-            if ( datagrams[i].bytes.empty() )
-                uncounted++;
-    return uncounted;
-}
-
 static void windows_server_drops( const windows_socket_errors_transport_t * transport, const char * name, const std::vector<windows_socket_errors_datagram_t> & datagrams )
 {
     windows_socket_errors_session_t session;
@@ -403,16 +389,16 @@ static void windows_server_drops( const windows_socket_errors_transport_t * tran
         windows_socket_errors_tick( &session );
     const int in_flight_after = windows_socket_errors_receives_in_flight( &session );
     const uint64_t counted = windows_socket_errors_server_counted( &session ) - counted_before;
-    const uint64_t uncounted = windows_socket_errors_server_uncounted( transport, datagrams );
     const uint64_t sent = (uint64_t) datagrams.size();
 
-    printf( "%s %s: sent %llu, counted %llu, uncounted by design %llu, receives in flight %d before and %d after, server received %llu and client received %llu payloads during and after\n",
-            name, windows_socket_errors_label( transport ), (unsigned long long) sent, (unsigned long long) counted, (unsigned long long) uncounted,
+    printf( "%s %s: sent %llu, counted %llu, receives in flight %d before and %d after, server received %llu and client received %llu payloads during and after\n",
+            name, windows_socket_errors_label( transport ), (unsigned long long) sent, (unsigned long long) counted,
             in_flight_before, in_flight_after,
             (unsigned long long) ( session.server_received - server_received_before ), (unsigned long long) ( session.client_received - client_received_before ) );
     fflush( stdout );
 
-    windows_socket_errors_require( counted + uncounted == sent );
+    // every dropped datagram is counted: no silent drop
+    windows_socket_errors_require( counted == sent );
     windows_socket_errors_require( in_flight_after == in_flight_before );
     windows_socket_errors_require( rocketnet_client_transport_state( session.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     windows_socket_errors_require( rocketnet_server_transport_is_client_connected( session.server, session.client_index ) );
@@ -438,11 +424,12 @@ static void windows_server_drops_runt_and_garbage( const windows_socket_errors_t
 }
 
 // the client: the same datagrams at a connected client's bound port. The
-// client listens only to the server it dialed and drops every other source
-// before its counters (sdk/rocketnet_client_transport.cpp,
-// rocketnet_client_process_packet), so a raw socket's datagrams count
-// nowhere: the case proves the I/O thread keeps receiving and the client
-// stays connected, and that no counter moves for traffic it never admits.
+// client's receive thread drops a datagram outside [prefilter, receive
+// ceiling] and counts CLIENT_RECEIVE_DROPPED_SIZE; every other datagram from
+// a source other than the server it dialed counts
+// CLIENT_RECEIVE_FOREIGN_SOURCE. The case proves each datagram lands on the
+// counter its size names, the I/O thread keeps receiving and the client
+// stays connected.
 static void windows_client_drops_oversize_and_garbage( bool ipv6 )
 {
     windows_socket_errors_transport_t transport = { "portable", ipv6 };
@@ -457,6 +444,13 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     const double quiet = rocketnet_platform_time();
     while ( rocketnet_platform_time() - quiet < 0.25 )
         windows_socket_errors_tick( &session );
+    uint64_t expect_size = 0;
+    for ( size_t i = 0; i < datagrams.size(); i++ )
+        if ( datagrams[i].bytes.size() < ROCKETNET_PREFILTER_BYTES || datagrams[i].bytes.size() > ROCKETNET_RECEIVE_CEILING )
+            expect_size++;
+    const uint64_t expect_foreign = (uint64_t) datagrams.size() - expect_size;
+    const uint64_t size_before = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE );
+    const uint64_t foreign_before = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE );
     const uint64_t refusals_before = windows_socket_errors_refusals( rocketnet_client_transport_counters( session.client ) );
     const uint64_t server_received_before = session.server_received;
     const uint64_t client_received_before = session.client_received;
@@ -469,6 +463,8 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     while ( rocketnet_platform_time() - drain < 0.5 )
         windows_socket_errors_tick( &session );
     const uint64_t refusals = windows_socket_errors_refusals( rocketnet_client_transport_counters( session.client ) ) - refusals_before;
+    const uint64_t size_drops = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE ) - size_before;
+    const uint64_t foreign_drops = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) - foreign_before;
 
     // after the flood the I/O thread still receives: a fresh run of ticks
     // delivers the server's payloads
@@ -477,13 +473,18 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     while ( rocketnet_platform_time() - after < 0.5 )
         windows_socket_errors_tick( &session );
 
-    printf( "windows_client_drops_oversize_and_garbage %s: sent %llu, client refusals %llu (other sources drop before the counters), client received %llu payloads during and %llu after, server received %llu\n",
-            ipv6 ? "ipv6" : "ipv4", (unsigned long long) datagrams.size(), (unsigned long long) refusals,
+    printf( "windows_client_drops_oversize_and_garbage %s: sent %llu, size drops %llu of %llu, foreign source %llu of %llu, client refusals %llu, client received %llu payloads during and %llu after, server received %llu\n",
+            ipv6 ? "ipv6" : "ipv4", (unsigned long long) datagrams.size(),
+            (unsigned long long) size_drops, (unsigned long long) expect_size, (unsigned long long) foreign_drops, (unsigned long long) expect_foreign,
+            (unsigned long long) refusals,
             (unsigned long long) ( client_received_mid - client_received_before ), (unsigned long long) ( session.client_received - client_received_mid ),
             (unsigned long long) ( session.server_received - server_received_before ) );
     fflush( stdout );
 
-    windows_socket_errors_require( refusals == 0 );
+    // every dropped datagram is counted, on the counter its size names
+    windows_socket_errors_require( size_drops == expect_size );
+    windows_socket_errors_require( foreign_drops == expect_foreign );
+    windows_socket_errors_require( refusals == size_drops + foreign_drops );
     windows_socket_errors_require( rocketnet_client_transport_state( session.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     windows_socket_errors_require( rocketnet_server_transport_is_client_connected( session.server, session.client_index ) );
     windows_socket_errors_require( session.client_received - client_received_mid > 20 );

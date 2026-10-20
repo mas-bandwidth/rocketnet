@@ -954,6 +954,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             { &client_transport->receive_buffer[0], &client_transport->receive_buffer[1] };
         rocketnet_client_io_init( &client_transport->client_io, &client_transport->io, &views[0], &views[1], buffers,
                                   client_transport->time_callback, client_transport->context );
+        client_transport->client_io.size_drops = &client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE];
 
         // tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys: the protocol
         // publishes the open copy at the challenge and retires it at every
@@ -1064,10 +1065,14 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
 static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time,
                                              uint8_t verdict, uint64_t sequence )
 {
-    // only the dialed server is listened to; everything else is junk
+    // only the dialed server is listened to; everything else is junk, and
+    // every dropped datagram is counted
 
     if ( !rocketnet_address_equal( from, &client_transport->protocol.server_address ) )
+    {
+        client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE]++;
         return;
+    }
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
@@ -2058,11 +2063,14 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         if ( packet_bytes == 0 )
             break;
 
-        // a cheap size sanity on the receive thread; the full checks and
-        // their counters run on the update thread
+        // a cheap size sanity on the receive thread, counted; the full
+        // checks and their counters run on the update thread
 
         if ( packet_bytes < ROCKETNET_PREFILTER_BYTES || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+        {
+            rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE], 1 );
             continue;
+        }
 
         const double receive_time = rocketnet_platform_time();
 

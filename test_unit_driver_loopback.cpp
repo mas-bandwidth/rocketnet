@@ -417,6 +417,87 @@ static void wire_totals_staged_finish_counts_exactly()
     printf( "wire_totals_staged_finish_counts_exactly\n" );
 }
 
+// A zero-length datagram a batch receive hands the server transport (the
+// Windows portable receive does) is counted on the prefilter as
+// PREFILTER_TOO_SHORT, with the runts and oversize datagrams beside it: every
+// dropped datagram is counted. A scripted driver, no socket, a test clock.
+struct empty_datagram_fixture_t
+{
+    int reported[8];
+    int count;
+    int head;
+};
+
+static void empty_datagram_destroy(void *) {}
+static bool empty_datagram_stop(void *) { return true; }
+static void empty_datagram_send_batch(void *, const rocketnet_platform_send_t *, int) {}
+static int empty_datagram_receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity)
+{
+    empty_datagram_fixture_t * f = (empty_datagram_fixture_t*) p;
+    int got = 0;
+    while ( got < capacity && f->head < f->count )
+    {
+        rocketnet_unit_check( rocketnet_address_parse( &from[got], "127.0.0.1:5000" ) );
+        const int reported = f->reported[f->head++];
+        const int written = reported < stride ? reported : stride;
+        if ( written > 0 )
+            memset( data + (size_t) got * (size_t) stride, 0x5a, (size_t) written );
+        bytes[got] = reported;
+        got++;
+    }
+    return got;
+}
+static rocketnet_server_socket_process_packets_t * empty_datagram_receive(void *) { return NULL; }
+
+static void server_counts_zero_length_datagram_as_too_short()
+{
+    empty_datagram_fixture_t fx;
+    memset( &fx, 0, sizeof(fx) );
+    fx.reported[fx.count++] = 0;
+    fx.reported[fx.count++] = 0;
+    fx.reported[fx.count++] = 1;
+    fx.reported[fx.count++] = ROCKETNET_RECEIVE_CEILING + 1;
+    fx.reported[fx.count++] = 0;
+
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    config.max_clients = 4;
+    config.protocol_id = 1;
+    snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
+    memset( config.backend_public_key, 0xAB, 32 );
+    memset( config.server_public_key, 0xCD, 32 );
+    memset( config.server_secret_key, 0xEF, 32 );
+
+    int create_status = -1;
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_unit_check( server );
+    rocketnet_server_driver_close( &server->io );
+    rocketnet_server_driver_operations_t operations;
+    memset( &operations, 0, sizeof(operations) );
+    operations.destroy = empty_datagram_destroy;
+    operations.stop = empty_datagram_stop;
+    operations.send_batch = empty_datagram_send_batch;
+    operations.receive_batch = empty_datagram_receive_batch;
+    operations.receive = empty_datagram_receive;
+    operations.flags = ROCKETNET_DRIVER_FLUSH_ON_UPDATE;
+    server->io.instance = &fx;
+    server->io.operations = &operations;
+
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+    const uint64_t short_before = rocketnet_counter_value( counters, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
+    const uint64_t large_before = rocketnet_counter_value( counters, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+
+    rocketnet_server_transport_update( server, 1000.0 );
+
+    rocketnet_unit_check( fx.head == fx.count );
+    counters = rocketnet_server_transport_counters( server );
+    rocketnet_unit_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT ) - short_before == 4 );
+    rocketnet_unit_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == 1 );
+
+    rocketnet_server_transport_destroy( server );
+    printf( "server_counts_zero_length_datagram_as_too_short\n" );
+}
+
 static void driver_loopback_holds_max_clients_plus_server()
 {
     const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
@@ -581,6 +662,7 @@ REGISTER_UNIT_TEST( driver_loopback_exchanges_both_ways );
 REGISTER_UNIT_TEST( driver_loopback_dual_stack_serves_ipv4_and_ipv6 );
 REGISTER_UNIT_TEST( driver_loopback_full_queue_drops_and_counts );
 REGISTER_UNIT_TEST( driver_loopback_destroy_frees_the_port );
+REGISTER_UNIT_TEST( server_counts_zero_length_datagram_as_too_short );
 REGISTER_UNIT_TEST( driver_loopback_holds_max_clients_plus_server );
 REGISTER_UNIT_TEST( driver_loopback_refuses_past_max_endpoints );
 REGISTER_UNIT_TEST( wire_totals_staged_finish_counts_exactly );

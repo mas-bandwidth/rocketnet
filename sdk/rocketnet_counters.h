@@ -612,7 +612,20 @@
     /* counts MESSAGE_UNRELIABLE_OVER_BUDGET. EXPECTED: a client's sends */ \
     /* before CONNECTED take it. Counted on the owner's counters, once per */ \
     /* message. appended: indices are the contract. */ \
-    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE )
+    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
+    \
+    /* A datagram the client drops on its receive thread on size alone: */ \
+    /* shorter than the prefilter (a zero-length datagram included) or */ \
+    /* longer than the receive ceiling (an oversize datagram the socket */ \
+    /* reports truncated or past its buffer). REFUSAL: nothing the server */ \
+    /* sends has that size. appended: indices are the contract. */ \
+    X( CLIENT_RECEIVE_DROPPED_SIZE, REFUSAL, NONE ) \
+    \
+    /* A datagram from a source other than the server the client dialed: */ \
+    /* the client listens to that server alone and drops the datagram */ \
+    /* before any protocol check. REFUSAL. appended: indices are the */ \
+    /* contract. */ \
+    X( CLIENT_RECEIVE_FOREIGN_SOURCE, REFUSAL, NONE )
 
 enum
 {

@@ -3704,7 +3704,12 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     }
 }
 
-int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
+// one datagram from a Windows socket: its bytes (past max_packet_size for an
+// oversize one), or -1 when the socket is drained or the receive failed. A
+// zero-length datagram returns 0 when keep_empty is set, so a batch hands it
+// to the transport's prefilter and it is counted there (PREFILTER_TOO_SHORT);
+// otherwise it is skipped, since 0 from the per-packet call reads as drained
+static int rocketnet_platform_socket_receive_datagram( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size, bool keep_empty )
 {
     rocketnet_assert( socket );
     rocketnet_assert( from );
@@ -3754,12 +3759,12 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             {
                 rocketnet_debug( "WSARecvFrom failed with error %d", error );
             }
-            return 0;
+            return -1;
         }
 
         result = (int) bytes_received;
 
-        if ( result == 0 )
+        if ( result == 0 && !keep_empty )
         {
             // a zero-length datagram is legal UDP carrying nothing the
             // protocol admits -- and returning 0 here would read as
@@ -3794,12 +3799,18 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     else
     {
         rocketnet_assert( 0 );
-        return 0;
+        return -1;
     }
   
     rocketnet_assert( result >= 0 );
 
     return result;
+}
+
+int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
+{
+    const int result = rocketnet_platform_socket_receive_datagram( socket, from, packet_data, max_packet_size, false );
+    return result < 0 ? 0 : result;
 }
 
 extern void * rocketnet_global_context;
@@ -4084,9 +4095,18 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     int num_packets = 0;
     while ( num_packets < max_packets )
     {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        // a zero-length datagram joins the batch at 0 bytes, so the
+        // transport's prefilter counts it (PREFILTER_TOO_SHORT) rather than
+        // it vanishing here
+        int bytes = rocketnet_platform_socket_receive_datagram( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride, true );
+        if ( bytes < 0 )
+            break;
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         int bytes = rocketnet_platform_socket_receive_packet( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride );
         if ( bytes == 0 )
             break;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         packet_bytes[num_packets] = bytes;
         num_packets++;
     }

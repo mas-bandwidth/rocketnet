@@ -106,6 +106,7 @@ struct rocketnet_client_io_t
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
     struct rocketnet_client_io_open_t open;
+    uint64_t * size_drops;                      // the owner's CLIENT_RECEIVE_DROPPED_SIZE, added atomically; NULL counts nothing
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -131,6 +132,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->time_context = time_context;
     io->guard_timeout_seconds = ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS;
     io->quit.store( false, std::memory_order_relaxed );
+    io->size_drops = NULL;
     memset( io->open.session_server_to_client, 0, sizeof( io->open.session_server_to_client ) );
     io->open.protocol_id = 0;
     memset( io->open.connection_salt, 0, sizeof( io->open.connection_salt ) );
@@ -321,6 +323,15 @@ inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 
 // The I/O thread's loop body (RNClientIo IoSend, IoFinishRing, IoReceive,
 // IoPublish, IoOwe, IoWait; docs/CLIENT-IO.md _The I/O step_ and _The wake_).
+// a datagram the I/O step drops on size alone (shorter than the prefilter,
+// a zero-length one included, or past the receive ceiling) is counted on the
+// owner's counters: every dropped datagram is counted
+inline void rocketnet_client_io_count_size_drop( rocketnet_client_io_t * io )
+{
+    if ( io->size_drops )
+        rocketnet_platform_atomic_add_u64( io->size_drops, 1 );
+}
+
 inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
     rocketnet_assert( io );
@@ -417,7 +428,10 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             for ( int i = 0; i < got; i++ )
             {
                 if ( packet_bytes[i] < ROCKETNET_PREFILTER_BYTES || packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
+                {
+                    rocketnet_client_io_count_size_drop( io );
                     continue;
+                }
                 (void) rocketnet_client_receive_handshake_io_receive( handshake );
                 const int index = buffer->num_packets;
                 buffer->from[index] = from[i];
@@ -452,6 +466,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                     (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
                 buffer->num_packets++;
             }
+            else
+                rocketnet_client_io_count_size_drop( io );
             io->fill_slots++;
             worked = true;
         }
