@@ -15,6 +15,7 @@
 #include "test_unit_registry.h"
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
+#include "sdk/rocketnet_counters.h"
 
 #include <stdio.h>
 #include <stdlib.h>
