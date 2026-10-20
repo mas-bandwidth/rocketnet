@@ -319,14 +319,16 @@ void * rocketnet_default_malloc_function( void * context, size_t bytes );
 /** @brief Internal default deallocator callback. @param context Opaque context, ignored. @param p Original pointer returned by the default allocator. */
 void rocketnet_default_free_function( void * context, void * p );
 
-// Internal to the SDK. Both transport updates clamp the caller's clock once per
-// update, before any read of it, through this helper: a non-finite time, or a
-// time below the last good one, becomes the last good time. A clamp sets
-// *clamped, counts one misuse and fires rocketnet_assert; a release build
-// clamps and goes on, a debug build is loud. It is also the client create's
-// check, seeded with a zero last good time. One compare per update, none per
-// packet.
-/** @brief Internal monotonic-time guard used by transport updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
+// Internal to the SDK. The transport updates and the message object's update
+// clamp the caller's clock once per update, before any read of it, through this
+// helper: a non-finite time, or a time below the last good one, becomes the
+// last good time. A clamp sets *clamped, counts one misuse and fires
+// rocketnet_assert; a release build clamps and goes on, a debug build is loud.
+// It is also the client create's check, seeded with a zero last good time. The
+// message object clamps first and passes the clamped value on to its transport,
+// so a bad time is counted once, never stored, and never becomes the clock
+// origin. One compare per update, none per packet.
+/** @brief Internal monotonic-time guard used by transport and message-object updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
 
 #ifdef __cplusplus

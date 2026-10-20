@@ -1039,7 +1039,12 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 /// the call. A NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
-/// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. A NULL client is a counted no-op that returns ROCKETNET_UPDATE_OK.
+/// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. The update time
+/// must be finite and nondecreasing: a NaN, an infinity or a step backwards is
+/// refused, counted once in rocketnet_api_misuse_count, and the last good time
+/// is kept, so the clock is never poisoned or wedged. A NULL client is a
+/// counted no-op that returns ROCKETNET_UPDATE_OK; with no connection the update
+/// stores no time, so nothing is counted there.
 ROCKETNET_EXPORT enum rocketnet_update_result_t rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
 /// Sends this frame's queued messages. A NULL client is a counted no-op.
@@ -1216,7 +1221,11 @@ ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t 
 /// from the server is invalid after the call. A NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
-/// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. On a stopped server a counted no-op. A NULL server is a counted no-op that returns ROCKETNET_UPDATE_OK.
+/// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. The update time
+/// must be finite and nondecreasing: a NaN, an infinity or a step backwards is
+/// refused, counted once in rocketnet_api_misuse_count, and the last good time
+/// is kept. On a stopped server a counted no-op, storing no time. A NULL server
+/// is a counted no-op that returns ROCKETNET_UPDATE_OK.
 ROCKETNET_EXPORT enum rocketnet_update_result_t rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
 /// Sends this frame's queued messages. On a stopped server a counted no-op. A NULL server is a counted no-op.

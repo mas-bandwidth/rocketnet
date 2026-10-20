@@ -426,8 +426,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
     rn_message_object_close_in_place( object );
 
-    if ( time != time || time < object->time )
-        time = object->time;
+    time = rocketnet_clamp_update_time( object->time, time, NULL );
     object->time = time;
 
     // the transport's clock: a client transport seeded at 0.0 at create starts
