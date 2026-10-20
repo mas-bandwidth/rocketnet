@@ -302,9 +302,25 @@ ClientRecvChallenge(p) ==
     /\ UNCHANGED clientRecvUnchanged
 
 \* rocketnet_client_process_denied: state 2 (temporary keys from the carried
-\* nonce) or 3 (the held handshake keys); -1.  Nothing else changes: the
-\* ephemeral is not zeroed here (F4) and neither are the keys.
+\* nonce) or 3 (the held handshake keys). A denial is
+\* rocketnet_client_set_state(CONNECTION_DENIED). A state at or below
+\* DISCONNECTED zeroes the keys and the ephemeral
+\* (rocketnet_client_connection_reset).
 ClientRecvDenied(p) ==
+    /\ p.type = "denied"
+    /\ S2C!Deliver(p)
+    /\ IF \/ cstate = 2 /\ p.att = cAttempt
+          \/ cstate = 3 /\ KeysOf(p) = cKeys
+         THEN /\ cstate' = -1
+              /\ cKeys' = NoKeys
+              /\ cEph' = FALSE
+         ELSE UNCHANGED <<cstate, cKeys, cEph>>
+    /\ UNCHANGED <<cHasCookie, cIndex, cSinceRecv, cSeen, cReasm>>
+    /\ UNCHANGED clientRecvUnchanged
+
+\* the pre-fix denial, only in SpecDeniedKeepsKeys: state -1, and the keys
+\* and the ephemeral stay. Not a disjunct of Next.
+ClientRecvDeniedKeepsKeys(p) ==
     /\ p.type = "denied"
     /\ S2C!Deliver(p)
     /\ IF \/ cstate = 2 /\ p.att = cAttempt
@@ -317,7 +333,8 @@ ClientRecvDenied(p) ==
 \* rocketnet_client_open_session_packet then the per-type action: states 3
 \* and 4, the session keys, the replay window; an accepted packet refreshes
 \* the timeout; a keep-alive in 3 sets the index and connects; a disconnect
-\* is state 0 immediately and the keys stay in memory
+\* is state 0 immediately. This action leaves the keys; set_state zeroes
+\* them, which KeysErasedWhenDown records
 ClientRecvSession(p) ==
     /\ p.type \in SessionTypes
     /\ S2C!Deliver(p)
@@ -514,9 +531,10 @@ OtherLeaves ==
 (***************************************************************************)
 (* Time passes on both ends and on both wires.                             *)
 (* rocketnet_client_check_deadlines: in 1..3 the total deadline first, then *)
-(* in 1..4 the idle timeout to -(state+1).  rocketnet_server_protocol_      *)
-(* update: a half-open mapping dies at its handshake deadline, an           *)
-(* established one at the idle timeout.                                    *)
+(* in 1..4 the idle timeout to -(state+1). A deadline or a timeout zeroes   *)
+(* the ephemeral; the session keys stay (KeysErasedWhenDown).               *)
+(* rocketnet_server_protocol_update: a half-open mapping dies at its        *)
+(* handshake deadline, an established one at the idle timeout.              *)
 (***************************************************************************)
 Tick ==
     /\ C2S!Age /\ S2C!Age
@@ -525,6 +543,7 @@ Tick ==
            dead  == cstate \in 1..3 /\ Deadline > 0 /\ age1 = Deadline
            timed == cstate \in 1..4 /\ Timeout > 0 /\ recv1 = Timeout
        IN /\ cReasm' = IF dead \/ timed THEN FALSE ELSE cReasm
+          /\ cEph' = IF dead \/ timed THEN FALSE ELSE cEph
           /\ cAge' = age1 /\ cSinceRecv' = recv1
           /\ cSinceSend' = Sat(cSinceSend, SendInterval)
           /\ cstate' = IF dead THEN -7 ELSE IF timed THEN -(cstate + 1) ELSE cstate
@@ -548,7 +567,7 @@ Tick ==
                                            !.sinceSend = ssend1]
                  /\ sReasm' = IF expired \/ stimed THEN FALSE ELSE sReasm
          ELSE UNCHANGED <<sMap, sReasm>>
-    /\ UNCHANGED <<cAttempt, cHasCookie, cKeys, cEph, cIndex, cSeen, cDiscPending, cDiscKeys,
+    /\ UNCHANGED <<cAttempt, cHasCookie, cKeys, cIndex, cSeen, cDiscPending, cDiscKeys,
                    cLostKinds, sOthers, sDiscPending, sDiscKeys, sDiscId, sLostKinds>>
 
 C2SEnvironment == C2S!Environment /\ UNCHANGED <<clientVars, serverVars, s2cVars>>
@@ -643,6 +662,10 @@ SpecTyped == Init /\ [][Next]_vars /\ FairnessTyped
 \* the reversed witness's spec: Next plus the pre-fix early fragment
 SpecEarlyFragment == Init /\ [][Next \/ ClientFragmentReceiveEarly]_vars /\ Fairness
 
+\* the reversed witness's spec: Next plus the pre-fix denial that keeps keys
+SpecDeniedKeepsKeys ==
+    Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvDeniedKeepsKeys(p))]_vars /\ Fairness
+
 (***************************************************************************)
 (* Safety.                                                                 *)
 (***************************************************************************)
@@ -687,10 +710,11 @@ StepsForwardOrFails ==
 DisconnectIsTerminal ==
     [][(cstate <= 0 /\ cstate' > 0) => (cstate' = 1 /\ cAttempt' = cAttempt + 1)]_vars
 
-\* a terminal failure state changes only by a connect (S:2046); F8 breaks
-\* it through disconnect()
+\* a terminal state leaves only by connect, to 1, or by disconnect, to 0.
+\* rocketnet_client_protocol_disconnect sets DISCONNECTED from any state
+\* that is not already DISCONNECTED (sdk/rocketnet.h).
 TerminalAbsorbing ==
-    [][(cstate < 0 /\ cstate' # cstate) => cstate' = 1]_vars
+    [][(cstate < 0 /\ cstate' # cstate) => cstate' \in {0, 1}]_vars
 
 \* a timeout from waiting state N lands in -(N+1) (S:2074-2077)
 TimeoutPairing ==
@@ -724,11 +748,13 @@ AcceptedUnderLiveKeys ==
 NoSendOnArrival ==
     [][(\E p \in ServerPackets : S2C!Deliver(p)) => c2sSent' = c2sSent]_vars
 
-\* the ephemeral secret is erased outside states 1 and 2 (S:1089-1092); F4
+\* the ephemeral secret is erased outside states 1 and 2. A denial and a
+\* deadline or timeout zero it, as rocketnet_client_set_state does.
 EphemeralErasedOutsideHandshake == cstate \notin {1, 2} => ~cEph
 
-\* the session keys are gone once the attempt is over (S:2186, S:2216
-\* "releasing all state"); an observation, see README-ClientConnection.md
+\* the session keys are gone once the attempt is over. A denial zeroes
+\* them. A timeout and a received disconnect leave them in this model; that
+\* is the observation, see README-ClientConnection.md
 KeysErasedWhenDown == cstate <= 0 => cKeys = NoKeys
 
 (***************************************************************************)
