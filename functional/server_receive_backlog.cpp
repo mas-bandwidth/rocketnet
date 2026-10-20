@@ -123,7 +123,7 @@ static long rocketnet_server_receive_backlog_rss_bound_mb()
     return bound;
 }
 
-SUITE_CASE_RSS_BOUND( server_receive_keeps_up_with_max_clients, rocketnet_server_receive_backlog_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_server_receive_keeps_up_with_max_clients, rocketnet_server_receive_backlog_rss_bound_mb );
 
 void rocketnet_test_server_receive_keeps_up_with_max_clients()
 {

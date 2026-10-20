@@ -430,6 +430,14 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
             return false;
         }
     }
+    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    {
+        if ( !suite_name_is_test_snake_case( entry->name ) )
+        {
+            printf( "check failed: SUITE_CASE_RSS_BOUND name %s is not test_ lowercase snake_case\n", entry->name );
+            return false;
+        }
+    }
 
     // group_of (NULL: every case is group 0) keeps cases that measure wall
     // time apart from cases that load the host: the cases run in ascending
