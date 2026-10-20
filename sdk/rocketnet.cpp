@@ -167,6 +167,21 @@ void rocketnet_log_level_override_apply( const char * value )
                     value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level.load( std::memory_order_relaxed ) );
 }
 
+void rocketnet_set_thread_priority( bool enabled )
+{
+    rocketnet_platform_set_thread_priority_enabled( enabled );
+}
+
+bool rocketnet_get_thread_priority( void )
+{
+    return rocketnet_platform_thread_priority_enabled();
+}
+
+uint64_t rocketnet_get_thread_priority_refusals( void )
+{
+    return rocketnet_platform_thread_priority_refusals();
+}
+
 enum rocketnet_log_level_t rocketnet_get_log_level( void )
 {
     return (enum rocketnet_log_level_t) log_level.load( std::memory_order_relaxed );
