@@ -6963,8 +6963,18 @@ extern void rocketnet_test_lifecycle_driver();
 // named skip instead of vanishing from the count (a skipped test is named and
 // logged, never silent)
 
+// clang warns about an unused static function defined in a main file (gcc and
+// MSVC do not), and on each platform the skips for the other platforms are
+// unreferenced, so the stub is marked unused where that attribute exists
+
+#if defined(__clang__) || defined(__GNUC__)
+#define ROCKETNET_FUNCTIONAL_SKIP_UNUSED __attribute__((unused))
+#else // #if defined(__clang__) || defined(__GNUC__)
+#define ROCKETNET_FUNCTIONAL_SKIP_UNUSED
+#endif // #if defined(__clang__) || defined(__GNUC__)
+
 #define ROCKETNET_FUNCTIONAL_SKIP( fn, test_name, reason ) \
-    static inline void fn() \
+    ROCKETNET_FUNCTIONAL_SKIP_UNUSED static void fn() \
     { \
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, test_name " [SKIPPED " reason "]" ); \
     }
