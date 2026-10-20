@@ -236,8 +236,6 @@ static const rocketnet_server_driver_operations_t io_uring_operations =
 };
 extern const rocketnet_driver_backend_t rocketnet_io_uring_driver = { &io_uring_operations, NULL };
 
-#define ROCKETNET_XDP_DEFAULT_QUEUES 7
-
 static void * xdp_create( void * context, const rocketnet_server_driver_config_t * config, rocketnet_address_t * )
 {
     const int queues = config->transport->num_xdp_queues > 0 ? config->transport->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;

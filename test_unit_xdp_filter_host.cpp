@@ -1540,13 +1540,13 @@ static void xdp_queue_default_matches_memory_plan()
 
     config.num_xdp_queues = 0;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
-    rocketnet_unit_check( plan.worker_threads == 7 );
-    rocketnet_unit_check( plan.sockets == 7 );
+    rocketnet_unit_check( plan.worker_threads == ROCKETNET_XDP_DEFAULT_QUEUES );
+    rocketnet_unit_check( plan.sockets == ROCKETNET_XDP_DEFAULT_QUEUES );
 
-    config.num_xdp_queues = -1;
+    config.num_xdp_queues = 3;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
-    rocketnet_unit_check( plan.worker_threads == 7 );
-    rocketnet_unit_check( plan.sockets == 7 );
+    rocketnet_unit_check( plan.worker_threads == 3 );
+    rocketnet_unit_check( plan.sockets == 3 );
 }
 
 #else // #if defined(__linux__)

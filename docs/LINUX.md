@@ -213,8 +213,9 @@ stay in the completion queue for a later call and are counted
 The create line is
 `io_uring transport: <n> queue reuseport group on port <p>, 4096 entry ring, 4096 receive buffers per queue`
 (`sdk/rocketnet_server_uring_linux.cpp:782-783`); a kernel without
-`IORING_FEAT_NODROP` adds a warning that it drops completions on overflow
-(`sdk/rocketnet_server_uring_linux.cpp:745-746`).
+`IORING_FEAT_NODROP` is refused: `rocketnet_server_uring_create` logs an
+error, destroys what it built and returns NULL, since a ring that drops
+completions on overflow would lose receives and sends without a count.
 
 ## 6. xdp and the provisioning script
 
