@@ -18,7 +18,8 @@ Two scripts:
 
     portable/portable impaired   gso/portable impaired   io_uring/portable impaired
     portable/portable clean      gso/portable clean      io_uring/portable clean
-    xdp/portable impaired        (root inside a virtme-ng guest of this
+    xdp/portable impaired        xdp/portable clean
+                                 (root inside a virtme-ng guest of this
                                   kernel, the watcher inside the guest)
 
   impaired is the link simulator on both ends: loss 5 percent, latency 30 ms,
@@ -35,8 +36,8 @@ usage:
                                        [--soak PATH] [--out DIR] [--sanitized]
 
   --cells takes names from: portable-impaired, gso-impaired,
-  io_uring-impaired, portable-clean, gso-clean, io_uring-clean, xdp-impaired
-  (default: all seven). --soak is the soak binary (default bin/soak).
+  io_uring-impaired, portable-clean, gso-clean, io_uring-clean, xdp-impaired,
+  xdp-clean (default: all eight). --soak is the soak binary (default bin/soak).
   --sanitized marks an ASan+LSan binary: the run is judged on a clean exit
   (no sanitizer report, leak check at exit on) and the watcher's verdict is
   recorded but not judged, since the sanitizers' own quarantine grows RSS.
@@ -69,7 +70,7 @@ IMPAIRED = {"SIMULATED_LOSS_PERCENT": "5", "SIMULATED_LATENCY_MS": "30",
             "SIMULATED_JITTER_MS": "20", "SIMULATED_DUPLICATE_PERCENT": "2"}
 
 CELLS = ["portable-impaired", "gso-impaired", "io_uring-impaired",
-         "portable-clean", "gso-clean", "io_uring-clean", "xdp-impaired"]
+         "portable-clean", "gso-clean", "io_uring-clean", "xdp-impaired", "xdp-clean"]
 
 NETNS = "rnsoak"
 NEAR = "rnsoak0"
