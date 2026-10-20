@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The two server handshake budgets standard/TRANSPORT.md publishes: the post-cookie
+// The two server handshake budgets standard/TRANSPORT.md t12 publishes: the post-cookie
 // handshake work budget per update and the failed-signature budget per
 // window. Both are local policy with defaults the standard states, and this
 // pins the defaults and the refusal each one produces -- no answer, and the

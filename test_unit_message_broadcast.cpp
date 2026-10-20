@@ -3,8 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Broadcast on the message server (standard/MESSAGES.md, "Broadcast"
-// and the R3 copy rule). A broadcast is one copy per connection: each
+// Broadcast on the message server (the R3 copy rule). A broadcast is one copy per connection: each
 // connection's region holds its own copy, the R3 copy this API cannot avoid.
 // rocketnet_message_server_broadcast sends the bytes to every connected slot
 // exactly as rocketnet_message_server_send would and returns the number of
@@ -461,7 +460,7 @@ static void mb_fill( uint8_t * data, int bytes, uint32_t id )
 }
 
 // ---------------------------------------------------------------------------
-// standard/MESSAGES.md Broadcast: three connected slots each receive the one broadcast
+// Broadcast: three connected slots each receive the one broadcast
 // exactly once, on the channel with the reliability asked; the return value is
 // the queued slot count
 // ---------------------------------------------------------------------------
@@ -498,7 +497,7 @@ static void message_server_broadcast_reaches_every_connected()
 }
 
 // ---------------------------------------------------------------------------
-// standard/MESSAGES.md Broadcast: a free slot and an exhausted slot are skipped and
+// Broadcast: a free slot and an exhausted slot are skipped and
 // counted; the return value names how many slots were queued
 // ---------------------------------------------------------------------------
 

@@ -279,7 +279,7 @@ static void message_of_1400_bytes_is_one_unfragmented_packet()
     }
 
     // 3. reliable ordered (code 3): reliable records may only ride a payload
-    // at or under the wire capacity (standard/MESSAGES.md _Messages_ check 9), so the
+    // at or under the wire capacity (standard/MESSAGES.md m4, check 9), so the
     // whole 1400-byte message must fit in one unfragmented packet
 
     {

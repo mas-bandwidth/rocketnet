@@ -4,7 +4,7 @@
 */
 
 // A half-open mapping is bound by an idle deadline as well as its fixed
-// handshake deadline (standard/TRANSPORT.md _Half-open state_): the earlier of the
+// handshake deadline (standard/TRANSPORT.md t12 and t17): the earlier of the
 // two removes it, a request inside the idle timeout refreshes it, and the
 // removal is counted as MAPPING_IDLE_TIMEOUT rather than as a handshake
 // expiry. Time is always an argument; the test clock starts at 1000.0 and

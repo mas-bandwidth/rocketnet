@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// standard/TRANSPORT.md, "Processing a connection request packet": a request from an
+// standard/TRANSPORT.md t12, rule 3: a request from an
 // address that already holds an encryption mapping is answered with the
 // mapping's stored challenge, byte-identical, whatever salt the request
 // carries. The mapping is created once and replaced never, so the challenge

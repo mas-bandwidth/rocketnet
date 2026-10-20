@@ -831,9 +831,9 @@ static void message_config_never_received_is_reliable_timeout()
     mc_pair_teardown( &pair );
 }
 
-// standard/MESSAGES.md labels the CONFIG defaults vector; this case regenerates it
+// standard/MESSAGES.md m11.4 labels the CONFIG defaults vector; this case regenerates it
 // from the library's own defaults (standard/MESSAGES.md m11) and pins it byte for
-// byte: enabled 0xFF, all eight types of the first version's mask (7.5).
+// byte: enabled 0xFF, all eight types of the first version's mask (standard/MESSAGES.md m11.2).
 // Red if the default mask or the default config drifts from the standard.
 static void config_vector_is_library_default()
 {

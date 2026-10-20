@@ -5,7 +5,7 @@
 
 // test_unit_secret_wipe.cpp -- the key-zeroisation oracle. Every terminal path
 // an attempt can take MUST leave the attempt's secret material zeroed:
-// standard/TRANSPORT.md's ephemeral-secret erasure (both sides zero their own ephemeral
+// standard/TRANSPORT.md t7's ephemeral-secret erasure (both sides zero their own ephemeral
 // secret once it is no longer needed for a handshake in progress) and the
 // denied path's "release all connection state", read at
 // sdk/rocketnet_client_protocol.cpp.

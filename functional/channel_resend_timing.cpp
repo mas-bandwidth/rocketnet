@@ -313,8 +313,8 @@ void resend_timing_table_over_lossy_links()
 
 /*
     block_resend_cost_over_long_path: the bandwidth a resend policy spends per
-    useful byte for a large block (standard/MESSAGES.md m9.3 "Resend" and "The
-    cost"; tla/RNResendTiming.tla Delay("c")). The client sends one 256 KiB
+    useful byte for a large block (standard/MESSAGES.md m9.3, the chunk
+    resend delay; tla/RNResendTiming.tla Delay("c")). The client sends one 256 KiB
     reliable-ordered block over a 200 ms path (harness latency 100 ms each
     way, jitter a tenth of that) at 10% loss both ways, while the server
     sends one 32-byte unreliable message per update so acks ride packets

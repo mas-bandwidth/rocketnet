@@ -870,7 +870,7 @@ static void xdp_host_invalid_type_drops()
 // ---------------------------------------------------------------------------
 // the exhaustive sweep: every type byte at every UDP payload size from 0 to
 // one past the receive ceiling, both families, against the size table of
-// standard/TRANSPORT.md (Packet sizes; Reading packets: the server ignores denied,
+// standard/TRANSPORT.md t8.11 and t10 (the server ignores denied,
 // challenge and cookie, and types 10 to 255 are reserved). The table is
 // written here, never taken from ROCKETNET_WIRE_SERVER_PACKET_VALID.
 

@@ -4,7 +4,7 @@
 */
 
 // The receiver's filter epoch window (tla/RNFilterEpochs.tla, standard/TRANSPORT.md
-// "The keyed filter value"): a rotation leaves two generations live, and an
+// t5.1): a rotation leaves two generations live, and an
 // epoch the table does not hold is refused on the comparison before any MAC.
 // Pure table computation; not wired into a receive path.
 

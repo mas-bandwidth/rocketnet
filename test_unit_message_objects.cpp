@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The client and server message objects and their C API (standard/MESSAGES.md
-// to 12; tla/RNSlots.tla, tla/RNConnectionMemory.tla). The objects run over
+// The client and server message objects and their C API
+// (tla/RNSlots.tla, tla/RNConnectionMemory.tla). The objects run over
 // the in-memory transport pair below, bound through the object's transport
 // seam (rn_message_link_t) exactly where the real transports bind: it hands
 // out frames at start_packet with the transport's packet id, takes them at
@@ -1913,8 +1913,8 @@ static void message_objects_client_clock_starts_at_first_update()
 }
 
 // ---------------------------------------------------------------------------
-// The unreliable path on the shipped objects (standard/MESSAGES.md m3,
-// 9.3): the cases of the retired standalone rn_unreliable_* module that
+// The unreliable path on the shipped objects (standard/MESSAGES.md
+// m6.1): the cases of the retired standalone rn_unreliable_* module that
 // describe behaviour the product has, run through the message objects.
 // ---------------------------------------------------------------------------
 

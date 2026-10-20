@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// standard/TRANSPORT.md, "No response may be larger than the packet that provoked it":
+// standard/TRANSPORT.md t19.1, a server MUST NOT send a response larger than the packet that provoked it:
 // the amplification table is normative, and every packet type is re-checked
 // against it whenever any size changes. These tests send each provoking
 // packet through the real server and client protocol objects, capture every
@@ -44,12 +44,12 @@
 #include "test/counters_expect.h"
 
 // Keep the table's normative sizes independent of the shared wire constants.
-static_assert( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES == 710, "standard/TRANSPORT.md request size" );
-static_assert( ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES == 38, "standard/TRANSPORT.md cookie size" );
-static_assert( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES == 66, "standard/TRANSPORT.md challenge size" );
-static_assert( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES == 50, "standard/TRANSPORT.md response size" );
-static_assert( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES == 34, "standard/TRANSPORT.md denied size" );
-static_assert( ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES == 41, "standard/TRANSPORT.md fresh keep-alive size" );
+static_assert( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES == 710, "STANDARD.md request size" );
+static_assert( ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES == 38, "STANDARD.md cookie size" );
+static_assert( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES == 66, "STANDARD.md challenge size" );
+static_assert( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES == 50, "STANDARD.md response size" );
+static_assert( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES == 34, "STANDARD.md denied size" );
+static_assert( ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES == 41, "STANDARD.md fresh keep-alive size" );
 
 // ---------------------------------------------------------------------------
 // The fixture: a server with the two token tables, one slot table and a small
@@ -299,7 +299,7 @@ static void reply_never_larger_than_request_every_unauthenticated_type()
     rocketnet_unit_check( response_bytes <= ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
 
     // a refused token: the expired token is refused before the cookie is
-    // issued, and standard/TRANSPORT.md's rule that a server never answers a request it
+    // issued, and standard/TRANSPORT.md t12's rule that a server never answers a request it
     // has rejected leaves the response empty. 710 provoking, 0 answering.
     {
         uint8_t refused_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];

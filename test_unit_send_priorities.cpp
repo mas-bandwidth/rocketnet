@@ -4,7 +4,7 @@
 */
 
 // Layer 6's scheduler, unit tier: RakNet's four send priorities inside the
-// budget's class order (standard/MESSAGES.md m10, tla/RNScheduler.tla). No
+// budget's class order (standard/MESSAGES.md m9.4, tla/RNScheduler.tla). No
 // sockets, no threads, no wall clock.
 //
 // Every case writes packets that hold one record each, so the order of the

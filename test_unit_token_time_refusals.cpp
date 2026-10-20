@@ -6,8 +6,8 @@
 // The three token-time refusals on the connection request path are three
 // distinct counters: an expired token, a token created more than five seconds
 // in the future, and a token whose lifetime exceeds the server's maximum are
-// each their own reason (standard/TRANSPORT.md, Counters: refusal reasons are never
-// merged; Processing Connection Requests, the request order). The server is
+// each their own reason (standard/TRANSPORT.md t18, the counter
+// table; t12, rule 4, the request order). The server is
 // driven with time as an argument from 1000.0: no sockets, no network and no
 // real clock.
 

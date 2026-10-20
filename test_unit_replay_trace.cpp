@@ -145,7 +145,7 @@ struct replay_window_ref_t
 
     // Receive (tla/ReplayWindow.tla:162-170); the session receive gate,
     // sdk/rocketnet_server_protocol.cpp:962-972. standard/TRANSPORT.md t10
-    // (Reading packets: a slotless mapping is ignored before the mark).
+    // (a slotless mapping is ignored before the mark).
     void receive( uint64_t s )
     {
         if ( connected || !gate_before_advance )

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Layer 4's dispatch, unit tier (standard/MESSAGES.md m7; tla/RNChannel.tla). No
+// Layer 4's dispatch, unit tier (standard/MESSAGES.md m6 and m7; tla/RNChannel.tla). No
 // sockets, no threads, no wall clock: time is an argument.
 
 #include <stdio.h>

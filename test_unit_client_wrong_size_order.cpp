@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// standard/TRANSPORT.md _Reading packets_ runs the per-type wire-size check before the
+// standard/TRANSPORT.md t10 runs the per-type wire-size check before the
 // state gate and reserves the 2^36 AEAD integrity counter for seal-open
 // failures. For a connection challenge (type 2, 66 wire bytes) and a
 // connection denied (type 1, 34 wire bytes), a packet one byte short or one

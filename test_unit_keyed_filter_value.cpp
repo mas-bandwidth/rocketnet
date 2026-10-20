@@ -3,8 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The keyed filter value, standard/TRANSPORT.md "The keyed filter value" (lines 489 to
-// 557): SipHash-2-4 under the 16-byte magic over the 7-byte input of packet
+// The keyed filter value, standard/TRANSPORT.md t5.1: SipHash-2-4 under the 16-byte magic over the 7-byte input of packet
 // type, packet length as a little-endian uint16, then the four bytes following
 // the prefilter header; the low 4 bytes of the 64-bit result, little-endian,
 // are the filter value. Pure computation, no wiring into a receive path, no

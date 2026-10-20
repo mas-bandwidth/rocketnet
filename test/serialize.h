@@ -9739,7 +9739,7 @@ inline void serialize_test()
     if ( !serialize_test_fp_barrier_holds() )
     {
         printf( "This toolchain contracts floating point THROUGH SERIALIZE_FLOAT_FORCE_ROUND. The compressed\n"
-                "float's quantization requires TWO distinct roundings on write and on read (standard/TRANSPORT.md), and\n"
+                "float's quantization requires TWO distinct roundings on write and on read (STANDARD.md), and\n"
                 "the barrier is what pins them under every contraction mode. On this build it does not hold, so\n"
                 "the wire cannot be conformant. Rebuild with -ffp-contract=off.\n\n" );
         serialize_check( !"SERIALIZE_FLOAT_FORCE_ROUND does not hold on this toolchain" );

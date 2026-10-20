@@ -12,7 +12,7 @@
 // copy arrives after its own delay, so packets overtake each other. A transport
 // refusal is a packet written and never sent (rn_endpoint_packet_failed). The
 // stand-in transport under each endpoint keeps the transport's two promises the
-// endpoint relies on (standard/TRANSPORT.md): a packet id opens once (the replay
+// endpoint relies on (standard/MESSAGES.md m1.4): a packet id opens once (the replay
 // window drops the duplicate copy), and an opened packet's id is acked back
 // to its sender, over the same kind of lossy path (P2; a lost ack is silence,
 // P5).

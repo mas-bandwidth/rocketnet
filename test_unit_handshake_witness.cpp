@@ -12,10 +12,10 @@
 // The four witnesses:
 //   F4  EphemeralErasedOutsideHandshake (ClientConnection): an attempt that
 //       fails from a waiting state leaves the client's ephemeral secret key
-//       and token scratch zeroed (S:1089-1092). Reversed: the failure exits
+//       and token scratch zeroed (standard/TRANSPORT.md t7). Reversed: the failure exits
 //       in check_deadlines and process_denied never sodium_memzero them.
 //   F8  TerminalAbsorbing (ClientConnection): only connect leaves a terminal
-//       state (-7..-1); disconnect() from one leaves it alone (S:2042-2047).
+//       state (-7..-1); disconnect() from one leaves it alone.
 //       Reversed: disconnect rewrites every non-zero state to 0.
 //   One client id, one live connection (ServerConnection F9, History
 //       "none"): two handshakes, each with its own token for one client id;
@@ -543,7 +543,7 @@ static void TestClientEphemeralErasedOutsideHandshake()
 
 // ---------------------------------------------------------------------------
 // F8, TerminalAbsorbing (ClientConnection.tla). still open on main:
-// disconnect() rewrites a terminal state (-7..-1) to 0 (S:2042-2047, the only
+// disconnect() rewrites a terminal state (-7..-1) to 0 (the model's rule: the only
 // way out of a terminal state is a fresh connect). the witness drives each
 // terminal state and asserts disconnect leaves it alone.
 // ---------------------------------------------------------------------------
@@ -598,7 +598,7 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
     rocketnet_handshake_to_challenge( &test, &test.client_address, 0x5A0CULL, &keys_a );
 
     // History "none": flush the used-token history so the second client's
-    // request no longer sees the binding (S:2782-2786)
+    // request no longer sees the binding
     {
         uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
         for ( int i = 0; i < 64; i++ )
