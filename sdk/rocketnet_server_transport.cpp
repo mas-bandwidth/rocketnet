@@ -18,6 +18,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 
 #ifndef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 
+#include <limits.h>
 #include <new>
 #include "rocketnet_packet_lease.h"
 #include "rocketnet_stats_window.h"
@@ -93,7 +94,7 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
 // 1000 light clients at 10 Hz, each sending one packet per update, and every
 // client must be served every update. The capacity a transport enforces is
 // send_capacity; create reads it from max_clients with a floor of the
-// historical 256 slots, and a unit seam can lower it after create.
+// historical 256 slots, and a unit seam can lower it at create.
 #define ROCKETNET_SERVER_MIN_SEND_PACKETS    256
 #define ROCKETNET_SERVER_MAX_SEND_PACKETS    ROCKETNET_MAX_CLIENTS
 
@@ -504,7 +505,7 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
     if ( !server_transport )
         return 0;
     if ( rocketnet_server_transport_staged( server_transport ) )
-        return 1;
+        return INT_MAX;
     const uint64_t used = server_transport->payload_ring.num_packets;
     return used >= (uint64_t) server_transport->send_capacity ? 0 :
         (int) ( (uint64_t) server_transport->send_capacity - used );

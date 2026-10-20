@@ -78,7 +78,7 @@ struct fair_world_t
     double time;
 };
 
-static void fair_world_create( fair_world_t * world, int num_clients )
+static void fair_world_create( fair_world_t * world, int num_clients, int capacity )
 {
     memset( world, 0, sizeof( *world ) );
     rocketnet_set_quiet( 1 );
@@ -97,7 +97,7 @@ static void fair_world_create( fair_world_t * world, int num_clients )
     server_config.transport = "loopback";
     fair_message_config( &server_config, NULL );
 
-    rocketnet_server_transport_set_create_send_capacity_for_test( 1 );
+    rocketnet_server_transport_set_create_send_capacity_for_test( capacity );
     world->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
     check( world->server != NULL );
     check( rocketnet_server_start( world->server ) == ROCKETNET_STATUS_OK );
@@ -199,10 +199,10 @@ static uint32_t fair_server_send( fair_world_t * world, int client, int channel,
     return rocketnet_server_finish_message( world->server, world->server_index[client], 2 );
 }
 
-static void fair_run_case( int num_clients )
+static void fair_run_case( int num_clients, int capacity = 1 )
 {
     fair_world_t world;
-    fair_world_create( &world, num_clients );
+    fair_world_create( &world, num_clients, capacity );
     for ( int i = 0; i < num_clients; i++ )
         fair_connect( &world, i, 0x9000 + (uint64_t) i );
 
@@ -242,16 +242,15 @@ static void fair_run_case( int num_clients )
             }
         }
 
-        // fairness at a cap of one packet per tick: with N clients the
-        // rotation serves each client every N ticks, so no client waits more
-        // than N ticks for its next reliable message. The first N ticks are
-        // the rotation's first pass.
+        // With N clients and capacity K, one-frame rounds serve each client
+        // within ceil(N/K) ticks, even when each client has multiple packets
+        // due. Allow the first rotation to reach every client.
         if ( tick >= num_clients && tick < FAIR_DATA_TICKS )
         {
             for ( int c = 0; c < num_clients; c++ )
             {
                 check( last_reliable_tick[c] >= 0 );
-                check( tick - last_reliable_tick[c] <= num_clients );
+                check( tick - last_reliable_tick[c] <= ( num_clients + capacity - 1 ) / capacity );
             }
         }
 
@@ -287,7 +286,12 @@ static void fair_run_case( int num_clients )
         if ( tick < FAIR_DATA_TICKS )
         {
             for ( int c = 0; c < num_clients; c++ )
+            {
+                // Queue unreliable first to exercise in-place admission before
+                // the reliable work for this tick is visible.
+                check( fair_server_send( &world, c, FAIR_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, (uint16_t) tick ) != 0 );
                 check( fair_server_send( &world, c, FAIR_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (uint16_t) tick ) != 0 );
+            }
         }
         rocketnet_server_send_packets( world.server );
         world.time += FAIR_DT;
@@ -319,7 +323,7 @@ static void fair_run_case( int num_clients )
     }
     if ( !ok )
     {
-        printf( "cap 1, %d clients: connected", num_clients );
+        printf( "cap %d, %d clients: connected", capacity, num_clients );
         for ( int c = 0; c < num_clients; c++ )
             printf( " [%d]=%d", c, rocketnet_client_state( world.clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
         printf( " server_reliable" );
@@ -344,6 +348,8 @@ static void fair_run_case( int num_clients )
         check( rocketnet_server_client_connected( world.server, world.server_index[c] ) != 0 );
         check( server_reliable[c] == FAIR_DATA_TICKS );
         check( client_reliable[c] == FAIR_DATA_TICKS );
+        check( server_unreliable[c] > 0 );
+        check( client_unreliable[c] > 0 );
     }
 
     fair_world_destroy( &world );
@@ -359,6 +365,12 @@ static void server_send_cap_one_three_clients()
     fair_run_case( 3 );
 }
 
+static void server_send_cap_two_three_clients()
+{
+    fair_run_case( 3, 2 );
+}
+
+REGISTER_UNIT_TEST( server_send_cap_two_three_clients );
 REGISTER_UNIT_TEST( server_send_cap_one_two_clients );
 REGISTER_UNIT_TEST( server_send_cap_one_three_clients );
 
