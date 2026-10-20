@@ -16,7 +16,9 @@
     ROCKETNET_FUNCTIONAL_THREAD_PRIORITY=off (functional/main.cpp). Numbers
     are reported, never asserted; each case asserts only that the client stays
     connected with zero timeouts. ROCKETNET_TIMING_SECONDS sets the measured
-    stretch (default 2 s).
+    stretch (default 2 s). The Linux load runs only in a measured run (with
+    ROCKETNET_TIMING_SECONDS set): in the parallel suite, 2 x cores spinning
+    threads would starve the cases running beside it.
 
       thread_priority_timing_receive_gaps            default; on Linux under
                                                      2 x cores busy-spinning
@@ -442,7 +444,10 @@ void thread_priority_timing_receive_gaps()
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     const unsigned int cores = std::thread::hardware_concurrency();
-    priority_timing_run( "receive_gaps_under_load", (int) ( 2 * ( cores ? cores : 1 ) ), false );
+    if ( getenv( "ROCKETNET_TIMING_SECONDS" ) )
+        priority_timing_run( "receive_gaps_under_load", (int) ( 2 * ( cores ? cores : 1 ) ), false );
+    else
+        priority_timing_run( "receive_gaps", 0, false );
 #else
     priority_timing_run( "receive_gaps", 0, false );
 #endif
