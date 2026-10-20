@@ -1014,7 +1014,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint
 /// server's public key. The token carries client_id, protocol_id, the server
 /// addresses, create_timestamp, expire_timestamp, timeout_seconds and
 /// user_data, and fresh session keys. server_address_strings holds
-/// server_address_count entries (1 or 2), at most one of each family; user_data
+/// server_address_count entries (1 or 2), at most one of each family. With
+/// both families the client selects the IPv6 address on a host that can open
+/// an IPv6 socket and the IPv4 address on one that cannot, and a server
+/// accepts the token when either address is one it serves. user_data
 /// is ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES long, or NULL for all zeros. The
 /// output is ROCKETNET_CONNECT_TOKEN_BYTES long and connect_token_bytes is its
 /// size; a short buffer is refused with ROCKETNET_STATUS_INVALID_ARGUMENT and
