@@ -95,6 +95,11 @@ checkout, in PowerShell or cmd.exe:
     bin\Release\functional.exe
     py -3 tools\check_xdp_archive.py --committed-only
 
+With Visual Studio's LLVM toolset (`Microsoft.VisualStudio.Component.VC.Llvm.Clang`) installed, `-DROCKETNET_BUILD_FUZZERS=ON` builds the four libFuzzer + AddressSanitizer targets (`fuzz_rocketnet_fuzz`, `fuzz_rocketnet_fuzz_message`, `fuzz_rocketnet_fuzz_connect_token`, `fuzz_rocketnet_fuzz_receive_structured`) with `clang-cl`:
+
+    cmake -B build-fuzz -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DROCKETNET_BUILD_FUZZERS=ON
+    cmake --build build-fuzz --target fuzz_rocketnet_fuzz fuzz_rocketnet_fuzz_message fuzz_rocketnet_fuzz_connect_token fuzz_rocketnet_fuzz_receive_structured --parallel 4
+
 `bin\Release\test.exe` is the unit suite and `bin\Release\functional.exe` the
 loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
 takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`

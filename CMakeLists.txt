@@ -3,6 +3,23 @@ project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    execute_process(
+        COMMAND "${CMAKE_CXX_COMPILER}" /clang:--print-resource-dir
+        OUTPUT_VARIABLE ROCKETNET_CLANG_RESOURCE_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    file(TO_CMAKE_PATH "${ROCKETNET_CLANG_RESOURCE_DIR}/lib/windows" ROCKETNET_CLANG_WINDOWS_LIB_DIR)
+    execute_process(
+        COMMAND "${CMAKE_CXX_COMPILER}" -fsanitize=fuzzer,address /MT "${CMAKE_CURRENT_SOURCE_DIR}/fuzz/rocketnet_fuzz.cpp" -###
+        ERROR_VARIABLE ROCKETNET_CLANG_DRY_RUN
+        OUTPUT_QUIET)
+    string(REGEX MATCHALL "\"-libpath:[^\"]+\"" ROCKETNET_CLANG_LIBPATHS "${ROCKETNET_CLANG_DRY_RUN}")
+    foreach(libpath_arg IN LISTS ROCKETNET_CLANG_LIBPATHS)
+        string(REGEX REPLACE "^\"-libpath:(.*)\"$" "\\1" libpath_dir "${libpath_arg}")
+        file(TO_CMAKE_PATH "${libpath_dir}" libpath_dir)
+        add_link_options("/LIBPATH:${libpath_dir}")
+    endforeach()
+endif()
 # clang-cl does not map #pragma warning(disable:4996) (rocketnet_platform.h,
 # rocketnet.cpp) to its own deprecation warning, so the CRT deprecations that
 # MSVC silences there are silenced here for clang-cl alone. The vendored
@@ -29,6 +46,7 @@ option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETN
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_IO_URING "Build the io_uring server driver against liburing when it is found (Linux)" ON)
+option(ROCKETNET_BUILD_FUZZERS "Build the libFuzzer targets when the compiler is clang-cl" OFF)
 set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
 set(ROCKETNET_DRIVER_SOURCES "" CACHE STRING "Additional native driver source files")
 if(ROCKETNET_DRIVER_REGISTRY_HEADER)
@@ -176,7 +194,7 @@ set(ROCKETNET_SOURCE
     ${ROCKETNET_DRIVER_SOURCES}
 )
 
-if(ROCKETNET_HARDEN)
+if(ROCKETNET_HARDEN AND NOT MSVC)
     foreach(language C CXX)
         if(language STREQUAL "C")
             check_c_compiler_flag("-fstack-protector-strong" ROCKETNET_C_STACK_PROTECTOR)
@@ -633,6 +651,42 @@ if(ROCKETNET_BUILD_TOOLS)
             "${CMAKE_CURRENT_SOURCE_DIR}/test")
         rocketnet_use_sodium(fuzz_replay_${harness})
         target_link_libraries(fuzz_replay_${harness} PRIVATE rocketnet_dev Threads::Threads)
+    endforeach()
+endif()
+
+if(ROCKETNET_BUILD_FUZZERS AND MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set_target_properties(rocketnet_dev PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    target_compile_definitions(rocketnet_dev PUBLIC
+        _ITERATOR_DEBUG_LEVEL=0
+        _DISABLE_STRING_ANNOTATION=1
+        _DISABLE_VECTOR_ANNOTATION=1)
+    target_compile_options(rocketnet_dev PUBLIC /MT /U_DEBUG /O1 /Ob1)
+    target_compile_options(rocketnet_dev PRIVATE -fsanitize=fuzzer-no-link,address)
+    target_link_options(rocketnet_dev INTERFACE
+        /INCREMENTAL:NO
+        "${ROCKETNET_CLANG_WINDOWS_LIB_DIR}/clang_rt.asan_dynamic-x86_64.lib"
+        "/WHOLEARCHIVE:${ROCKETNET_CLANG_WINDOWS_LIB_DIR}/clang_rt.asan_static_runtime_thunk-x86_64.lib"
+        "$<$<NOT:$<BOOL:$<TARGET_PROPERTY:ROCKETNET_IS_FUZZER>>>:${ROCKETNET_CLANG_WINDOWS_LIB_DIR}/clang_rt.fuzzer_no_main-x86_64.lib>")
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured)
+        add_executable(fuzz_${harness} fuzz/${harness}.cpp)
+        set_target_properties(fuzz_${harness} PROPERTIES
+            MSVC_RUNTIME_LIBRARY "MultiThreaded"
+            ROCKETNET_IS_FUZZER ON)
+        target_compile_definitions(fuzz_${harness} PRIVATE ROCKETNET_DEVELOPMENT=1)
+        target_compile_features(fuzz_${harness} PRIVATE cxx_std_17)
+        target_compile_options(fuzz_${harness} PRIVATE -fsanitize=fuzzer,address /fp:precise)
+        target_include_directories(fuzz_${harness} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/sodium"
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test")
+        rocketnet_use_sodium(fuzz_${harness})
+        target_link_options(fuzz_${harness} BEFORE PRIVATE
+            "/WHOLEARCHIVE:${ROCKETNET_CLANG_WINDOWS_LIB_DIR}/clang_rt.fuzzer-x86_64.lib")
+        target_link_libraries(fuzz_${harness} PRIVATE rocketnet_dev Threads::Threads)
+        add_custom_command(TARGET fuzz_${harness} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${ROCKETNET_CLANG_WINDOWS_LIB_DIR}/clang_rt.asan_dynamic-x86_64.dll"
+                "$<TARGET_FILE_DIR:fuzz_${harness}>")
     endforeach()
 endif()
 
