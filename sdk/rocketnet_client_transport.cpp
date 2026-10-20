@@ -334,7 +334,7 @@ static inline bool rocketnet_client_link_patterns( const rocketnet_client_transp
 // receives, unless the patterns put them through the link simulator.
 static inline bool rocketnet_client_io_core( const rocketnet_client_transport_t * transport )
 {
-    return ( transport->io_thread || transport->step_in_update ) && !rocketnet_client_link_patterns( transport );
+    return ( transport->io_thread || transport->step_in_update ) && !transport->link_simulator;
 }
 
 // Link!ReverseWindow: the window held by the simulator is emitted reversed, whole,
@@ -453,18 +453,66 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( !plan.reassembly_bytes || !rocketnet_memory_add( plan.reassembly_bytes, 4, rocketnet_allocation_overhead() ) ) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
 
-    if ( strcmp( driver, "portable" ) == 0 )
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+    struct rocketnet_portable_io_client_layout_t
     {
-        plan.driver_bytes = rocketnet_platform_socket_allocation_bytes();
-        plan.sockets = 1;
-    }
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-    else if ( strcmp( driver, "msgx" ) == 0 )
+        void * context;
+        void * socket;
+        void * wake;
+    };
+#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) )
+    struct rocketnet_platform_wake_layout_t
     {
-        plan.driver_bytes = rocketnet_platform_socket_allocation_bytes();
-        plan.sockets = 1;
-    }
+        void * context;
+        int socket_fd;
+        int event_fd;
+    };
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    struct rocketnet_platform_wake_layout_t
+    {
+        void * context;
+        int kq;
+        int socket_fd;
+        bool read_enabled;
+    };
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    struct rocketnet_platform_wake_layout_t
+    {
+        void * context;
+        void * socket_handle;
+        void * read_event;
+        void * wake_event;
+    };
+#else
+    struct rocketnet_platform_wake_layout_t
+    {
+        void * context;
+    };
 #endif
+#endif
+
+    if ( strcmp( driver, "portable" ) == 0
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+         || strcmp( driver, "msgx" ) == 0
+#endif
+       )
+    {
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+        plan.driver_bytes = rocketnet_memory_allocations( {
+            sizeof(rocketnet_platform_socket_t),
+            sizeof(rocketnet_portable_io_client_layout_t),
+            sizeof(rocketnet_platform_wake_layout_t)
+        } );
+#else
+        plan.driver_bytes = rocketnet_platform_socket_allocation_bytes();
+#endif
+        if ( !config->step_driven )
+        {
+            if ( !rocketnet_memory_add( plan.driver_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
+                return false;
+        }
+        plan.sockets = 1;
+    }
     else return false;
 
     if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.driver_bytes ) return false;
@@ -2136,7 +2184,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         if ( packet_bytes < ROCKETNET_PREFILTER_BYTES || packet_bytes > ROCKETNET_RECEIVE_CEILING )
             continue;
 
-        const double receive_time = ( client_transport->step_in_update && rocketnet_client_link_patterns( client_transport ) )
+        const double receive_time = client_transport->step_in_update
             ? client_transport->time
             : rocketnet_platform_time();
 
