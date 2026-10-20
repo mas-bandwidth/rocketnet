@@ -17,6 +17,8 @@ STANDARD step in _Processing Connection Requests_:
 | compares | cheap | address flags, advertised address, server key compares | address flags; advertised address; server public key |
 | cookie | cheap | cookie MAC and budget gate | recompute the cookie MAC |
 | used | cheap | used-token history lookup | token identifier in used-token history |
+| capacity | cheap | rocketnet_encryption_map_full before any signature, seal or keypair | no free encryption mapping slot |
+| claim | cheap | rocketnet_used_token_history_claim_check and claim_record | token identifier claimed by a different source address |
 | admitted | cheap | removed with the admitted-token set (`docs/SESSION.md` 1.6): the used-token history rung is now the cheap refusal of a token a connected client holds, from any other address; the model keeps the position | (none) |
 | restart | cheap | already-connected and mapping lookups | already connected; resend stored challenge |
 | signature | crypto | crypto_sign_verify_detached in sdk/rocketnet_connect_token.cpp | verify the signature |
@@ -24,22 +26,26 @@ STANDARD step in _Processing Connection Requests_:
 | slots | cheap | rocketnet_client_slots_num_free in sdk/rocketnet_server_protocol.cpp | no client slots available |
 | keypair | crypto | crypto_box_keypair in sdk/rocketnet_server_protocol.cpp | obtain the server ephemeral keypair |
 
-The code holds the slots and keypair rungs once this card lands: the slot
-check seals the denial under the handshake keys, which need no ephemeral
-pair, so it stands ahead of the keypair. The remaining rungs reach the model
-order as the token-order cards land; until then the table states the target
-order the model checks.
+The code holds this order. The capacity rung reads the mapping table, and the
+claim rung records the first valid request's address for its token, both ahead
+of the signature, seal and keypair. The slot check seals the denial under the
+handshake keys, which need no ephemeral pair, so it stands ahead of the
+keypair. The model scales positions by ten so the capacity and claim rungs sit
+between the used and admitted rungs without a new config constant.
 
 ## Witnesses
 
 Each witness is the same module under a Broken cfg, moving one cheap rung
-behind a crypto rung. TLC must reject all three with `CheapRefusalsFirst`:
+behind a crypto rung or removing the token claim. TLC must reject the three
+order witnesses with `CheapRefusalsFirst` and the claim witness with
+`OneLiveMappingPerToken`:
 
 | Witness | Order | Code replay |
 |---|---|---|
-| SlotsAfterKeypair | slots at 11, keypair at 10 | BASE: crypto_box_keypair and the scalar multiplication inside rocketnet_derive_connection_keys run before rocketnet_client_slots_num_free, so a full server pays for a keypair on every denial |
-| AdmittedAfterVerify | admitted at 8, signature at 6 | BASE order with the admitted lookup behind the signature verify: a cheap refusal decided only after signature work |
-| VersionNotFirst | version at 9, behind the signature at 8 | a version refusal decided only after signature work; the version byte is a fixed-offset compare and belongs first |
+| SlotsAfterKeypair | slots at 110, keypair at 100 | BASE: crypto_box_keypair and the scalar multiplication inside rocketnet_derive_connection_keys run before rocketnet_client_slots_num_free, so a full server pays for a keypair on every denial |
+| AdmittedAfterVerify | admitted at 80, signature at 60 | BASE order with the admitted lookup behind the signature verify: a cheap refusal decided only after signature work |
+| VersionNotFirst | version at 90, behind the signature at 80 | a version refusal decided only after signature work; the version byte is a fixed-offset compare and belongs first |
+| TokenManyAddresses | claim rung removed (`ClaimAtRequest <- MCTokenClaimRemoved`) | the request path before the claim: one token presented from two addresses buys two live half-open mappings, so `OneLiveMappingPerToken` fails |
 
 Replayed by hand: in SlotsAfterKeypair a full-server packet (fault `full`)
 passes the keypair rung, so `spent` holds when the slots rung refuses, and

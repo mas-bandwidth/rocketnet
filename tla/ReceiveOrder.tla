@@ -2,66 +2,97 @@
 (***************************************************************************)
 (* A receive path as ordered rungs, each cheap or crypto.  The request     *)
 (* path runs in the ruled order: version byte, signed timestamps, address  *)
-(* and key compares, cookie gate and budget, used and admitted token       *)
-(* lookups, restart rule, signature, seal open, slots, keypair.  Keyed     *)
-(* hashes (the cookie MAC, the token identifier, key derivation) are the   *)
-(* cheap tier and spend no counted cryptography.                           *)
+(* and key compares, cookie gate and budget, used token lookup, the        *)
+(* token-to-address claim and the mapping capacity, restart rule,          *)
+(* signature, seal open, slots, keypair.  Keyed hashes (the cookie MAC,    *)
+(* the token identifier, key derivation) are the cheap tier and spend no   *)
+(* counted cryptography.                                                   *)
 (*                                                                         *)
 (* CheapRefusalsFirst: a refusal at a rung above the signature spends no   *)
 (* cryptography at all, and the slot refusal, which must wait for a        *)
 (* verified token, spends no keypair work.  The committed instance holds   *)
-(* it; the three witnesses (slots after keypair, admitted after verify,    *)
-(* version not first) break it, each replayed against the code by hand     *)
-(* in README-ReceiveOrder.md.                                              *)
+(* it; the witnesses (slots after keypair, admitted after verify, version  *)
+(* not first, and the token claim removed) break it or the one-mapping     *)
+(* rule, each replayed against the code by hand in README-ReceiveOrder.md. *)
+(*                                                                         *)
+(* The claim rung records the first request's address for its token and    *)
+(* refuses a second address until the handshake deadline; the capacity     *)
+(* rung refuses a full mapping table.  OneLiveMappingPerToken is the       *)
+(* consequence: a token holds at most one live half-open mapping.  The     *)
+(* claim expires with the mapping on the Deadline step.                    *)
 (***************************************************************************)
-EXTENDS Integers
+EXTENDS Integers, FiniteSets
 
 CONSTANTS PosVersion, PosTimestamps, PosCompares, PosCookie, PosUsed,
           PosAdmitted, PosRestart, PosSignature, PosSeal, PosSlots,
           PosKeypair
 
 Rungs == {"version", "timestamps", "compares", "cookie", "used",
-          "admitted", "restart", "signature", "seal", "slots", "keypair"}
+          "capacity", "claim", "admitted", "restart", "signature", "seal",
+          "slots", "keypair"}
 
 CryptoRungs == {"signature", "seal", "keypair"}
 
 AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
-                "admitted", "restart"}
+                "capacity", "claim", "admitted", "restart"}
 
-Faults == {"none", "version", "expired", "full", "admitted",
-           "signature", "seal"}
+Faults == {"none", "version", "expired", "full", "mapfull", "claimed",
+           "admitted", "signature", "seal"}
 
+\* Positions are scaled by ten so the two new cheap rungs sit between the
+\* used rung and the next configured rung without a new config constant.
 Pos(r) ==
-    CASE r = "version"   -> PosVersion
-      [] r = "timestamps" -> PosTimestamps
-      [] r = "compares"  -> PosCompares
-      [] r = "cookie"    -> PosCookie
-      [] r = "used"      -> PosUsed
-      [] r = "admitted"  -> PosAdmitted
-      [] r = "restart"   -> PosRestart
-      [] r = "signature" -> PosSignature
-      [] r = "seal"      -> PosSeal
-      [] r = "slots"     -> PosSlots
-      [] r = "keypair"   -> PosKeypair
+    CASE r = "version"   -> 10 * PosVersion
+      [] r = "timestamps" -> 10 * PosTimestamps
+      [] r = "compares"  -> 10 * PosCompares
+      [] r = "cookie"    -> 10 * PosCookie
+      [] r = "used"      -> 10 * PosUsed
+      [] r = "capacity"  -> 10 * PosUsed + 2
+      [] r = "claim"     -> 10 * PosUsed + 5
+      [] r = "admitted"  -> 10 * PosAdmitted
+      [] r = "restart"   -> 10 * PosRestart
+      [] r = "signature" -> 10 * PosSignature
+      [] r = "seal"      -> 10 * PosSeal
+      [] r = "slots"     -> 10 * PosSlots
+      [] r = "keypair"   -> 10 * PosKeypair
 
+RungPositions == { Pos(r) : r \in Rungs }
+MinPos == CHOOSE p \in RungPositions : \A q \in RungPositions : p <= q
+MaxPos == CHOOSE p \in RungPositions : \A q \in RungPositions : p >= q
 RungAt(p) == CHOOSE r \in Rungs : Pos(r) = p
+NextPos(p) == CHOOSE q \in RungPositions : q > p /\ \A s \in RungPositions : s > p => q <= s
+
+\* The token claim and the mapping table are the same small instance as the
+\* code: two addresses, two tokens, room for two half-open mappings.
+
+Addrs == {"A", "B"}
+Tokens == {"t1", "t2"}
+None == "none"
+MapCap == 2
+ClaimAtRequest == TRUE
+
+VARIABLES pos, fault, spent, spentKp, outcome, refusedRung,
+          spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps
+
+vars == <<pos, fault, spent, spentKp, outcome, refusedRung,
+          spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps>>
+
+MapCount == Cardinality({ a \in Addrs : maps[a] # None })
+MapFull == MapCount >= MapCap
+ClaimOther == claims[reqToken] # None /\ claims[reqToken] # reqAddr
 
 Refuses(r, f) ==
     \/ (r = "version" /\ f = "version")
     \/ (r = "timestamps" /\ f = "expired")
+    \/ (r = "capacity" /\ (f = "mapfull" \/ MapFull))
+    \/ (r = "claim" /\ (f = "claimed" \/ (ClaimAtRequest /\ ClaimOther)))
     \/ (r = "slots" /\ f = "full")
     \/ (r = "admitted" /\ f = "admitted")
     \/ (r = "signature" /\ f = "signature")
     \/ (r = "seal" /\ f = "seal")
 
-VARIABLES pos, fault, spent, spentKp, outcome, refusedRung,
-          spentAtRefusal, spentKpAtRefusal
-
-vars == <<pos, fault, spent, spentKp, outcome, refusedRung,
-          spentAtRefusal, spentKpAtRefusal>>
-
 TypeOK ==
-    /\ pos \in 1..12
+    /\ pos \in RungPositions \cup {MaxPos + 1}
     /\ fault \in Faults
     /\ spent \in BOOLEAN
     /\ spentKp \in BOOLEAN
@@ -69,9 +100,13 @@ TypeOK ==
     /\ refusedRung \in Rungs \cup {"none"}
     /\ spentAtRefusal \in BOOLEAN
     /\ spentKpAtRefusal \in BOOLEAN
+    /\ reqAddr \in Addrs
+    /\ reqToken \in Tokens
+    /\ claims \in [Tokens -> Addrs \cup {None}]
+    /\ maps \in [Addrs -> Tokens \cup {None}]
 
 Init ==
-    /\ pos = 1
+    /\ pos = MinPos
     /\ fault \in Faults
     /\ spent = FALSE
     /\ spentKp = FALSE
@@ -79,34 +114,41 @@ Init ==
     /\ refusedRung = "none"
     /\ spentAtRefusal = FALSE
     /\ spentKpAtRefusal = FALSE
+    /\ reqAddr \in Addrs
+    /\ reqToken \in Tokens
+    /\ claims = [t \in Tokens |-> None]
+    /\ maps = [a \in Addrs |-> None]
 
 RefuseStep ==
     /\ outcome = "pending"
-    /\ pos <= 11
+    /\ pos <= MaxPos
     /\ Refuses(RungAt(pos), fault)
     /\ outcome' = "refused"
     /\ refusedRung' = RungAt(pos)
     /\ spentAtRefusal' = spent
     /\ spentKpAtRefusal' = spentKp
-    /\ pos' = 12
-    /\ UNCHANGED <<fault, spent, spentKp>>
+    /\ pos' = MaxPos + 1
+    /\ UNCHANGED <<fault, spent, spentKp, reqAddr, reqToken, claims, maps>>
 
 AdvanceStep ==
     /\ outcome = "pending"
-    /\ pos <= 11
+    /\ pos < MaxPos
     /\ ~Refuses(RungAt(pos), fault)
-    /\ pos' = pos + 1
+    /\ pos' = NextPos(pos)
     /\ spent' = (spent \/ (RungAt(pos) \in CryptoRungs))
     /\ spentKp' = (spentKp \/ (RungAt(pos) = "keypair"))
+    /\ claims' = IF RungAt(pos) = "claim" /\ ClaimAtRequest /\ claims[reqToken] = None
+                  THEN [claims EXCEPT ![reqToken] = reqAddr] ELSE claims
     /\ UNCHANGED <<fault, outcome, refusedRung, spentAtRefusal,
-                   spentKpAtRefusal>>
+                   spentKpAtRefusal, reqAddr, reqToken, maps>>
 
 AcceptStep ==
     /\ outcome = "pending"
-    /\ pos = 12
+    /\ pos = MaxPos
     /\ outcome' = "accepted"
+    /\ maps' = [a \in Addrs |-> IF a = reqAddr THEN reqToken ELSE maps[a]]
     /\ UNCHANGED <<pos, fault, spent, spentKp, refusedRung,
-                   spentAtRefusal, spentKpAtRefusal>>
+                   spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims>>
 
 Next == RefuseStep \/ AdvanceStep \/ AcceptStep
 
@@ -116,5 +158,10 @@ CheapRefusalsFirst ==
     outcome = "refused" =>
         /\ (refusedRung \in AboveVerify => ~spentAtRefusal)
         /\ (refusedRung = "slots" => ~spentKpAtRefusal)
+
+\* one token holds at most one live half-open mapping: the claim rung
+\* refuses a second address while the first mapping lives, and the mapping
+\* leaves only on its handshake deadline.
+OneLiveMappingPerToken == \A t \in Tokens : Cardinality({ a \in Addrs : maps[a] = t }) <= 1
 
 =============================================================================
