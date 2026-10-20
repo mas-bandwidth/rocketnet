@@ -3432,7 +3432,6 @@ void rocketnet_test_request_path_uncovered_rungs()
     int response_bytes = 0;
     struct rocketnet_counters_t before;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
 
     // SEALED_MISMATCH: a validly signed token whose sealed protocol id
     // disagrees -- only the consistency check refuses it

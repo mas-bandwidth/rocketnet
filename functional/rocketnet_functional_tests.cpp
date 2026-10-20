@@ -6951,7 +6951,7 @@ extern void rocketnet_test_lifecycle_driver();
 // logged, never silent)
 
 #define ROCKETNET_FUNCTIONAL_SKIP( fn, test_name, reason ) \
-    static void fn() \
+    static inline void fn() \
     { \
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, test_name " [SKIPPED " reason "]" ); \
     }

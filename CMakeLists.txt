@@ -3,6 +3,15 @@ project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
+# clang-cl does not map #pragma warning(disable:4996) (rocketnet_platform.h,
+# rocketnet.cpp) to its own deprecation warning, so the CRT deprecations that
+# MSVC silences there are silenced here for clang-cl alone. The vendored
+# sodium amalgamation keeps helpers its configuration does not call; clang-cl
+# reports them where MSVC at /W3 does not.
+if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    add_compile_options(-Wno-deprecated-declarations)
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c" PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
+endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)

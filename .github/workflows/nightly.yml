@@ -190,9 +190,9 @@ jobs:
   # its exports; nothing runs on ARM64 because no ARM64 runner exists.
   #
   # Measured on the fleet Windows runner, one job at a time: clang-cl configure
-  # 17s, clean build 144s, test.exe 8s, functional.exe 20-25s, consumer and
-  # export checks 6s, about 3.5 minutes; the ARM64 configure took 12s, and its
-  # library build is not yet timed because it does not yet compile.
+  # 14-17s, clean build 120-144s, test.exe 8s, functional.exe 20-25s, consumer,
+  # package and export checks about 1 minute; ARM64 configure 12s, clean
+  # library build 106s, image and export checks 1s; about 7 minutes in all.
   # The runner needs the Visual Studio LLVM toolset (clang-cl) and the MSVC
   # ARM64 build tools besides the MSVC x64 tools.
 
