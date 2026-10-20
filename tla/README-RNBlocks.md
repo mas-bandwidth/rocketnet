@@ -42,7 +42,7 @@ function cites its action):
 | Action | Who | What | Code |
 |---|---|---|---|
 | `NumberMessage` | the sender | the FIFO head is numbered: a message of at most `Small` units is one record; a larger one is `k = ceil(Units / F)` fragments taking `next .. next+k-1` at once and one span `[p, p + (k-1)F + last)`, fragment `i` at `p + iF`, both bounds of 6.2 checked once; every record carries ordering index `m - 1` | `rn_channels_finish` (the count `k`), `rn_ordered_write` calling `rn_window_send_first_write_block` (`sdk/rocketnet_window_send.cpp`) |
-| `SendRecord(n)` | the sender | a numbered record is written into a packet: a first send or a resend, each fragment on its own; the RTO is abstract | `rn_ordered_item` (index, `k - 1`, ring offset `ring_start % B`), `rn_ordered_walk` |
+| `SendRecord(n)` | the sender | a numbered record is written into a packet: a first send or a resend, each fragment on its own; the resend delay is abstract | `rn_ordered_item` (index, `k - 1`, ring offset `ring_start % B`), `rn_ordered_walk` |
 | `Receive(r)` | the receiver | a duplicate number writes nothing; otherwise the anchor is found or opened by `b = n - index`, the fragment is copied to its own offset `ring + index·F` and `have` counts it | `rn_channels_dispatch_chunk` (the copy to `record->ring * 16`, `anchor->block_have++`); a single record is `rn_channels_dispatch_ordered` |
 | `Deliver(b)` | the receiver | the message at the read index is complete: one view of its span read at stride `F`, and the read index moves by one | `rn_channels_dispatch_chunk` (`have == count`, `delta == 0`), `rn_channels_deliver_ordered`, `rn_channels_drain` |
 | `Fwd!Environment` | the path | drop, duplicate, reorder | `tla/Link.tla` |
@@ -68,7 +68,7 @@ Invariants:
   reused. Slot reuse under `U'` is `RNWindow`'s (`NoSlotCollision`) and ring reuse
   `RNRing`'s (`LiveSpansDisjoint`); a block mixed with another after numbers wrap
   is not reachable here.
-- **The RTO.** Any numbered record may be resent at any time, so every order of
+- **The resend delay.** Any numbered record may be resent at any time, so every order of
   arrival the link and the sender can produce is explored.
 - **Dispatch inside the receive.** The code delivers inside the dispatch call that
   completes the message and then drains; here `Deliver` is its own step, which

@@ -84,6 +84,8 @@ static inline int rocketnet_uring_recvmsg_parse(
     const uint8_t ** name, int * name_bytes,
     const uint8_t ** payload, int * payload_bytes )
 {
+    if ( msg_namelen < 0 || msg_controllen < 0 )
+        return ROCKETNET_URING_RECV_SHORT_BUFFER;
     struct io_uring_recvmsg_out out;
     if ( buffer_bytes < (int) sizeof( out ) + msg_namelen + msg_controllen )
         return ROCKETNET_URING_RECV_SHORT_BUFFER;

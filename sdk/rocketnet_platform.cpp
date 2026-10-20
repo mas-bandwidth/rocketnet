@@ -16,6 +16,7 @@
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <pthread.h>
 #include <sched.h>
+#include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
@@ -296,6 +297,17 @@ uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * 
     return rocketnet_platform_atomic_load_u64( &socket->send_failures );
 }
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+// The file status flags a non-blocking socket is set to: the descriptor's
+// current flags (fcntl F_GETFL) with O_NONBLOCK added. F_SETFL replaces the
+// flags it is given, so the socket create paths pass this merge rather than
+// O_NONBLOCK alone.
+
+int rocketnet_platform_nonblocking_flags( int flags )
+{
+    return flags | O_NONBLOCK;
+}
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 // Test-only send-failure seam, compiled into the development library only.
 // The next N sendto and sendmsg_x calls on one socket report the chosen errno
 // without reaching the kernel, so a functional case can drive the send error
@@ -786,8 +798,9 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     if ( socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
-        // non-blocking
-        if ( fcntl( socket->handle, F_SETFL, O_NONBLOCK, 1 ) == -1 )
+        // non-blocking, keeping the descriptor's other status flags
+        const int flags = fcntl( socket->handle, F_GETFL, 0 );
+        if ( flags == -1 || fcntl( socket->handle, F_SETFL, rocketnet_platform_nonblocking_flags( flags ) ) == -1 )
         {
             rocketnet_error( "failed to set socket to non-blocking" );
             rocketnet_platform_socket_destroy( socket );
@@ -2443,8 +2456,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     if ( socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
-        // non-blocking
-        if ( fcntl( socket->handle, F_SETFL, O_NONBLOCK, 1 ) == -1 )
+        // non-blocking, keeping the descriptor's other status flags
+        const int flags = fcntl( socket->handle, F_GETFL, 0 );
+        if ( flags == -1 || fcntl( socket->handle, F_SETFL, rocketnet_platform_nonblocking_flags( flags ) ) == -1 )
         {
             rocketnet_error( "failed to set socket to non-blocking" );
             rocketnet_platform_socket_destroy( socket );
@@ -2772,6 +2786,18 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 #define ROCKETNET_MSGX_RETRY_SECONDS 60.0
 
+static inline double rocketnet_msgx_down_until( rocketnet_platform_socket_t * socket )
+{
+    double value;
+    __atomic_load( &socket->msgx_down_until, &value, __ATOMIC_RELAXED );
+    return value;
+}
+
+static inline void rocketnet_msgx_set_down_until( rocketnet_platform_socket_t * socket, double value )
+{
+    __atomic_store( &socket->msgx_down_until, &value, __ATOMIC_RELAXED );
+}
+
 // the name reports the LIVE path -- tests and logs treat it as ground
 // truth, so a paused pump reads as portable until its pause expires. a
 // pure read: expiry itself is cleared by the next batch call's
@@ -2782,25 +2808,30 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
     rocketnet_assert( socket );
     if ( !socket->msgx )
         return "portable";
-    if ( socket->msgx_down_until > 0.0 && rocketnet_platform_time() < socket->msgx_down_until )
+    const double down_until = rocketnet_msgx_down_until( socket );
+    if ( down_until > 0.0 && rocketnet_platform_time() < down_until )
         return "portable";
     return "msgx";
 }
 
 // is the msgx pump live for this call? eligibility is decided at create;
 // a pause expires here, making the caller's next batch attempt the
-// re-probe. main-thread only, like every batch call (the transport's
-// phase contract: update and the flushes run on the main thread).
+// re-probe. the client's batch send and receive run on its I/O thread
+// (portable_io_client_send_batch in sdk/rocketnet_driver_builtin.cpp) while
+// rocketnet_platform_socket_pump above reads the pause on its caller's
+// thread, so msgx_down_until is only loaded and stored atomically (relaxed:
+// it orders nothing else).
 
 static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 {
     if ( !socket->msgx )
         return false;
-    if ( socket->msgx_down_until > 0.0 )
+    const double down_until = rocketnet_msgx_down_until( socket );
+    if ( down_until > 0.0 )
     {
-        if ( rocketnet_platform_time() < socket->msgx_down_until )
+        if ( rocketnet_platform_time() < down_until )
             return false;
-        socket->msgx_down_until = 0.0;
+        rocketnet_msgx_set_down_until( socket, 0.0 );
         rocketnet_debug( "msgx pump pause expired. next batch call is the re-probe" );
     }
     return true;
@@ -2808,7 +2839,7 @@ static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 
 static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
 {
-    socket->msgx_down_until = rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS;
+    rocketnet_msgx_set_down_until( socket, rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS );
     rocketnet_warn( "%s refused (%s). msgx pump pauses %g seconds", which, strerror( error ), ROCKETNET_MSGX_RETRY_SECONDS );
 }
 
@@ -3471,6 +3502,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 #include <wininet.h>
 #include <iphlpapi.h>
 #include <qos2.h>
+#include <mswsock.h>
 
 #pragma comment( lib, "WS2_32.lib" )
 #pragma comment( lib, "IPHLPAPI.lib" )
@@ -3492,7 +3524,7 @@ static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
 // Windows: SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL ) on the
 // network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
-// from platform init to platform term (game/Libraries/platform/platform.cpp:154 and :173 in the game that carried flow)
+// from platform init to platform term, matching the host application's lifecycle
 
 static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
 {
@@ -3956,6 +3988,69 @@ int rocketnet_platform_id()
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif // #ifndef SIO_UDP_CONNRESET
+
+#ifndef SIO_UDP_NETRESET
+#define SIO_UDP_NETRESET _WSAIOW(IOC_VENDOR, 15)
+#endif // #ifndef SIO_UDP_NETRESET
+
+static volatile LONG rocketnet_platform_udp_reset_refusal_logged = 0;
+static volatile LONG64 rocketnet_platform_receive_reset_count = 0;
+
+// windows-udp-connreset audit: every socket rocketnet creates on Windows
+// (portable server and client, iocp, rio) turns both ICMP reset reports off
+// here, so a hard-killed peer never turns into receive errors (DRIVERS.md,
+// "Windows connection reset")
+bool rocketnet_platform_socket_disable_udp_resets( uintptr_t handle )
+{
+    bool disabled = true;
+    const DWORD codes[2] = { SIO_UDP_CONNRESET, SIO_UDP_NETRESET };
+    const char * names[2] = { "SIO_UDP_CONNRESET", "SIO_UDP_NETRESET" };
+    for ( int i = 0; i < 2; i++ )
+    {
+        BOOL report = FALSE;
+        DWORD returned_bytes = 0;
+        if ( WSAIoctl( (SOCKET) handle, codes[i], &report, sizeof( report ), NULL, 0, &returned_bytes, NULL, NULL ) == SOCKET_ERROR )
+        {
+            disabled = false;
+            if ( InterlockedExchange( &rocketnet_platform_udp_reset_refusal_logged, 1 ) == 0 )
+                rocketnet_warn( "%s refused (Winsock %d): receive paths skip reset statuses instead", names[i], WSAGetLastError() );
+        }
+    }
+    return disabled;
+}
+
+bool rocketnet_platform_receive_status_is_reset( int status )
+{
+    switch ( status )
+    {
+        case WSAECONNRESET:
+        case WSAENETRESET:
+        case WSAECONNREFUSED:
+        case WSAEHOSTUNREACH:
+        case WSAENETUNREACH:
+        case ERROR_PORT_UNREACHABLE:
+        case ERROR_HOST_UNREACHABLE:
+        case ERROR_NETWORK_UNREACHABLE:
+        case ERROR_CONNECTION_REFUSED:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void rocketnet_platform_count_receive_reset()
+{
+    InterlockedIncrement64( &rocketnet_platform_receive_reset_count );
+}
+
+uint64_t rocketnet_platform_receive_resets()
+{
+    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
@@ -3989,14 +4084,10 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         return NULL;
     }
 
-    // IMPORTANT: tell windows we don't want to receive any connection reset messages
-    // for this socket, otherwise recvfrom errors out when client sockets disconnect hard
-    // in response to ICMP messages.
-    #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
-    BOOL bNewBehavior = FALSE;
-    DWORD dwBytesReturned = 0;
-    WSAIoctl( s->handle, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL );
-
+    // IMPORTANT: tell windows we don't want to receive any connection or network
+    // reset reports for this socket, otherwise a receive errors out after a peer
+    // disconnects hard and its ICMP port unreachable comes back
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) s->handle );
     // own the port exclusively: without SO_EXCLUSIVEADDRUSE another local
     // process binds the same port with SO_REUSEADDR and takes its datagrams.
     // set before bind, as the IOCP and RIO drivers do.
@@ -4149,10 +4240,10 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
 
-    if ( socket->handle != 0 )
+    if ( socket->handle != INVALID_SOCKET )
     {
         closesocket( socket->handle );
-        socket->handle = 0;
+        socket->handle = INVALID_SOCKET;
     }
 
     rocketnet_free( socket->context, socket );
@@ -4259,7 +4350,16 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
                 break;
             }
 
-            if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT && error != WSAECONNRESET )
+            // an ICMP report of an earlier send is not the end of the
+            // queue: skip it and keep reading, or one dead peer ends every
+            // drain early (windows-udp-connreset audit, portable receive)
+            if ( rocketnet_platform_receive_status_is_reset( error ) )
+            {
+                rocketnet_platform_count_receive_reset();
+                continue;
+            }
+
+            if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT )
             {
                 rocketnet_debug( "WSARecvFrom failed with error %d", error );
             }
@@ -4496,6 +4596,7 @@ bool rocketnet_platform_client_ipv6_available()
     SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
     if ( probe == INVALID_SOCKET )
         return false;
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) probe );
     closesocket( probe );
     return true;
 #else

@@ -104,11 +104,6 @@ const char * rocketnet_address_to_string( const rocketnet_address_t * address, c
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
-#if defined(WINVER) && WINVER <= 0x0502
-        // ipv6 not supported
-        buffer[0] = '\0';
-        return buffer;
-#else
         uint16_t ipv6_network_order[8];
         for ( int i = 0; i < 8; ++i )
             ipv6_network_order[i] = rocketnet_platform_htons( address->data.ipv6[i] );
@@ -128,7 +123,6 @@ const char * rocketnet_address_to_string( const rocketnet_address_t * address, c
             }
             return buffer;
         }
-#endif
     }
     else if ( address->type == ROCKETNET_ADDRESS_IPV4 )
     {
@@ -168,11 +162,6 @@ const char * rocketnet_address_to_string_without_port( const rocketnet_address_t
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
-#if defined(WINVER) && WINVER <= 0x0502
-        // ipv6 not supported
-        buffer[0] = '\0';
-        return buffer;
-#else
         uint16_t ipv6_network_order[8];
         for ( int i = 0; i < 8; ++i )
             ipv6_network_order[i] = rocketnet_platform_htons( address->data.ipv6[i] );
@@ -180,7 +169,6 @@ const char * rocketnet_address_to_string_without_port( const rocketnet_address_t
         rocketnet_platform_inet_ntop6( ipv6_network_order, address_string, sizeof( address_string ) );
         rocketnet_copy_string( buffer, address_string, ROCKETNET_MAX_ADDRESS_STRING_LENGTH );
         return buffer;
-#endif
     }
     else if ( address->type == ROCKETNET_ADDRESS_IPV4 )
     {

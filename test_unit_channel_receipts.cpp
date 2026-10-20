@@ -326,7 +326,7 @@ static void promoted_type5_block_replays_last_index_and_reliable_loss_witnesses(
         rocketnet_unit_check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE && record.block );
     }
 
-    // BrokenReliableLoss: an elapsed RTO does not turn a reliable block into LOSS.
+    // BrokenReliableLoss: an elapsed resend delay does not turn a reliable block into LOSS.
     rn_window_ack_receipt_sweep( &connection->ordered.ack, 10.0 );
     rocketnet_message_receipt_t out[4];
     rn_window_ack_receipt_end_update( &connection->ordered.ack );

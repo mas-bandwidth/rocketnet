@@ -90,7 +90,7 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     }
 
     const rocketnet_message_config_t * config = endpoint->config;
-    const int max_packets = config->max_packets_per_update < ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? config->max_packets_per_update : ROCKETNET_PACKET_BUILDER_MAX_PACKETS;
+    const int max_packets = config->packets_per_update < ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? config->packets_per_update : ROCKETNET_PACKET_BUILDER_MAX_PACKETS;
     rn_ordered_init( &endpoint->ordered, endpoint->region, config, budget, max_packets, ROCKETNET_MESSAGE_SINGLE_BYTES );
     rn_packet_builder_init( &endpoint->unreliable_builder, endpoint->region, NULL, budget, 1, ROCKETNET_MESSAGE_SINGLE_BYTES );
 
@@ -412,7 +412,7 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
     // a packet) one packet of it stays for that phase
     // (RNOutgoingBuild ReliableSentWithinOneUpdate)
     const int reserved = rn_endpoint_ordered_due( endpoint, now ) ? 1 : 0;
-    if ( endpoint->unreliable_count > 0 || endpoint->written + reserved >= endpoint->config->max_packets_per_update ||
+    if ( endpoint->unreliable_count > 0 || endpoint->written + reserved >= endpoint->config->packets_per_update ||
          ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&
            ( endpoint->region->channel_send[channel].queue_head != RN_DESCRIPTOR_NONE ||
              endpoint->ordered.ack.chunk_head != RN_RESEND_NONE ) ) )
@@ -660,7 +660,7 @@ uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 
 // Whether the ordered path has a packet to write now: a message queued for
 // its first write, or a number at the head of either resend FIFO that is
-// unsent or past its class's adaptive RTO delay (chunks also respect the
+// unsent or past its class's adaptive resend delay (chunks also respect the
 // reliable-timeout attempts cap). This keeps a frame from being started
 // for nothing.
 
@@ -828,7 +828,7 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
         endpoint->write_phase = RN_ENDPOINT_WRITE_RELIABLE;
     }
 
-    const int max_packets = endpoint->config->max_packets_per_update;
+    const int max_packets = endpoint->config->packets_per_update;
 
     if ( endpoint->write_phase == RN_ENDPOINT_WRITE_RELIABLE )
     {
@@ -1225,7 +1225,7 @@ double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint )
         const rn_sent_packet_t * entry = &region->sent_packets[sweep % region->packets];
         if ( entry->packet_id == 0 )
             continue;
-        const double loss = entry->send_time + ack->rto;
+        const double loss = entry->send_time + ack->resend_delay;
         if ( loss < deadline )
             deadline = loss;
         break;

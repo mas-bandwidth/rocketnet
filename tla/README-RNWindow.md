@@ -73,7 +73,7 @@ Actions, one per operation and per outside event:
 | Action | Who | What |
 |---|---|---|
 | `NumberRecord` | sender | gives `next` to a record under the count bound; the block takes `BlockLen` numbers at once |
-| `WritePacket(S, pid)` | sender | writes a packet with a fresh id carrying any set of unacked numbered records, first sends and resends alike (the RTO firing); records it in the map, evicting the oldest entry when full; `Fwd!Send` |
+| `WritePacket(S, pid)` | sender | writes a packet with a fresh id carrying any set of unacked numbered records, first sends and resends alike (the resend delay firing); records it in the map, evicting the oldest entry when full; `Fwd!Send` |
 | `ReceiveAck(q)` | sender | `Rev!Deliver`; every id of `q` still in the map marks its numbers acked and leaves the map; other ids are ignored |
 | `OpenPacket(p)` | receiver | `Fwd!Deliver`; the id joins `pending` (P2); each wire number is reconstructed against `R` (a misread is recorded and nothing else happens); then `Accept`: 6.5 per number (duplicate dropped, outside the window or slot live with another number is a violation), accepted numbers set bits, claim descriptors, advance `R`; then 7.2 dispatch: unordered delivered now, ordered delivered when every ordered predecessor is received (draining holds), else held |
 | `FixBatch` | receiver | the batch is fixed; no more opens this update (P6) |
@@ -81,7 +81,7 @@ Actions, one per operation and per outside event:
 | `EndUpdate` | receiver | the delivered list expires; its descriptors stop being live |
 | `FwdEnvironment`, `RevEnvironment` | the paths | `Link!Environment` on each direction |
 
-The RTO is abstract: any unacked number may be resent at any time, so `last_send`, the
+The resend delay is abstract: any unacked number may be resent at any time, so `last_send`, the
 resend FIFO and the RTT estimator have no counterpart. Blocks appear only as their effect
 on `U'` and on the receiver's holds. One ordered channel is modelled abstractly: the
 numbers in `Ordered` are on it in number order (layer 6 first-writes a channel's records
@@ -146,7 +146,7 @@ value exhausts TLC's tableau.
   abstract ordered channel, sequenced delivery, receipts (layer 4). Fragment contents
   and the split (layer 5). The scheduler (layer 6): its first-write order is assumed as
   "number order is ordering order".
-- Real time: the RTO, backoff, the RTT estimator, `reliable_timeout`. Any unacked number
+- Real time: the resend delay, backoff, the RTT estimator, `reliable_timeout`. Any unacked number
   is due at any moment.
 - The transport: only P2 and P6 remain, as the receiver's ack and update rules. Its
   replay window (which drops a packet seen before or more than 4096 sequences old) is not
@@ -370,16 +370,16 @@ Both under `Pattern = "alternate"` both ways, `Spec`, at `W = 3`, each found in 
    forces nothing. The transport puts its ack block in every packet of every update, so the
    plain ack send is strongly fair, and so is the plain write.
 
-### The abstract RTO evicts its own acks (model-size artefact with a design note)
+### The abstract resend delay evicts its own acks (model-size artefact with a design note)
 
 With both plain sends strongly fair, `"alternate"` under head fairness alone gave a
 130-state lasso in which `0`, `1` and `2` are acked and delivered but `3` is written
 forever and never acked. The sent map holds `P = 2` entries. Between the receiver opening
 a packet carrying `3` and the ack for it landing, the sender writes `3` twice more (the
-abstract RTO is due at every moment), so the opened packet's id has been evicted when its
+abstract resend delay is due at every moment), so the opened packet's id has been evicted when its
 ack lands and the ack is ignored, as 6.4 says. Every ack in the lasso names an evicted id.
 
-This is the model's RTO outpacing the ack path, which the real RTO (above the RTT, RFC
+This is the model's resend delay outpacing the ack path, which the real resend delay (above the RTT, RFC
 6298 with back-off) does not do. `AcksLand` excludes it. The design note for the code
 card: `P` must exceed the packets a connection writes in one RTT, resends included, or a
 sender under back-off can evict its own acks and stall until `reliable_timeout`; section
