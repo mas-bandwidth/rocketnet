@@ -97,9 +97,12 @@ with `dlsym`; iOS keeps the portable pump and omits `msgx` from its built-in
 resource plan because the private symbols are not resolved there. At socket
 create, a non-blocking socket with both symbols runs `recvmsg_x` with
 `MSG_PEEK` as a probe, so it leaves queued traffic available to the pump. A
-result of zero or more, or `EAGAIN`/`EWOULDBLOCK`, grants the pump, and any
-other errno leaves that socket on the portable per-packet loop (the probe block
-under `#if TARGET_OS_OSX` in `rocketnet_platform_socket_create_internal`).
+result of zero or more, or `EAGAIN`/`EWOULDBLOCK`, grants the pump. If the
+probe returns `EINVAL`, `MSG_PEEK` is unsupported, so the pump choice is deferred
+to the first real receive batch; that batch pauses and falls back to the
+per-packet loop if `recvmsg_x` also refuses it. Any other probe errno leaves
+that socket on the portable per-packet loop (the probe block under
+`#if TARGET_OS_OSX` in `rocketnet_platform_socket_create_internal`).
 
 At runtime a send errno that is ordinary UDP weather (`EAGAIN`, `EWOULDBLOCK`,
 `ENOBUFS`, `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EMSGSIZE`,
