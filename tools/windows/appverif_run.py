@@ -289,13 +289,16 @@ def terminate_process_tree(process: subprocess.Popen) -> None:
         process.kill()
         process.wait()
     # taskkill /T exits non-zero when a process of the tree exits between its
-    # listing and its termination ("There is no running instance of the
-    # task."); only an ERROR line with any other reason is a process left alive.
+    # listing and its termination: an ERROR line followed by the reason "There
+    # is no running instance of the task.". Only an ERROR with any other
+    # reason is a process left alive.
+    lines = [line.strip() for line in (stopped.stdout + "\n" + stopped.stderr).splitlines() if line.strip()]
     errors = [
-        line.strip()
-        for line in (stopped.stdout + "\n" + stopped.stderr).splitlines()
-        if line.strip().startswith("ERROR:") and TASK_GONE_REASON not in line
+        line + " " + lines[index + 1] if index + 1 < len(lines) else line
+        for index, line in enumerate(lines)
+        if line.startswith("ERROR:")
     ]
+    errors = [error for error in errors if TASK_GONE_REASON not in error]
     if errors or (stopped.returncode != 0 and not stopped.stdout.strip()):
         output = " ".join(errors) or " ".join((stopped.stdout + " " + stopped.stderr).split())
         raise RuntimeError(f"taskkill failed to stop process tree {process.pid} (exit {stopped.returncode}): {output}")
