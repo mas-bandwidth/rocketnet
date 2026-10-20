@@ -39,6 +39,15 @@
 (* (StepBegin, CallerStep, StepEnd), never concurrently with the rest of   *)
 (* the main thread and never blocking.                                     *)
 (*                                                                         *)
+(* Destinations.  The hand-off passes the transport's server address,    *)
+(* and the first attempt that finds committed slots binds the Filling     *)
+(* ring's destination; a deferred ring keeps it.  Disconnect seals its    *)
+(* burst for the server address, resets the protocol (which zeroes the    *)
+(* server address) and attempts a hand-off with the address it saved;     *)
+(* every later hand-off, destroy's included, passes the zeroed one.       *)
+(* DestinationOverwrite is a defined switch, FALSE here, that a reversed  *)
+(* witness replaces with TRUE: every attempt overwrites the destination.  *)
+(*                                                                         *)
 (* Six switches restore the defects the reversed witnesses must catch:    *)
 (* ReopenBeforeSent lets the main thread reopen a ring the I/O thread is  *)
 (* still sending; ReceiveIntoExposed lets the I/O thread write a          *)
@@ -63,6 +72,11 @@ CONSTANTS NumSlots,            \* slots per send ring
           StepDriven,          \* caller runs non-blocking I/O steps; no thread
           StepModeStartsThread \* defect: step mode also starts an I/O thread
 
+\* defect: every hand-off attempt overwrites the Filling ring's destination,
+\* the unconditional io->to[io->rings.fill] = *to; a reversed witness
+\* replaces this definition (DestinationOverwrite <- ...)
+DestinationOverwrite == FALSE
+
 ASSUME NumSlots \in Nat \ {0} /\ BufferCap \in Nat \ {0}
 ASSUME MaxDatagrams \in Nat
 ASSUME /\ ReopenBeforeSent \in BOOLEAN /\ ReceiveIntoExposed \in BOOLEAN
@@ -79,6 +93,7 @@ RingStates   == {"Filling", "HandedOff", "Sending", "Sent"}
 Owners       == {"free", "game", "main", "io"}
 BufferStates == {"Fill", "Ready", "Exposed", "Free"}
 Phases       == {"Running", "Stopping", "Joined", "Freed"}
+Addresses    == {"server", "zero"}   \* the dialed server, or the reset (zeroed) one
 
 VARIABLES ring,      \* each send ring's state
           owner,     \* each slot's owner: free, a game thread, main (committed), io
@@ -100,14 +115,19 @@ VARIABLES ring,      \* each send ring's state
           phase,     \* the transport's life
           ioAlive,   \* the I/O thread has not exited (the I/O core, in step mode)
           inCall,    \* step mode: update or send_packets is running the I/O step
-          lastExec   \* who ran the last I/O core action: none, thread or caller
+          lastExec,  \* who ran the last I/O core action: none, thread or caller
+          addr,      \* protocol.server_address: "zero" once disconnect has reset it
+          dest,      \* io->to: each ring's destination
+          held,      \* io->to_held: the Filling ring's destination is bound
+          commitTo   \* the address each slot was committed for, or "none"
 
-sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait>>
+destVars == <<addr, dest, held, commitTo>>
+sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, addr, dest, held, commitTo>>
 recvVars == <<pending, arrived, buf, count, snap, owed, delivered>>
 
 vars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake, waiting,
           waitReadable, pending, arrived, buf, count, snap, owed, delivered,
-          phase, ioAlive, inCall, lastExec>>
+          phase, ioAlive, inCall, lastExec, addr, dest, held, commitTo>>
 
 TypeOK ==
     /\ ring \in [Rings -> RingStates]
@@ -127,6 +147,10 @@ TypeOK ==
     /\ ioAlive \in BOOLEAN
     /\ inCall \in BOOLEAN
     /\ lastExec \in {"none", "thread", "caller"}
+    /\ addr \in Addresses
+    /\ dest \in [Rings -> Addresses]
+    /\ held \in [Rings -> BOOLEAN]
+    /\ commitTo \in [Rings -> [Slots -> Addresses \cup {"none"}]]
 
 Init ==
     /\ ring = [r \in Rings |-> "Filling"]
@@ -146,6 +170,10 @@ Init ==
     /\ ioAlive = TRUE
     /\ inCall = FALSE
     /\ lastExec = "none"
+    /\ addr = "server"
+    /\ dest = [r \in Rings |-> "zero"]
+    /\ held = [r \in Rings |-> FALSE]
+    /\ commitTo = [r \in Rings |-> [s \in Slots |-> "none"]]
 
 FillBuffer    == CHOOSE b \in Buffers : buf[b] = "Fill"
 HasExposed    == \E b \in Buffers : buf[b] = "Exposed"
@@ -167,25 +195,36 @@ HandOffDue ==
 \* start_packet: a game thread takes a free slot of the Filling ring
 Write(s) ==
     /\ phase = "Running"
+    /\ addr = "server"
     /\ ring[fill] = "Filling"
     /\ owner[fill][s] = "free"
     /\ owner' = [owner EXCEPT ![fill][s] = "game"]
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
+    /\ UNCHANGED destVars
     /\ UNCHANGED recvVars
 
 \* finish_packet: the slot is sealed and committed
 Commit(s) ==
     /\ owner[fill][s] = "game"
     /\ owner' = [owner EXCEPT ![fill][s] = "main"]
+    /\ commitTo' = [commitTo EXCEPT ![fill][s] = addr]
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
+    /\ UNCHANGED <<addr, dest, held>>
     /\ UNCHANGED recvVars
+
+\* the destination a hand-off attempt leaves on the Filling ring: the one
+\* bound by an earlier, deferred attempt, else the address it is passed
+\* (rocketnet_client_io_hand_off); under DestinationOverwrite always the
+\* address passed
+BoundDest(to) ==
+    IF held[fill] /\ ~DestinationOverwrite THEN dest[fill] ELSE to
 
 \* the hand-off (send_packets, send_packet through it, or the end of
 \* update) when the other ring is open: the committed ring goes to the I/O
 \* thread with one release store and one wake
-HandOff ==
+HandOffTo(to) ==
     /\ MainFree
     /\ HandOffDue
     /\ ring[Other(fill)] = "Filling"
@@ -195,15 +234,21 @@ HandOff ==
                                      ELSE owner[fill][s]]]
     /\ fill' = Other(fill)
     /\ wake' = TRUE
+    /\ dest' = [dest EXCEPT ![fill] = BoundDest(to)]
+    /\ held' = [held EXCEPT ![fill] = FALSE]
     /\ UNCHANGED <<sent, ioRing, deferred, mainWait, waiting, waitReadable,
-                   phase, ioAlive>>
+                   phase, ioAlive, addr, commitTo>>
     /\ UNCHANGED recvVars
+
+\* send_packets, send_packet, update and destroy pass the transport's
+\* server address (sdk/rocketnet_client_transport.cpp:1086 and :1245)
+HandOff == HandOffTo(addr)
 
 \* the hand-off when the other ring is still HandedOff or Sending: the
 \* committed slots stay in the Filling ring and CLIENT_SEND_DEFERRED moves;
 \* they leave with the next hand-off.  Under HandOffWaits the main thread
 \* blocks on the I/O thread instead.
-Defer ==
+DeferTo(to) ==
     /\ MainFree
     /\ HandOffDue
     /\ ring[Other(fill)] \in {"HandedOff", "Sending"}
@@ -211,8 +256,49 @@ Defer ==
                             /\ UNCHANGED deferred
                        ELSE /\ deferred' = TRUE
                             /\ UNCHANGED mainWait
+    /\ dest' = [dest EXCEPT ![fill] = BoundDest(to)]
+    /\ held' = [held EXCEPT ![fill] = TRUE]
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, wake, waiting,
-                   waitReadable, phase, ioAlive>>
+                   waitReadable, phase, ioAlive, addr, commitTo>>
+    /\ UNCHANGED recvVars
+
+Defer == DeferTo(addr)
+
+\* rocketnet_client_transport_disconnect (sdk/rocketnet_client_transport.cpp
+\* from :1993): with the fills joined, the burst is sealed for the server
+\* address, the protocol reset zeroes the server address, the burst is
+\* committed into the Filling ring (one slot stands for the burst) and a
+\* hand-off is attempted with the address saved before the reset.  Once
+\* the address is zero no game thread writes again.
+Disconnect(s) ==
+    /\ MainFree
+    /\ addr = "server"
+    /\ ring[fill] = "Filling"
+    /\ \A t \in Slots : owner[fill][t] # "game"
+    /\ owner[fill][s] = "free"
+    /\ ring[Other(fill)] # "Sent"
+    /\ addr' = "zero"
+    /\ commitTo' = [commitTo EXCEPT ![fill][s] = "server"]
+    /\ \/ /\ ring[Other(fill)] = "Filling"
+          /\ ring' = [ring EXCEPT ![fill] = "HandedOff"]
+          /\ owner' = [owner EXCEPT ![fill] =
+                          [t \in Slots |-> IF t = s \/ owner[fill][t] = "main" THEN "io"
+                                           ELSE owner[fill][t]]]
+          /\ fill' = Other(fill)
+          /\ wake' = TRUE
+          /\ dest' = [dest EXCEPT ![fill] = BoundDest("server")]
+          /\ held' = [held EXCEPT ![fill] = FALSE]
+          /\ UNCHANGED <<deferred, mainWait>>
+       \/ /\ ring[Other(fill)] \in {"HandedOff", "Sending"}
+          /\ owner' = [owner EXCEPT ![fill][s] = "main"]
+          /\ IF HandOffWaits THEN /\ mainWait' = TRUE
+                                  /\ UNCHANGED deferred
+                             ELSE /\ deferred' = TRUE
+                                  /\ UNCHANGED mainWait
+          /\ dest' = [dest EXCEPT ![fill] = BoundDest("server")]
+          /\ held' = [held EXCEPT ![fill] = TRUE]
+          /\ UNCHANGED <<ring, fill, wake>>
+    /\ UNCHANGED <<sent, ioRing, waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
 \* the defect's blocked main thread resumes once the other ring is Sent
@@ -222,6 +308,7 @@ WaitDone ==
     /\ mainWait' = FALSE
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, wake, waiting,
                    waitReadable, phase, ioAlive>>
+    /\ UNCHANGED destVars
     /\ UNCHANGED recvVars
 
 \* a hand-off reopens a ring the I/O thread has finished (acquire load)
@@ -233,8 +320,10 @@ Reopen(r) ==
     /\ ring' = [ring EXCEPT ![r] = "Filling"]
     /\ owner' = [owner EXCEPT ![r] = [s \in Slots |-> "free"]]
     /\ sent' = [sent EXCEPT ![r] = {}]
+    /\ commitTo' = [commitTo EXCEPT ![r] = [s \in Slots |-> "none"]]
     /\ UNCHANGED <<fill, ioRing, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
+    /\ UNCHANGED <<addr, dest, held>>
     /\ UNCHANGED recvVars
 
 \* update, first step: expose the Ready buffer (acquire) when there is
@@ -332,6 +421,7 @@ IoSend(r, s) ==
     /\ sent' = [sent EXCEPT ![r] = sent[r] \cup {s}]
     /\ UNCHANGED <<owner, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
+    /\ UNCHANGED destVars
     /\ UNCHANGED recvVars
 
 \* every slot sent: the ring is released to the main thread (release store)
@@ -343,6 +433,7 @@ IoFinishRing(r) ==
     /\ ioRing' = "none"
     /\ UNCHANGED <<owner, sent, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
+    /\ UNCHANGED destVars
     /\ UNCHANGED recvVars
 
 \* read one datagram into the I/O thread's buffer while it has room. Every
@@ -456,6 +547,7 @@ StepBegin ==
     /\ inCall' = TRUE
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive, lastExec>>
+    /\ UNCHANGED destVars
     /\ UNCHANGED recvVars
 
 \* the step is one pass that never blocks (rocketnet_client_io_step with
@@ -475,6 +567,7 @@ StepEnd ==
     /\ inCall' = FALSE
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive, lastExec>>
+    /\ UNCHANGED destVars
     /\ UNCHANGED recvVars
 
 \* game threads write and commit at any time; the main thread's own
@@ -485,6 +578,7 @@ OnMain(A) == ~inCall /\ A /\ UNCHANGED <<inCall, lastExec>>
 MainNext ==
     \/ OnGame(\E s \in Slots : Write(s) \/ Commit(s))
     \/ OnMain(HandOff \/ Defer \/ WaitDone)
+    \/ OnMain(\E s \in Slots : Disconnect(s))
     \/ OnMain(\E r \in Rings : Reopen(r))
     \/ OnMain(Expose \/ Return \/ Stop \/ Join \/ Free)
     \/ StepBegin \/ StepEnd
@@ -561,6 +655,12 @@ NoReuseBeforeSent ==
     \A r \in Rings, s \in Slots :
         owner[r][s] = "game" => /\ ioRing # r
                                 /\ ring[r] = "Filling"
+
+\* every slot a ring sends goes to the destination it was committed with:
+\* a deferred ring keeps the destination its first hand-off attempt bound,
+\* and a later attempt passing the zeroed address does not overwrite it
+SentToCommitted ==
+    \A r \in Rings, s \in Slots : s \in sent[r] => dest[r] = commitTo[r][s]
 
 \* the exposed receive buffer never changes between Expose and Return
 ExposedStable ==

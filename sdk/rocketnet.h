@@ -836,15 +836,15 @@ struct rocketnet_client_config_t
     int send_buffer_bytes;                          ///< ROCKETNET_CLIENT_SEND_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        ///< ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          ///< ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     ///< ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; 1 .. 1024; default 256; the send budget is the throttle
+    int packets_per_update;                     ///< ROCKETNET_CLIENT_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; 1 .. 1024; default 256; the send budget is the throttle
     int unreliable_deliveries;                      ///< ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            ///< ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /// @brief Maximum queued client send receipts, 16 through 65536 (default 256).
     /// A full ring drops its oldest receipt; ROCKETNET_CLIENT_RECEIPT_RING can override it.
     int receipt_ring;                               ///< ROCKETNET_CLIENT_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             ///< ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 2000
-    int rto_min_ms;                                 ///< ROCKETNET_CLIENT_RTO_MIN_MS: optional sampled RTO floor in milliseconds; 0 disables it; 0 .. 60000; default 0
-    int rto_max_ms;                                 ///< ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_initial_ms;                             ///< ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_min_ms;                                 ///< ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    int resend_delay_max_ms;                                 ///< ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
     int reliable_timeout_ms;                        ///< ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
     int simulated_loss_percent;                     ///< ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off (sdk/rocketnet_internal.h:435)
@@ -893,15 +893,15 @@ struct rocketnet_server_config_t
     int send_buffer_bytes;                          ///< ROCKETNET_SERVER_SEND_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
     int send_queue_messages;                        ///< ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024
     int packets_in_flight;                          ///< ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     ///< ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; per client; 1 .. 1024; default 256; the send budget is the throttle
+    int packets_per_update;                     ///< ROCKETNET_SERVER_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; per client; 1 .. 1024; default 256; the send budget is the throttle
     int unreliable_deliveries;                      ///< ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256
     int sequenced_holds;                            ///< ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
     /// @brief Maximum queued receipts per server client, 16 through 65536 (default 256).
     /// A full ring drops its oldest receipt; ROCKETNET_SERVER_RECEIPT_RING can override it.
     int receipt_ring;                               ///< ROCKETNET_SERVER_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             ///< ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 2000
-    int rto_min_ms;                                 ///< ROCKETNET_SERVER_RTO_MIN_MS: optional sampled RTO floor in milliseconds; 0 disables it; 0 .. 60000; default 0
-    int rto_max_ms;                                 ///< ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_initial_ms;                             ///< ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS: the initial resend delay before an rtt sample, milliseconds; 10 .. 60000; default 2000
+    int resend_delay_min_ms;                                 ///< ROCKETNET_SERVER_RESEND_DELAY_MIN_MS: optional sampled resend delay floor in milliseconds; 0 disables it; 0 .. 60000; default 0
+    int resend_delay_max_ms;                                 ///< ROCKETNET_SERVER_RESEND_DELAY_MAX_MS: the maximum resend delay, milliseconds; 10 .. 60000; default 2000
     int reliable_timeout_ms;                        ///< ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     /// Simulated link conditions: development only. A release library refuses nonzero simulated_* fields with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
     int simulated_loss_percent;                     ///< ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: development only: outgoing loss 0..100; 0 is off (sdk/rocketnet_internal.h:510)

@@ -63,7 +63,7 @@ The unreliable connection layer the message layer runs over: connection state, s
 | Counters on every path, each classified, conserved and named by a test | ✅ | ✅ | ✅ |
 | The server drains its receive queue up to a per-update budget | ✅ | ✅ | ✅ |
 | Every piece of per-connection state is reset when a connection ends, in one function per side | ✅ | ✅ | ✅ |
-| A public client can run with no I/O thread, stepped by the game's update | ✅ | ✅ | ✅ |
+| A public client can run with no I/O thread, stepped by the caller's update | ✅ | ✅ | ✅ |
 | Client socket I/O off the main thread, gated by the measured main-thread cost per frame | ✅ | ✅ | ✅ |
 | complete | 100% | 100% | 100% |
 
@@ -142,7 +142,7 @@ AF_XDP serves IPv4 and IPv6 end to end (8a35a14): a server serves the family of 
 
 ## XDP (later)
 
-The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes later, separately, by the owner's call; RocketNet already runs with XDP in the game, tested to 10 Gbps.
+The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes later, separately, by the owner's call; RocketNet already runs with XDP, measured at 10 Gbps.
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -378,9 +378,9 @@ The normative standard in standard/: standard/TRANSPORT.md (the t sections) and 
 
 [Source data](docs/roadmap.sexp)
 
-## Second deliverable: keys and backends (later)
+## Keys and backends (planned)
 
-What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. After v1.0.0, by the owner's call.
+What customers need to run their own connect-token backend: their own keypairs, the guide, and working example backends in Go and C#. Planned after v1.0.0.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -402,9 +402,9 @@ Correctness work that follows the v1.0.0 milestone, by the owner's call.
 
 [Source data](docs/roadmap.sexp)
 
-## Final deliverable: hardening and long testing
+## Hardening and long testing (planned)
 
-Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger, moved off the v1.0.0 sprint on 2026-10-20 by the owner's call: the current milestone is the public API complete with unit and functional tests green, and this work is the final deliverable. Each row keeps its whole brief and its latest head.
+Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger are planned after v1.0.0. Each row keeps its whole brief and its latest head.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -441,7 +441,7 @@ Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledge
 |---|:---:|:---:|:---:|
 | Release hardening flags | ❌ | ❌ | ❌ |
 | Reproducible vendored sources | ✅ | ❌ | ❌ |
-| First integrating game vendors the SDK and proves it (release gate) | ❌ | ❌ | ❌ |
+| An integrating application vendors the SDK and proves it (release gate) | ❌ | ❌ | ❌ |
 | Supported-platform policy | ❌ | — | — |
 | Security disclosure and release process | ✅ | — | — |
 | Independent review of the connection layer repair diff, received | ❌ | — | — |

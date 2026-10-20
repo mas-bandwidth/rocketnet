@@ -230,6 +230,11 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     if ( result == 0 || error == WSA_IO_PENDING )
         return true; // Immediate success also produces exactly one IOCP event.
     iocp->pending.fetch_sub( 1, std::memory_order_release );
+    // a post refused with an ICMP report of an earlier send is counted with
+    // the reset statuses, then waits on the retry list like every refused post
+    // (windows-udp-connreset audit, iocp post)
+    if ( rocketnet_platform_receive_status_is_reset( error ) )
+        rocketnet_platform_count_receive_reset();
     iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].fetch_add( 1, std::memory_order_relaxed );
     InterlockedPushEntrySList( &iocp->retry_receives, &op->free_entry );
     return false;

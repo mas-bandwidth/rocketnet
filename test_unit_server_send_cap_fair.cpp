@@ -16,6 +16,9 @@
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
 #include "sdk/rocketnet_counters.h"
+#include "sdk/rocketnet_memory.h"
+#include "sdk/rocketnet_driver_loopback.h"
+#include "test/suite_runner.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -433,7 +436,10 @@ REGISTER_UNIT_TEST( server_send_cap_two_multi_packet_service );
 static void server_send_capacity_spare_slots_keep_in_place()
 {
     fair_world_t world;
-    fair_world_create( &world, 1, 0, 256 );
+    // Keep fewer connected peers than configured peers: surplus is measured
+    // against the one connected peer, not the four configured slots. Four
+    // send slots preserve that distinction without reserving 256 peers.
+    fair_world_create( &world, 1, 4, 4 );
     fair_connect( &world, 0, 0x9100 );
     fair_update_clients( &world );
     fair_send_clients( &world );
@@ -450,15 +456,46 @@ REGISTER_UNIT_TEST( server_send_cap_two_three_clients );
 REGISTER_UNIT_TEST( server_send_cap_one_two_clients );
 REGISTER_UNIT_TEST( server_send_cap_one_three_clients );
 
+// The configuration server_send_capacity_default_covers_clients creates: the
+// default, at ROCKETNET_MAX_CLIENTS clients, on the loopback driver. The case
+// and its bound read it, so they cannot drift apart.
+static void send_capacity_default_config( rocketnet_server_transport_config_t * config )
+{
+    rocketnet_server_transport_default_config( config );
+    config->protocol_id = FAIR_PROTOCOL;
+    config->max_clients = ROCKETNET_MAX_CLIENTS;
+}
+
+// server_send_capacity_default_covers_clients's peak resident bound. The case
+// creates a full-capacity server transport, whose per-client memory is
+// allocated up front by design, and the Windows Debug CRT fills every block
+// it returns, so the whole plan is resident there. The bound is
+// rocketnet_server_transport_memory_plan's total for the case's
+// configuration, planned with the portable driver because the plan has no
+// row for the loopback driver, plus one loopback endpoint's create-time queue
+// (rocketnet_loopback_queue_bytes at ROCKETNET_LOOPBACK_QUEUE_INITIAL_PACKETS),
+// plus a stated 32 MiB margin for the process itself. A regression above the
+// plan fails the case.
+static long send_capacity_default_rss_bound_mb()
+{
+    rocketnet_server_transport_config_t config;
+    send_capacity_default_config( &config );
+    rocketnet_server_memory_plan_t plan;
+    if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
+        return 0;
+    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_INITIAL_PACKETS ) + rocketnet_allocation_overhead();
+    return suite_rss_bound_mb( plan.total_bytes + endpoint, 32 );
+}
+
+SUITE_CASE_RSS_BOUND( server_send_capacity_default_covers_clients, send_capacity_default_rss_bound_mb );
+
 // The default capacity is sized from the configured client count, so a
 // 1000-client server can start one payload frame for every client in one
 // update. This reads the transport directly; no client and no clock.
 static void server_send_capacity_default_covers_clients()
 {
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
-    config.protocol_id = FAIR_PROTOCOL;
-    config.max_clients = ROCKETNET_MAX_CLIENTS;
+    send_capacity_default_config( &config );
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( config.backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( config.server_public_key, config.server_secret_key ) == ROCKETNET_STATUS_OK );

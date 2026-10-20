@@ -118,8 +118,15 @@ the create log line names each feature as yes or no.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
-once for a staging generation; the backend retains ownership until it can
-safely reuse that storage. None
+for staged work; the backend retains ownership until it can safely reuse
+that storage. XDP retries a flush on each `send_packets` call, including when
+no new commit advances the transport counter. With two staging buffers,
+`rocketnet_send_handoff_t::publish` queues at most one and keeps the other
+for producers until the worker retires the queued generation. The next flush
+publishes the retained work. `RNDriverSendStaging.Publish`, `WorkerRetire`
+and `RetryFlushPublishes` model this rule. Packet-slot capacity is still
+`ROCKETNET_XDP_SEND_QUEUE_SIZE` per buffer; retaining producer storage does
+not permit an unbounded backlog. None
 of these rules sets a frame, packet-send or ACK rate.
 
 ## Creation and shutdown
@@ -267,10 +274,12 @@ portable server and client sockets, `iocp` with and without USO and URO, and
 create through `rocketnet_platform_socket_disable_udp_resets`, which checks each
 `WSAIoctl` and logs a refusal once without failing the create. Every receive
 path still skips the reset and unreachable statuses and keeps draining: the
-portable receive reads on, an `iocp` or `rio` post refused with one is posted
-again, a failed `iocp` completion is reposted, and a `rio` slice whose re-post
-fails waits on a retry list for the next `receive_packets`.
-`rocketnet_platform_receive_resets` counts the statuses skipped. The functional
+portable receive reads on, an `iocp` re-post refused with one waits on the
+retry list for the worker's next wakeup, a failed `iocp` completion is
+reposted, and a `rio` slice whose re-post fails waits on a retry list for the
+next `receive_packets`. `rocketnet_platform_receive_resets` counts the reset
+statuses the portable receive skips and the `iocp` and `rio` completions and
+refused posts carry. The functional
 cases in `functional/windows_connreset.cpp` prove it for each server transport
 and family: `windows_connreset_hard_killed_client_*` ends one of four clients
 with `TerminateProcess` while the server keeps sending to it, and the other

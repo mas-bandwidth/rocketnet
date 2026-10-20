@@ -278,7 +278,14 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
 #endif
     if ( !rio->rio.RIOReceiveEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
                                  (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
+    {
+        // a post refused with an ICMP report of an earlier send is counted
+        // with the reset statuses; a refused re-post waits on the retry list in
+        // rocketnet_rio_complete_receive (windows-udp-connreset audit, rio post)
+        if ( rocketnet_platform_receive_status_is_reset( WSAGetLastError() ) )
+            rocketnet_platform_count_receive_reset();
         return false;
+    }
     rio->posted_receives++;
     return true;
 }
@@ -450,6 +457,7 @@ bool rocketnet_server_rio_available()
     SOCKET socket = WSASocketW( AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_REGISTERED_IO );
     if ( socket == INVALID_SOCKET )
         return false;
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) socket );
     RIO_EXTENSION_FUNCTION_TABLE table;
     const bool available = rocketnet_rio_load_table( socket, &table );
     closesocket( socket );
