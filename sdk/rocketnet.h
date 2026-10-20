@@ -809,16 +809,16 @@ struct rocketnet_client_config_t
     int send_buffer_bytes;                          // ROCKETNET_CLIENT_SEND_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
     /** @brief ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024 */
     int send_queue_messages;                        // ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024
-    /** @brief ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256 */
+    /** @brief ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked, the packets_in_flight window; 16 .. 1 << 16; default 256 */
     int packets_in_flight;                          // ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256
     /**
-     * @brief ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets the client sends per update; 1 .. 1024; default 256.
+     * @brief ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: max_packets_per_update, the most packets the client sends in one update; 1 .. 1024; default 256.
      *
-     * In-place unreliable messages sent at finish and the packets
+     * In-place unreliable messages sent at finish and what
      * rocketnet_client_send_packets() writes count together against this one
      * allowance per update. While reliable work is due, an in-place message
-     * never takes the last packet of the allowance, so that work is sent in
-     * the same update. The send budget, not this field, is the throttle.
+     * never takes the last of the allowance, so that work is sent in the
+     * same update. The send budget, not this field, is the throttle.
      */
     int max_packets_per_update;                     // ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; 1 .. 1024; default 256; the send budget is the throttle
     /** @brief ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256 */
@@ -838,7 +838,7 @@ struct rocketnet_client_config_t
     /** @brief ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000 */
     int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     /**
-     * @brief Development only: the link simulator's outgoing packet loss, percent; 0 .. 100; default 0, which is off.
+     * @brief Development only: the link simulator's outgoing loss, percent; 0 .. 100; default 0, which is off.
      *
      * A revision-2 field: only a _sized call given the revision-2 size reads or
      * writes it. The unsized validate, required_memory and create calls take it
@@ -874,7 +874,7 @@ struct rocketnet_client_config_t
      */
     int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
     /**
-     * @brief Development only: the link simulator's outgoing packet duplication, percent; 0 .. 100; default 0, which is off.
+     * @brief Development only: the link simulator's outgoing duplication, percent; 0 .. 100; default 0, which is off.
      *
      * A revision-2 field: only a _sized call given the revision-2 size reads or
      * writes it. The unsized validate, required_memory and create calls take it
@@ -960,16 +960,16 @@ struct rocketnet_server_config_t
     int send_buffer_bytes;                          // ROCKETNET_SERVER_SEND_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
     /** @brief ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024 */
     int send_queue_messages;                        // ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024
-    /** @brief ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256 */
+    /** @brief ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked, the packets_in_flight window; per client; 16 .. 1 << 16; default 256 */
     int packets_in_flight;                          // ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256
     /**
-     * @brief ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets sent to each client per update; 1 .. 1024; default 256.
+     * @brief ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: max_packets_per_update, the most packets sent to each client in one update; 1 .. 1024; default 256.
      *
-     * Per client: in-place unreliable messages sent at finish and the packets
+     * Per client: in-place unreliable messages sent at finish and what
      * rocketnet_server_send_packets() writes count together against this one
      * allowance per update. While reliable work is due, an in-place message
-     * never takes the last packet of the allowance, so that work is sent in
-     * the same update. The send budget, not this field, is the throttle.
+     * never takes the last of the allowance, so that work is sent in the
+     * same update. The send budget, not this field, is the throttle.
      */
     int max_packets_per_update;                     // ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets sent per update, in-place unreliable finish messages and send_packets together; per client; 1 .. 1024; default 256; the send budget is the throttle
     /** @brief ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256 */
@@ -989,7 +989,7 @@ struct rocketnet_server_config_t
     /** @brief ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000 */
     int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
     /**
-     * @brief Development only: the link simulator's outgoing packet loss, percent; 0 .. 100; default 0, which is off.
+     * @brief Development only: the link simulator's outgoing loss, percent; 0 .. 100; default 0, which is off.
      *
      * A revision-2 field: only a _sized call given the revision-2 size reads or
      * writes it. The unsized validate, required_memory and create calls take it
@@ -1025,7 +1025,7 @@ struct rocketnet_server_config_t
      */
     int simulated_jitter_ms;                        // development only: outgoing jitter in milliseconds; 0 is off
     /**
-     * @brief Development only: the link simulator's outgoing packet duplication, percent; 0 .. 100; default 0, which is off.
+     * @brief Development only: the link simulator's outgoing duplication, percent; 0 .. 100; default 0, which is off.
      *
      * A revision-2 field: only a _sized call given the revision-2 size reads or
      * writes it. The unsized validate, required_memory and create calls take it
@@ -1442,7 +1442,7 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config( struct
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /**
- * @brief Writes the revision-1 defaults with the published development keys and test packet filter.
+ * @brief Writes the revision-1 defaults with the published development keys and test filter value.
  * @param config Destination structure; NULL is a counted misuse that writes nothing.
  * @return ROCKETNET_STATUS_OK after writing, or ROCKETNET_STATUS_INVALID_ARGUMENT
  * for a NULL config.
