@@ -402,9 +402,9 @@ Correctness work that follows the v1.0.0 milestone, by the owner's call.
 
 [Source data](docs/roadmap.sexp)
 
-## Hardening and long testing after the payment milestone (later)
+## Final deliverable: hardening and long testing
 
-Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger, moved off the v1.0.0 sprint on 2026-10-20 by the owner's call: the payment milestone is the public API complete with unit and functional tests green, and this work follows it. Each row keeps its whole brief and its latest head.
+Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger, moved off the v1.0.0 sprint on 2026-10-20 by the owner's call: the current milestone is the public API complete with unit and functional tests green, and this work is the final deliverable. Each row keeps its whole brief and its latest head.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|

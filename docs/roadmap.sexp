@@ -2725,12 +2725,12 @@ ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Clau
    :columns platforms
    :rows
    ((:id "server-running-invariants" :feature "TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client" :cells (n n n) :note "the query itself ships as rocketnet_server_running in v1.0.0")))
-  (:id "after-payment" :title "Hardening and long testing after the payment milestone (later)"
-   :text "Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger, moved off the v1.0.0 sprint on 2026-10-20 by the owner's call: the payment milestone is the public API complete with unit and functional tests green, and this work follows it. Each row keeps its whole brief and its latest head."
+  (:id "final-deliverable" :title "Final deliverable: hardening and long testing"
+   :text "Soaks, load, stress, matrices, fuzzing, sanitizers, nightlies and the TLA+ ledger, moved off the v1.0.0 sprint on 2026-10-20 by the owner's call: the current milestone is the public API complete with unit and functional tests green, and this work is the final deliverable. Each row keeps its whole brief and its latest head."
    :columns platforms
    :rows
    (
-(:id "rocketnet-lan-1000-client-soak-matrix" :feature "A thousand clients for ten minutes on every transport of every platform, over the LAN, every guarantee checked" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-lan-1000-client-soak-matrix sha=<sha12> tier: heavy
+(:id "rocketnet-lan-1000-client-soak-matrix" :feature "A thousand clients for ten minutes on every transport of every platform, over the LAN, every guarantee checked" :cells (n n n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-lan-1000-client-soak-matrix sha=<sha12> tier: heavy
 WHO: only friend rowan
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
@@ -2795,7 +2795,7 @@ BUILD BOUND (the bench sandbox caps a job at 256 processes and 8 GiB). On Linux 
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 CARRY: OWNER PROFILE (2026-10-20): \"I want 1000 players tested and working on all platforms and all transports for v1.0.0. But each client should be light. 10HZ ticks. 1 packet per-update.\" and \"I want the hardcore load testing done after v1.0.0.\" So every 1000-client run here is the light profile: 1000 clients, each updating at 10 Hz and sending 1 packet per update, on every server transport of the platform; pass = all connect, every client receives, none disconnected, reliable in order. No high-rate or bandwidth stress (that is the next milestone). This supersedes any heavier rate or the 256 kbps profile written earlier in this brief.
 ")
-    (:id "rocketnet-linux-transport-matrix-repeat" :feature "Linux: every transport cell fifty times in a row with zero flakes, and the functional suite under ASan per transport" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-linux-transport-matrix-repeat" :feature "Linux: every transport cell fifty times in a row with zero flakes, and the functional suite under ASan per transport" :cells (n - -) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
 PRIORITY: blocker
@@ -2860,7 +2860,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
 ")
-    (:id "rocketnet-macos-transport-matrix-repeat" :feature "macOS: every transport cell fifty times in a row, zero flakes, nightly" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "WHO: only friend rowan
+    (:id "rocketnet-macos-transport-matrix-repeat" :feature "macOS: every transport cell fifty times in a row, zero flakes, nightly" :cells (- n -) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "WHO: only friend rowan
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
@@ -2926,7 +2926,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
 ")
-    (:id "rocketnet-win-load-1000-clients" :feature "A thousand clients against a Windows server, on every Windows transport" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-win-load-1000-clients" :feature "A thousand clients against a Windows server, on every Windows transport" :cells (- - n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
 PRIORITY: blocker
@@ -2992,7 +2992,7 @@ ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Clau
 CARRY: OWNER PROFILE (2026-10-20): \"I want 1000 players tested and working on all platforms and all transports for v1.0.0. But each client should be light. 10HZ ticks. 1 packet per-update.\" and \"I want the hardcore load testing done after v1.0.0.\" So every 1000-client run here is the light profile: 1000 clients, each updating at 10 Hz and sending 1 packet per update, on every server transport of the platform; pass = all connect, every client receives, none disconnected, reliable in order. No high-rate or bandwidth stress (that is the next milestone). This supersedes any heavier rate or the 256 kbps profile written earlier in this brief.
 FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
 ")
-    (:id "rocketnet-win-soak-per-transport" :feature "Windows soaks per transport under loss, jitter and duplication, with flat handles and memory" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-win-soak-per-transport" :feature "Windows soaks per transport under loss, jitter and duplication, with flat handles and memory" :cells (- - n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
 PRIORITY: blocker
@@ -3059,7 +3059,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
 ")
-    (:id "rocketnet-win-transport-matrix-repeat" :feature "Every Windows transport, every address family, fifty times clean" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-win-transport-matrix-repeat" :feature "Every Windows transport, every address family, fifty times clean" :cells (- - n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
 PRIORITY: blocker
@@ -3124,7 +3124,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
 ")
-    (:id "rocketnet-linux-soak-per-transport" :feature "Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: sprint/rocketnet-linux-soak-per-transport.w9.g1.e0" :brief "CARRY: rocketnet-linux-soak-per-transport attempt 4 head=9395a2438f18acd9edc0e6486feaae072c0c270f
+    (:id "rocketnet-linux-soak-per-transport" :feature "Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory" :cells (n - -) :note "final deliverable (owner 2026-10-20); latest work: sprint/rocketnet-linux-soak-per-transport.w9.g1.e0" :brief "CARRY: rocketnet-linux-soak-per-transport attempt 4 head=9395a2438f18acd9edc0e6486feaae072c0c270f
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
@@ -3193,7 +3193,7 @@ ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Clau
 CARRY: head=2c26b9b2de2aa78d5feaea7c8fdf04e46c776571: portable/gso/io_uring soaks 30 min clean x6, sanitizer runs clean, watcher red on the planted leak; xdp guest boots at 3072M with the veth gateway set. One defect left (driver file now in PATHS): under the 30-min impaired soak the xdp server counts SEND_RING_FULL (51 on amd-1, 1 on vision) because both send buffers are handed off and neither has come back (rocketnet_server_socket_linux.cpp:2045-2054). Find why completions are not reaped in time under impairment (reap before claiming a buffer, or size the pool to the TX ring) and fix it so the impaired xdp soak shows zero SEND_RING_FULL; keep fds/threads/memory flat. Then re-run the xdp impaired and clean 30-min soaks.
 NOTE: rebalanced to Stella (owner 2026-10-20, Rowan width 8): build on the latest pushed head of this card (the Rowan worker pushes it before stopping); run CHECKLIST.md; two-minute rule.
 ")
-    (:id "rocketnet-load-light-profile-linux" :feature "Linux: 1000 light clients on every transport" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: 6fdee017 on sprint/rocketnet-load-light-profile-linux.w5.g1.e0" :brief "CARRY: rocketnet-load-light-profile-linux attempt 1 head=e132c94da295fe4cbedc0edf24eb812db9b08681
+    (:id "rocketnet-load-light-profile-linux" :feature "Linux: 1000 light clients on every transport" :cells (n - -) :note "final deliverable (owner 2026-10-20); latest work: 6fdee017 on sprint/rocketnet-load-light-profile-linux.w5.g1.e0" :brief "CARRY: rocketnet-load-light-profile-linux attempt 1 head=e132c94da295fe4cbedc0edf24eb812db9b08681
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: test
@@ -3242,7 +3242,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 NOTE: coordinator 2026-10-20: XDP checks run inside a booted vng guest on any kvm bench (VM KIT: /opt/vm-kernels/{6.8,7.0}/vmlinuz), with the guest uname -r quoted; GATE-NEEDS moved from xdp to kvm. A SKIPPED guest case is not a pass.
 ")
-    (:id "rocketnet-linux-hard-killed-peer-never-stalls-receive" :feature "Linux: a hard-killed peer or an ICMP error never stalls portable, gso, io_uring or xdp" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: 9bd3c64c on sprint/rocketnet-linux-hard-killed-peer-never-stalls-receive.w9.g1.e0" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-linux-hard-killed-peer-never-stalls-receive" :feature "Linux: a hard-killed peer or an ICMP error never stalls portable, gso, io_uring or xdp" :cells (n - -) :note "final deliverable (owner 2026-10-20); latest work: 9bd3c64c on sprint/rocketnet-linux-hard-killed-peer-never-stalls-receive.w9.g1.e0" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
 PRIORITY: blocker
@@ -3313,7 +3313,7 @@ CARRY: VM AUDIT 2026-10-20: the hetzner1 reader booted a vng guest at head 9bc92
 NOTE: coordinator 2026-10-20: XDP checks run inside a booted vng guest on any kvm bench (VM KIT: /opt/vm-kernels/{6.8,7.0}/vmlinuz), with the guest uname -r quoted; GATE-NEEDS moved from xdp to kvm. A SKIPPED guest case is not a pass.
 NOTE: fix routed to friends (owner 2026-10-20); carry the latest pushed head and FIX lines; run CHECKLIST.md; two-minute rule.
 ")
-    (:id "rocketnet-macos-load-1000-clients-t" :feature "macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: 6dd8067c on sprint/rocketnet-macos-load-1000-clients-t.w10.g1.e0" :brief "WHO: only friend rowan
+    (:id "rocketnet-macos-load-1000-clients-t" :feature "macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary" :cells (- n -) :note "final deliverable (owner 2026-10-20); latest work: 6dd8067c on sprint/rocketnet-macos-load-1000-clients-t.w10.g1.e0" :brief "WHO: only friend rowan
 CARRY: rocketnet-macos-load-1000-clients-t attempt 6 head=7c5994ed7d0fb1775b9942f58b4bd829205eac32
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
@@ -3387,7 +3387,7 @@ CARRY: head=149c1b864e38b1abaaa856a89407ff9df08d0f37. Coordinator ruling: the cl
 CARRY: OWNER PROFILE (2026-10-20): \"I want 1000 players tested and working on all platforms and all transports for v1.0.0. But each client should be light. 10HZ ticks. 1 packet per-update.\" and \"I want the hardcore load testing done after v1.0.0.\" So every 1000-client run here is the light profile: 1000 clients, each updating at 10 Hz and sending 1 packet per update, on every server transport of the platform; pass = all connect, every client receives, none disconnected, reliable in order. No high-rate or bandwidth stress (that is the next milestone). This supersedes any heavier rate or the 256 kbps profile written earlier in this brief.
 NOTE: rebalanced to Stella (owner 2026-10-20, Rowan width 8): build on the latest pushed head of this card (the Rowan worker pushes it before stopping); run CHECKLIST.md; two-minute rule.
 ")
-    (:id "rocketnet-macos-sanitizers-and-leaks" :feature "macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: 0585538d on sprint/rocketnet-macos-sanitizers-and-leaks.w10.g1.e0" :brief "WHO: only friend rowan
+    (:id "rocketnet-macos-sanitizers-and-leaks" :feature "macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly" :cells (- n -) :note "final deliverable (owner 2026-10-20); latest work: 0585538d on sprint/rocketnet-macos-sanitizers-and-leaks.w10.g1.e0" :brief "WHO: only friend rowan
 CARRY: rocketnet-macos-sanitizers-and-leaks attempt 3 head=4b506cec7d12af242bd444a7c244af8626414805
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
@@ -3463,7 +3463,7 @@ CARRY: head=4b506cec7d12af242bd444a7c244af8626414805. PATHS widened: apply the t
 CARRY: w6 HOLD head 85b0f72b: three sanitizer fixes proven; leaks script fixed (per-case, signed binaries, self-test red); Developer Mode now on and the Xcode license now accepted on the studio (DEVELOPER_DIR workaround no longer needed). Remaining: (a) apply the channel_harness.h destroy fix (proposed-channel-harness.diff in ~/.local/state/nova-reads/rocketnet-macos-sanitizers-and-leaks.w6/) and show control_fragment_packets_each_end at 0 leaks on all pins; (b) fix the TSan race in functional/thread_priority_timing.cpp :130/:353; (c) merge current BASE and re-run; (d) functional reds that also fail at BASE under sanitizers are pre-existing: list them, do not fix them here.
 NOTE: rebalanced to Stella (owner 2026-10-20): Rowan's row was over its width; build on the latest pushed head.
 ")
-    (:id "rocketnet-linux-nightly-soak-green-at-base" :feature "Linux: the nightly soak jobs green at the branch" :cells (n - -) :note "after the payment milestone (owner 2026-10-20); latest work: 0e3143ab on sprint/rocketnet-linux-nightly-soak-green-at-base.w4.g1.e0" :brief "RESULT: rocketnet-linux-nightly-soak-green-at-base sha=000000000000 tier: pro
+    (:id "rocketnet-linux-nightly-soak-green-at-base" :feature "Linux: the nightly soak jobs green at the branch" :cells (n - -) :note "final deliverable (owner 2026-10-20); latest work: 0e3143ab on sprint/rocketnet-linux-nightly-soak-green-at-base.w4.g1.e0" :brief "RESULT: rocketnet-linux-nightly-soak-green-at-base sha=000000000000 tier: pro
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: test
@@ -3511,7 +3511,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 ")
-    (:id "rocketnet-win-libfuzzer-clang-cl" :feature "The fuzz targets build and run under libFuzzer on Windows" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: sprint/rocketnet-win-libfuzzer-clang-cl.w9.g5.e0" :brief "CARRY: rocketnet-win-libfuzzer-clang-cl attempt 9 head=63b568add8b117fd6562188a88dd1fbbbba51bba
+    (:id "rocketnet-win-libfuzzer-clang-cl" :feature "The fuzz targets build and run under libFuzzer on Windows" :cells (- - n) :note "final deliverable (owner 2026-10-20); latest work: sprint/rocketnet-win-libfuzzer-clang-cl.w9.g5.e0" :brief "CARRY: rocketnet-win-libfuzzer-clang-cl attempt 9 head=63b568add8b117fd6562188a88dd1fbbbba51bba
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
@@ -3584,7 +3584,7 @@ FIX (coordinator, 2026-10-20, owner's two-minute rule): DONE-WHEN (2)'s four 15-
 - Release test.exe.
 Make sure the nightly step's paths match the Ninja output dir (build-fuzz/). Then finish LAND with the 15-minute runs listed as OWED.
 ")
-    (:id "rocketnet-win-lifecycle-stress" :feature "Create, destroy, connect, restart: a thousand times on Windows with nothing left behind" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: 745ffb1b on sprint/rocketnet-win-lifecycle-stress.w13.g3.e0" :brief "CARRY: rocketnet-win-lifecycle-stress attempt 2 head=0959fdc23f471c26d86b9ce30794d53088cfcb25 (the last pushed head, on sprint/rocketnet-win-lifecycle-stress.w2.g1.e21, verified on GitHub 2026-10-20; continue from it, merged with BASE, and redo nothing it already holds). This head supersedes any earlier carry the brief names below.
+    (:id "rocketnet-win-lifecycle-stress" :feature "Create, destroy, connect, restart: a thousand times on Windows with nothing left behind" :cells (- - n) :note "final deliverable (owner 2026-10-20); latest work: 745ffb1b on sprint/rocketnet-win-lifecycle-stress.w13.g3.e0" :brief "CARRY: rocketnet-win-lifecycle-stress attempt 2 head=0959fdc23f471c26d86b9ce30794d53088cfcb25 (the last pushed head, on sprint/rocketnet-win-lifecycle-stress.w2.g1.e21, verified on GitHub 2026-10-20; continue from it, merged with BASE, and redo nothing it already holds). This head supersedes any earlier carry the brief names below.
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: code
@@ -3653,7 +3653,7 @@ CARRY: head=f149e5f59879ae6c4ca0fbd2ac1f6c155f9cb598 (base dee6a29b merged, Rele
 CARRY: w8 head a78dbc1d (sprint/rocketnet-win-lifecycle-stress.w8.g1.e0): the thread check fails only on growth (:113), handles unchanged (:112); captain Debug and Release build; test.exe green in both; planted leaks red at :112 and :355. ONLY OWED: merge BASE (4e1be4e8+), then one EXCLUSIVE winlock hold (allowed from 15:45Z): full functional.exe Release, Debug with the 4096 bound, and the 10-run gate of the five cases. Scripts are ready at /mnt/c/rowan-jobs/rocketnet-win-lifecycle-stress.w8/excl.sh. Push from captain over HTTPS via its nova-push-credential helper (benches can't reach captain).
 FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
 ")
-    (:id "rocketnet-r1-windows-nightlies-all-run" :feature "Windows nightlies: all jobs run, warnings gated, verifier script safe" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-r1-windows-nightlies-all-run" :feature "Windows nightlies: all jobs run, warnings gated, verifier script safe" :cells (- - n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: ci
 PRIORITY: high
@@ -3702,7 +3702,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 NOTE: fix routed to friends (owner 2026-10-20); build on the latest pushed head of this card, never discard it unless plainly garbage (say so); run CHECKLIST.md; two-minute rule.
 ")
-    (:id "rocketnet-r1-tla-ledger-current" :feature "TLA ledger: every case finishes or says why; docs current" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: d629f045 on sprint/rocketnet-r1-tla-ledger-current.w4.g1.e0" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-r1-tla-ledger-current" :feature "TLA ledger: every case finishes or says why; docs current" :cells (n n n) :note "final deliverable (owner 2026-10-20); latest work: d629f045 on sprint/rocketnet-r1-tla-ledger-current.w4.g1.e0" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: fix
 PRIORITY: high
@@ -3759,7 +3759,7 @@ FIX (coordinator, 2026-10-20, converge for v1.0): finish LAND at this head with 
 - item (3): rekeying docs/WITNESSES.tsv and its checker.
 List both as OWED (post-v1.0). Approved as PATHS-PROPOSED: tla/README-ServerConnection.md and tla/README-ReplayWindow.md. The MCReplayWindowMid 445 s manual rerun is OWED.
 ")
-    (:id "rocketnet-server-send-capacity-sized-from-config" :feature "Server send capacity is sized from the config, never a fixed 256" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-server-send-capacity-sized-from-config" :feature "Server send capacity is sized from the config, never a fixed 256" :cells (n n n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: fix
 PRIORITY: blocker
@@ -3798,7 +3798,7 @@ Never start a server on this machine.
 No `rm -rf` outside the job directory.
 Report what was not done.
 ")
-    (:id "rocketnet-load-light-profile-macos" :feature "macOS: 1000 light clients on msgx and portable" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-load-light-profile-macos" :feature "macOS: 1000 light clients on msgx and portable" :cells (- n -) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: test
 PRIORITY: blocker
@@ -3846,7 +3846,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
 ")
-    (:id "rocketnet-load-light-profile-windows" :feature "Windows: 1000 light clients on portable, iocp and rio" :cells (- - n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
+    (:id "rocketnet-load-light-profile-windows" :feature "Windows: 1000 light clients on portable, iocp and rio" :cells (- - n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: test
 PRIORITY: blocker
@@ -3894,7 +3894,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 FIX (coordinator, 2026-10-20, owner deferral): under the owner's two-minute rule this card does NOT run its long soak, load, stress or repeat runs now. Scope it to what can be proven in short runs: the harness, workflow or code change the card adds, built and run in Debug at the exact head with each run under 2 minutes, a red-first proof where the card fixes a bug, and CHECKLIST.md. Then finish LAND, listing every long run as OWED (they become a separate card after v1.0.0-preview1). If the card has no change beyond the long run itself, finish LAND with only the docs or workflow wiring and the long run OWED. Never shorten a long run and call it a pass. Build on the latest pushed head.
 ")
-    (:id "rocketnet-macos-nightly-soak-green-at-base" :feature "macOS: the nightly soak job green at the branch" :cells (- n -) :note "after the payment milestone (owner 2026-10-20); latest work: 3bd59a0b on sprint/rocketnet-macos-nightly-soak-green-at-base.w4.g1.e0" :brief "RESULT: rocketnet-macos-nightly-soak-green-at-base sha=000000000000 tier: pro
+    (:id "rocketnet-macos-nightly-soak-green-at-base" :feature "macOS: the nightly soak job green at the branch" :cells (- n -) :note "final deliverable (owner 2026-10-20); latest work: 3bd59a0b on sprint/rocketnet-macos-nightly-soak-green-at-base.w4.g1.e0" :brief "RESULT: rocketnet-macos-nightly-soak-green-at-base sha=000000000000 tier: pro
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: test
@@ -3942,7 +3942,7 @@ Touch only the files PATHS and NEW name; a fix that needs another file goes into
 
 ATTRIBUTION: each commit message ends with the trailer line Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>, and a By: line naming the worker who does this attempt above it; a model name is never a By:.
 ")
-    (:id "rocketnet-example-soak-disconnect-regression" :feature "Example soak: disconnect under loss reaches the server again" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-example-soak-disconnect-regression sha=000000000000 tier: pro
+    (:id "rocketnet-example-soak-disconnect-regression" :feature "Example soak: disconnect under loss reaches the server again" :cells (n n n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-example-soak-disconnect-regression sha=000000000000 tier: pro
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: fix
@@ -3977,7 +3977,7 @@ Never start a server on this machine.
 No `rm -rf` outside the job directory.
 Report what was not done.
 ")
-    (:id "rocketnet-r1-receipt-loss-after-its-own-deadline" :feature "Ack receipts: LOSS only after the receipt deadline" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: sprint/rocketnet-r1-receipt-loss-after-its-own-deadline.w7.g1.e0" :brief "RESULT: rocketnet-r1-receipt-loss-after-its-own-deadline sha=000000000000 tier: pro
+    (:id "rocketnet-r1-receipt-loss-after-its-own-deadline" :feature "Ack receipts: LOSS only after the receipt deadline" :cells (n n n) :note "final deliverable (owner 2026-10-20); latest work: sprint/rocketnet-r1-receipt-loss-after-its-own-deadline.w7.g1.e0" :brief "RESULT: rocketnet-r1-receipt-loss-after-its-own-deadline sha=000000000000 tier: pro
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: fix
@@ -4036,7 +4036,7 @@ CARRY: OWNER 2026-10-20: match RakNet and be better where it helps. The RTO is R
 CARRY: OWNER 2026-10-20 (supersedes the 100 ms floor line): the RTO floor is a config option, default 0.0 (no floor), which matches RakNet exactly; a caller may set it, for example to 0.1 s. One config field (one way to do it), validated >= 0, documented in the header; tests pin both the default (no floor, RakNet values) and a set floor.
 CARRY: SHARED RTO HELPER (owned by rocketnet-r1-loopback-rtt-and-spurious-resends): rn_window_ack_compute_rto( srtt, rttvar, configured_min, configured_max ), using the public config field rto_min_ms (default 0, range 0..60000). Receipt loss calls that helper; don't write a second RTO function. Land after loopback-rtt.
 ")
-    (:id "rocketnet-format-netcode-style-v1" :feature "rocketnet-format-netcode-style-v1" :cells (n n n) :note "after the payment milestone (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-format-netcode-style-v1 sha=000000000000 tier: heavy
+    (:id "rocketnet-format-netcode-style-v1" :feature "rocketnet-format-netcode-style-v1" :cells (n n n) :note "final deliverable (owner 2026-10-20); latest work: no pushed branch" :brief "RESULT: rocketnet-format-netcode-style-v1 sha=000000000000 tier: heavy
 REPO: mas-bandwidth/rocketnet
 BASE: sprint/rocketnet-proof
 KIND: chore
