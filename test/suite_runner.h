@@ -336,59 +336,53 @@ inline void suite_emit_captured( const std::string & output, bool show_all )
     fflush( stdout );
 }
 
-// Runs one case with its stdout held in a scratch file, then prints every line
-// when it failed and only the name lines when it passed. This is the same
-// names-only shape the suite applies to its children, so `--run <case>` does
-// not leak a passing case's diagnostics without ROCKETNET_TEST_VERBOSE.
+// Runs one case in a child with its stdout and stderr read through a pipe,
+// then prints every line when it failed and only the name lines when it
+// passed. The child may exit(1), abort or be killed and the parent still has
+// every line it wrote. This is the same names-only shape the suite applies to
+// its children, so `--run <case>` does not leak a passing case's diagnostics
+// without ROCKETNET_TEST_VERBOSE.
 inline int suite_run_names_only( int ( *worker )( const char * ), const char * name )
 {
-    const char * tmpdir = std::getenv( "TMPDIR" );
-    if ( tmpdir == NULL || tmpdir[0] == '\0' )
-        return worker( name );
-    std::string pattern = std::string( tmpdir ) + "/rocketnet-suite-XXXXXX";
-    std::vector<char> path( pattern.begin(), pattern.end() );
-    path.push_back( '\0' );
-    const int fd = mkstemp( path.data() );
-    if ( fd < 0 )
-        return worker( name );
-    unlink( path.data() );
-    FILE * scratch = fdopen( fd, "w+" );
-    if ( !scratch )
-    {
-        close( fd );
-        return worker( name );
-    }
     fflush( stdout );
-    const int saved = dup( fileno( stdout ) );
-    if ( saved < 0 )
+    fflush( stderr );
+    int pipefd[2];
+    if ( pipe( pipefd ) != 0 )
+        return worker( name );
+    const pid_t pid = fork();
+    if ( pid < 0 )
     {
-        fclose( scratch );
+        close( pipefd[0] );
+        close( pipefd[1] );
         return worker( name );
     }
-    if ( dup2( fileno( scratch ), fileno( stdout ) ) < 0 )
+    if ( pid == 0 )
     {
-        close( saved );
-        fclose( scratch );
-        return worker( name );
+        close( pipefd[0] );
+        if ( dup2( pipefd[1], STDOUT_FILENO ) < 0 || dup2( pipefd[1], STDERR_FILENO ) < 0 )
+            _exit( 127 );
+        if ( pipefd[1] != STDOUT_FILENO && pipefd[1] != STDERR_FILENO )
+            close( pipefd[1] );
+        const int rc = worker( name );
+        fflush( stdout );
+        fflush( stderr );
+        _exit( rc );
     }
-    const int rc = worker( name );
-    fflush( stdout );
-    dup2( saved, fileno( stdout ) );
-    close( saved );
+    close( pipefd[1] );
     std::string output;
-    rewind( scratch );
-    char buf[4096];
-    for ( ;; )
+    suite_drain( pipefd[0], output );
+    close( pipefd[0] );
+    int status = 0;
+    pid_t waited;
+    do
     {
-        const size_t n = fread( buf, 1, sizeof( buf ), scratch );
-        if ( n > 0 )
-        {
-            output.append( buf, n );
-            continue;
-        }
-        break;
-    }
-    fclose( scratch );
+        waited = waitpid( pid, &status, 0 );
+    } while ( waited < 0 && errno == EINTR );
+    int rc = 1;
+    if ( waited >= 0 && WIFEXITED( status ) )
+        rc = WEXITSTATUS( status );
+    else if ( waited >= 0 && WIFSIGNALED( status ) )
+        rc = 128 + WTERMSIG( status );
     suite_emit_captured( output, rc != 0 );
     return rc;
 }
@@ -408,6 +402,14 @@ inline int suite_main( int argc, char ** argv,
         for ( int i = 3; i < argc; i++ )
             if ( argv[i][0] == '-' )
                 return suite_usage( argv );
+        // Under a suite run the parent already captures this process, so
+        // stream straight through; a second capture would lose lines when the
+        // parent kills the process group at the time limit.
+        if ( std::getenv( "ROCKETNET_TEST_SUITE_CAPTURE" ) != NULL )
+        {
+            unsetenv( "ROCKETNET_TEST_SUITE_CAPTURE" );
+            return worker( argv[2] );
+        }
         if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
             return suite_run_names_only( worker, argv[2] );
         return worker( argv[2] );
@@ -468,6 +470,8 @@ inline int suite_main( int argc, char ** argv,
         std::string output;
     };
     const bool suite_capture = !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL;
+    if ( suite_capture )
+        setenv( "ROCKETNET_TEST_SUITE_CAPTURE", "1", 1 );
     std::vector<running_t> running;
     std::vector<suite_result> results;
     size_t next = 0;
