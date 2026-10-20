@@ -133,9 +133,10 @@ ring can fill; `start_packet` then refuses as at BASE (`SEND_RING_FULL`).
 Only `destroy` waits. `disconnect` seals its burst into the Filling ring and
 hands it off like any packet (deferred when the other ring is busy, retried
 by the next `update`); `destroy` makes the last hand-off itself, waiting for
-the other ring to be Sent if it must (Stop and destroy order), so a
-disconnect burst is on the wire before the transport is freed whether or not
-an `update` ran in between.
+the other ring to be Sent if it must (Stop and destroy order), so a disconnect
+burst is on the wire before the transport is freed whether or not an `update`
+ran in between — unless the wait hits its bound (Stop and destroy order), in
+which case the burst is dropped and counted.
 
 **The protocol packet and disconnect.** The packet `update` builds
 (`rocketnet_client_protocol_update`) and the disconnect burst of
@@ -251,15 +252,27 @@ socket.
 holds committed slots (a deferred disconnect burst, say), it waits until the
 other ring loads Sent (acquire; `rocketnet_platform_sleep( 0.0001 )` between
 loads; destroy is off the frame path), reopens it and hands the Filling ring
-off. Then it stores quit and wakes the I/O thread. The I/O thread finishes
-every handed-off ring (so the disconnect burst is sent), sends nothing new,
-and exits. The main thread joins it, then closes the transport, then frees the
-transport. Nothing is freed while the I/O thread can touch it
-(`FreedOnlyAfterJoin`), and no committed slot is dropped by destroy
-(`CommittedEventuallyHandedOff`). In the step-driven unit mode there is no
-I/O thread: `destroy` calls `rocketnet_client_io_step( transport, false )`
-itself in place of the sleep and the join, so the order is tested with no
-real time.
+off. Both waits are bounded on the transport's own clock (the config's
+`time_callback`; null means `rocketnet_platform_time`): the last hand-off
+waits at most `ROCKETNET_CLIENT_DESTROY_HANDOFF_WAIT_SECONDS` (2 s), and the
+step-driven exit loop at most `ROCKETNET_CLIENT_DESTROY_STEP_WAIT_SECONDS`
+(2 s). A live I/O thread sends a handed-off ring in one step (microseconds;
+the I/O guard timeout is 1 ms), so a transport that has not reached Sent
+within a second has a stuck driver, and the two-second margin never delays a
+live shutdown. On expiry destroy gives up, logs a warning, counts the
+committed slots it drops under `SEND_RING_FULL`, and continues to Stop. Then
+it stores quit and wakes the I/O thread. The I/O thread finishes every
+handed-off ring (so the disconnect burst is sent), sends nothing new, and
+exits. The main thread joins it (the join is bounded by the thread's stop
+check: `rocketnet_client_io_step` returns EXITED once quit is set and no ring
+is in flight), then closes the transport, then frees the transport. Nothing is
+freed while the I/O thread can touch it (`FreedOnlyAfterJoin`); a committed
+slot is either handed off or, if the other ring never reaches Sent before the
+deadline, dropped and counted as above (`CommittedEventuallyHandedOff` becomes
+"eventually handed off or dropped at the deadline"). In the step-driven unit
+mode there is no I/O thread: `destroy` calls `rocketnet_client_io_step(
+transport, false )` itself in place of the sleep and the join, so the order is
+tested with no real time.
 
 ## The interface
 

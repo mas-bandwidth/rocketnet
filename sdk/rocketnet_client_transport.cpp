@@ -1050,6 +1050,15 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     return client_transport;
 }
 
+// destroy bounds its two waits on the transport's own clock (docs/CLIENT-IO.md
+// _Stop and destroy order_). A live I/O thread sends a handed-off ring in one
+// step (microseconds; the I/O guard timeout is 1 ms), so a transport that has
+// not reached Sent within a second has a stuck driver. Two seconds is an
+// order of magnitude of headroom; destroy is off the frame path, so the bound
+// never delays a live shutdown.
+const double ROCKETNET_CLIENT_DESTROY_HANDOFF_WAIT_SECONDS = 2.0;
+const double ROCKETNET_CLIENT_DESTROY_STEP_WAIT_SECONDS = 2.0;
+
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1061,7 +1070,8 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     {
         // docs/CLIENT-IO.md _Stop and destroy order_: the last hand-off,
         // waiting for the other ring to be Sent if it must (only destroy
-        // waits; RNClientIo CommittedEventuallyHandedOff), then Stop, Join,
+        // waits; RNClientIo CommittedEventuallyHandedOff, and the Timeout
+        // that drops the committed slots at the deadline), then Stop, Join,
         // close and free (FreedOnlyAfterJoin). The step-driven mode runs the
         // step in place of the sleep and the join.
         rocketnet_client_io_t * io = &client_transport->client_io;
@@ -1071,27 +1081,61 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
             committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
         if ( committed > 0 )
         {
+            // the last hand-off's wait is bounded: a send that never reaches
+            // Sent (a stuck driver) must not hang destroy. On expiry (RNClientIo
+            // Timeout) the committed slots are dropped and counted under
+            // SEND_RING_FULL, and destroy continues to Stop; FreedOnlyAfterJoin
+            // is kept (memory is freed only after the join in threaded mode).
             const int other = io->rings.fill ^ 1;
+            const double deadline = client_transport->time_callback( client_transport->context ) +
+                                    ROCKETNET_CLIENT_DESTROY_HANDOFF_WAIT_SECONDS;
+            bool gave_up = false;
             while ( true )
             {
                 const int state = io->rings.state[other].load( std::memory_order_acquire );
                 if ( state == ROCKETNET_CLIENT_RING_SENT || state == ROCKETNET_CLIENT_RING_FILLING )
                     break;
+                if ( client_transport->time_callback( client_transport->context ) >= deadline )
+                {
+                    gave_up = true;
+                    break;
+                }
                 if ( client_transport->step_driven || client_transport->step_in_update )
                     rocketnet_client_io_step( io, false );
                 else
                     rocketnet_platform_sleep( 0.0001 );
             }
-            rocketnet_client_send_rings_reopen( &io->rings, other );
-            const int result = rocketnet_client_io_hand_off( io, committed, &client_transport->protocol.server_address );
-            rocketnet_assert( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
-            (void) result;
+            if ( !gave_up )
+            {
+                rocketnet_client_send_rings_reopen( &io->rings, other );
+                const int result = rocketnet_client_io_hand_off( io, committed, &client_transport->protocol.server_address );
+                rocketnet_assert( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+                (void) result;
+            }
+            else
+            {
+                rocketnet_warn( "client destroy gave up waiting for the send ring; dropping %llu committed packet(s)",
+                               (unsigned long long) committed );
+                rocketnet_platform_atomic_add_u64(
+                    &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], committed );
+            }
         }
         rocketnet_client_io_retire_keys( io );
         rocketnet_client_io_stop( io );
         if ( client_transport->step_driven || client_transport->step_in_update )
         {
-            while ( rocketnet_client_io_step( io, false ) != ROCKETNET_CLIENT_IO_EXITED ) {}
+            // the step loop is bounded the same way: a core that never reaches
+            // EXITED (a ring stuck in flight) must not hang destroy.
+            const double deadline = client_transport->time_callback( client_transport->context ) +
+                                    ROCKETNET_CLIENT_DESTROY_STEP_WAIT_SECONDS;
+            while ( rocketnet_client_io_step( io, false ) != ROCKETNET_CLIENT_IO_EXITED )
+            {
+                if ( client_transport->time_callback( client_transport->context ) >= deadline )
+                {
+                    rocketnet_warn( "client destroy gave up stepping the I/O core to exit" );
+                    break;
+                }
+            }
         }
         else
         {
