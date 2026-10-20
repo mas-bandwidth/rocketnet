@@ -21,15 +21,6 @@ endif()
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
-# clang-cl does not map #pragma warning(disable:4996) (rocketnet_platform.h,
-# rocketnet.cpp) to its own deprecation warning, so the CRT deprecations that
-# MSVC silences there are silenced here for clang-cl alone. The vendored
-# sodium amalgamation keeps helpers its configuration does not call; clang-cl
-# reports them where MSVC at /W3 does not.
-if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    add_compile_options(-Wno-deprecated-declarations)
-    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c" PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
-endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)
@@ -434,7 +425,8 @@ add_library(rocketnet_header_warnings OBJECT
     tools/header_warnings/header_warnings.cpp)
 target_include_directories(rocketnet_header_warnings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
 if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    target_compile_options(rocketnet_header_warnings PRIVATE /Wall /external:anglebrackets /external:W0)
+    # C4820 (padding added) is MSVC's -Wpadded: layout, not a defect.
+    target_compile_options(rocketnet_header_warnings PRIVATE /Wall /wd4820 /external:anglebrackets /external:W0)
 elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
     target_compile_options(rocketnet_header_warnings PRIVATE -Weverything -Wno-padded)
     check_c_compiler_flag("-Wno-poison-system-directories" ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)

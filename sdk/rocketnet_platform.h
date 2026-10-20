@@ -1051,8 +1051,6 @@ bool rocketnet_msgx_read_sockaddr( struct rocketnet_platform_socket_t * socket, 
     #include "Windows/MinWindows.h"
     #endif // #if !ROCKETNET_UNREAL_ENGINE
 
-    #pragma warning(disable:4996)
-
     #if _WIN64
     typedef uint64_t rocketnet_platform_socket_handle_t;
     #else

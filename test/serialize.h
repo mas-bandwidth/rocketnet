@@ -170,10 +170,6 @@
 #define serialize_static_assert( condition, message ) typedef char serialize_static_assert_join( serialize_static_assert_line_, __LINE__ )[ ( condition ) ? 1 : -1 ] __attribute__(( unused ))
 #endif // #if ( defined( __cplusplus ) && __cplusplus >= 201103L ) || defined( _MSC_VER )
 
-#if defined(_MSC_VER) && !defined(_CRT_SECURE_NO_WARNINGS)
-#define _CRT_SECURE_NO_WARNINGS
-#endif
-
 #if !defined(SERIALIZE_DEBUG) && !defined(SERIALIZE_RELEASE)
 #if defined(NDEBUG)
 #define SERIALIZE_RELEASE
@@ -241,12 +237,6 @@
 
 // implicit narrowing is a deliberate style inside this header. push/pop so the disabled
 // warnings do not leak into code that includes it. note that code using the serialize_* macros
-// compiles at the including file's warning state: disable 4127 and 4244 there if needed.
-#ifdef _MSC_VER
-#pragma warning( push )
-#pragma warning( disable : 4127 )
-#pragma warning( disable : 4244 )
-#endif // #ifdef _MSC_VER
 
 // everything the library itself needs. serialize.h is intentionally self contained:
 // including it into a translation unit with no prior includes must compile.
@@ -9815,8 +9805,5 @@ inline void serialize_test()
 
 #endif // #if SERIALIZE_ENABLE_TESTS
 
-#ifdef _MSC_VER
-#pragma warning( pop )
-#endif // #ifdef _MSC_VER
 
 #endif // #ifndef SERIALIZE_H
