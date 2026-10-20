@@ -96,3 +96,9 @@ done
 ```
 
 A refused run is a finding, not a partial run: `bin/load` names the limit and the command that raises it before it opens a socket, and exits `1`.
+
+A host that denies the loopback bind (a sandbox or firewall) makes every server transport refuse to start; `bin/load` then exits `1` with the transport code it got, before any client is created:
+
+```
+load: failed to create message server (status=18 TRANSPORT_LADDER_EXHAUSTED)
+```
