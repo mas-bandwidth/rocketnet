@@ -90,6 +90,15 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGE
 #define ROCKETNET_URING_DESTROY_WAIT_ROUNDS                                  5
 #define ROCKETNET_URING_DESTROY_MAX_ROUNDS                                  64
 
+// destroy's wait ends after ROCKETNET_URING_DESTROY_WAIT_ROUNDS silent rounds,
+// or after ROCKETNET_URING_DESTROY_MAX_ROUNDS rounds however many of them
+// completed, so steady completions cannot hold it open
+
+static bool rocketnet_server_uring_destroy_wait_over( int empty_rounds, int rounds )
+{
+    return empty_rounds >= ROCKETNET_URING_DESTROY_WAIT_ROUNDS || rounds >= ROCKETNET_URING_DESTROY_MAX_ROUNDS;
+}
+
 // each slot's info is the slot's msghdr, iovec and destination, which the
 // kernel reads until the send's CQE. finish threads write packet_bytes, so a
 // slot's info is cache line aligned.
@@ -191,6 +200,12 @@ struct rocketnet_server_uring_t
     struct io_uring_sqe test_sqes[ROCKETNET_URING_ENTRIES];
     int test_sqes_queued;
     struct rocketnet_server_uring_test_completion_t test_completions[ROCKETNET_URING_CQE_BATCH];
+
+    // the no-kernel-ring seam: a fake driver whose receive_packets runs only
+    // the re-arm loop, and the next this many arm calls find no submission
+    // entry (the failed re-arm the CQE handler can hit)
+    bool test_no_ring;
+    int test_arm_find_no_sqe;
 #endif
 };
 
@@ -593,6 +608,18 @@ static struct io_uring_sqe * rocketnet_server_uring_get_sqe( struct rocketnet_se
 static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring, int queue_index )
 {
     struct rocketnet_server_uring_queue_t * queue = &uring->queues[queue_index];
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( uring->test_arm_find_no_sqe > 0 )
+    {
+        uring->test_arm_find_no_sqe--;
+        return false;
+    }
+    if ( uring->test_no_ring )
+    {
+        queue->armed = true;
+        return true;
+    }
+#endif
     struct io_uring_sqe * sqe = rocketnet_server_uring_get_sqe( uring );
     if ( !sqe )
     {
@@ -683,6 +710,26 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
     io_uring_buf_ring_advance( queue->buf_ring, 1 );
 }
 
+// RNUringDriver Reap(c), the "term" case: the multishot ended, so it is
+// disarmed. the one-shot re-arm is not guaranteed (it can find no submission
+// entry), so receive_packets re-arms a disarmed queue; each failed arm here
+// is counted too.
+
+static void rocketnet_server_uring_multishot_ended( struct rocketnet_server_uring_t * uring, int queue_index )
+{
+    struct rocketnet_server_uring_queue_t * queue = &uring->queues[queue_index];
+
+    queue->armed = false;
+
+    if ( !uring->destroying )
+    {
+        if ( rocketnet_server_uring_arm( uring, queue_index ) )
+            uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS]++;
+        else
+            uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED]++;
+    }
+}
+
 // RNUringDriver Reap(c): one CQE, by the kind in its tag
 
 static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * uring, const struct io_uring_cqe * cqe )
@@ -729,16 +776,10 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
             // the "term" case: the multishot ended (RNUringDriver KernelStop
             // posted this CQE). re-arm while running, never during destroy.
 
-            queue->armed = false;
-
             if ( cqe->res == -ENOBUFS )
                 uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS]++;
 
-            if ( !uring->destroying )
-            {
-                if ( rocketnet_server_uring_arm( uring, queue_index ) )
-                    uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS]++;
-            }
+            rocketnet_server_uring_multishot_ended( uring, queue_index );
         }
         return;
     }
@@ -849,6 +890,74 @@ void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t 
 }
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+
+// the no-kernel-ring seam: a fake driver with queues but no ring. the test
+// owns it through these calls only.
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues )
+{
+    if ( num_queues <= 0 )
+        return NULL;
+    struct rocketnet_server_uring_t * uring = new (std::nothrow) rocketnet_server_uring_t();
+    if ( !uring )
+        return NULL;
+    uring->queues = new (std::nothrow) rocketnet_server_uring_queue_t[num_queues]();
+    if ( !uring->queues )
+    {
+        delete uring;
+        return NULL;
+    }
+    uring->num_queues = num_queues;
+    uring->test_no_ring = true;
+    return uring;
+}
+
+void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring )
+{
+    delete[] uring->queues;
+    delete uring;
+}
+
+void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring_t * uring, int count )
+{
+    uring->test_arm_find_no_sqe = count > 0 ? count : 0;
+}
+
+void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t * uring, int queue_index, bool arm_finds_no_sqe )
+{
+    uring->test_arm_find_no_sqe = arm_finds_no_sqe ? 1 : 0;
+    rocketnet_server_uring_multishot_ended( uring, queue_index );
+}
+
+bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index )
+{
+    return uring->queues[queue_index].armed;
+}
+
+uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter )
+{
+    return uring->counters[counter];
+}
+
+// destroy's wait end condition (rocketnet_server_uring_destroy_wait_over):
+// always_completes says every round yields a CQE, so no round is silent.
+// guard is the case's own iteration bound, so a wait that never ends is
+// reported, not run forever.
+
+int rocketnet_server_uring_test_destroy_wait_rounds( bool always_completes, int guard )
+{
+    int empty_rounds = 0;
+    int rounds = 0;
+    while ( !rocketnet_server_uring_destroy_wait_over( empty_rounds, rounds ) )
+    {
+        if ( !always_completes )
+            empty_rounds++;
+        rounds++;
+        if ( rounds > guard )
+            return -rounds;
+    }
+    return rounds;
+}
 
 // the fake driver: create's allocations and arms, with the source in place
 // of the ring and the sockets. each queue's buffer ring is plain memory the
@@ -1095,7 +1204,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
         int rounds = 0;
         bool drained = false;
 
-        while ( empty_rounds < ROCKETNET_URING_DESTROY_WAIT_ROUNDS && rounds < ROCKETNET_URING_DESTROY_MAX_ROUNDS )
+        while ( !rocketnet_server_uring_destroy_wait_over( empty_rounds, rounds ) )
         {
             rounds++;
 
@@ -1473,15 +1582,45 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
 // the fill bank becomes the exposed bank the transport reads until the next
 // call, and the other bank is emptied as the new fill bank
 
+// re-arm every queue whose multishot is disarmed and not destroying, so a
+// re-arm that found no submission entry at the end of a multishot does not
+// silence the queue for good; each failed arm is counted
+
+static void rocketnet_server_uring_rearm_unarmed( struct rocketnet_server_uring_t * uring )
+{
+    for ( int i = 0; i < uring->num_queues; i++ )
+    {
+        struct rocketnet_server_uring_queue_t * queue = &uring->queues[i];
+        if ( !queue->armed && !uring->destroying )
+        {
+            if ( rocketnet_server_uring_arm( uring, i ) )
+                uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS]++;
+            else
+                uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED]++;
+        }
+    }
+}
+
 void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
+
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+    if ( uring->test_no_ring )
+    {
+        rocketnet_server_uring_rearm_unarmed( uring );
+        return;
+    }
+#endif
 
     if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == ROCKETNET_URING_RECEIVE_BUDGET &&
          rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
     {
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
     }
+
+    rocketnet_server_uring_rearm_unarmed( uring );
+
     rocketnet_server_uring_submit( uring );
 
     const int exposed_bank = uring->fill_bank;
