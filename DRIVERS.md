@@ -382,7 +382,7 @@ stdin, because the server stops when its stdin reaches end of file
 (server.c:150-165) and a guest run without a terminal starts there:
 
 ```sh
-vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
+vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from
@@ -436,30 +436,36 @@ when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
 a historical filter, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 
-`cmake/XdpSources.cmake` is the source list for staging, archiving, CMake rebuild
-dependencies and verification. Add a new runtime BPF source/header there; archive
-entries use basenames, which must be unique. The checker also exercises adding
-one future input to this list while unrelated files remain in staging.
+The XDP program is compiled at build time and loaded from memory. On Linux,
+`cmake/EmbedXdp.cmake` compiles `server_xdp/server_xdp.c` to `server_xdp.o`
+with a clang that has the BPF target (the flags of `server_xdp/Makefile`, plus
+flags that keep checkout paths out of the object) and
+embeds the object's bytes in `build/generated/rocketnet_server_xdp.h` as
+`rocketnet_server_xdp_o`. `rocketnet_server_socket_create` opens those bytes
+with `bpf_object__open_mem` and hands the object to libxdp with
+`xdp_program__from_bpf_obj`: the server host needs no compiler, `make`, kernel
+headers, temporary directory or child process. `test_xdp_filter` loads the same
+`server_xdp.o`. A configure without such a clang says
+`XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
+embeds a zero-length object, and the `xdp` create refuses with
+`could not load server_xdp program: this build has no server_xdp.o (no clang with the BPF target at configure time)`.
+macOS and Windows do not build the object.
 
-Windows uses the committed `sdk/rocketnet_server_xdp.h` without requiring xxd.
-Whenever a listed input changes, refresh that fallback on a development host
-with xxd, then run the same decoded-content check used by package tests and
-Windows CI:
+`cmake/XdpSources.cmake` lists the object's inputs: CMake recompiles the object
+when one changes, and `tools/check_xdp_archive.py` reads the same list. On Linux
+the checker compiles the object twice from copies of the sources at different
+paths, mtimes and umasks and requires identical bytes, requires the generated
+header to embed exactly the object, shows that a changed source changes the
+object, and fails when a build tree's embedded object differs from a fresh
+compile of the current sources (stale):
 
 ```sh
-cmake --build build --target rocketnet_xdp_header
-if ! python3 tools/check_xdp_archive.py --committed-only; then
-    cp build/generated/rocketnet_server_xdp.h sdk/rocketnet_server_xdp.h
-fi
-python3 tools/check_xdp_archive.py
+python3 tools/check_xdp_archive.py            # checks ./build when it exists
+python3 tools/check_xdp_archive.py --build <build-dir>
 ```
 
-`--committed-only` verifies the fallback without requiring xxd. The generated
-header must contain the exact generated archive bytes; the committed fallback's
-archive must contain the exact current source bytes, independently of archive
-timestamps and ownership metadata. The conditional copy avoids changing the
-fallback solely because archive metadata differs. CI compiles a fresh extraction
-of the archive, so a removed input cannot be supplied by old staging files.
+Elsewhere, and with `--committed-only`, it checks only that every listed input
+exists, which needs no compiler.
 Neither check loads a program or attaches to a network interface.
 
 The Linux connection-type label is an IPv4 main-table heuristic. It does not
