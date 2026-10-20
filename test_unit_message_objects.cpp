@@ -2390,10 +2390,17 @@ static void send_budget_env_overrides_config()
         mo_pair_teardown( &pair );
     }
     {
-        // a value that does not parse, or one above the maximum, refuses the create
+        // a value that does not parse, or one above the maximum, refuses the create.
+        // The refused create returns before its one allocation (sdk/rocketnet_message_server.cpp:218), and the harness
+        // link has no destroy (mo_link, line 353), so the endpoint mo_net_client made stays
+        // the harness's: it is freed here before slot 0 is used again, because
+        // mo_net_client overwrites net->clients[slot] (line 133) and mo_net_free frees only
+        // the endpoint left in each slot.
         mo_net_t * net = mo_net_new();
         mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
         check( mo_client_create( net, 0, &config, 0 ) == NULL );
+        delete net->clients[0];
+        net->clients[0] = NULL;
         mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "10000001" );
         check( mo_client_create( net, 0, &config, 0 ) == NULL );
         mo_net_free( net );
