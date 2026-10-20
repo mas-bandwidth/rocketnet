@@ -52,7 +52,8 @@ writes the reset inventory each field below stands for and cites this model.
 | `Deny`, `TokenExpires`, `Timer` | a denial during the handshake; the token expiring during the handshake; each stage's deadline and the connected timeout |
 | `ServerDisconnect`, `ClientDisconnect` | the server's disconnect; the client's disconnect from the handshake or connected |
 | `DisconnectFromError` | disconnect from an error state: back to DISCONNECTED, the reason kept |
-| `Send` | message start/finish, only while CONNECTED |
+| `Send` | message start/finish, only while CONNECTED (the `queuebeforeconnected` defect also enables it in a handshake state) |
+| `DropSend` | message start outside CONNECTED (`rocketnet_client_start_message` returns NULL and counts `ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS`; the message layer's `MESSAGE_SEND_NOT_CONNECTED`, `rn_message_object_start` in `sdk/rocketnet_message_server.cpp`): no per-connection field changes, nothing is held; the ghost `droppedIn` is `{st}` after a drop and `{}` after any other step (RN-2 m1.5) |
 | `ServerSend(s)`, `Deliver(s)`, `Lose(s)` | the server's packets of any session ever started, delivered, or lost; a packet opens only under the session keys it was sealed with |
 
 Every path out of a connection goes through `End`, which applies the one `Reset`. Reconnect is
@@ -71,6 +72,7 @@ the new session's first sequences (`replay_window`).
 | `TypeOK`, `CurrentOnlyWhileLive` | invariant | types; a session is in progress exactly in the live states |
 | `ConnectOnlyFromDisconnected` | invariant | connect succeeds only from DISCONNECTED |
 | `NoSendUnlessConnected` | invariant | no message is queued outside CONNECTED, and no send-side field is written outside it |
+| `DropLeavesNothing` | invariant | a drop happens only outside CONNECTED (and with an object), and outside CONNECTED no send-side field holds anything, so nothing dropped is sent once the connection reaches CONNECTED |
 | `ResetIsInit` | invariant | outside a connection every per-connection field is Init; the lifetime counter equals the connections this object made, and the config stays |
 | `RecordIsCurrent` | invariant | the record holds only Init and the current session's writes |
 | `ReconnectObservesNothing` | invariant | no packet of session s opens in session s' # s, and no step reads a field another session wrote |
@@ -83,8 +85,9 @@ the new session's first sequences (`replay_window`).
 |---|---|---|---|
 | `MCClientSessionUnreset.cfg` | `Defect = "unreset"`, `UnresetField = "replay_window"`: Reset skips the replay window | `ReconnectObservesNothing`, exit 12 | 13 states: create, connect, two handshake steps, a packet of session 1 opens (`replay_window = 1`), the client disconnects (the reset leaves `replay_window = 1`), connect again, two handshake steps, a packet of session 2 opens: `cur = 2`, `st = "SENDING_CONNECTION_RESPONSE"`, `observed = {"replay_window"}`. The new session's first packet is checked against session 1's window: the replay-window false reject. |
 | `MCClientSessionConnectAnywhere.cfg` | `Defect = "connectanywhere"`: connect succeeds in every state | `ConnectOnlyFromDisconnected`, exit 12 | 4 states: create, connect, connect again from the handshake: `cur = 2`, `st = "REQUESTING_COOKIE"`, `connectFrom = {"REQUESTING_COOKIE", "DISCONNECTED"}` |
+| `MCClientSessionQueueBeforeConnected.cfg` | `Defect = "queuebeforeconnected"`: `Send` also runs in a handshake state, a send queued before CONNECTED | `NoSendUnlessConnected`, exit 12 | 4 states: create, connect, a send in the first handshake stage: `st = "REQUESTING_COOKIE"`, `queuedIn = {"REQUESTING_COOKIE"}`, the send-side fields written with session 1's tag. In the code that is `rocketnet_client_start_message` after `rocketnet_client_connect` and before CONNECTED, which the message layer now drops (`DropSend`) instead of queueing |
 
-Both traces were read step by step against the defect each constant names. With the Unreset
+Every trace was read step by step against the defect each constant names. With the Unreset
 instance and `INVARIANT ResetIsInit` instead, TLC fails `ResetIsInit` at the first reset (8
 states: a denial after a packet of session 1 opened leaves `replay_window = 1` in
 `CONNECTION_DENIED`); that run is a bench check, not a recorded case. With `SPECIFICATION Spec` (no
@@ -98,9 +101,10 @@ case, one for witnesses, 110-second cap per case):
 
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
-| `MCClientSession.cfg` | pass | 70,880 | 8,044 | 6.949 | 0 |
-| `MCClientSessionUnreset.cfg` | `ReconnectObservesNothing` violated | 4,693 | 949 | 2.109 | 12 |
-| `MCClientSessionConnectAnywhere.cfg` | `ConnectOnlyFromDisconnected` violated | 11 | 8 | 1.599 | 12 |
+| `MCClientSession.cfg` | pass | 129,594 | 13,523 | 1.768 | 0 |
+| `MCClientSessionUnreset.cfg` | `ReconnectObservesNothing` violated | 8,531 | 1,551 | 0.750 | 12 |
+| `MCClientSessionConnectAnywhere.cfg` | `ConnectOnlyFromDisconnected` violated | 12 | 9 | 0.610 | 12 |
+| `MCClientSessionQueueBeforeConnected.cfg` | `NoSendUnlessConnected` violated | 14 | 14 | 0.609 | 12 |
 
 ## Bounds
 

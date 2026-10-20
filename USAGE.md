@@ -140,7 +140,7 @@ row per field of both public structs.
 | state_change_callback | none | `void (*)( void *, int, int )` | `NULL` | no environment form |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | no environment form |
 | game_clock_epoch | ROCKETNET_CLIENT_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
-| send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer, or above `10000000`: refuses the create; `0` or less disables the budget in this direction (not recommended) |
+| send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer, or above `10000000`: refuses the create; `0` or less sets the budget to its ceiling, `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s), NOT RECOMMENDED; each connection's starting rate |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_CLIENT_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
 | receive_ring_bytes | ROCKETNET_CLIENT_RECEIVE_RING_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
@@ -171,7 +171,7 @@ row per field of both public structs.
 | game_clock_epoch | ROCKETNET_SERVER_GAME_CLOCK_EPOCH | uint64_t | `0` (wall clock) | a non-integer: refuses the create |
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
-| per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` or less disables the budget in this direction (not recommended) |
+| per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` or less sets the budget to its ceiling, `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s), NOT RECOMMENDED; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_SERVER_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |
 | receive_ring_bytes | ROCKETNET_SERVER_RECEIVE_RING_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
@@ -318,6 +318,21 @@ connected client, loop over the slots with `rocketnet_server_client_connected`
 and start message and finish message for each. A destination id is a client index today
 (`uint64_t`); ids with `ROCKETNET_FLOW_ID_BIT` set are reserved for flows.
 
+A message is sent only on a connection that is CONNECTED, on the client and on
+the server alike: the client while `rocketnet_client_state` is
+`ROCKETNET_CLIENT_STATE_CONNECTED`, the server to an index for which
+`rocketnet_server_client_connected` is true. A send on any other connection (a
+client from create until CONNECTED, or after it disconnects; a server index
+below `max_clients` with no CONNECTED client, or a stopped server) is dropped:
+start message returns `NULL`, logs nothing and adds 1 to
+`ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS` or
+`ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS`, and finish message returns `0`.
+The drop is normal, never misuse, and nothing is held for a later send. A game
+that sends every frame needs no state check: the same `if ( out )` that covers
+the other `NULL` returns covers this one, and the first frame after CONNECTED
+carries the current state. A server index at or past `max_clients` is misuse,
+counted in `rocketnet_api_misuse_count`.
+
 The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
 `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_RELIABLE`,
 `ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`,
@@ -349,11 +364,16 @@ uint32_t queue_state( struct rocketnet_client_t * client, const uint8_t * state,
 }
 ```
 
-`rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` change a
-connection's budget at runtime. A value of `0` or less disables the budget in
-that direction, which is not recommended; a positive value up to
-`ROCKETNET_SEND_BUDGET_MAX_KBPS` caps it. Each returns `ROCKETNET_STATUS_OK`, or
-`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` above the maximum with the rate unchanged.
+The config's `send_kbps` and `per_client_send_kbps` set a connection's starting
+rate. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps`
+change a CONNECTED connection's budget at runtime. A value of `0` or less sets
+the budget to its ceiling, `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s), NOT
+RECOMMENDED; a positive value up to `ROCKETNET_SEND_BUDGET_MAX_KBPS` caps it.
+Each returns `ROCKETNET_STATUS_OK`, or `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`
+above the maximum with the rate unchanged. On a connection that is not
+CONNECTED (a client in a handshake state, a server slot with no CONNECTED
+client, a stopped server) each returns `ROCKETNET_STATUS_INVALID_ARGUMENT` and
+changes nothing; that is not misuse.
 
 ## Receiving messages
 
