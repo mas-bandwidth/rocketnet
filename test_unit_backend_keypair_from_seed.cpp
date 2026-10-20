@@ -135,7 +135,7 @@ static void backend_keypair_from_seed_assert_hook( const char *, const char *, c
 
 void backend_keypair_from_seed_null_refused()
 {
-    void ( *saved_assert )( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( backend_keypair_from_seed_assert_hook );
     backend_keypair_from_seed_asserts = 0;
 
