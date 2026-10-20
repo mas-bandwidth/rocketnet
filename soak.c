@@ -485,6 +485,14 @@ int main( int argc, char ** argv )
                     { printf( "PAYLOAD VERIFY FAILED at client (%d bytes)\n", received_bytes ); failures++; }
             }
         }
+        else
+        {
+            // the handshake replies update stages: a staged driver without
+            // ROCKETNET_DRIVER_FLUSH_ON_UPDATE (xdp) publishes them only at
+            // send_packets (sdk/rocketnet_server_transport.cpp:2009-2022), and
+            // with no server link simulator nothing else flushes them
+            rocketnet_server_transport_send_packets( server );
+        }
 
         if ( rocketnet_time() - last_report_time > 10.0 )
         {
