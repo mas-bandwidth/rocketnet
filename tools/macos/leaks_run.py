@@ -29,7 +29,7 @@ suite runner's own cap). The case names are read from the
 rocketnet_functional_tests table in functional/rocketnet_functional_tests.cpp;
 the table holds rows for other platforms behind #if, and a case this build
 does not hold answers "unknown functional test" with exit 2 on its plain run
-(functional/rocketnet_functional_tests.cpp:8697),
+(functional/rocketnet_functional_tests.cpp:8700),
 so the matrix lists it as SKIP and runs no leaks on it.
 
 Modes:
