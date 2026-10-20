@@ -60,12 +60,11 @@ config the gate reads, without creating a transport.
 The functional suite takes its loopback ports from the OS. Every loopback
 server and socket it opens binds port 0 and reads back the port the OS gave.
 An address that must carry a real port takes a free one from the OS through
-`rocketnet_test_free_port` (functional/harness.inc:228), which binds a
-scratch socket to `127.0.0.1:0`, reads the port, and closes it. Two
-`./bin/functional` runs may share a machine at the same time. The one
-exception is the root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`), which
-makes a fixed namespace and veth pair and binds port 40411 on it
-(functional/rocketnet_functional_tests.cpp:7213); it skips without root.
+`rocketnet_test_free_port`, which binds a scratch socket to
+`127.0.0.1:0`, reads the port, and closes it. Two `./bin/functional` runs
+may share a machine at the same time. The one exception is the root-only XDP
+veth case (`ROCKETNET_TEST_XDP_VETH`), which makes a fixed namespace and veth
+pair and binds port 40411 on it; it skips without root.
 
 Dependencies, per platform, as CI installs them:
 
@@ -198,8 +197,8 @@ is compiled into each SDK library with private symbol names; no sodium header,
 DLL or package is required by consumers. Dependency metadata contains no
 producer paths. Shared consumers inherit the Windows DLL import definition.
 The package accepts a request for any earlier or equal version of the same major
-version (`COMPATIBILITY SameMajorVersion`, `CMakeLists.txt:659`), so
-`find_package(RocketNet 1.0)` finds every later 1.x patch. The imported targets
+version (`COMPATIBILITY SameMajorVersion`), so `find_package(RocketNet 1.0)`
+finds every later 1.x patch. The imported targets
 hand a consumer no floating-point option and no memory-budget definition: the
 only compile definition they carry is `ROCKETNET_SHARED` on
 `RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
@@ -249,8 +248,7 @@ An incompatible layout or calling-contract change must increment
 do not require a revision change. Changes to public fields must also update the
 ABI metadata and native regression checks. The existing unsized C entry points still
 require matching headers and library; this does not make an old native binary
-safe to use with an arbitrary newer library. Sized evolution APIs remain a
-separate compatibility project.
+safe to use with an arbitrary newer library.
 
 ## History memory budget
 
@@ -539,9 +537,9 @@ for correct wire bytes today. The strict build is the family floor: contraction 
 architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-64 one), so
 float arithmetic near a wire diverges bit-wise between architectures without it. If you
 compile rocketnet's sources into your own build rather than linking the library, carry the same
-flag. The flag is private to rocketnet's own targets (`CMakeLists.txt:80` for the tree,
-`CMakeLists.txt:301` for each library): neither the installed package nor
-`add_subdirectory` passes it to your targets, whose floating-point flags stay your own.
+flag. The flag is private to rocketnet's own targets: neither the installed
+package nor `add_subdirectory` passes it to your targets, whose floating-point
+flags stay your own.
 The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
 (one rounding of `a*b+c` would change `0x00000000` to `0x33800000` / `0x3C90000000000000`),
 and `tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
