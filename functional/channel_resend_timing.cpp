@@ -14,7 +14,7 @@
     messages that never arrived (timeouts).
 
     Two schedules run on the same seed: "rule" is the shipped default
-    (min( rto, resend_interval ), no back-off) and "fixed" is a resend every
+    (the adaptive RTO, no back-off) and "fixed" is a resend every
     100 ms, set on the client's estimator (rto_min = rto_max = rto = 100 ms).
     The case prints the whole table beside the Monte Carlo model's p99 for
     the rule (one message's timeline, ack after RTT plus up to a tick), and
@@ -26,15 +26,15 @@
     - zero timeouts;
     - every resend gap, from the client's resend gap record (struct
       rn_resend_gaps_t, measured where rn_window_ack_commit sets last_send),
-      is at least the delay min( rto, resend_interval ) in force at the
+      is at least the adaptive RTO in force at the
       resend, and at most the delay in force at the update before plus one
-      tick; so no gap exceeds resend_interval plus one tick;
+      tick; the RTO follows max(rto_min, min(2*SRTT + 4*dev + 30 ms, rto_max));
     - ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS gaps of the largest size fit
       inside reliable_timeout (RNResendTiming AttemptsBeforeTimeout);
     - every message's latency is within its own ceiling: the one-way latency
       and its jitter, the harness floor of two ticks (a send waits for its
       update, a delivery is seen at the receiver's next one) and, for each
-      send of it before the one that arrived, resend_interval plus a tick.
+      send of it before the one that arrived, the preceding update's formula-derived RTO plus a tick.
 
     The p50, p99 and p99.9 columns are printed, not asserted. A p99 of 400
     samples is the fifth-slowest message, which moves by a whole resend when
@@ -94,6 +94,7 @@ struct resend_timing_row_t
     uint32_t gaps;                  // resends measured by the client's resend gap record
     double gap_min_ms;
     double gap_max_ms;
+    double rto_bound_ms;            // largest formula-derived RTO during the run
     double early_min_ms;            // min of gap - delay at the resend
     double late_max_ms;             // max of gap - delay at the update before
     double reliable_timeout_ms;
@@ -111,6 +112,14 @@ static double resend_timing_percentile( const double * sorted, int count, double
     if ( index >= count )
         index = count - 1;
     return sorted[index];
+}
+
+// Independent oracle: keep the assertion separate from the production helper.
+static double resend_timing_rto_bound( const rn_window_ack_t * ack )
+{
+    if ( !ack->has_rtt )
+        return ack->rto_initial;
+    return std::max( ack->rto_min, std::min( 2.0 * ack->srtt + 4.0 * ack->rttvar + 0.030, ack->rto_max ) );
 }
 
 static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_ms, int loss_percent, resend_timing_row_t * row )
@@ -155,6 +164,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     static uint8_t seen[RESEND_TIMING_MESSAGES];
     static double sends_at[RESEND_TIMING_MESSAGES][RESEND_TIMING_MAX_SENDS];
     static int sends[RESEND_TIMING_MESSAGES];
+    static double resend_ceiling_ms[RESEND_TIMING_MESSAGES][RESEND_TIMING_MAX_SENDS];
     memset( seen, 0, sizeof(seen) );
     memset( sends, 0, sizeof(sends) );
 
@@ -163,7 +173,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     memset( state, 0x5A, sizeof(state) );
 
     const double tick_ms = tick * 1000.0;
-    const double resend_interval_ms = (double) ROCKETNET_MESSAGE_RESEND_INTERVAL_MS;
+    double rto_bound_ms = resend_timing_rto_bound( ack ) * 1000.0;
     double ceiling_slack_ms = -1.0e30;
     int max_sends = 0;
 
@@ -185,7 +195,11 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         }
         rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof(state) );
 
+        const double previous_rto_ms = resend_timing_rto_bound( ack ) * 1000.0;
         up = rocketnet_channel_harness_pump( &h, tick );
+        const double current_rto_ms = resend_timing_rto_bound( ack ) * 1000.0;
+        resend_timing_check( fabs( ack->rto * 1000.0 - current_rto_ms ) <= 1e-6 );
+        rto_bound_ms = std::max( rto_bound_ms, current_rto_ms );
 
         // each send of each undelivered message: a send sets its number's
         // last_send to the update's time, at most once an update
@@ -200,6 +214,14 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
             if ( slot->number != number || slot->last_send != h.now )
                 continue;
             resend_timing_check( sends[i] < RESEND_TIMING_MAX_SENDS );
+            const int n = sends[i];
+            if ( n > 0 )
+            {
+                const double gap_ms = ( h.now - sends_at[i][n - 1] ) * 1000.0;
+                resend_timing_check( gap_ms >= current_rto_ms - 1e-6 );
+                resend_timing_check( gap_ms <= previous_rto_ms + tick_ms + 1e-6 );
+            }
+            resend_ceiling_ms[i][n] = n == 0 ? 0.0 : resend_ceiling_ms[i][n - 1] + previous_rto_ms + tick_ms;
             sends_at[i][sends[i]++] = h.now;
         }
 
@@ -222,7 +244,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
             resend_timing_check( k >= 1 );
             if ( k > max_sends )
                 max_sends = k;
-            const double ceiling_ms = ( latency + jitter ) * 1000.0 + 2.0 * tick_ms + (double) ( k - 1 ) * ( resend_interval_ms + tick_ms );
+            const double ceiling_ms = ( latency + jitter ) * 1000.0 + 2.0 * tick_ms + resend_ceiling_ms[index][k - 1];
             if ( message_ms - ceiling_ms > ceiling_slack_ms )
                 ceiling_slack_ms = message_ms - ceiling_ms;
         }
@@ -251,6 +273,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     row->gaps = gaps->count[0];
     row->gap_min_ms = gaps->gap_min[0] * 1000.0;
     row->gap_max_ms = gaps->gap_max[0] * 1000.0;
+    row->rto_bound_ms = rto_bound_ms;
     row->early_min_ms = gaps->early_min[0] * 1000.0;
     row->late_max_ms = gaps->late_max[0] * 1000.0;
     row->reliable_timeout_ms = ack->reliable_timeout * 1000.0;
@@ -291,7 +314,6 @@ void resend_timing_table_over_lossy_links()
     fflush( stdout );
 
     const double tick_ms = 1000.0 / 60.0;
-    const double resend_interval_ms = (double) ROCKETNET_MESSAGE_RESEND_INTERVAL_MS;
     const double eps_ms = 1e-6;
     for ( int s = 0; s < 2; s++ )
         for ( int r = 0; r < 4; r++ )
@@ -303,7 +325,7 @@ void resend_timing_table_over_lossy_links()
                 resend_timing_check( row->gaps > 0 );
                 resend_timing_check( row->early_min_ms >= -eps_ms );
                 resend_timing_check( row->late_max_ms <= tick_ms + eps_ms );
-                resend_timing_check( row->gap_max_ms <= resend_interval_ms + tick_ms + eps_ms );
+                resend_timing_check( row->gap_max_ms <= row->rto_bound_ms + tick_ms + eps_ms );
                 // the attempts rule: MIN_RESEND_ATTEMPTS of the largest gap fit inside reliable_timeout
                 resend_timing_check( (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * row->gap_max_ms <= row->reliable_timeout_ms );
                 // the rule, per message: within its own ceiling
@@ -329,10 +351,10 @@ void resend_timing_table_over_lossy_links()
     order, section 8, not the resend walk, and this case does not measure it.)
 
     Two schedules run on the same seed: "rto" is the shipped rule (a chunk
-    waits the RTO alone; a small record min( rto, resend_interval )) and
+    waits the RTO; a small record uses the same RTO) and
     "cap100" puts the chunks back on the 100 ms cap, set on the client's
     estimator (rto_max = rto_initial = rto = 100 ms, which leaves the small
-    records' delay at its 100 ms cap on this path). The case asserts: the
+    records' delay at 100 ms on this path). The case asserts: the
     block arrives whole in every run; under "rto" the client's wire bytes are
     at most 1.4 times the block's payload, and below the cap's; and the small
     messages beside the block are all delivered and never held behind its

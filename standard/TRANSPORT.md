@@ -346,7 +346,7 @@ Registry rules:
 | cookie key rotation | `60` | seconds | protocol value | [t12 Handshake: server](#t12) |
 | server redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
 | client redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
-| ack debt threshold | `64` | packets | protocol value | [t15 Acknowledgement](#t15) |
+| ack debt threshold | `1` | packet | send on the next update after an eliciting packet | [t15 Acknowledgement](#t15) |
 | used-token history per slot | `8` | entries | protocol value | [t12 Handshake: server](#t12) |
 
 The token identifier of a connect token is the BLAKE2b hash, of token
@@ -3282,13 +3282,12 @@ connection ack packet is opened, replay-marked and processed for its block like
 any other session packet, but MUST NOT add acknowledgement debt. This rule
 prevents acknowledgements from eliciting acknowledgements.
 
-An endpoint SHOULD send a standalone connection ack packet when its
-acknowledgement debt reaches the [t3 Constants and registries](#t3) (ack debt
-threshold row), and MAY send one sooner when fresh delivery information is
-useful. A sender MUST clear the debt when it sends any session packet that
-carries a block. A standalone acknowledgement contains the block and no
-packet-type data. It is an optimization for timely delivery notification;
-correctness does not depend on sending it.
+An endpoint MUST send an acknowledgement block on its next protocol update
+whenever acknowledgement debt is nonzero. If no other session packet carries
+the block on that update, it MUST send a standalone connection ack packet. A sender MUST clear
+the debt when it sends any session packet that carries a block. A standalone
+acknowledgement contains the block and no packet-type data. A type 8 packet
+does not add debt, so acknowledgements do not elicit acknowledgements.
 
 <a id="t15.5"></a>
 ### t15.5. Round-trip sampling
@@ -3615,14 +3614,25 @@ an input ([t1.4 Conventions](#t1.4)).
    rotation period of [t3 Constants and registries](#t3) and no longer.
 8. An endpoint MUST send the redundant disconnect packet count of
    [t3 Constants and registries](#t3) on a deliberate disconnect.
-9. An endpoint SHOULD send a standalone ack when its ack debt reaches the ack
-   debt threshold of [t3 Constants and registries](#t3), and MUST NOT delay an
-   ack past the next packet it sends.
-10. A server SHOULD enforce the handshake work budget after the cookie of a
+9. An endpoint MUST send an acknowledgement block on its next update when
+   ack debt is nonzero, using a standalone ack if no other session packet
+   carries it, and MUST NOT wait for a packet threshold or keep-alive cadence.
+10. A reliable-message sender MUST retransmit an unacknowledged message only
+    when its adaptive retransmission timeout (RTO) expires. Before any RTT
+    sample, the RTO is 2 seconds by default. For the first RTT sample, the
+    sender MUST set both its smoothed RTT and deviation to that sample. For
+    each later sample, deviation MUST move 5 percent toward the absolute
+    difference between the prior smoothed RTT and the sample, then smoothed
+    RTT MUST move 5 percent toward the sample.
+    The RTO is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
+    configured maximum (2 seconds by default) and raised to the configured
+    minimum (0 by default). A nonzero minimum is an implementation option.
+    The sender MUST NOT back off the RTO after retransmission.
+11. A server SHOULD enforce the handshake work budget after the cookie of a
     connection request validates and before any asymmetric operation. When it
     does, a request past the budget MUST be refused with no reply and counted
     as a refusal, and the budget MUST be reset at the start of each update.
-11. A server SHOULD apply the failed-signature budget before the signature
+12. A server SHOULD apply the failed-signature budget before the signature
     verification. When it does, a request from a source that has already
     failed in the current failed-signature window MUST be refused before the
     verification runs and counted as a refusal. The budget MUST NOT refuse a
@@ -3653,7 +3663,7 @@ input: the timing defaults above, in the order stated, each as a little-endian u
 0a 00 00 00 00 00 00 00 05 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00
 3c 00 00 00 00 00 00 00 0a 00 00 00 00 00 00 00
-0a 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00
+0a 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00
 00 04 00 00 00 00 00 00 5a 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00
 ```
@@ -4311,3 +4321,28 @@ blocks at readout. In a kernel dataplane the context is a CPU; in userspace
 it is a thread. Counters are monotonic and never reset, so a rate is derived
 by differencing two snapshots and a zero still means that the event never
 happened. See [t18 Error handling and counters](#t18).
+
+
+### Create-time maximum-RTO message reserve
+
+Each connection adds a local payload reserve to its configured message-region
+headroom at CREATE. Let `R = ceil(send_kbps * 125 * rto_max_ms / 1000)` bytes.
+Client and server creation use their respective resolved per-connection budgets,
+including an explicit creation override. Generic connection sizing conservatively
+uses the larger configured budget. A zero/unlimited budget has no finite reserve.
+
+The descriptor pool adds `ceil(R / 128)` entries. The 128-, 512-, and 1152-byte
+fixed pools add `ceil(R / 128)`, `ceil(R / 512)`, and `ceil(R / 1024)` chunks,
+respectively, including each chunk's four-byte link and alignment. The send-span
+arena adds R plus up to 15 padding bytes per 1153 payload bytes, rounded to 64.
+Receive-ring and reliable-window wire parameters do not change. This extends the
+historical headroom-only formula and default sizes above; runtime sizing reports
+the resulting total. All parts remain in the single allocator-hook allocation.
+
+The capacity guarantee assumes typical payload sizes of 128/512/1024 bytes in
+the corresponding fixed pools, or larger messages in the span arena. Arbitrarily
+tiny records can exhaust bounded descriptors or padding capacity; they retain
+MESSAGE_MEMORY_EXHAUSTED and disconnect behavior. Raising the runtime send budget
+after CREATE does not enlarge this allocation; configure the intended maximum
+budget before creation. The full-budget regression retains one maximum RTO of
+payload without acknowledgments at both default client and server budgets.
