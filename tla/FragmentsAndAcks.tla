@@ -14,11 +14,12 @@
 (* (sdk/rocketnet_fragment.cpp, rocketnet_reassembly_process_fragment).    *)
 (*                                                                         *)
 (* Sequences.  A spends session sequences in order: one per payload, a     *)
-(* block of cnt for a fragmented payload (fragment 0 rides the sequence    *)
-(* start_packet spent, the rest come from the block start_fragments        *)
-(* reserves), and a burn spends sequences nothing is ever sent on          *)
-(* (USAGE.md, "A fragmented payload spends far more than one").  The       *)
-(* sender stops at MaxSeq so the state space is finite.                    *)
+(* block of cnt for a fragmented payload (the client reserves fragment 0  *)
+(* at start_packet and the rest with start_fragments; the server reserves  *)
+(* the whole block after every output frame is ready), and a burn spends  *)
+(* sequences nothing is ever sent on (USAGE.md, "A fragmented payload *)
+(* spends far more than one"). The sender stops at MaxSeq so the state *)
+(* space is finite.                                                        *)
 (*                                                                         *)
 (* Payload ids.  A fragmented payload's id is a per-direction counter      *)
 (* that skips zero and wraps (next_fragment_payload_id, 1 + (raw-1) mod    *)
@@ -297,9 +298,12 @@ StartFragmented(cnt) ==
     /\ UNCHANGED <<receiverVars, burned, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
     /\ UNCHANGED <<bitsChecked, lastExpect, lastVisited>>
 
-\* A sequence spent and never sent: start_packet acquired a frame and the
-\* packet was aborted, or finish_packet returned zero on the wire route
-\* (USAGE.md, "Not every NULL from start_packet spends one").
+\* A sequence spent and never sent: a client start_packet takes it and then
+\* refuses (the client's send ring, arena or lease table), or an already-started
+\* client packet is aborted or its finish is refused. The server assigns its
+\* sequence only after finish accepts the payload and reserves every wire frame,
+\* so its refused starts, aborted starts and refused finishes spend none.
+\* USAGE.md, "Not every NULL from start_packet spends one".
 BurnOne ==
     /\ Burns
     /\ nextSeq <= MaxSeq

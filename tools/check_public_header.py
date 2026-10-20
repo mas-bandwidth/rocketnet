@@ -99,6 +99,39 @@ def compile_alone_cl():
             report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
 
 
+def check_channel_bound(compiler_c, compiler_cxx):
+    """Consumer overrides stay fixed; the complete SDK test build stays wide."""
+    variants = [("consumer", [], 32),
+                ("internal wide build", ["ROCKETNET_INTERNAL_WIDE_BUILD=1"], 512)]
+    with tempfile.TemporaryDirectory(prefix="rocketnet-channel-bound-") as directory:
+        source = Path(directory) / "bound.c"
+        for label, defines, expected in variants:
+            source.write_text('#include "rocketnet.h"\n'
+                              '#if ROCKETNET_MAX_CHANNELS != %d\n' % expected +
+                              '#error "channel bound does not match the library build"\n'
+                              '#endif\n')
+            if sys.platform == "win32":
+                try:
+                    compiler = msvc_tool("cl")
+                    environment = msvc_environment()
+                except (RuntimeError, OSError, KeyError, subprocess.CalledProcessError) as error:
+                    report(False, "(a) channel bound: no MSVC cl: %s" % error)
+                    return
+                commands = [("C", [compiler, "/nologo", "/Zs", "/W4", "/WX", "/Tc" + str(source)]),
+                            ("C++", [compiler, "/nologo", "/Zs", "/W4", "/WX", "/Tp" + str(source)])]
+                flags = ["/I" + str(HEADER.parent), "/DROCKETNET_MAX_CHANNELS=512"] + ["/D" + d for d in defines]
+            else:
+                environment = None
+                commands = [("C99", [compiler_c, "-std=c99", "-x", "c"]),
+                            ("C++11", [compiler_cxx, "-std=c++11", "-x", "c++"])]
+                flags = ["-pedantic", "-Wall", "-Wextra", "-Werror", "-fsyntax-only",
+                         "-I", str(HEADER.parent), "-DROCKETNET_MAX_CHANNELS=512"] + ["-D" + d for d in defines] + [str(source)]
+            for language, command in commands:
+                result = subprocess.run(command + flags, capture_output=True, text=True, env=environment)
+                detail = "" if result.returncode == 0 else ": " + (result.stderr + result.stdout).strip()
+                report(result.returncode == 0, "(a) %s channel bound is %d in %s%s" % (label, expected, language, detail))
+
+
 # (b) -----------------------------------------------------------------------
 
 def check_includes(text):
@@ -341,6 +374,7 @@ def main():
     raw = HEADER.read_text()
     print("%s: %d lines" % (HEADER.relative_to(ROOT) if ROOT in HEADER.parents else HEADER, len(raw.splitlines())))
     compile_alone(args.cc, args.cxx)
+    check_channel_bound(args.cc, args.cxx)
     check_includes(raw)
     check_declarations(raw)
     if not args.no_run:
