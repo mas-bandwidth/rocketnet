@@ -12,6 +12,8 @@
 #include <inttypes.h>
 #include <stddef.h>
 
+#include <sodium.h>
+
 // Layer 1, the region: docs/CHANNELS.md section 4, sized by section 14, the
 // send store checked by the section 4 tests.
 
@@ -1178,9 +1180,14 @@ void rn_arena_destroy( rn_arena_t * arena )
 {
     if ( !arena )
         return;
-    // a caller's block stays the caller's
-    if ( arena->owns_memory )
-        rocketnet_free( arena->context, arena );
+    // the regions hold message bytes: the whole arena, header to the last
+    // region, is wiped before it is freed or handed back. a caller's block
+    // stays the caller's
+    void * context = arena->context;
+    const int owns_memory = arena->owns_memory;
+    sodium_memzero( arena, (size_t) arena->bytes );
+    if ( owns_memory )
+        rocketnet_free( context, arena );
 }
 
 int rn_arena_num_regions( const rn_arena_t * arena )
