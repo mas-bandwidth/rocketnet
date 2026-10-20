@@ -864,7 +864,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
 
         const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
-        const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config };
+        int driver_status = ROCKETNET_STATUS_OK;
+        const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config, &driver_status };
         // the step-driven create (unit tests) opens the caller's operations
         // in place of the candidate's backend
         const rocketnet_client_driver_operations_t * operations = step_driven_operations ? step_driven_operations :
@@ -872,6 +873,20 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( rocketnet_client_driver_open( operations, step_driven_operations ? step_driven_driver_context : client_transport->context,
                 &driver_config, &bind_address, &client_transport->io ) )
             granted_driver = candidate;
+
+        // a rung that failed for want of memory is not a refusal: the create
+        // ends with OUT_OF_MEMORY and never falls to the next candidate
+        // (rocketnet_client_driver_config_t.status, sdk/rocketnet_driver.h);
+        // any other failed open is a refusal and falls
+
+        if ( granted_driver < 0 && driver_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
+        {
+            rocketnet_error( "client transport create: the %s transport could not allocate its endpoint", rocketnet_driver_name( candidate ) );
+            rocketnet_client_transport_destroy( client_transport );
+            if ( status )
+                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+            return NULL;
+        }
 
         if ( granted_driver < 0 )
         {
