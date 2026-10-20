@@ -1270,9 +1270,9 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
         return;
     if ( !server->running )
         return;
-    // every slot: the redundant disconnects and the slot's reset (EndClient);
-    // the disconnect packets are staged, so flush them before the transport
-    // goes
+    // one step, RUNNING to STOPPED (tla/ServerSession.tla Stop): each connected
+    // client gets the redundant disconnects, flushed before the transport
+    // goes, and every slot its reset (EndClient)
     rocketnet_server_disconnect_all_clients( server );
     rocketnet_message_server_send_packets( server->running );
     for ( int i = 0; i < server->max_clients; i++ )
