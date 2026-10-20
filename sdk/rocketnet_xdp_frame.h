@@ -284,13 +284,13 @@ static inline bool rocketnet_xdp_frame_parse(
         return false;
 
     // bytes past the UDP length (link-layer padding) are not payload; a UDP
-    // length past the frame end leaves the payload at the frame end (the
-    // kernel filter drops such a frame before redirect, in server_xdp_udp)
+    // length past the frame end is refused, as server_xdp_udp drops it
 
     const uint16_t udp_len = ( (uint16_t) f[header_bytes - 4] << 8 ) | f[header_bytes - 3];
     payload_bytes = (int) ( frame_bytes - header_bytes );
-    if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES < payload_bytes )
-        payload_bytes = (int) udp_len - ROCKETNET_UDP_HEADER_BYTES;
+    if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES > payload_bytes )
+        return false;
+    payload_bytes = (int) udp_len - ROCKETNET_UDP_HEADER_BYTES;
 
     *out_payload = f + header_bytes;
     *out_payload_length = payload_bytes;

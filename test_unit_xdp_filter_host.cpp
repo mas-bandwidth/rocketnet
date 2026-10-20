@@ -1408,6 +1408,25 @@ static void xdp_host_udp_length_drops()
         ip_short.frame.pad_bytes = 6;
         ip_short.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + ip_short.frame.payload_bytes - 4;
         rows.push_back( xdp_host_expect( ip_short, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+
+        // an IP length that names less than a UDP header, or one byte more
+        // than the frame holds, is malformed: the datagram to this server
+        // drops as too small rather than being judged by the frame end
+
+        xdp_host_row_t ip_zero = xdp_host_row( "IP length 0", families[f] );
+        ip_zero.frame.override_ip_len = 0;
+        rows.push_back( xdp_host_expect( ip_zero, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+
+        xdp_host_row_t ip_past = xdp_host_row( "IP length one byte past the frame", families[f] );
+        ip_past.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + ip_past.frame.payload_bytes + 1;
+        rows.push_back( xdp_host_expect( ip_past, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+
+        // to another port the same malformed length passes untouched
+
+        xdp_host_row_t ip_zero_other = xdp_host_row( "IP length 0 to another port", families[f] );
+        ip_zero_other.frame.override_ip_len = 0;
+        ip_zero_other.frame.port = xdp_host_server_port + 1;
+        rows.push_back( xdp_host_expect( ip_zero_other, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
     }
     xdp_host_run_rows( rows );
     // Also verify the host frame parser refuses corrupt/short UDP length
@@ -1422,6 +1441,21 @@ static void xdp_host_udp_length_drops()
 
         f.override_udp_len = 0;
         frame = xdp_host_frame_bytes( f );
+        rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame.data(), frame.size(), &from, &payload, &payload_len ) );
+    }
+
+    // a UDP length past the frame end is refused by the host parser too, in
+    // both families, as server_xdp_udp drops it
+
+    for ( int family = 4; family <= 6; family += 2 )
+    {
+        xdp_host_frame_t f;
+        f.family = family;
+        f.override_udp_len = 8 + f.payload_bytes + 20;
+        const std::vector<uint8_t> frame = xdp_host_frame_bytes( f );
+        rocketnet_address_t from;
+        const uint8_t * payload = NULL;
+        int payload_len = 0;
         rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame.data(), frame.size(), &from, &payload, &payload_len ) );
     }
 
@@ -1442,24 +1476,6 @@ static void xdp_host_udp_length_drops()
         rocketnet_unit_check( payload == frame.data() + frame.size() - f.pad_bytes - f.payload_bytes );
     }
 
-}
-
-static void xdp_queue_default_matches_memory_plan()
-{
-    rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
-
-    rocketnet_server_memory_plan_t plan;
-
-    config.num_xdp_queues = 0;
-    rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
-    rocketnet_unit_check( plan.worker_threads == 7 );
-    rocketnet_unit_check( plan.sockets == 7 );
-
-    config.num_xdp_queues = -1;
-    rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
-    rocketnet_unit_check( plan.worker_threads == 7 );
-    rocketnet_unit_check( plan.sockets == 7 );
 }
 
 #else // #if ROCKETNET_XDP_FILTER_HOST
@@ -1503,9 +1519,45 @@ XDP_HOST_SKIPPED( xdp_host_replay_drops_behind_the_window )
 XDP_HOST_SKIPPED( xdp_host_replay_never_writes_the_map )
 
 XDP_HOST_SKIPPED( xdp_host_udp_length_drops )
-XDP_HOST_SKIPPED( xdp_queue_default_matches_memory_plan )
 
 #endif // #if ROCKETNET_XDP_FILTER_HOST
+
+// The xdp driver's default queue rule: create and the memory plan take the
+// same count when num_xdp_queues is zero or negative. The xdp branch of
+// rocketnet_builtin_server_memory_plan exists on Linux only.
+
+#if defined(__linux__)
+
+#include "sdk/rocketnet.h"
+#include "sdk/rocketnet_memory.h"
+
+static void xdp_queue_default_matches_memory_plan()
+{
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+
+    rocketnet_server_memory_plan_t plan;
+
+    config.num_xdp_queues = 0;
+    rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
+    rocketnet_unit_check( plan.worker_threads == 7 );
+    rocketnet_unit_check( plan.sockets == 7 );
+
+    config.num_xdp_queues = -1;
+    rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
+    rocketnet_unit_check( plan.worker_threads == 7 );
+    rocketnet_unit_check( plan.sockets == 7 );
+}
+
+#else // #if defined(__linux__)
+
+static void xdp_queue_default_matches_memory_plan()
+{
+    printf( "xdp_queue_default_matches_memory_plan [SKIPPED the xdp memory plan is Linux only]\n" );
+    fflush( stdout );
+}
+
+#endif // #if defined(__linux__)
 
 REGISTER_UNIT_TEST( xdp_host_ipv4_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( xdp_host_ipv6_rocketnet_packet_redirects );

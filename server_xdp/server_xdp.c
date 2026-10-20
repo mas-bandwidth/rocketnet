@@ -397,11 +397,12 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
                     // the IP total length bounds the datagram when it names
                     // at least a UDP header and fits in the frame; otherwise
-                    // the frame end does
+                    // it is malformed, and zero bytes make server_xdp_udp
+                    // drop it as too small once the port and address match
 
                     const __u32 frame_udp_bytes = data_end - (void*)udp;
                     const __u32 ip_tot_len = __builtin_bswap16( ip->tot_len );
-                    __u32 ip_udp_bytes = frame_udp_bytes;
+                    __u32 ip_udp_bytes = 0;
                     if ( ip_tot_len >= sizeof(struct iphdr) + sizeof(struct udphdr) && ip_tot_len - sizeof(struct iphdr) <= frame_udp_bytes )
                         ip_udp_bytes = ip_tot_len - sizeof(struct iphdr);
 
@@ -431,11 +432,13 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
                     // the IPv6 payload length bounds the datagram when it
                     // names at least a UDP header and fits in the frame;
-                    // otherwise the frame end does
+                    // otherwise it is malformed, and zero bytes make
+                    // server_xdp_udp drop it as too small once the port and
+                    // address match
 
                     const __u32 frame_udp_bytes = data_end - (void*)udp;
                     const __u32 ip6_payload_len = __builtin_bswap16( ip6->payload_len );
-                    __u32 ip_udp_bytes = frame_udp_bytes;
+                    __u32 ip_udp_bytes = 0;
                     if ( ip6_payload_len >= sizeof(struct udphdr) && ip6_payload_len <= frame_udp_bytes )
                         ip_udp_bytes = ip6_payload_len;
 
