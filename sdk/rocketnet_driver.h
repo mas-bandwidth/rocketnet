@@ -102,6 +102,13 @@ struct rocketnet_server_driver_operations_t
     // failed send call, cumulative for the driver's life; the transport
     // surfaces it as SEND_FAILED when its counters are read.
     uint64_t (*send_failures)( void * driver );
+    // optional; main thread only. The datagrams the driver's own size pass
+    // dropped before the transport's prefilter saw them, cumulative for the
+    // driver's life: too_short below the smallest packet a server reads,
+    // too_large above the receive ceiling or truncated. The transport adds
+    // each one's growth to PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE when
+    // its counters are read (sdk/rocketnet_server_transport.cpp:2756-2765).
+    void (*receive_drops)( void * driver, uint64_t * too_short, uint64_t * too_large );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination

@@ -212,6 +212,13 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_replay_marks_t * replay_marks;
 
     struct rocketnet_counters_t counters;
+
+    // the driver's receive_drops totals as last read: each read adds only the
+    // growth since to PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE, which the
+    // protocol's own prefilter also counts into (sdk/rocketnet_server_protocol.cpp:1231)
+    uint64_t driver_receive_too_short = 0;
+    uint64_t driver_receive_too_large = 0;
+
     struct rocketnet_server_protocol_t protocol;
 
     // the portable path's buffers ride the struct on every platform now
@@ -2743,6 +2750,19 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     // SEND_FAILED is the driver's own cumulative count, assigned on read
     if ( server_transport->io.operations && server_transport->io.operations->send_failures )
         server_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = server_transport->io.operations->send_failures( server_transport->io.instance );
+    // a driver's own size pass drops before the prefilter sees a datagram:
+    // its growth lands on the prefilter size counters, so one oversize
+    // datagram reads PREFILTER_TOO_LARGE on every driver
+    if ( server_transport->io.operations && server_transport->io.operations->receive_drops )
+    {
+        uint64_t too_short = 0;
+        uint64_t too_large = 0;
+        server_transport->io.operations->receive_drops( server_transport->io.instance, &too_short, &too_large );
+        server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] += too_short - server_transport->driver_receive_too_short;
+        server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] += too_large - server_transport->driver_receive_too_large;
+        server_transport->driver_receive_too_short = too_short;
+        server_transport->driver_receive_too_large = too_large;
+    }
     return &server_transport->counters;
 }
 
