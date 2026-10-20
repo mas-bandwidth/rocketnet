@@ -776,7 +776,7 @@ processes and two packets make it checked once.
 **Files.** `sdk/rocketnet_server_socket_linux.cpp:2121-2229` (receive frames and pending
 return), `:2232-2247` (completions), `:2249-2356` (send batch), `:1762-1795, 1870-1897`
 (start, acquire, publish); `sdk/rocketnet_pending_frames.h:9-35`;
-`sdk/rocketnet_send_handoff.h:9-44`. CLAUDE.md:100-106 ranks the pending-return spill
+`sdk/rocketnet_send_handoff.h:9-57`. CLAUDE.md:100-106 ranks the pending-return spill
 first among known issues: it "has not been driven on hardware".
 
 **States.** Each receive frame is in one of `Fill` (kernel), `Rx` (kernel → user ring)
@@ -796,17 +796,18 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
   keeps the batch (`:2334-2355`).
 - Main thread: `send_packets` publishes a non-empty filling generation and acquires the
   next (`:1883-1897`). A fill thread may acquire on the slow path when both are queued
-  (`:1766-1775`). When no generation is free, `start_packet`'s slow path reopens the
-  newest queued generation and continues after its packets (`send_handoff.h:43`); the
-  front is never reopened.
+  (`:1766-1775`). The handoff's reopen (`send_handoff.h:43`) returns the newest queued
+  generation and never the front; `tla/SendHandoff.tla` checks the reopen rules. The
+  socket's acquire helper (`:2260-2271`) calls only acquire; no caller of reopen exists
+  in this tree yet.
 
 **Rules.**
 - `INV FrameConservation`: every UMEM frame has exactly one owner at every step
   (comment `:2159-2170`; `pending_frames.h:6-7`).
 - `INV ReleaseConsumedOnly`: the RX release covers exactly the consumed descriptors.
-- `INV HandoffNoOverwrite`: a full queue refuses new storage without overwriting a
-  queued generation (`send_handoff.h:8`); `tla/SendHandoff.tla` keeps the free,
-  filling and queued sets partitioned.
+- `INV HandoffNoOverwrite`: when every generation is queued, acquire returns -1 and
+  reopen returns the newest queued generation, never the front; a queued generation is
+  never overwritten or duplicated (`send_handoff.h:22-49`, `tla/SendHandoff.tla`).
 - `INV ReopenedPrivate`: the generation reopen hands back is no longer queued and is
   never the one in flight (`send_handoff.h:43`, `tla/SendHandoff.tla`).
 - `INV FrontNeverReopened`: reopen takes the newest queued generation, never the front
