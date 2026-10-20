@@ -8,6 +8,15 @@ Each pair runs in its own fresh temporary working directory on a free UDP
 port it picks and passes through ROCKETNET_EXAMPLE_PORT, so two runs at once
 never collide; a server that fails to bind is retried on a new port, at most
 three tries.
+Every example that runs alone also runs in its own fresh temporary working
+directory, so files it writes (example_soak writes soak-results.tsv) never
+collide between two runs.
+example_soak runs with --clients 64 (SINGLE_ARGS): its default is 1000
+in-process clients (examples/soak.c:121), which peaks near 8 GB of resident
+memory and is killed by an 8 GB process-tree cap when two runs go at once.
+At 64 clients each example stays well under 1 GB, so two runs at once stay
+under 4 GB together. The 1000-client proof is the soak matrix, not this
+script.
 Each process gets a 120-second timeout and must exit 0 with PASS as its last
 line. Prints one PASS example_<name> line per example; exits 1 on a failure.
 """
@@ -26,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 TIMEOUT_SECONDS = 120
 PORT_TRIES = 3
+SINGLE_ARGS = {"soak": ["--clients", "64"]}
 
 
 def binary_dirs(build, config):
@@ -74,16 +84,20 @@ def check_result(label, result):
 
 
 def run_single(name, binary):
+    workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{name}_")
     try:
         result = subprocess.run(
-            [str(binary)],
+            [str(binary)] + SINGLE_ARGS.get(name, []),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=TIMEOUT_SECONDS,
+            cwd=workdir,
         )
     except subprocess.TimeoutExpired:
         return failure(name, f"timed out after {TIMEOUT_SECONDS}s")
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
     return check_result(name, result)
 
 
