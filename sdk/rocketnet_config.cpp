@@ -17,6 +17,8 @@
 #include <errno.h>
 #include <inttypes.h>
 
+#include <sodium.h>
+
 // ----------------------------------------------------------------
 //              the tables, expanded into everything derived
 // ----------------------------------------------------------------
@@ -640,6 +642,10 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
                 const bool decoded_whole = decoded_bytes == field->size;
                 if ( decoded_whole )
                     memcpy( base, decoded, (size_t) field->size );
+                // the staging holds the decoded bytes, a secret key's among
+                // them, on the parse and on a refused decode alike: wiped
+                // before either exit
+                sodium_memzero( decoded, sizeof(decoded) );
                 ROCKETNET_CONFIG_DECODE_STAGING_SEEN( decoded, field->size );
                 if ( !decoded_whole )
                 {

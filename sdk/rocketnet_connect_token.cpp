@@ -326,6 +326,8 @@ int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private
                                server_public_key,
                                server_secret_key ) != 0 )
     {
+        // the refused exit wipes the staging as the open exit does
+        sodium_memzero( private_block, sizeof(private_block) );
         ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof(private_block), 1 );
         return 0;
     }
