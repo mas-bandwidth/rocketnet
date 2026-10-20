@@ -2587,7 +2587,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
         server_transport->stats_pending_packets_sent = 0;
         server_transport->stats_pending_bytes_sent = 0;
 
-        // RNDriverSendStaging.SendPackets: XDP may retain the producer
+        // RNDriverSendStaging.Publish: XDP may retain the producer
         // generation while its worker owns the other buffer. Re-flush even
         // without a new commit so worker retirement cannot strand that work.
 
