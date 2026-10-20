@@ -33,3 +33,26 @@ template<size_t Capacity> struct rocketnet_pending_frames_t
         return true;
     }
 };
+
+// One pass over the RX descriptors a peek returned: peeked of them, the first
+// at ring index index. While staging_full() is false, take(index + i, taken)
+// hands descriptor i to the staging buffer; the pass stops at the first full
+// check. The peek advanced the ring's cached consumer past every peeked
+// descriptor, so cancel(peeked - taken) moves it back over the descriptors
+// not taken: the next peek returns them first, and the caller's
+// release(taken) returns exactly the descriptors read. Returns taken.
+// Shared by the XDP worker and test_unit_xdp_receive_ring.cpp; the ring's
+// frame ownership is modelled in tla/RNXdpReceiveRing.tla.
+template<class Full, class Take, class Cancel>
+uint32_t rocketnet_xdp_receive_take(uint32_t index, uint32_t peeked, Full staging_full, Take take, Cancel cancel)
+{
+    uint32_t taken = 0;
+    for (uint32_t i = 0; i < peeked; ++i)
+    {
+        if (staging_full()) break;
+        take(index + i, taken);
+        ++taken;
+    }
+    if (taken < peeked) cancel(peeked - taken);
+    return taken;
+}

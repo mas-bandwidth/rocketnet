@@ -2631,31 +2631,25 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
             // receive packets
 
-            // How many descriptors this pass actually took. The loop below can
-            // stop early when the staging buffer fills, and everything after
-            // this point -- the release, the refill, the pending-return spill --
-            // must cover exactly that many, not the number peeked. Releasing
-            // more would hand the kernel uninitialized stack as umem addresses:
-            // rejected (leaking the frame forever) or in range and aliasing a
-            // LIVE frame, which is the packet corruption the shouty comment at
-            // rocketnet_constants.h:22 warns about.
-            //
-            // Descriptors left unconsumed stay in the ring and come back on the
-            // next peek, which is the correct AF_XDP behaviour when a consumer
-            // cannot keep up.
-            uint32_t num_consumed = 0;
+            // The pass takes descriptors while the staging buffer has room
+            // (rocketnet_xdp_receive_take, rocketnet_pending_frames.h:47). The
+            // peek above advanced the ring's cached consumer past all
+            // num_packets descriptors; the pass cancels the ones it did not
+            // take (rocketnet_pending_frames.h:56, xsk_ring_cons__cancel
+            // below), so the next peek returns them first, and the release
+            // below, the refill and the pending-return spill cover exactly
+            // num_consumed. The frame ownership is modelled in
+            // tla/RNXdpReceiveRing.tla.
 
             uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
 
-            for ( uint32_t i = 0; i < num_packets; i++ ) 
+            const uint32_t num_consumed = rocketnet_xdp_receive_take( receive_index, num_packets,
+                [&]() { return receive_buffer->num_packets >= ROCKETNET_XDP_RECV_QUEUE_SIZE; },
+                [&]( uint32_t ring_index, uint32_t slot )
             {
-                if ( receive_buffer->num_packets >= ROCKETNET_XDP_RECV_QUEUE_SIZE )
-                    break;
+                const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, ring_index );
 
-                const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
-
-                frame[num_consumed] = desc->addr;
-                num_consumed++;
+                frame[slot] = desc->addr;
 
                 uint8_t * __restrict__ packet_data = (uint8_t*)socket->buffer + desc->addr;
 
@@ -2685,7 +2679,8 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                     receive_buffer->num_packets++;
                 }
-            }
+            },
+                [&]( uint32_t count ) { xsk_ring_cons__cancel( &socket->receive_queue, count ); } );
 
             rocketnet_platform_mutex_release( &socket->receive_mutex );
 
