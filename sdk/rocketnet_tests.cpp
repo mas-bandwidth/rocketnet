@@ -8080,6 +8080,9 @@ static bool rocketnet_test_name_in( const char * name, const char * const * list
 
 #define RN_TEST_ONE_MISUSE( call ) do { const uint64_t misuse_before = rocketnet_api_misuse_count(); call; rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 ); } while ( 0 )
 
+// destroy on NULL is silent, as free(NULL) is: no misuse counted, no assert fired
+#define RN_TEST_SILENT_NULL( call ) do { const uint64_t misuse_before = rocketnet_api_misuse_count(); const int asserts_before = rocketnet_test_null_asserts; call; rocketnet_check( rocketnet_api_misuse_count() == misuse_before ); rocketnet_check( rocketnet_test_null_asserts == asserts_before ); } while ( 0 )
+
 void rocketnet_test_public_api_null()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
@@ -8110,7 +8113,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( (rocketnet_client_default_config_sized)( NULL, 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_client_default_config_sized)( NULL, sizeof( client_config ) ) != ROCKETNET_STATUS_OK ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_connect( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
-    RN_TEST_ONE_MISUSE( rocketnet_client_destroy( NULL ) );
+    RN_TEST_SILENT_NULL( rocketnet_client_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_update( NULL, 1000.0 ) == ROCKETNET_UPDATE_OK ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_send_packets( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
@@ -8133,7 +8136,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_server_default_config_sized)( NULL, sizeof( server_config ) ) != ROCKETNET_STATUS_OK ) );
     RN_TEST_ONE_MISUSE( (rocketnet_server_dev_config_sized)( NULL, 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_server_create_sized)( NULL, NULL, NULL, 0, NULL, 0, NULL ) == NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_server_destroy( NULL ) );
+    RN_TEST_SILENT_NULL( rocketnet_server_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_running( NULL ) == 0 ) );
@@ -8199,11 +8202,24 @@ void rocketnet_test_public_api_null()
 }
 
 // The version is one integer, and the library and the header agree on it.
+// The text form is the integers plus the prerelease: "1.0.0-preview-1" for
+// v1.0.0-preview-1, "1.0.0" for a final release, "dev" in a development build.
 
 void rocketnet_test_version_is_one_integer()
 {
     rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
     rocketnet_check( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
+#if ROCKETNET_DEVELOPMENT
+    rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, "dev" ) == 0 );
+    rocketnet_check( strcmp( ROCKETNET_VERSION_PRERELEASE, "" ) == 0 );
+#else // #if ROCKETNET_DEVELOPMENT
+    char expected[64];
+    if ( ROCKETNET_VERSION_PRERELEASE[0] != '\0' )
+        snprintf( expected, sizeof( expected ), "%d.%d.%d-%s", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH, ROCKETNET_VERSION_PRERELEASE );
+    else
+        snprintf( expected, sizeof( expected ), "%d.%d.%d", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH );
+    rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, expected ) == 0 );
+#endif // #if ROCKETNET_DEVELOPMENT
 }
 
 void rocketnet_test_public_api_null_is_a_counted_no_op()

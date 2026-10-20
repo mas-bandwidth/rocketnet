@@ -259,31 +259,39 @@ static void server_serves_ipv4_and_ipv6_clients_on_one_port()
     for ( int step = 0; step < 400 && ( got_ipv4 < 1 || got_ipv6 < 1 || got_from_ipv4 < 1 || got_from_ipv6 < 1 ); step++ )
     {
         both_families_pump( server, ipv4, ipv6, &time );
-        const uint8_t * data = NULL;
-        int bytes = 0;
-        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( server, &batch ) )
         {
-            check( bytes == 4 && memcmp( data, from_ipv4, 4 ) == 0 );
-            rocketnet_server_release_message( server, 0, data );
-            got_from_ipv4++;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                check( batch.channel[i] == 0 && batch.bytes[i] == 4 );
+                if ( batch.client_index[i] == 0 )
+                {
+                    check( memcmp( batch.data[i], from_ipv4, 4 ) == 0 );
+                    got_from_ipv4++;
+                }
+                else
+                {
+                    check( batch.client_index[i] == 1 && memcmp( batch.data[i], from_ipv6, 4 ) == 0 );
+                    got_from_ipv6++;
+                }
+            }
         }
-        while ( rocketnet_server_receive_message( server, 1, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_messages( ipv4, &batch ) )
         {
-            check( bytes == 4 && memcmp( data, from_ipv6, 4 ) == 0 );
-            rocketnet_server_release_message( server, 1, data );
-            got_from_ipv6++;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                check( batch.channel[i] == 0 && batch.bytes[i] == 4 && memcmp( batch.data[i], to_ipv4, 4 ) == 0 );
+                got_ipv4++;
+            }
         }
-        while ( rocketnet_client_receive_message( ipv4, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_messages( ipv6, &batch ) )
         {
-            check( bytes == 4 && memcmp( data, to_ipv4, 4 ) == 0 );
-            rocketnet_client_release_message( ipv4, data );
-            got_ipv4++;
-        }
-        while ( rocketnet_client_receive_message( ipv6, 0, &data, &bytes ) )
-        {
-            check( bytes == 4 && memcmp( data, to_ipv6, 4 ) == 0 );
-            rocketnet_client_release_message( ipv6, data );
-            got_ipv6++;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                check( batch.channel[i] == 0 && batch.bytes[i] == 4 && memcmp( batch.data[i], to_ipv6, 4 ) == 0 );
+                got_ipv6++;
+            }
         }
     }
     check( got_from_ipv4 == 1 && got_from_ipv6 == 1 && got_ipv4 == 1 && got_ipv6 == 1 );
