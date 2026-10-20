@@ -38,6 +38,10 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
 
+// Defined beside the builtin operation tables in rocketnet_driver_builtin.cpp.
+bool rocketnet_server_driver_receive_drops( const struct rocketnet_server_driver_operations_t * operations,
+                                           void * driver, uint64_t * too_short, uint64_t * too_large );
+
 // The capacity-aware receive entry's declaration lives beside its definition
 // in sdk/rocketnet_server_protocol.cpp; the transport passes the size of the
 // payload buffer it hands over.
@@ -223,6 +227,7 @@ struct rocketnet_server_transport_t
     int driver;
 
     rocketnet_server_driver_t io;
+    uint64_t driver_faults;                     // a receive count or byte count this update refused
 
     // the kernel replay marks: allocated only when the granted driver reports
     // the replay capability, written from the update walk and committed to the
@@ -230,6 +235,13 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_replay_marks_t * replay_marks;
 
     struct rocketnet_counters_t counters;
+
+    // the driver's receive_drops totals as last read: each read adds only the
+    // growth since to PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE, which the
+    // protocol's own prefilter also counts into (sdk/rocketnet_server_protocol.cpp:1255)
+    uint64_t driver_receive_too_short = 0;
+    uint64_t driver_receive_too_large = 0;
+
     struct rocketnet_server_protocol_t protocol;
 
     // the portable path's buffers ride the struct on every platform now
@@ -1859,11 +1871,29 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                                                         receive_buffer->packet_bytes,
                                                                         batch_capacity );
 
+        // a count past the slots asked for, or a byte count that is negative
+        // or past the stride, is a driver fault and is not a received packet
+        if ( num_received < 0 )
+        {
+            server_transport->driver_faults++;
+            num_received = 0;
+        }
+        else if ( num_received > batch_capacity )
+        {
+            server_transport->driver_faults++;
+            num_received = batch_capacity;
+        }
+
         for ( int i = 0; i < num_received; i++ )
         {
             struct rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
             const int packet_bytes = receive_buffer->packet_bytes[i];
+            if ( packet_bytes < 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            {
+                server_transport->driver_faults++;
+                continue;
+            }
 
             server_transport->stats_frames[stats_index].packets_received++;
             server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( from.type ) );
@@ -2778,6 +2808,18 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     // SEND_FAILED is the driver's own cumulative count, assigned on read
     if ( server_transport->io.operations && server_transport->io.operations->send_failures )
         server_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = server_transport->io.operations->send_failures( server_transport->io.instance );
+    // a driver's own size pass drops before the prefilter sees a datagram:
+    // its growth lands on the prefilter size counters, so one oversize
+    // datagram reads PREFILTER_TOO_LARGE on every driver
+    uint64_t too_short = 0;
+    uint64_t too_large = 0;
+    if ( rocketnet_server_driver_receive_drops( server_transport->io.operations, server_transport->io.instance, &too_short, &too_large ) )
+    {
+        server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] += too_short - server_transport->driver_receive_too_short;
+        server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] += too_large - server_transport->driver_receive_too_large;
+        server_transport->driver_receive_too_short = too_short;
+        server_transport->driver_receive_too_large = too_large;
+    }
     return &server_transport->counters;
 }
 
