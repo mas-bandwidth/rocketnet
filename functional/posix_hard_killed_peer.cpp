@@ -840,18 +840,19 @@ static const posix_seam_case_t posix_seam_cases[] =
     { "test_posix_receive_seam_unknown_errno_pauses_msgx", 0 },
 };
 
-#define POSIX_HK_NUM_CELL_CASES ( 3 * 2 * 2 * 3 )
+#define POSIX_HK_NUM_SERVERS ( (int) ( sizeof(posix_hk_servers) / sizeof(posix_hk_servers[0]) ) )
+#define POSIX_HK_NUM_CELL_CASES ( 3 * POSIX_HK_NUM_SERVERS * 2 * 2 )
 #define POSIX_HK_NUM_SEAM_CASES ( (int) ( sizeof(posix_seam_cases) / sizeof(posix_seam_cases[0]) ) )
 
 static char posix_hk_names[POSIX_HK_NUM_CELL_CASES][96];
 
 static void posix_hk_cell_of( int index, int * kind, posix_hk_cell_t * cell )
 {
-    // index = ( ( kind * 3 + server ) * 2 + family ) * 2 + client
+    // index = ( ( kind * POSIX_HK_NUM_SERVERS + server ) * 2 + family ) * 2 + client
     const int client = index % 2;
     const int family = ( index / 2 ) % 2;
-    const int server = ( index / 4 ) % 3;
-    *kind = index / 12;
+    const int server = ( index / 4 ) % POSIX_HK_NUM_SERVERS;
+    *kind = index / ( 4 * POSIX_HK_NUM_SERVERS );
     cell->server = posix_hk_servers[server];
     cell->ipv6 = family == 1;
     cell->client = posix_hk_clients[client];
