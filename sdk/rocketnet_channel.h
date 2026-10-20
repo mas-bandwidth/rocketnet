@@ -328,12 +328,12 @@ struct rn_ordered_t
 
 // Binds the whole path to one connection's carved region. `config` is the
 // connection's message config (NULL: the defaults), `budget` the connection's
-// send budget (NULL: unbudgeted), max_packets_per_update at most
+// send budget (NULL: unbudgeted), packets_per_update at most
 // ROCKETNET_PACKET_BUILDER_MAX_PACKETS, payload_capacity the frame payload
 // bytes. The region is carved already; nothing is allocated.
 
 bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region, const struct rocketnet_message_config_t * config,
-                      struct rocketnet_send_budget_t * budget, int max_packets_per_update, int payload_capacity );
+                      struct rocketnet_send_budget_t * budget, int packets_per_update, int payload_capacity );
 
 // RNChannel!WritePacket for one update. Resends first (the oldest due
 // number, then each number numbered and never sent), then new messages, each

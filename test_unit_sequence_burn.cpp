@@ -20,7 +20,7 @@
 // the ack blocks (every real packet acked, no unknown sequence), the loss
 // counters and stats, rtt, the replay window (every later packet delivered,
 // none refused), and on the message layer the reliable channel's resends and
-// the RTO estimate. The lease table is not driven here: on the loopback driver
+// the resend delay estimate. The lease table is not driven here: on the loopback driver
 // a fill phase holds at most the payload ring's 256 frames plus
 // ROCKETNET_SEND_ARENA_SLOTS arena frames, below its refusal point (half its
 // capacity, sdk/rocketnet_packet_lease.h:37). The server assigns the sequence
@@ -672,7 +672,7 @@ static void sequence_burn_server_unreserved_fragment_finish_does_not_count_as_lo
 }
 REGISTER_UNIT_TEST( sequence_burn_server_unreserved_fragment_finish_does_not_count_as_loss );
 
-// ---- the reliable channel and its RTO over real refused starts -------------
+// ---- the reliable channel and its resend delay over real refused starts -------------
 //
 // The message layer on the same loopback pair, default message config. Each
 // round the burning side sends one 8-byte reliable ordered message, and every
@@ -688,8 +688,8 @@ REGISTER_UNIT_TEST( sequence_burn_server_unreserved_fragment_finish_does_not_cou
 // The layer's write pass then treats the frame as not started
 // (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1100) and writes the
 // rest next update. The control run is the same traffic with no seam. Measured
-// on the burning side: reliable records resent on the RTO (MESSAGE_RESENT),
-// the ordered window's srtt, rttvar and rto; on the peer: every reliable
+// on the burning side: reliable records resent on the resend delay (MESSAGE_RESENT),
+// the ordered window's srtt, rttvar and resend_delay; on the peer: every reliable
 // message received, in order, and no duplicate.
 
 #define BURN_MESSAGE_ROUNDS 40
@@ -716,7 +716,7 @@ struct sequence_burn_message_measures_t
     uint64_t duplicate;             // MESSAGE_DUPLICATE on the receiver
     double srtt;
     double rttvar;
-    double rto;
+    double resend_delay;
 };
 
 // the seam: armed for one update, it fills the ring and lets the layer's own
@@ -911,7 +911,7 @@ static void sequence_burn_message_run( int side, bool burn, struct sequence_burn
     const struct rn_window_ack_t * ack = &sender->connections[0].ordered.ack;
     m->srtt = ack->srtt;
     m->rttvar = ack->rttvar;
-    m->rto = ack->rto;
+    m->resend_delay = ack->resend_delay;
 
     sequence_burn_message_pair_teardown( &pair );
 }
@@ -921,10 +921,10 @@ static void sequence_burn_message_print( const char * name, const struct sequenc
     if ( getenv( "ROCKETNET_SEQUENCE_BURN_PRINT" ) == NULL )
         return;
     printf( "BURN %-22s reliable_sent=%d reliable_received=%d large_sent=%d large_received=%d in_order=%d layer_refused=%d "
-            "ring_full=%llu resent=%llu duplicate=%llu srtt=%.6f rttvar=%.6f rto=%.6f\n",
+            "ring_full=%llu resent=%llu duplicate=%llu srtt=%.6f rttvar=%.6f resend_delay=%.6f\n",
             name, m->reliable_sent, m->reliable_received, m->large_sent, m->large_received, m->reliable_in_order,
             m->layer_refused, (unsigned long long) m->ring_full, (unsigned long long) m->resent,
-            (unsigned long long) m->duplicate, m->srtt, m->rttvar, m->rto );
+            (unsigned long long) m->duplicate, m->srtt, m->rttvar, m->resend_delay );
 }
 
 static void sequence_burn_message_compare( int side, const char * name )
@@ -958,14 +958,15 @@ static void sequence_burn_message_compare( int side, const char * name )
     rocketnet_unit_check( burned.resent <= control.resent );
     rocketnet_unit_check( burned.duplicate <= control.duplicate );
 
-    // the RTO estimate: a refused start delays one packet by one update
+    // the resend delay estimate: a refused start delays one packet by one update
     // (10 ms here), so the samples differ by less than a step; the burned
     // sequences add no sample and no back-off
     rocketnet_unit_check( fabs( burned.srtt - control.srtt ) < 0.01 );
-    rocketnet_unit_check( fabs( burned.rto - control.rto ) < 0.01 );
+    const double resend_delay_difference_bound = 2.0 * fabs( burned.srtt - control.srtt ) + 4.0 * fabs( burned.rttvar - control.rttvar ) + 1e-9;
+    rocketnet_unit_check( fabs( burned.resend_delay - control.resend_delay ) <= resend_delay_difference_bound );
 }
 
-static void sequence_burn_server_reliable_and_rto_unchanged() { sequence_burn_message_compare( BURN_SIDE_SERVER, "server.message" ); }
-REGISTER_UNIT_TEST( sequence_burn_server_reliable_and_rto_unchanged );
-static void sequence_burn_client_reliable_and_rto_unchanged() { sequence_burn_message_compare( BURN_SIDE_CLIENT, "client.message" ); }
-REGISTER_UNIT_TEST( sequence_burn_client_reliable_and_rto_unchanged );
+static void sequence_burn_server_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_SERVER, "server.message" ); }
+REGISTER_UNIT_TEST( sequence_burn_server_reliable_and_resend_delay_unchanged );
+static void sequence_burn_client_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_CLIENT, "client.message" ); }
+REGISTER_UNIT_TEST( sequence_burn_client_reliable_and_resend_delay_unchanged );

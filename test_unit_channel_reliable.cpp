@@ -96,9 +96,9 @@ static void reliable_test_config( rocketnet_message_config_t * config )
     config->receive_ring_bytes = 262144;
     config->max_message_bytes = 262144;
     config->send_buffer_bytes = 800000;
-    config->rto_min_ms = 20;
-    config->rto_initial_ms = 100;
-    config->rto_max_ms = 400;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_max_ms = 400;
 }
 
 static void reliable_exactly_once_any_order_under_loss_dup_reorder()

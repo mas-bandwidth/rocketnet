@@ -426,11 +426,13 @@ static void check_component_create_sweeps( allocator_state & state )
         [&]() { return rocketnet_encryption_map_create( &state, 16 ); },
         []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 6 );
 
-    // 2. rocketnet_used_token_history_create: 7 allocations (fail N=1..7, succeed N=8).
+    // 2. rocketnet_used_token_history_create: 17 allocations (fail N=1..17, succeed N=18).
+    //    the history holder plus two independent eight-allocation tables, the
+    //    response-binding table and the request-claim table.
     check( sweep_component_create<rocketnet_used_token_history_t>(
         state,
         [&]() { return rocketnet_used_token_history_create( &state, 16 ); },
-        []( rocketnet_used_token_history_t * h ) { rocketnet_used_token_history_destroy( h ); } ) == 7 );
+        []( rocketnet_used_token_history_t * h ) { rocketnet_used_token_history_destroy( h ); } ) == 17 );
 
     // 4. rocketnet_client_slots_create: 9 allocations (fail N=1..9, succeed N=10).
     check( sweep_component_create<rocketnet_client_slots_t>(

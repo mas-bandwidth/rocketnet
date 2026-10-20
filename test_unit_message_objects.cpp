@@ -397,11 +397,11 @@ static void mo_config( rocketnet_message_config_t * config )
     config->send_buffer_bytes = 65536;
     config->send_queue_messages = 64;
     config->packets_in_flight = 64;
-    config->max_packets_per_update = 8;
+    config->packets_per_update = 8;
     config->unreliable_deliveries = 64;
-    config->rto_initial_ms = 100;
-    config->rto_min_ms = 20;
-    config->rto_max_ms = 400;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_max_ms = 400;
     config->reliable_timeout_ms = 120000;
 }
 
@@ -903,11 +903,16 @@ static void mo_end_to_end_up()
     std::vector<uint32_t> got_ordered[MO_MAX_SLOTS][4];
     uint32_t unreliable_sent = 0, unreliable_got = 0;
 
+    uint32_t loss_random = 0x12345678u; // fixed seed: reproducible 1/7 random loss
     for ( int round = 0; round < 120; round++ )
     {
         // loss: every fifth round drops everything one way
         pair.net->drop_to_server = ( round % 5 ) == 2;
-        pair.net->drop_to_client = ( round % 7 ) == 3;
+        // Randomize the 1/7 loss phase so it cannot lock to a fixed resend delay.
+        loss_random ^= loss_random << 13;
+        loss_random ^= loss_random >> 17;
+        loss_random ^= loss_random << 5;
+        pair.net->drop_to_client = ( loss_random % 7 ) == 0;
 
         if ( round < 60 )
         {
@@ -1061,8 +1066,9 @@ static void server_kicks_exhausted_client_others_unaffected()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // deliberate fixed-pool exhaustion
     mo_pair_t pair;
-    mo_pair_setup( &pair, 2, &config );
+    mo_pair_setup( &pair, 2, &config, 0, 0 );
     mo_step( &pair );
 
     // the server queues to slot 0 without sending until its region has no room
@@ -1277,7 +1283,7 @@ static void acks_only_from_transport_acked_packets()
     }
     check( delivered == 1 );                                                       // once, however often it arrives
     check( region->descriptors_free == region->queue - 2 );                        // still in flight: no ack, no release (this message and the connection's CONFIG, 10.3)
-    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );          // resent on its RTO
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );          // resent on its resend delay
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > 0 );
 
     // a delivered payload is not an ack, nor is any other event: the record
@@ -2284,6 +2290,7 @@ static void send_room_watch_crosses_once_and_rearms_below_half()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit descriptor headroom
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -2396,8 +2403,9 @@ static void send_room_warns_in_debug_builds_only()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // deliberate fixed-pool exhaustion
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config );
+    mo_pair_setup( &pair, 1, &config, 0, 0 );
     mo_step( &pair );
     mo_step( &pair );
 
@@ -2444,7 +2452,7 @@ static void send_room_warns_in_debug_builds_only()
 
     // a server names the slot
     mo_pair_teardown( &pair );
-    mo_pair_setup( &pair, 1, &config );
+    mo_pair_setup( &pair, 1, &config, 0, 0 );
     mo_step( &pair );
     mo_step( &pair );
     check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );

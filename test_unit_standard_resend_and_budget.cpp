@@ -23,7 +23,7 @@
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// m9.resend-trace: the sent-packet map, min( rto, resend interval ), and the
+// m9.resend-trace: the sent-packet map, the RakNet adaptive resend delay, and the
 // reliable timeout over two paths, time an argument from 1000.0.
 // ---------------------------------------------------------------------------
 
@@ -81,7 +81,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
         if ( capacity < 16 )
             return -1;
 
-        // short path: a 20 ms sample gives rto 45 ms, under the 100 ms interval
+        // short path: a 20 ms sample gives the RakNet resend delay of 150 ms.
         {
             resend_trace_fixture_t f;
             resend_trace_open( &f );
@@ -89,9 +89,9 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             const uint64_t second = resend_trace_send( &f, t0 );
             check( rn_window_ack_on_ack( &f.ack, second, t0 + 0.020 ) == 1 );
             out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.040 );
-            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.046 );
-            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.090 );
-            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.091 );
+            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.109 );
+            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.111 );
+            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.221 );
             out[n++] = (uint8_t) rn_window_ack_check_timeout( &f.ack, t0 + 9.999 );
             out[n++] = (uint8_t) rn_window_ack_check_timeout( &f.ack, t0 + 10.000 );
             out[n++] = (uint8_t) f.ack.error;
@@ -99,8 +99,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             resend_trace_close( &f );
         }
 
-        // long path: a 400 ms sample clamps rto at 250 ms, so the 100 ms
-        // resend interval is the delay
+        // long path: a 400 ms sample is capped at the default 2 s adaptive resend delay.
         {
             resend_trace_fixture_t f;
             resend_trace_open( &f );
@@ -108,8 +107,9 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             const uint64_t second = resend_trace_send( &f, t0 );
             check( rn_window_ack_on_ack( &f.ack, second, t0 + 0.400 ) == 1 );
             out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.400 );
-            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.499 );
-            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.501 );
+            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 1.629 );
+            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 1.631 );
+            out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 2.001 );
             resend_trace_close( &f );
         }
 
@@ -194,9 +194,10 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
     return -1;
 }
 
+// Re-pin m9 because the trace now waits for the RakNet adaptive resend delay.
 static const rn_standard_vector_t standard_resend_and_budget_table[] =
 {
-    RN_STANDARD_VECTOR( "m9.resend-trace", "00010001000104010001" ),
+    RN_STANDARD_VECTOR( "m9.resend-trace", "0000000100010400000001" ),
     RN_STANDARD_VECTOR( "m9.budget-trace", "0000000000000000020102000100010100010101" ),
 };
 

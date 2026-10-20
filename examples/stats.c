@@ -31,7 +31,7 @@ static int print_client_stats( struct rocketnet_client_t * client )
     return rocketnet_client_counter( client, ROCKETNET_CLIENT_COUNTER_BYTES_SENT ) > 0;
 }
 
-static int run_connect_and_traffic( struct rocketnet_server_t * server, struct rocketnet_client_t * client )
+static int run_connect_and_traffic( struct rocketnet_server_t * server, struct rocketnet_client_t * client, double * time_base )
 {
     const int max_clients = rocketnet_server_max_clients( server );
     const double start = rocketnet_time();
@@ -41,7 +41,7 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
 
     while ( rocketnet_time() - start < 5.0 )
     {
-        const double now = 1000.0 + ( rocketnet_time() - start );
+        const double now = *time_base + ( rocketnet_time() - start );
         // (1) update pumps the transport; (2) receive, release, echo back
         if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             return -1;
@@ -90,6 +90,7 @@ static int run_connect_and_traffic( struct rocketnet_server_t * server, struct r
         if ( connected && rocketnet_time() - connected_at > 1.5 )
             break;
     }
+    *time_base += rocketnet_time() - start;
     return connected ? 0 : -1;
 }
 
@@ -102,6 +103,7 @@ int main( void )
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     char server_address[64];
     int result = 1;
+    double time_base = 1000.0;
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
@@ -124,7 +126,7 @@ int main( void )
         client = NULL;
     }
     CHECK( client != NULL );
-    CHECK( run_connect_and_traffic( server, client ) == 0 );
+    CHECK( run_connect_and_traffic( server, client, &time_base ) == 0 );
     const int client_index = rocketnet_client_index( client );
     printf( "client state %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
     CHECK( print_client_stats( client ) );
@@ -139,7 +141,7 @@ int main( void )
         const double start = rocketnet_time();
         while ( rocketnet_time() - start < 2.0 )
         {
-            const double now = 1000.0 + ( rocketnet_time() - start );
+            const double now = time_base + ( rocketnet_time() - start );
             rocketnet_client_update( client, now );
             rocketnet_server_update( server, now );
             rocketnet_client_send_packets( client );
@@ -148,6 +150,7 @@ int main( void )
             if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED )
                 break;
         }
+        time_base += rocketnet_time() - start;
     }
     printf( "client after disconnect state %s reason %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ), rocketnet_disconnect_reason_name( rocketnet_client_disconnect_reason( client ) ) );
     printf( "server client %d disconnect reason %s\n", client_index, rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, client_index ) ) );

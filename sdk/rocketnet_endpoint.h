@@ -91,7 +91,7 @@ struct rn_endpoint_config_t
     /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */                                                                        \
     /* writes it, packet_sent or packet_failed ends it */                                                                                             \
     X( write_phase, int write_phase ) /* RN_ENDPOINT_WRITE_* */                                                                                       \
-    X( written, int written ) /* packets this update, in place and queued, against max_packets_per_update */                                          \
+    X( written, int written ) /* packets this update, in place and queued, against packets_per_update */                                          \
     X( packet_kind, int packet_kind ) /* RN_ENDPOINT_PACKET_* of the planned packet */                                                                \
     X( packet_written, int packet_written ) /* 1 between write_packet and packet_sent or packet_failed */                                             \
     X( large_bytes, int large_bytes ) /* SEQUENCED_LARGE: the payload bytes */                                                                        \
@@ -158,7 +158,7 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 // reordered; for UNRELIABLE_SEQUENCED also its channel's queue or a pending
 // block chunk) or the update's packet allowance is spent, and
 // RN_ENDPOINT_IN_PLACE_NO otherwise (the region path decides and refuses).
-// In-place packets and the write pass's packets share max_packets_per_update;
+// In-place packets and the write pass's packets share packets_per_update;
 // while reliable work is due at now, an in-place packet never takes the last
 // of it, so the write pass's reliable phase has a packet for that work in the
 // same update (RNOutgoingBuild ReliableSentWithinOneUpdate; a full window or a

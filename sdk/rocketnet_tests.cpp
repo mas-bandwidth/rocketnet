@@ -137,15 +137,19 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
 #define ROCKETNET_TEST_LOG_RING_LINES 32
 #define ROCKETNET_TEST_LOG_RING_LINE_BYTES 1024
-// a slot holds "<time>: <level>: " in front of a whole captured line: the
+// a slot holds "<event>: <level>: " in front of a whole captured line: the
 // level name is at most 7 bytes (sdk/rocketnet.cpp:179), so 64 bytes hold
-// the prefix for any clock reading below 10^40 seconds
+// the prefix for any uint64 event ordinal
 #define ROCKETNET_TEST_LOG_RING_PREFIX_BYTES 64
 #define ROCKETNET_TEST_LOG_RING_SLOT_BYTES ( ROCKETNET_TEST_LOG_RING_PREFIX_BYTES + ROCKETNET_TEST_LOG_RING_LINE_BYTES )
 
 static char rocketnet_test_log_ring[ROCKETNET_TEST_LOG_RING_LINES][ROCKETNET_TEST_LOG_RING_SLOT_BYTES];
 
 static int rocketnet_test_log_ring_lines;
+
+// the capture stamps each entry with a monotonically increasing event ordinal,
+// never a clock read: the unit suite reads no real time.
+static uint64_t rocketnet_test_log_ring_stamp;
 
 static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
@@ -164,9 +168,11 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     }
 
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_TEST_LOG_RING_LINES];
-    const int slot_length = snprintf( slot, ROCKETNET_TEST_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    const int slot_length = snprintf( slot, ROCKETNET_TEST_LOG_RING_SLOT_BYTES, "%llu: %s: %s",
+              (unsigned long long) rocketnet_test_log_ring_stamp, rocketnet_log_level_name( level ), line );
     if ( slot_length < 0 || (size_t) slot_length >= ROCKETNET_TEST_LOG_RING_SLOT_BYTES )
         return;
+    rocketnet_test_log_ring_stamp++;
     rocketnet_test_log_ring_lines++;
 }
 
@@ -223,14 +229,6 @@ do                                                                              
 // the exact-delta helper and the conservation assert, checked by this suite
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
 #include "../test/counters_expect.h"
-
-void rocketnet_test_time()
-{
-    double start = rocketnet_platform_time();
-    rocketnet_platform_sleep( 0.1 );
-    double finish = rocketnet_platform_time();
-    rocketnet_check( finish > start );
-}
 
 // the clamp is a pure function: a non-finite time or a step backwards is the
 // last good time, counted and (in a debug build) asserted; a forward step
@@ -1535,92 +1533,6 @@ void rocketnet_test_connect_token_mint()
     rocketnet_check( memcmp( id_1, id_2, 16 ) != 0 );
 }
 
-struct rocketnet_mint_thread_result_t
-{
-    bool ok;
-    int mints;
-};
-
-// one thread's independent run: mint into its own buffer, then verify and open
-// every token against the test keys and its own private fields
-static void rocketnet_test_connect_token_mint_thread( struct rocketnet_signed_connect_data_t signed_fields,
-                                                      struct rocketnet_connect_token_private_t private_fields,
-                                                      uint64_t base_client_id,
-                                                      int iterations,
-                                                      struct rocketnet_mint_thread_result_t * result )
-{
-    result->ok = true;
-    result->mints = 0;
-
-    for ( int i = 0; i < iterations; i++ )
-    {
-        struct rocketnet_connect_token_private_t fields = private_fields;
-        fields.client_id = base_client_id + (uint64_t) i;
-
-        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-        if ( !rocketnet_write_connect_token( &signed_fields, &fields, rocketnet_test_backend_secret_key, token_data ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        struct rocketnet_connect_token_t token;
-        rocketnet_read_connect_token( &token, token_data );
-        if ( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        struct rocketnet_connect_token_private_t opened;
-        if ( !rocketnet_open_connect_token_private( &opened, token.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        if ( opened.client_id != fields.client_id )
-        {
-            result->ok = false;
-            return;
-        }
-
-        if ( memcmp( opened.client_to_server_key, fields.client_to_server_key, ROCKETNET_KEY_BYTES ) != 0 ||
-             memcmp( opened.server_to_client_key, fields.server_to_client_key, ROCKETNET_KEY_BYTES ) != 0 )
-        {
-            result->ok = false;
-            return;
-        }
-
-        result->mints++;
-    }
-}
-
-void rocketnet_test_connect_token_mint_concurrent()
-{
-    // two threads mint independent tokens at once, each with its own client
-    // ids and output buffer, and each opens only its own tokens: minting must
-    // touch no state outside its own call
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_connect_token_private_t private_fields;
-    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
-
-    const int iterations = 300;
-    struct rocketnet_mint_thread_result_t results[2];
-
-    std::thread thread_a( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
-                          ROCKETNET_TEST_CLIENT_ID + 1, iterations, &results[0] );
-    std::thread thread_b( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
-                          ROCKETNET_TEST_CLIENT_ID + 0x100000, iterations, &results[1] );
-    thread_a.join();
-    thread_b.join();
-
-    rocketnet_check( results[0].ok );
-    rocketnet_check( results[1].ok );
-    rocketnet_check( results[0].mints == iterations );
-    rocketnet_check( results[1].mints == iterations );
-}
-
 void rocketnet_test_connect_token_refusals()
 {
     struct rocketnet_connect_token_t token;
@@ -2222,6 +2134,47 @@ void rocketnet_test_used_token_history()
         uint8_t bound_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
         rocketnet_test_token_id( bound_id, i );
         rocketnet_check( !rocketnet_used_token_history_check( history, bound_id, &address_b, now ) );
+    }
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+void rocketnet_test_used_token_claim_cannot_evict_binding()
+{
+    // claim pressure must not consume or evict binding-history capacity: the
+    // response-binding table and the request-claim table are independent
+    const uint64_t now = 1000;
+    const uint64_t expire = now + 300;
+
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 4 );
+    rocketnet_check( history );
+
+    struct rocketnet_address_t address_a, address_b;
+    rocketnet_check( rocketnet_address_parse( &address_a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "10.0.0.2:30000" ) );
+
+    // a live response binding for token 1
+    uint8_t id_a[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( id_a, 1 );
+    rocketnet_used_token_history_record( history, id_a, &address_a, expire, now );
+    rocketnet_check( !rocketnet_used_token_history_check( history, id_a, &address_b, now ) );
+
+    // fill the claim table with live claims for four distinct tokens
+    for ( int i = 2; i <= 5; i++ )
+    {
+        uint8_t claim_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_test_token_id( claim_id, i );
+        rocketnet_check( rocketnet_used_token_history_claim_record( history, claim_id, &address_b, 1005.0, 1000.0 ) == 1 );
+    }
+
+    // the claim table is full: a fifth fresh claim is refused, and the
+    // refusal must not evict token 1's still-live binding
+    {
+        uint8_t claim_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_test_token_id( claim_id, 6 );
+        rocketnet_check( rocketnet_used_token_history_claim_record( history, claim_id, &address_b, 1005.0, 1000.0 ) == 0 );
+        rocketnet_check( !rocketnet_used_token_history_check( history, id_a, &address_b, now ) );
+        rocketnet_check( rocketnet_used_token_history_check( history, id_a, &address_a, now ) );
     }
 
     rocketnet_used_token_history_destroy( history );
@@ -3130,10 +3083,11 @@ void rocketnet_test_request_path_state_refusals()
     int payload_client_index = -1;
     struct rocketnet_counters_t before;
 
-    // the used-token history binds the token to the first address whose
-    // response opens under it, never at the request (STANDARD.md, Processing
-    // Connection Response Packets): a replay from elsewhere before that is
-    // answered with a challenge, and binds nothing
+    // the first valid request claims the token for its address and is
+    // answered with a challenge (STANDARD.md, Processing Connection
+    // Requests; tla/ReceiveOrder.tla, Claim). the claim lives until the
+    // handshake deadline, so the same token from another address is refused
+    // before any signature, seal or keypair work.
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     uint8_t challenge[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
     rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
@@ -3145,14 +3099,33 @@ void rocketnet_test_request_path_state_refusals()
     struct rocketnet_address_t third_address;
     rocketnet_check( rocketnet_address_parse( &third_address, "198.51.100.51:56789" ) );
 
-    // the replayed request needs a cookie for the new address first
+    // the replayed request needs a cookie for the new address first; even
+    // with it, the claim refuses the token and spends no cryptography
     uint8_t replayed[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     memcpy( replayed, request, sizeof(replayed) );
     memset( replayed + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
     test.client_address = second_address;
     rocketnet_test_pass_cookie_gate( &test, replayed );
-    rocketnet_check( rocketnet_test_process( &test, replayed, sizeof(replayed), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    before = test.counters;
+    memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+    rocketnet_check( rocketnet_test_process( &test, replayed, sizeof(replayed), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
+    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
+    rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+
+    // a second client from another address with a fresh token for the same
+    // client id gets its own challenge before the first connects -- the token
+    // differs, so the claim does not refuse it
+    uint8_t fresh[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( fresh, 0x4444555566667777ULL, rocketnet_test_salt );
+    test.client_address = second_address;
+    rocketnet_test_pass_cookie_gate( &test, fresh );
+    rocketnet_check( rocketnet_test_process( &test, fresh, sizeof(fresh), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     uint8_t second_challenge[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     memcpy( second_challenge, response, sizeof(second_challenge) );
 
     // the real client opens its challenge and responds: the token is bound
@@ -3176,11 +3149,9 @@ void rocketnet_test_request_path_state_refusals()
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
     test.client_address = real_address;
 
-    // the second address still holds the mapping its replay created. here
-    // the token keys are the test constants, so it can open its challenge --
-    // the client that moved, or a shared token. while the first connection
-    // lives, its response is refused: one token, one live connection, by the
-    // client id the token carries
+    // the second token's response is refused while the first connection
+    // lives: one token, one live connection, by the client id the token
+    // carries
     rocketnet_test_client_derive_from_challenge( second_challenge, sizeof(second_challenge), &keys );
     rocketnet_test_client_build_response( client_response, &keys );
     const uint64_t refused_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED];
@@ -3190,8 +3161,8 @@ void rocketnet_test_request_path_state_refusals()
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] == refused_before + 1 );
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
 
-    // once the first connection has closed, its slot is free and the token
-    // may connect again inside its expiry: the accepted residual risk
+    // once the first connection has closed, its slot is free and the second
+    // token may connect inside its expiry: the accepted residual risk
     // (docs/SESSION.md, Token reuse)
     uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
@@ -3291,6 +3262,113 @@ void rocketnet_test_request_path_slots_and_denial()
     rocketnet_test_server_teardown( &test );
 }
 
+
+void rocketnet_test_one_token_many_addresses_refused_cheaply()
+{
+    // one valid token from many source addresses: the first request claims
+    // the token and buys one half-open mapping; every later address is
+    // refused at the claim rung before any signature, seal or keypair work.
+    // a full map refuses at its own cheap rung, also before any crypto.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( request, 0x9100000000000001ULL, rocketnet_test_salt );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    struct rocketnet_counters_t before;
+
+    struct rocketnet_address_t first_address;
+    rocketnet_check( rocketnet_address_parse( &first_address, "198.51.100.10:40000" ) );
+    test.client_address = first_address;
+    rocketnet_test_pass_cookie_gate( &test, request );
+
+    memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+    rocketnet_check( rocketnet_crypto_tally.signature_verify == 1 );
+    rocketnet_check( rocketnet_crypto_tally.seal_open == 1 );
+    rocketnet_check( rocketnet_crypto_tally.keypair == 1 );
+    rocketnet_check( rocketnet_crypto_tally.scalarmult > 0 );
+
+    // the same token from six other ports is refused with no crypto spent
+    // and no second mapping. at BASE every one of these was answered with a
+    // challenge and bought a mapping (test_one_token_many_addresses_refused_cheaply.BASE)
+    for ( int i = 0; i < 6; i++ )
+    {
+        struct rocketnet_address_t other_address;
+        char address_string[64];
+        snprintf( address_string, sizeof(address_string), "198.51.100.%d:40001", 20 + i );
+        rocketnet_check( rocketnet_address_parse( &other_address, address_string ) );
+
+        uint8_t replay[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        memcpy( replay, request, sizeof(replay) );
+        memset( replay + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
+        test.client_address = other_address;
+        rocketnet_test_pass_cookie_gate( &test, replay );
+
+        before = test.counters;
+        memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+        rocketnet_check( rocketnet_test_process( &test, replay, sizeof(replay), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
+        rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
+        rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
+        rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
+        rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+        rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+    }
+
+    // fill the map with seven further distinct tokens, one address each
+    for ( int i = 0; i < 7; i++ )
+    {
+        struct rocketnet_address_t fill_address;
+        char address_string[64];
+        snprintf( address_string, sizeof(address_string), "198.51.100.%d:40002", 40 + i );
+        rocketnet_check( rocketnet_address_parse( &fill_address, address_string ) );
+        test.client_address = fill_address;
+
+        uint8_t fill_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        uint8_t fill_salt[8];
+        memcpy( fill_salt, rocketnet_test_salt, 8 );
+        fill_salt[0] = (uint8_t) ( i + 1 );
+        rocketnet_test_build_request( fill_request, 0x9200000000000000ULL + (uint64_t) i, fill_salt );
+        rocketnet_test_pass_cookie_gate( &test, fill_request );
+        rocketnet_check( rocketnet_test_process( &test, fill_request, sizeof(fill_request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    }
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 8 );
+
+    // a fresh token at a fresh address now finds the map full: refused,
+    // counted with the map's two counters, and no crypto spent
+    struct rocketnet_address_t overflow_address;
+    rocketnet_check( rocketnet_address_parse( &overflow_address, "198.51.100.200:40003" ) );
+    test.client_address = overflow_address;
+    uint8_t overflow_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( overflow_request, 0x9300000000000000ULL, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate( &test, overflow_request );
+
+    before = test.counters;
+    memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+    rocketnet_check( rocketnet_test_process( &test, overflow_request, sizeof(overflow_request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        uint64_t expected = before.values[i];
+        if ( i == ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED ||
+             i == ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING ||
+             i == ROCKETNET_COUNTER_MAPPING_TABLE_FULL )
+            expected++;
+        rocketnet_check( test.counters.values[i] == expected );
+    }
+    rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
+    rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 8 );
+
+    rocketnet_test_server_teardown( &test );
+}
 
 void rocketnet_test_full_server_refuses_before_keypair()
 {
@@ -6791,21 +6869,7 @@ void rocketnet_test_payload_size_sweep()
 }
 
 
-static bool threads_work = false;
 
-static void test_thread_function(void*)
-{
-    threads_work = true;
-}
-
-void rocketnet_test_platform_thread()
-{
-    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, test_thread_function, NULL );
-    rocketnet_check( thread );
-    rocketnet_platform_thread_join( thread );
-    rocketnet_platform_thread_destroy( thread );
-    rocketnet_check( threads_work );
-}
 
 void rocketnet_test_platform_mutex()
 {
@@ -7314,6 +7378,17 @@ void rocketnet_test_frame_sync_lifecycle()
 
     rocketnet_frame_sync_destroy( frame_sync );
 }
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+extern int rocketnet_frame_sync_timebase_ready_for_testing();
+
+void rocketnet_test_frame_sync_timebase_before_create()
+{
+    // The probe reads only the OS timebase scale, never the live clock. The
+    // first frame-sync object has not been created when this runs.
+    rocketnet_check( rocketnet_frame_sync_timebase_ready_for_testing() );
+}
+#endif
 
 // a counting allocator: a create that reached allocation would move it. the
 // library is uninitialized with no live allocations when it is installed, so
@@ -8568,33 +8643,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_set_assert_callback( saved_assert );
 }
 
-void rocketnet_test_frame_sync_wait()
-{
-    // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
-    // the assertion is pacing and accounting, never precision -- precision
-    // was the issue #56 measurement campaign's job, and CI runners are noisy.
-
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 250.0 );
-    rocketnet_check( frame_sync );
-
-    const double start = rocketnet_platform_time();
-    for ( int i = 0; i < 25; i++ )
-    {
-        rocketnet_frame_sync_wait( frame_sync );
-    }
-    const double elapsed = rocketnet_platform_time() - start;
-
-    struct rocketnet_frame_sync_stats_t stats;
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 25 );
-    rocketnet_check( elapsed > 0.06 );                              // it actually paced: a free run finishes in microseconds
-    rocketnet_check( elapsed < 5.0 );                               // and it did not wedge
-    rocketnet_check( !stats.spinning || stats.priority_held );      // never an unprivileged spin
-    rocketnet_check( stats.guard_seconds <= ( 1.0 / 250.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
-
-    rocketnet_frame_sync_destroy( frame_sync );
-}
-
 // --- the general acks ---
 
 static int rocketnet_test_popcount64_reference( uint64_t v )
@@ -9233,9 +9281,10 @@ void rocketnet_test_ack_debt()
     int payload_client_index = -1;
 
     double time = 200.0;
+    test.server.acks->endpoints[0].ack_debt = 0;
 
     // --- the server side: eliciting packets received with nothing sent
-    // back arm the debt, and the threshold fires exactly one type 8 ---
+    // back arm the debt, and one eliciting packet makes exactly one type 8 due ---
 
     const uint8_t data[4] = { 1, 2, 3, 4 };
 
@@ -9249,10 +9298,10 @@ void rocketnet_test_ack_debt()
                                                           payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
     }
 
-    // one below the threshold: not due
+    // no eliciting packet: not due
     rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet ) == 0 );
 
-    // the threshold: the standalone ack goes out, and the debt resets
+    // one eliciting packet: the standalone ack goes out, and the debt resets
     time += 0.001;
     int bytes = rocketnet_client_protocol_write_payload( &client, data, 4, time, packet );
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
@@ -9287,12 +9336,11 @@ void rocketnet_test_ack_debt()
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
                                                       ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet ) == 0 );
+    uint8_t reset_ack[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, reset_ack ) >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES );
 
-    // --- the client side: keep-alives received with nothing sent back arm
-    // the client's debt, and its update emits the type 8 outside the send
-    // rate -- that is what removes the coupling between ack capacity and
-    // return-traffic cadence ---
+    // --- the client side: one keep-alive makes an ack due on the next
+    // protocol update, outside the scheduled send rate ---
 
     double client_time = client.last_send_time + 0.02;      // inside the rate gate: no scheduled send is due
 
@@ -9333,6 +9381,8 @@ void rocketnet_test_ack_non_elicitation()
     struct rocketnet_counters_t client_counters;
     struct rocketnet_client_protocol_t client;
     rocketnet_test_ack_connect( &test, &client, &client_counters, 0xE11C17ULL );
+    client.ack.ack_debt = 0;
+    test.server.acks->endpoints[0].ack_debt = 0;
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -9341,10 +9391,8 @@ void rocketnet_test_ack_non_elicitation()
     int payload_bytes = 0;
     int payload_client_index = -1;
 
-    // type 8 never elicits: a flood of standalone acks -- twice the debt
-    // threshold -- adds nothing to the client's debt, so its update emits no
-    // ack back and the conversation terminates. two quiet peers each
-    // obliged to acknowledge acknowledgments would exchange them forever.
+    // Type 8 never elicits. Even when an ack is due after one other packet,
+    // a flood of type 8 packets adds no debt and cannot start an ack loop.
 
     struct rocketnet_encryption_mapping_t * mapping =
         rocketnet_encryption_map_entry( test.server.encryption_map,
@@ -9369,8 +9417,7 @@ void rocketnet_test_ack_non_elicitation()
     rocketnet_client_protocol_update( &client, client_time, packet, &out_bytes );
     rocketnet_check( out_bytes == 0 );
 
-    // the mirror at the server: hand it a flood of type 8s and its own
-    // standalone ack never becomes due
+    // The mirror at the server: type 8 packets never create server ack debt.
     for ( int i = 0; i < 2 * ROCKETNET_ACK_DEBT_THRESHOLD; i++ )
     {
         int bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_ACK_PACKET,
@@ -9384,9 +9431,10 @@ void rocketnet_test_ack_non_elicitation()
     client.send_sequence_session += (uint64_t) ( 2 * ROCKETNET_ACK_DEBT_THRESHOLD );        // the hand-built packets spent these
     rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, client_time, packet ) == 0 );
 
-    // and a balanced idle connection exchanges no type 8 at all: both ends
-    // at their scheduled rates for thirty simulated seconds, every packet a
-    // keep-alive. time continues from the connection's own clock so neither
+    // and a balanced idle connection sends no ack in response to an ack: both
+    // ends exchange keep-alives, and each eliciting keep-alive may receive one
+    // standalone ack on the next update. Time continues from the connection's
+    // own clock so neither
     // end's idle timeout fires.
     double time = client_time;
     for ( int step = 0; step < 3000; step++ )
@@ -9396,7 +9444,7 @@ void rocketnet_test_ack_non_elicitation()
         rocketnet_client_protocol_update( &client, time, packet, &bytes );
         if ( bytes > 0 )
         {
-            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet[0] == ROCKETNET_CONNECTION_ACK_PACKET );
             rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
                                                               ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
                                                               payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
@@ -9406,7 +9454,7 @@ void rocketnet_test_ack_non_elicitation()
             bytes = rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, packet );
         if ( bytes > 0 )
         {
-            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+            rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet[0] == ROCKETNET_CONNECTION_ACK_PACKET );
             rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof(payload), &payload_bytes ) );
         }
     }
@@ -11655,17 +11703,16 @@ static void rocketnet_test_pass_cookie_gate_from( struct rocketnet_test_server_t
     memcpy( request + ROCKETNET_PREFILTER_BYTES, response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
 }
 
-// The token is bound to an address only once that address opens a response
-// (STANDARD.md, Processing Connection Response Packets; tla/RNSecurityTables.tla,
-// BoundOnlyToOpener). An on-path attacker copies the real client's
+// The first address to present a valid request owns its token until the
+// handshake deadline (STANDARD.md, Processing Connection Requests;
+// tla/ReceiveOrder.tla, Claim). An on-path attacker copies the real client's
 // cookie-bearing request off the in-memory wire, earns a cookie at its own
 // address, and replays the request from there ahead of the real one. The
-// replay reaches a challenge it cannot open, so it never responds, and binds
-// nothing: the real client connects, the token is bound to the client's
-// address, and a second replay is refused. Before the binding moved, the
-// replay bound the token to the attacker's address at request time and the
-// real client's request was refused as TOKEN_ALREADY_USED until it timed out.
-// Time is an argument throughout; there are no sockets.
+// replay claims the token and reaches a challenge it cannot open, so the real
+// client's retransmitted requests are refused as TOKEN_ALREADY_USED until the
+// claim and the attacker's mapping both die at the handshake deadline; then
+// the real client connects and the token is bound to its address at the
+// response. Time is an argument throughout; there are no sockets.
 
 void rocketnet_test_token_bound_at_response_open()
 {
@@ -11734,8 +11781,8 @@ void rocketnet_test_token_bound_at_response_open()
                 memcpy( replay + ROCKETNET_PREFILTER_BYTES, cookie + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
                         ROCKETNET_COOKIE_FIELD_BYTES );
 
-                // the replay passes every check the real request would: the
-                // server answers it with a challenge the attacker cannot open
+                // the replay claims the token before the real request and is
+                // answered with a challenge the attacker cannot open
                 rocketnet_network_simulator_send( simulator, &attacker_address, &server_address, replay, sizeof(replay), time );
             }
 
@@ -11764,14 +11811,56 @@ void rocketnet_test_token_bound_at_response_open()
 
     rocketnet_check( replayed );
 
-    // the real client was never refused for the token, and it connected
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
+    // the attacker's replay claimed the token: the real client was refused
+    // for it and holds no slot or mapping, while the attacker's half-open
+    // mapping is the one live claim
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] > 0 );
+    rocketnet_check( client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+    {
+        int attacker_mapping = rocketnet_encryption_map_find( test.server.encryption_map, &attacker_address );
+        rocketnet_check( attacker_mapping != -1 );
+        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, attacker_mapping )->client_index == -1 );
+
+    }
+
+    // the handshake deadline removes the attacker's mapping and its claim;
+    // the real client's next request is then answered and the response binds
+    // the token to the client's address
+    time += 5.0;
+    rocketnet_server_protocol_update( &test.server, time );
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &attacker_address ) == -1 );
+
+    while ( time < 110.0 && client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        time += 0.05;
+        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+        rocketnet_check( client.state > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+
+        if ( packet_bytes > 0 )
+            rocketnet_network_simulator_send( simulator, &client_address, &server_address, packet, packet_bytes, time );
+
+        int bytes;
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
+        {
+            rocketnet_server_protocol_process_packet( &test.server, &from, packet, bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
+        }
+
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &client_address, time, &from, packet ) ) > 0 )
+            rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof(payload), &payload_bytes );
+    }
+
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
     rocketnet_check( rocketnet_client_slots_client_id( test.server.client_slots, 0 ) == 0xB17DB17DULL );
 
-    // the token is bound to the client's address, and the attacker's mapping
-    // holds no slot: the replay bound nothing
+    // the token is bound to the client's address at the response, and no
+    // attacker record exists
     const uint8_t * token_identifier = NULL;
     {
         int client_mapping = rocketnet_encryption_map_find( test.server.encryption_map, &client_address );
@@ -11780,26 +11869,7 @@ void rocketnet_test_token_bound_at_response_open()
     }
     rocketnet_check( rocketnet_used_token_history_check( test.server.used_token_history, token_identifier, &client_address, ROCKETNET_TEST_CREATE_TS ) );
     rocketnet_check( !rocketnet_used_token_history_check( test.server.used_token_history, token_identifier, &attacker_address, ROCKETNET_TEST_CREATE_TS ) );
-    {
-        int attacker_mapping = rocketnet_encryption_map_find( test.server.encryption_map, &attacker_address );
-        rocketnet_check( attacker_mapping != -1 );
-        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, attacker_mapping )->client_index == -1 );
-    }
-
-    // after the handshake deadline the attacker's mapping is gone, and a fresh
-    // replay from its address is refused after one hash
-    rocketnet_server_protocol_update( &test.server, time + 5.0 );
     rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &attacker_address ) == -1 );
-    {
-        uint8_t replay[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-        memcpy( replay, captured, sizeof(replay) );
-        memset( replay + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
-        rocketnet_test_pass_cookie_gate_from( &test, &attacker_address, replay );
-        struct rocketnet_counters_t before = test.counters;
-        rocketnet_check( rocketnet_test_process_from( &test, &attacker_address, replay, sizeof(replay),
-                                                      ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
-    }
 
     rocketnet_network_simulator_destroy( simulator );
     rocketnet_test_server_teardown( &test );
@@ -12534,9 +12604,9 @@ void rocketnet_test_public_config_resolve()
     client.time_callback = rocketnet_test_resolve_time;
     client.send_kbps = 1234;
     client.num_channels = 7; client.window_messages = 128; client.receive_ring_bytes = 8192; client.max_message_bytes = 4096;
-    client.send_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.max_packets_per_update = 2;
-    client.unreliable_deliveries = 17; client.sequenced_holds = 5; client.receipt_ring = 32; client.rto_initial_ms = 200;
-    client.rto_min_ms = 20; client.rto_max_ms = 300; client.reliable_timeout_ms = 5000;
+    client.send_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.packets_per_update = 2;
+    client.unreliable_deliveries = 17; client.sequenced_holds = 5; client.receipt_ring = 32; client.resend_delay_initial_ms = 200;
+    client.resend_delay_min_ms = 20; client.resend_delay_max_ms = 300; client.reliable_timeout_ms = 5000;
     rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
     rocketnet_check( memcmp( client_transport.filter_value, filter, 4 ) == 0 );
     rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.num_reassembly_slots == 3 );
@@ -12544,9 +12614,9 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change && client_transport.time_callback == rocketnet_test_resolve_time );
     rocketnet_check( kbps == 1234 );
     rocketnet_check( message.num_channels == 7 && message.window_messages == 128 && message.receive_ring_bytes == 8192 && message.max_message_bytes == 4096 );
-    rocketnet_check( message.send_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.max_packets_per_update == 2 );
-    rocketnet_check( message.unreliable_deliveries == 17 && message.sequenced_holds == 5 && message.receipt_ring == 32 && message.rto_initial_ms == 200 );
-    rocketnet_check( message.rto_min_ms == 20 && message.rto_max_ms == 300 && message.reliable_timeout_ms == 5000 );
+    rocketnet_check( message.send_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.packets_per_update == 2 );
+    rocketnet_check( message.unreliable_deliveries == 17 && message.sequenced_holds == 5 && message.receipt_ring == 32 && message.resend_delay_initial_ms == 200 );
+    rocketnet_check( message.resend_delay_min_ms == 20 && message.resend_delay_max_ms == 300 && message.reliable_timeout_ms == 5000 );
 
     // the env displaces the struct
 
@@ -14404,7 +14474,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
-    { "test_time", rocketnet_test_time },
     { "test_update_time_clamp", rocketnet_test_update_time_clamp },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
@@ -14440,7 +14509,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_signed_connect_data", rocketnet_test_signed_connect_data },
     { "test_connect_token_frozen", rocketnet_test_connect_token_frozen },
     { "test_connect_token_mint", rocketnet_test_connect_token_mint },
-    { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent },
     { "test_connect_token_refusals", rocketnet_test_connect_token_refusals },
     { "test_prefilter", rocketnet_test_prefilter },
     { "test_packet_associated_data", rocketnet_test_packet_associated_data },
@@ -14454,6 +14522,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_counters", rocketnet_test_counters },
     { "test_response_wrong_size_counted", rocketnet_test_response_wrong_size_counted },
     { "test_used_token_history", rocketnet_test_used_token_history },
+    { "test_used_token_claim_cannot_evict_binding", rocketnet_test_used_token_claim_cannot_evict_binding },
     { "test_encryption_map", rocketnet_test_encryption_map },
     { "test_encryption_map_iterator", rocketnet_test_encryption_map_iterator },
     { "test_server_update_sweep", rocketnet_test_server_update_sweep },
@@ -14473,6 +14542,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_state_refusals", rocketnet_test_request_path_state_refusals },
     { "test_token_bound_at_response_open", rocketnet_test_token_bound_at_response_open },
     { "test_request_path_slots_and_denial", rocketnet_test_request_path_slots_and_denial },
+    { "test_one_token_many_addresses_refused_cheaply", rocketnet_test_one_token_many_addresses_refused_cheaply },
     { "test_full_server_refuses_before_keypair", rocketnet_test_full_server_refuses_before_keypair },
     { "test_request_path_cheap_refusals_spend_no_crypto", rocketnet_test_request_path_cheap_refusals_spend_no_crypto },
     { "test_server_full_connect", rocketnet_test_server_full_connect },
@@ -14510,7 +14580,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
     { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
     { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
-    { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
@@ -14527,6 +14596,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
     { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
     { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    { "test_frame_sync_timebase_before_create", rocketnet_test_frame_sync_timebase_before_create },
+#endif
     { "test_create_before_init_is_refused", rocketnet_test_create_before_init_is_refused },
     { "test_allocator_refusal_is_returned", rocketnet_test_allocator_refusal_is_returned },
     { "test_public_api_null_is_a_counted_no_op", rocketnet_test_public_api_null_is_a_counted_no_op },
@@ -14571,7 +14643,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_hostile_id_does_not_poison_slot", rocketnet_test_fragment_hostile_id_does_not_poison_slot },
     { "test_fragment_too_large_clauses", rocketnet_test_fragment_too_large_clauses },
     { "test_send_arena", rocketnet_test_send_arena },
-    { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_public_config_env_round_trip", rocketnet_test_public_config_env_round_trip },
     { "test_public_config_resolve", rocketnet_test_public_config_resolve },

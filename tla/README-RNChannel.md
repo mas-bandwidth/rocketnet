@@ -103,7 +103,7 @@ builder admission, fair oldest-number retransmission including attempts that
 survive the Link loss pattern, fair packet opening, application drain, update
 turnover, and packet ACK transmission/reception. Infinitely many ACK sends
 must yield useful ACKs before sent-map eviction. This last assumption stands
-for appropriate RTO/map sizing; the model does not prove RTT measurement.
+for appropriate resend delay/map sizing; the model does not prove RTT measurement.
 The normal liveness case uses deterministic alternating packet loss in both
 directions. Safety does not use fairness and permits arbitrary forward loss,
 duplication and reordering. The safety configuration uses a TLC `SafetyView` that omits Link send counters

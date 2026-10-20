@@ -117,10 +117,10 @@ static void ep_config( rocketnet_message_config_t * config )
     config->receive_ring_bytes = 65536;
     config->max_message_bytes = 65536;
     config->send_buffer_bytes = 262144;
-    config->max_packets_per_update = 4;
-    config->rto_min_ms = 20;
-    config->rto_initial_ms = 100;
-    config->rto_max_ms = 250;
+    config->packets_per_update = 4;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_max_ms = 250;
     config->reliable_timeout_ms = 600000;
 }
 
@@ -479,11 +479,13 @@ static uint64_t ep_frees = 0;
 
 #if ROCKETNET_TEST_CLOCK_WRAP
 static uint64_t ep_clock_reads = 0;
+static double ep_fake_clock = 1000.0;
 extern "C" double __real_rocketnet_platform_time();
 extern "C" double __wrap_rocketnet_platform_time()
 {
     ep_clock_reads++;
-    return __real_rocketnet_platform_time();
+    ep_fake_clock += ( 1.0 / 60.0 );
+    return ep_fake_clock;
 }
 #endif // #if ROCKETNET_TEST_CLOCK_WRAP
 
