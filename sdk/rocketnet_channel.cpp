@@ -304,26 +304,55 @@ bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t ch
 }
 
 // The counter a reader or window violation (ROCKETNET_MESSAGE_VIOLATION_*,
-// sdk/rocketnet_message.h) moves besides MESSAGE_PROTOCOL_VIOLATION: checks 5
-// to 8 have their own counters, the same ones the dispatch moves; a violation
-// with no counter of its own returns MESSAGE_PROTOCOL_VIOLATION, which
-// rn_channels_count_violation counts once.
+// sdk/rocketnet_message.h) moves besides MESSAGE_PROTOCOL_VIOLATION: every
+// check has its own counter, the same ones the dispatch moves, and a violation
+// with no counter of its own (an unknown value) returns
+// MESSAGE_PROTOCOL_VIOLATION, which rn_channels_count_violation counts once.
 static_assert( ROCKETNET_MESSAGE_NUM_VIOLATIONS == 13, "a new message violation is mapped in rn_violation_counter" );
-static_assert( ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL == 5 && ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED == 6 &&
-               ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK == 7 && ROCKETNET_MESSAGE_VIOLATION_BAD_RING == 8,
-               "rn_violation_counter maps checks 5 to 8 to their counters" );
 
-static int rn_violation_counter( int violation )
+// Each violation is tied to the counter it moves; the function is constexpr so
+// the tie is checked at compile time.
+static constexpr int rn_violation_counter( int violation )
 {
-    switch ( violation )
-    {
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL:       return ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL;
-        case ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED:  return ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED;
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK:         return ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK;
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_RING:          return ROCKETNET_COUNTER_MESSAGE_BAD_RING;
-        default:                                            return ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION;
-    }
+    return violation == ROCKETNET_MESSAGE_VIOLATION_BAD_FORM ? ROCKETNET_COUNTER_MESSAGE_BAD_FORM :
+           violation == ROCKETNET_MESSAGE_VIOLATION_TRUNCATED ? ROCKETNET_COUNTER_MESSAGE_TRUNCATED :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS ? ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH ? ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL ? ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL :
+           violation == ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED ? ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK ? ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_RING ? ROCKETNET_COUNTER_MESSAGE_BAD_RING :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE ? ROCKETNET_COUNTER_MESSAGE_BAD_SIZE :
+           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL ? ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL :
+           violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW ? ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW :
+           violation == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION ? ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION :
+           ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION;
 }
+
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_FORM ) == ROCKETNET_COUNTER_MESSAGE_BAD_FORM,
+               "BAD_FORM moves MESSAGE_BAD_FORM" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_TRUNCATED ) == ROCKETNET_COUNTER_MESSAGE_TRUNCATED,
+               "TRUNCATED moves MESSAGE_TRUNCATED" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS ) == ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS,
+               "BAD_FLAGS moves MESSAGE_BAD_FLAGS" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH ) == ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH,
+               "BAD_LENGTH moves MESSAGE_BAD_LENGTH" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL ) == ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL,
+               "BAD_CHANNEL moves MESSAGE_BAD_CHANNEL" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED ) == ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED,
+               "TYPE_NOT_ENABLED moves MESSAGE_TYPE_NOT_ENABLED" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK ) == ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK,
+               "BAD_BLOCK moves MESSAGE_BAD_BLOCK" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_RING ) == ROCKETNET_COUNTER_MESSAGE_BAD_RING,
+               "BAD_RING moves MESSAGE_BAD_RING" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE ) == ROCKETNET_COUNTER_MESSAGE_BAD_SIZE,
+               "BAD_SIZE moves MESSAGE_BAD_SIZE" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL ) == ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL,
+               "BAD_CONTROL moves MESSAGE_BAD_CONTROL" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW ) == ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW,
+               "NUMBER_OUTSIDE_WINDOW moves MESSAGE_NUMBER_OUTSIDE_WINDOW" );
+static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION ) == ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION,
+               "SLOT_COLLISION moves MESSAGE_SLOT_COLLISION" );
 
 void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
 {

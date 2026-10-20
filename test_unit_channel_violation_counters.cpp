@@ -16,6 +16,7 @@
 #include "sdk/rocketnet_allocator.h"
 #include "sdk/rocketnet_channel.h"
 #include "sdk/rocketnet_message.h"
+#include "sdk/rocketnet_read_write.h"
 
 #define check rocketnet_unit_check
 
@@ -192,3 +193,145 @@ static void violation_wide_reliable_sequenced_boundary_is_sent()
 REGISTER_UNIT_TEST( violation_wide_reliable_sequenced_boundary_is_sent );
 
 #endif // #if ROCKETNET_MAX_CHANNELS > 256
+
+// The remaining wire-check violations (STANDARD.md _Messages_ checks 1 to 4,
+// 9, 10 and 12) each move their own counter beside MESSAGE_PROTOCOL_VIOLATION,
+// which is counted once for the connection the violation ends. A fresh node
+// per case, because the first violation ends the connection.
+static void violation_feed_refuses( violation_node_t * receiver, const uint8_t * data, int bytes,
+                                     int expected_result, int expected_counter )
+{
+    const int result = rn_ordered_receive( &receiver->ordered, data, bytes );
+    if ( expected_result >= 0 )
+        check( result == expected_result );
+    else
+        check( result != ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( receiver->counters.values[expected_counter] == 1 );
+    check( receiver->counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+    check( rn_ordered_decide( &receiver->ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+}
+
+static void violation_reader_and_window_checks_move_their_own_counters()
+{
+    // check 1: BAD_FORM
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_config( &config, 8 );
+        violation_init( &receiver, &config );
+        const uint8_t payload[1] = { 0x00 };
+        violation_feed_refuses( &receiver, payload, 1, ROCKETNET_MESSAGE_VIOLATION_BAD_FORM, ROCKETNET_COUNTER_MESSAGE_BAD_FORM );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // check 2: TRUNCATED
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_config( &config, 8 );
+        violation_init( &receiver, &config );
+        const uint8_t payload[2] = { 0x00, ROCKETNET_MESSAGE_FORM_RECORDS };
+        violation_feed_refuses( &receiver, payload, 2, ROCKETNET_MESSAGE_VIOLATION_TRUNCATED, ROCKETNET_COUNTER_MESSAGE_TRUNCATED );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // check 3: BAD_FLAGS (reserved bits)
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_config( &config, 8 );
+        violation_init( &receiver, &config );
+        const uint8_t payload[4] = { 0x80, 0x00, 0x00, ROCKETNET_MESSAGE_FORM_RECORDS };
+        violation_feed_refuses( &receiver, payload, 4, ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS, ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // check 4: BAD_LENGTH (a RELIABLE_ORDERED record with length zero)
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_config( &config, 8 );
+        violation_init( &receiver, &config );
+        uint8_t payload[13];
+        uint8_t * p = payload;
+        rocketnet_write_uint8( &p, 0x03 );
+        rocketnet_write_uint16( &p, 0 );
+        *p++ = 0; *p++ = 0; *p++ = 0;
+        rocketnet_write_uint16( &p, 0 );
+        *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
+        violation_feed_refuses( &receiver, payload, (int) ( p - payload ), ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH, ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // check 9: BAD_SIZE (a reliable record on a payload past the wire maximum)
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_config( &config, 8 );
+        violation_init( &receiver, &config );
+        static uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES + 64];
+        uint8_t * p = payload;
+        rocketnet_write_uint8( &p, 0x03 );
+        rocketnet_write_uint16( &p, 1 );
+        *p++ = 0; *p++ = 0; *p++ = 0;
+        rocketnet_write_uint16( &p, 0 );
+        *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        *p++ = 0x00;
+        const int total = ROCKETNET_MAX_PAYLOAD_BYTES + 1;
+        memset( p, 0xFF, (size_t) ( total - 1 - (int) ( p - payload ) ) );
+        payload[total - 1] = ROCKETNET_MESSAGE_FORM_RECORDS;
+        violation_feed_refuses( &receiver, payload, total, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // check 12: BAD_CONTROL (a CONFIG control record with an invalid body)
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_config( &config, 8 );
+        violation_init( &receiver, &config );
+        uint8_t payload[8];
+        uint8_t * p = payload;
+        rocketnet_write_uint8( &p, 0x22 );
+        rocketnet_write_uint16( &p, 1 );
+        *p++ = 8; *p++ = 0; *p++ = 0;
+        *p++ = 0x00;
+        *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
+        violation_feed_refuses( &receiver, payload, (int) ( p - payload ), -1, ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // check 10: NUMBER_OUTSIDE_WINDOW
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_config( &config, 8 );
+        violation_init( &receiver, &config );
+        uint8_t payload[14];
+        uint8_t * p = payload;
+        rocketnet_write_uint8( &p, 0x03 );
+        rocketnet_write_uint16( &p, 1 );
+        *p++ = 0x00; *p++ = 0x04; *p++ = 0x00;
+        rocketnet_write_uint16( &p, 0 );
+        *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        *p++ = 0x00;
+        *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
+        violation_feed_refuses( &receiver, payload, (int) ( p - payload ), ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW, ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW );
+        rn_arena_destroy( receiver.arena );
+    }
+}
+
+REGISTER_UNIT_TEST( violation_reader_and_window_checks_move_their_own_counters );
+
+// SLOT_COLLISION (check 10) is a defensive window state a live receive path
+// cannot reach with crafted wire records (the descriptor slot it guards is
+// released by delivery before a later number can land on it); its counter is a
+// distinct index, tied to its violation by the SDK's rn_violation_counter.
+static_assert( ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION != ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION,
+               "SLOT_COLLISION has its own counter" );
+static_assert( ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION != ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW,
+               "the two window violations have distinct counters" );

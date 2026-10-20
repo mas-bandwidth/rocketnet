@@ -309,6 +309,14 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_PASSED_FRAGMENT",
     "XDP_KERNEL_DROPPED_FIRST_FRAGMENT",
     "MESSAGE_SEND_NOT_CONNECTED",
+    "MESSAGE_BAD_FORM",
+    "MESSAGE_TRUNCATED",
+    "MESSAGE_BAD_FLAGS",
+    "MESSAGE_BAD_LENGTH",
+    "MESSAGE_BAD_SIZE",
+    "MESSAGE_BAD_CONTROL",
+    "MESSAGE_NUMBER_OUTSIDE_WINDOW",
+    "MESSAGE_SLOT_COLLISION",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
