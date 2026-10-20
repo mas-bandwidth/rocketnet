@@ -595,7 +595,10 @@ corruption.
   `rto = clamp( 1.25·srtt + 2·rttvar, rto_min, rto_max )`
   (`ROCKETNET_MESSAGE_RTO_SCALE_PERCENT` 125, a constant beside the config,
   not a field, so the public config keeps its ABI1 layout); before the first
-  sample it is `rto_initial`. At the defaults (`rto_initial` 100 ms, `rto_min`
+  sample it is `rto_initial`. The three bounds are capped at the receipt
+  deadline (`RN_RECEIPT_DEADLINE_S`, 2 s), so the resend rto is never above the
+  receipt deadline and a receipt is never reported lost before the resend
+  timeout would have fired. At the defaults (`rto_initial` 100 ms, `rto_min`
   10 ms, `rto_max` 250 ms) a lost record is resent within one to two RTTs. There is no
   back-off: every resend of a record waits the same delay, as in RakNet (study
   §9), so many attempts fit before `reliable_timeout` (`tla/RNResendTiming.tla`,
