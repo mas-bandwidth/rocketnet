@@ -139,6 +139,11 @@ static void rocketnet_frame_sync_sleep_until( struct rocketnet_frame_sync_t * fr
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
+    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // without priority held the wait is plain absolute sleep
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+
     frame_sync->waiter_thread = pthread_self();
     pthread_getschedparam( pthread_self(), &frame_sync->waiter_previous_policy, &frame_sync->waiter_previous_param );
     struct sched_param param;
@@ -164,6 +169,11 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
+    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // without priority held the wait is plain absolute sleep
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+
     // the real-time thread contract pro audio uses: period, computation and
     // constraint in mach time units. needs no privileges.
 
@@ -201,6 +211,11 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
+    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // without priority held the wait is plain absolute sleep
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+
     frame_sync->waiter_thread_id = GetCurrentThreadId();
     frame_sync->waiter_previous_priority = GetThreadPriority( GetCurrentThread() );
     if ( !SetThreadPriority( GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL ) )
@@ -220,6 +235,23 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 }
 
 #endif
+
+// For unit tests only (test_unit_thread_priority.cpp declares it): the
+// priority step rocketnet_frame_sync_wait takes on its first wait, run on a
+// frame sync that is never created (no timer, no thread), then given back
+// through rocketnet_frame_sync_restore_priority. Returns priority_held.
+int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns )
+{
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
+    rocketnet_frame_sync_platform_init();
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
+    struct rocketnet_frame_sync_t frame_sync;
+    memset( &frame_sync, 0, sizeof( frame_sync ) );
+    frame_sync.period_ns = period_ns;
+    rocketnet_frame_sync_elevate_priority( &frame_sync );
+    rocketnet_frame_sync_restore_priority( &frame_sync );
+    return frame_sync.priority_held;
+}
 
 // -------------------------------------------------------------------
 // the pure parts
