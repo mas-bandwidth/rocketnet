@@ -921,7 +921,7 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 // and 116 MB (strace of one create: two anonymous mmaps of those sizes),
 // past glibc's largest mmap threshold, so every create maps them fresh and
 // the value-initialising placement new (sdk/rocketnet_server_transport.cpp:1163,
-// sdk/rocketnet_server_gso_linux.cpp:575) faults every page in: ~42k minor
+// sdk/rocketnet_server_gso_linux.cpp:644) faults every page in: ~42k minor
 // faults and ~0.12 s of system time a gso create on a 64-core Linux member.
 // A per-cell case serves those allocations from the main heap and keeps the
 // heap untrimmed, so a create after the first reuses resident pages. The
