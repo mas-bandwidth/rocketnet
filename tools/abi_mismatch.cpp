@@ -16,7 +16,7 @@
 // arguments must fail loudly instead of depending on the production library.
 void rocketnet_api_misuse_record() { abort(); }
 static void fixture_assert( const char *, const char *, const char *, int ) { abort(); }
-void (*rocketnet_assert_function_pointer)( const char *, const char *, const char *, int ) = fixture_assert;
+void (*rn_assert_function)( const char *, const char *, const char *, int ) = fixture_assert;
 
 static bool mode(const char * name)
 {
