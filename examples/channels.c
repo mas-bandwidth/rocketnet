@@ -91,24 +91,24 @@ int main( void )
         {
             while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
             {
-                uint32_t seq = 0;
-                CHECK( bytes == (int) sizeof( seq ) );
-                memcpy( &seq, data, sizeof( seq ) );
+                uint32_t value = 0;
+                CHECK( bytes == (int) sizeof( value ) );
+                memcpy( &value, data, sizeof( value ) );
                 rocketnet_server_release_message( server, data );
-                CHECK( seq == chat_received + 1 );
-                chat_received = seq;
-                chat_this_frame++;
-            }
-            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
-            {
-                uint32_t pos = 0;
-                CHECK( bytes == (int) sizeof( pos ) );
-                memcpy( &pos, data, sizeof( pos ) );
-                rocketnet_server_release_message( server, data );
-                CHECK( pos > last_pos );
-                last_pos = pos;
-                positions_received++;
-                pos_this_frame++;
+                if ( value & 0x80000000u )
+                {
+                    const uint32_t seq = value & 0x7fffffffu;
+                    CHECK( seq == chat_received + 1 );
+                    chat_received = seq;
+                    chat_this_frame++;
+                }
+                else
+                {
+                    CHECK( value > last_pos );
+                    last_pos = value;
+                    positions_received++;
+                    pos_this_frame++;
+                }
             }
         }
 
@@ -137,10 +137,11 @@ int main( void )
             if ( chat_sent < NUM_CHAT )
             {
                 chat_sent++;
-                buf = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, sizeof( chat_sent ) );
+                uint32_t chat_value = chat_sent | 0x80000000u;
+                buf = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, sizeof( chat_value ) );
                 CHECK( buf != NULL );
-                memcpy( buf, &chat_sent, sizeof( chat_sent ) );
-                CHECK( rocketnet_client_finish_message( client, sizeof( chat_sent ) ) != 0 );
+                memcpy( buf, &chat_value, sizeof( chat_value ) );
+                CHECK( rocketnet_client_finish_message( client, sizeof( chat_value ) ) != 0 );
             }
         }
 
