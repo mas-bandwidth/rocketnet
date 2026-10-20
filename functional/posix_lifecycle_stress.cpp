@@ -456,6 +456,38 @@ static int posix_count( const posix_cell_t * cell, int count )
     return count;
 }
 
+// A loopback port for posix_server_restart_same_port_100 that a plain IPv4
+// bind on 127.0.0.1 takes now, probed from a pid-dependent start in
+// 20000-29999. That range is below the ephemeral ranges (macOS
+// net.inet.ip.portrange.first and Linux ip_local_port_range start at 49152
+// and 32768 by default), so a port 0 bind by another socket on the host is
+// never given it; with an ephemeral port, a client or server another case
+// creates between one destroy and the next create can hold it, and the
+// create is refused (TRANSPORT_LADDER_EXHAUSTED, printed at
+// functional/posix_lifecycle_stress.cpp:568). 0 when none binds.
+static unsigned posix_fixed_loopback_port()
+{
+    const unsigned first = 20000;
+    const unsigned span = 10000;
+    const unsigned start = (unsigned) getpid() % span;
+    for ( unsigned k = 0; k < span; k++ )
+    {
+        const unsigned port = first + ( start + k ) % span;
+        const int probe = socket( AF_INET, SOCK_DGRAM, 0 );
+        posix_check( probe >= 0 );
+        struct sockaddr_in address;
+        memset( &address, 0, sizeof( address ) );
+        address.sin_family = AF_INET;
+        address.sin_port = htons( (uint16_t) port );
+        address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        const bool bound = bind( probe, (const struct sockaddr *) &address, sizeof( address ) ) == 0;
+        close( probe );
+        if ( bound )
+            return port;
+    }
+    return 0;
+}
+
 // the bind address a cell's server takes: loopback with a kernel-chosen port,
 // or the near end of the pair on the xdp cell's fixed port
 static const char * posix_bind_address( const posix_cell_t * cell )
@@ -870,12 +902,23 @@ void rocketnet_test_posix_server_restart_same_port_100()
 
         const posix_resource_counts_t before = posix_stable_counts();
 
-        // discover a free port, release it, and from then on bind that exact
+        // pick a free port, release it, and from then on bind that exact
         // port again and again. The restart is what SO_REUSEADDR behaviour on
-        // BSD is on trial for; the client connects every round.
-        rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
-        const unsigned fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
-        rocketnet_server_transport_destroy( discovery );
+        // BSD is on trial for; the client connects every round. A loopback
+        // cell's port comes from below the ephemeral range
+        // (posix_fixed_loopback_port), so no port 0 bind elsewhere on the host
+        // takes it between a destroy and the next create.
+        unsigned fixed_port = 0;
+        if ( cell->xdp )
+        {
+            rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
+            fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
+            rocketnet_server_transport_destroy( discovery );
+        }
+        else
+        {
+            fixed_port = posix_fixed_loopback_port();
+        }
         posix_check( fixed_port != 0 );
 
         char fixed_address[64];
@@ -1105,7 +1148,7 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 
     The red proof, each a scratch build that is not kept, each run as
     ./bin/functional --run posix_client_create_destroy_1000 and failing at
-    posix_case_result (functional/posix_lifecycle_stress.cpp:740):
+    posix_case_result (functional/posix_lifecycle_stress.cpp:772):
 
     - the macOS socket destroy skips its close (sdk/rocketnet_platform.cpp:2467):
       [server portable, client portable] FAIL fds 4 -> 1004, threads 1 -> 1.
