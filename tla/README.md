@@ -91,33 +91,49 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 
 ## Case inventory
 
+The table below is generated from `CASES.tsv`: 224 declared cases in 36 groups.
+
 | Group | Cases | Scope |
 |---|---:|---|
-| `link` | 11 | All historical Link configurations |
-| `clientconnection` | 21 | All historical connection configurations, including nine debt cases |
-| `replaywindow` | 2 | Existing control and long-skip `WindowIsTruth` witness |
-| `rnsendstore` | 1 | Existing committed control |
-| `rnring` | 5 | Existing committed control and four invariant witnesses |
-| `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
-| `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
-| `rnuringdriver` | 3 | io_uring driver control (invariants and liveness) and two invariant witnesses |
-| `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |
-| `rnclientiodecrypt` | 5 | Decrypt on the client I/O thread: control (invariants and liveness) and four invariant witnesses |
-| `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
-| `rnxdpreplay` | 3 | Kernel replay high-water map control and two invariant witnesses |
-| `rnriodriver` | 3 | Windows RIO server driver design: control with two liveness properties and two invariant witnesses |
-| `rnlivefleetrun` | 3 | Live fleet run lifecycle (docs/LIVE-XDP.md): control with one liveness property and two invariant witnesses |
-| `rnoutgoingbuild` | 4 | The outgoing build (docs/OUTGOING-BUILD.md): control with one action property and three witnesses: the copy step (`NoCopy`), an allowance of its own for in-place packets (`PacketQuota`), and no packet kept for due reliable work (`ReliableSentWithinOneUpdate`) |
-| `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew (docs/DST.md section 7): control with one liveness and one action property, and two invariant witnesses |
-| `rnclientreceivequit` | 5 | The client receive thread's quit-and-wake handshake with destroy: controls for linux, macOS and Windows (two invariants, one action property, one liveness property) and two witnesses: the wake sent before quit (`WokenSeesQuit`) and a wait with no timeout and no wake (`DestroyCompletes`) |
-
-The 47-case plan covers every root configuration. Other experiments described
-in the model READMEs remain historical; this migration does not claim fresh
-measurements for uncommitted variants or change their model semantics.
-
+| `clientconnection` | 23 | Declared configurations in `CASES.tsv` |
+| `clientsession` | 5 | Declared configurations in `CASES.tsv` |
+| `fragmentsandacks` | 24 | Declared configurations in `CASES.tsv` |
+| `link` | 19 | Declared configurations in `CASES.tsv` |
+| `receiveorder` | 4 | Declared configurations in `CASES.tsv` |
+| `replaywindow` | 2 | Declared configurations in `CASES.tsv` |
+| `rnblocks` | 2 | Declared configurations in `CASES.tsv` |
+| `rnchannel` | 8 | Declared configurations in `CASES.tsv` |
+| `rnchanneltypes` | 11 | Declared configurations in `CASES.tsv` |
+| `rnclientio` | 8 | Declared configurations in `CASES.tsv` |
+| `rnclientiodecrypt` | 5 | Declared configurations in `CASES.tsv` |
+| `rnclientreceivequit` | 5 | Declared configurations in `CASES.tsv` |
+| `rnconnectionmemory` | 3 | Declared configurations in `CASES.tsv` |
+| `rndriversendstaging` | 2 | Declared configurations in `CASES.tsv` |
+| `rnendpoint` | 7 | Declared configurations in `CASES.tsv` |
+| `rnfilterepochs` | 3 | Declared configurations in `CASES.tsv` |
+| `rnflows` | 2 | Declared configurations in `CASES.tsv` |
+| `rnlivefleetrun` | 3 | Declared configurations in `CASES.tsv` |
+| `rnoutgoingbuild` | 4 | Declared configurations in `CASES.tsv` |
+| `rnreceipts` | 4 | Declared configurations in `CASES.tsv` |
+| `rnresendtiming` | 3 | Declared configurations in `CASES.tsv` |
+| `rnring` | 5 | Declared configurations in `CASES.tsv` |
+| `rnriodriver` | 4 | Declared configurations in `CASES.tsv` |
+| `rnscheduler` | 3 | Declared configurations in `CASES.tsv` |
+| `rnsecuritytables` | 13 | Declared configurations in `CASES.tsv` |
+| `rnsendbudget` | 4 | Declared configurations in `CASES.tsv` |
+| `rnsendspans` | 3 | Declared configurations in `CASES.tsv` |
+| `rnsendstore` | 1 | Declared configurations in `CASES.tsv` |
+| `rnsenthistory` | 3 | Declared configurations in `CASES.tsv` |
+| `rnsimfaults` | 3 | Declared configurations in `CASES.tsv` |
+| `rnslots` | 12 | Declared configurations in `CASES.tsv` |
+| `rnuringdriver` | 3 | Declared configurations in `CASES.tsv` |
+| `rnwindow` | 7 | Declared configurations in `CASES.tsv` |
+| `rnxdpreplay` | 3 | Declared configurations in `CASES.tsv` |
+| `serverconnection` | 4 | Declared configurations in `CASES.tsv` |
+| `serversession` | 9 | Declared configurations in `CASES.tsv` |
 ## Initial migration measurements
 
-All 47 cases were measured on Linux with the pinned runner and JAR above,
+At the initial 47-case migration snapshot, cases were measured on Linux with the pinned runner and JAR above,
 using two workers for controls, one for witnesses, and 110 seconds per case.
 Thirty-eight matched their declared outcomes; nine exhausted the budget.
 The three historically unfinished cases remain debt. Six formerly required

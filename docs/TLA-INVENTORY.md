@@ -1,4 +1,6 @@
-# rocketnet state machines: the TLA+ inventory
+# rocketnet state machines: historical TLA+ inventory
+
+> This design review describes source snapshot `5cb7613`; its proposed module labels are historical, not a claim that matching files exist. The current module roster is listed below. F1 is fixed by commit `5ab9e5c8ea4d31d385d19e5d3178e38ff6591d27`.
 
 > STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
 
@@ -29,7 +31,7 @@ not a code change on this card.
 
 | # | Kind | Where | One line |
 |---|---|---|---|
-| F1 | **defect** | `sdk/rocketnet_replay.cpp:54-60` | A forward jump of ≥ 4096 sequences clears 4 of the window's 64 words. The stale bits make the receiver refuse genuine packets and make its next ack block claim thousands of sequences it never opened. |
+| F1 | fixed (`5ab9e5c8ea4d31d385d19e5d3178e38ff6591d27`) | `sdk/rocketnet_replay.cpp:54-60` | A long skip clears the complete replay window. The original stale-bit defect and counterexample below are historical; the regression witness remains in the model. |
 | F2 | closed (gap, SHOULD, and CLAUDE.md:179) | `sdk/rocketnet_server_transport.cpp:832-838`, `sdk/rocketnet_server_protocol.cpp:377, 1198-1227` | Closed: the cookie key rotates on its 60 s period (`ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS`) via `rocketnet_server_protocol_rotate_cookie_key_if_due` in `rocketnet_server_protocol_update`, keeping the previous key for one period while `current_time < previous_cookie_key_expire_time`. |
 | F3 | gap (MUST) | `sdk/rocketnet_client_slots.cpp:148-156` | The free slot is found by a linear scan. The standard requires a free list. |
 | F4 | gap (MUST) | `sdk/rocketnet_client_protocol.cpp:201-221, 612-614` | When an attempt fails from state 1 or 2 (denied, cookie/request timeout, token expired), the client's ephemeral secret is not zeroed. It survives until the application calls `disconnect`, `connect` or `destroy`. |
@@ -41,7 +43,7 @@ not a code change on this card.
 | F10 | observation | `sdk/rocketnet_fragment.cpp:181-184, 253, 456` | A slot cleared on delivery forgets its payload id. A late fragment of an older, already-abandoned id then re-occupies the empty slot and is counted abandoned a second time. Bytes never alias. |
 | F11 | observation | `sdk/rocketnet_server_transport.cpp:1158-1159` | The maintenance loop reads the mapping address without the `mapping_index < 0` guard that `rocketnet_server_connected_mapping` (`sdk/rocketnet_server_protocol.cpp:1062-1090`) applies. It cannot be reached in the shipped protocol. The `SlotMappingBijection` invariant covers it. |
 
-### F1, traced
+### F1, historical defect trace (fixed by `5ab9e5c8ea4d31d385d19e5d3178e38ff6591d27`)
 
 The window is `ROCKETNET_REPLAY_WINDOW_BITS = ROCKETNET_HISTORY_PACKETS = 4096` bits
 (`sdk/rocketnet_replay.h:26`, `sdk/rocketnet_history.h:8`). It is stored as
@@ -888,303 +890,48 @@ and no protocol. Its pure parts are already factored out for direct tests
 
 ---
 
-## The module list, in order
+## Current module files
 
-These are ordered bottom-up, per the standing practice: each module stands on the ones
-before it. **The layer list goes to the maintainer for correction before module 1 is built**; this
-inventory proposes the layers, it does not settle them.
+This roster is generated from the checked-in root `tla/*.tla` files, excluding `MC*.tla` instance helpers. It names files that exist at this source snapshot.
 
-Common shape for every module:
-- Every module lives in `tla/<Module>.tla`, with `tla/MC<Module>.tla` and
-  `tla/MC<Module>.cfg` beside it.
-- Every TLC run is a row in `tla/RUNS.tsv` (module, config, states, distinct, result,
-  bench, date), run on vision (else hetzner), never on the Studio.
-- Each module is cited from the code it models, in a comment at the function named in
-  its "cite from" line.
+| Module | File |
+|---|---|
+| `ClientConnection` | `tla/ClientConnection.tla` |
+| `ClientSession` | `tla/ClientSession.tla` |
+| `FragmentsAndAcks` | `tla/FragmentsAndAcks.tla` |
+| `Link` | `tla/Link.tla` |
+| `RNBlocks` | `tla/RNBlocks.tla` |
+| `RNChannel` | `tla/RNChannel.tla` |
+| `RNChannelTypes` | `tla/RNChannelTypes.tla` |
+| `RNClientIo` | `tla/RNClientIo.tla` |
+| `RNClientIoDecrypt` | `tla/RNClientIoDecrypt.tla` |
+| `RNClientReceiveQuit` | `tla/RNClientReceiveQuit.tla` |
+| `RNConnectionMemory` | `tla/RNConnectionMemory.tla` |
+| `RNDriverSendStaging` | `tla/RNDriverSendStaging.tla` |
+| `RNEndpoint` | `tla/RNEndpoint.tla` |
+| `RNFilterEpochs` | `tla/RNFilterEpochs.tla` |
+| `RNFlows` | `tla/RNFlows.tla` |
+| `RNLiveFleetRun` | `tla/RNLiveFleetRun.tla` |
+| `RNOutgoingBuild` | `tla/RNOutgoingBuild.tla` |
+| `RNReceipts` | `tla/RNReceipts.tla` |
+| `RNResendTiming` | `tla/RNResendTiming.tla` |
+| `RNRing` | `tla/RNRing.tla` |
+| `RNRioDriver` | `tla/RNRioDriver.tla` |
+| `RNScheduler` | `tla/RNScheduler.tla` |
+| `RNSecurityTables` | `tla/RNSecurityTables.tla` |
+| `RNSendBudget` | `tla/RNSendBudget.tla` |
+| `RNSendSpans` | `tla/RNSendSpans.tla` |
+| `RNSendStore` | `tla/RNSendStore.tla` |
+| `RNSentHistory` | `tla/RNSentHistory.tla` |
+| `RNSimFaults` | `tla/RNSimFaults.tla` |
+| `RNSlots` | `tla/RNSlots.tla` |
+| `RNUringDriver` | `tla/RNUringDriver.tla` |
+| `RNWindow` | `tla/RNWindow.tla` |
+| `RNXdpReplay` | `tla/RNXdpReplay.tla` |
+| `ReceiveOrder` | `tla/ReceiveOrder.tla` |
+| `ReplayWindow` | `tla/ReplayWindow.tla` |
+| `ServerConnection` | `tla/ServerConnection.tla` |
+| `ServerSession` | `tla/ServerSession.tla` |
+## Provenance and limits
 
-Common channel: a bag of packets, with actions `Send`, `Lose` (remove any), `Dup` (copy
-any) and `Deliver` (any one, so order is free). Where the module is about security, add
-`Inject`: an attacker that can re-send any packet it has seen from any source address,
-and can forge nothing sealed.
-
-Time is a `Tick` action over a small integer clock. Liveness uses weak fairness on
-`Tick` and strong fairness on delivering *some* copy of a retransmitted packet, never on
-one particular packet.
-
-Every module also carries a **reversed witness**: one constant flip that reproduces a
-known-bad version, which TLC must reject. A module whose witness passes is not checking
-anything.
-
-### 1. `RNReplayWindow` (M7)
-
-- CONSTANTS `WordBits = 2`, `Words = 4` (W = 8), `ClearWords ∈ {1, 4}`, `MaxSeq = 24`.
-- VARIABLES `highest`, `win ∈ [0..Words-1 → [0..WordBits-1 → BOOLEAN]]`, ghost `opened`.
-- Actions: `Open(s)` for any `s ∈ 1..MaxSeq` with `¬AlreadyReceived(s)`. This is
-  `advance` exactly as `replay.cpp:42-70` writes it: clear `ClearWords` words when the
-  skip is ≥ W, else clear the skipped bits. `Probe(s)` is the check alone. Order and gaps
-  are free, so loss, reorder and duplication are all inside `Open`'s choice.
-- Properties: `NeverAcceptsReplay`, `InWindowExact`, `BlockTruthful` (the block as the
-  set of `s ∈ [max(1, highest − W + 1), highest]` whose bit is set), `ZeroNeverValid`.
-- MC: `ClearWords = 1` keeps the code's ratio of cleared to total words (4 of 64 is
-  1 of 16; at 4 words, 1 is the nearest). It must fail `InWindowExact` and
-  `BlockTruthful` with a trace of a skip ≥ W over stale words: F1. `ClearWords = Words`
-  is the fix and must pass.
-- Reversed witness: the fix passing *and* the code failing is the pair.
-- Cite from: `rocketnet_replay_advance`.
-
-### 2. `RNSecurityTables` (M5 + M6)
-
-- CONSTANTS `Tokens = {t1, t2, t3}`, `Addrs = {a1, a2}`, `HistoryCap = 2`,
-  `AdmittedCap = 2`, `MaxClock = 4`, `CookieLife = 1`, `RotatePeriod = 2`.
-- VARIABLES `history`, `admitted`, `insertOrder`, `keyGen`, `hasPrev`, `clock`,
-  `connections` (a ghost: which token admitted which connection).
-- Actions:
-  - `Request(t, a, cookieGen, cookieExp)`, running the ladder in order (gate, check,
-    contains, record);
-  - `Response(t, a)`, running add (with F9's present-means-success), or deny on
-    `noSlot`;
-  - `Rotate`, `Tick`;
-  - `Disconnect(t)`, which ends a ghost connection.
-- Properties: `OneConnectionPerToken`, `AdmittedNeverEvictedUnexpired`,
-  `DeniedTokenStaysUsable`, `RotationWindow`, `NoAsymmetricWithoutCookie`.
-  `BindingFirstAddress` goes in a second cfg: expected to fail by flush-then-replay,
-  documenting S:2566-2570.
-- Reversed witness: `admitted` evicts oldest. That must fail `OneConnectionPerToken`.
-- Cite from: `rocketnet_token_table_select_slot`, and the gate at
-  `rocketnet_server_protocol_process_connection_request`.
-
-### 3. `RNHandshake` (M1 + M2 + M3, with the integrity limit and key erasure)
-
-- CONSTANTS `Clients = {c1, c2}` (c2 shares c1's client id in one cfg), `MaxClients = 1`,
-  `MapCap = 2`, `SendInterval = 1`, `HandshakeDeadline = 3`, `Timeout = 4`,
-  `TokenLife = 6`, `IntegrityLimit = 2`, `InFlight = 3` per direction. The tables come
-  from module 2 as an abstract admitted/bound predicate.
-- VARIABLES: client `state`, `salt`, `ephLive`, `keys`, `cookie`, `seqH`, `seqS`;
-  server `mapping[addr]` with `{status, clientIndex, nonce, deadline, lastRecv,
-  challengeId}`, `slot[i]` with `{connected, confirmed, clientId, mappingIndex}`,
-  `freeMapIdx`; the channels; `nonceCounter`; `clock`.
-- Actions: `Connect`, `ClientTick` (send / deadlines), `ClientRecv(p)`, `ServerRecv(p)`,
-  `ServerSweep`, `AppDisconnect`, `AppDisconnectClient(i)`, `SlotFreedElsewhere` (for F5),
-  `Lose`, `Dup`, `Deliver`, `Inject`, `Tick`.
-- Properties:
-  - safety: `ForwardOnly`, `TimeoutPairing`, `NoSlotBeforeResponse`,
-    `MappingCreatedOnce`, `NonceFresh`, `DeadlineFixed`, `AlreadyConnectedSilent`,
-    `SlotMappingBijection`, `OneSlotPerClientId`, `EphemeralErasedOutsideHandshake`
-    (expect F4);
-  - liveness: `AttemptResolves`, `NoSingleLossStrands`, `HalfBounded`;
-  - in a separate cfg: `TerminalAbsorbing` (expect F8), `DeniedMeansNoSlot` (expect F5),
-    and `SlotReleasedAfterClientGone` under `Inject` (expect F7).
-- Budget: this is the largest state space. If TLC exceeds a bench budget, cut to one
-  client before cutting `Dup` or `Deliver`'s freedom. Those carry the traces the
-  standard argues about.
-- Reversed witness: assign the slot at the challenge (pre-step-3). That must fail
-  `NoSlotBeforeResponse` under `Inject` (S:1168-1173).
-- Cite from: `rocketnet_client_protocol_update`,
-  `rocketnet_server_protocol_process_connection_request`,
-  `rocketnet_client_slots_assign`.
-
-### 4. `RNAckDelivery` (M8)
-
-- CONSTANTS `SentRing = 4`, `AggRing = 2`, `BatchCap = 1`, `MaxSeq = 8`, one fragmented
-  payload of 2 fragments.
-- VARIABLES: per endpoint `sent`, `aggregates`, `highestSent`, `ackDebt`, `batch`; the
-  peer's received set as module 1's `win`/`highest`.
-- Actions: `SendPayload`, `SendFragmented`, `SendAck`, `RecvBlock`, `Update` (drains the
-  batch), plus the channel actions.
-- Properties: `SurfacedOnce`, `AggregateAllFragments`, `SurfacedOnlyIfOpened` (fails
-  under module 1's `ClearWords = 1` and passes under the fix), `DeferredSurfaces`,
-  `AckConversationTerminates`.
-- Reversed witness: type 8 elicits. That must fail `AckConversationTerminates`.
-- Cite from: `rocketnet_ack_apply_run`.
-
-### 5. `RNKeepAlive` (M4)
-
-- CONSTANTS `SendInterval = 2` ticks, `UpdateTick = 1`, one client and one slot,
-  `AppSendsEveryTick ∈ {TRUE, FALSE}`, `Slots = 2` with `FrameBudget = 1` per update
-  (for `EverySlotServiced`).
-- VARIABLES `lastKA`, `lastSend`, `latch`, `tagged`, the client `state`, the cursor, the
-  channels, `clock`.
-- Properties: `LatchImpliesConnected`, `EstablishmentUnstoppable`, `EverySlotServiced`,
-  `OverClaimStrandsOnlyItself`.
-- Reversed witness: pacing reads `lastSend` before the latch (the #90 code). That must
-  fail `EstablishmentUnstoppable` with `AppSendsEveryTick`.
-- Cite from: `rocketnet_server_protocol_write_keep_alive_if_due`.
-
-### 6. `RNReassembly` (M9)
-
-- CONSTANTS `IdBits = 4` (ids modulo 16, serial arithmetic at 8), `Slots = 2`,
-  `Counts = {2, 3}`, `Stride = 2`, `MaxPayload = 5`, and one defective sender allowed to
-  vary count and size.
-- VARIABLES: per slot `{id, count, stride, finalBytes, finalStaged, received}`, the
-  ghost `delivered`, and `abandonedIds`.
-- Properties: `RefusalLeavesSlot`, `DeliveredExact`, `NoAliasing`, `CountPinned`,
-  `SlotRecovers`; `NoResurrection` in a separate cfg (expect F10).
-- Reversed witness: a plain `<` instead of serial arithmetic. That must fail
-  `SlotRecovers` across the wrap (S:1909-1915).
-- Cite from: `rocketnet_reassembly_process_fragment`.
-
-### 7. `RNPacketLeases` (M10)
-
-- CONSTANTS `Threads = 2`, `Capacity = 4` (half usable), `Epochs = 2`, `Contexts = 3`
-  including a copied one.
-- VARIABLES: `entry[k].state`, `entry[k].ctx`, `used`, `epoch`, per thread `pc`.
-- Actions: insert, resolve and take, broken into their atomic steps (load, CAS, publish)
-  so interleavings are real; `Reset` only when every thread is idle (the join contract,
-  U:46-48).
-- Properties: `ConsumeOnce`, `ResolveFindsOwn`, `NoLeaseAfterReset`.
-- Reversed witness: `Reset` allowed while a thread is mid-insert. That must fail
-  `ResolveFindsOwn` or `ConsumeOnce`.
-- Cite from: `rocketnet_packet_leases_t`.
-
-### 8. `RNReceiveFlip` (M12)
-
-- CONSTANTS `BufCap = 2`, `Packets = 3`, `Mirror ∈ {FALSE, TRUE}` (TRUE is the client's
-  index variant).
-- VARIABLES `counter`, `buf[0..1]`, `lockHolder`, game and worker `pc`, the ghosts
-  `appended` and `drained`.
-- Properties: `Exclusive`, `Conserved`.
-- Reversed witness: the worker releases the mutex between appends. That must fail
-  `Exclusive`.
-- Cite from: `rocketnet_server_socket_receive_packets`, `rocketnet_client_receive_packets`.
-
-### 9. `RNXdpFrames` (M13)
-
-- CONSTANTS `RxFrames = 4`, `FillRing = 2`, `RxRing = 2`, `PendingCap = 2`,
-  `StageCap = 1`, `TxFrames = 3`, `TxRing = 2`, `Generations = 2`; kernel actions are
-  nondeterministic (fill → rx, tx → complete, reserve may return zero).
-- VARIABLES `owner[frame]`, `pending`, the ring contents, `handoff {free, queued, head,
-  count, filling}`, `flowIndex`, `startIndex`, `batch`.
-- Properties: `FrameConservation`, `ReleaseConsumedOnly`, `HandoffNoOverwrite`,
-  `RetireAfterCopy`, `FramesReturn`.
-- Reversed witness: release the peeked count instead of the consumed count. That must
-  fail `FrameConservation` (the bug the comment at `:2159-2166` describes).
-- Cite from: `rocketnet_server_socket_xdp_thread_function`.
-
-### 10. `RNTransportLifecycle` (M11 + M14)
-
-- CONSTANTS `Workers = 2`, `RecvOps = 2`, `SendOps = 1`.
-- VARIABLES: transport `state`, `stopping`, `pending`, `activeWorkers`, per op status,
-  per worker `pc` and mutex, `cancelled`, `retry`.
-- Properties: `NoPostAfterCancel`, `DestroyQuiescent`, `StopDrains`, `StopCompletes`,
-  `NoStageAfterStop`; `NoProtocolAfterStopped` in a separate cfg (expect F6).
-- Reversed witness: `stop` skips the mutex barrier. That must fail `NoPostAfterCancel`.
-- Cite from: `rocketnet_server_iocp_stop`, `rocketnet_server_transport_update`.
-
-### 11. `RNConnectionMemory` (the message layer's per-connection memory)
-
-Added after the inventory, with the message layer (docs/CHANNELS.md 4). Written,
-run and recorded: `tla/RNConnectionMemory.tla`, `tla/README-RNConnectionMemory.md`.
-
-- CONSTANTS `Slots = {s1, s2, s3}`, `Clients = {c1, c2, c3, c4}`, `Capacity = 3`.
-- VARIABLES: per slot `state` (Free, Connected, Disconnected), `owner`, `used`,
-  `exhausted`, `reason`, `records`.
-- Actions: `Connect`, `Use`, `Release`, `Exhaust`, `Kick`, `Leave`, `Reuse`.
-- Properties: `ExhaustionOnlyLeadsToDisconnect`, `ReusedSlotStartsClean`,
-  `NoCrossSlotEffect`, `ExhaustedReasonNamed`, `UsedBounded`; LIVE
-  `ExhaustedEventuallyFree`.
-- Reversed witnesses: `BrokenNoReset` must fail `ReusedSlotStartsClean`;
-  `BrokenCarryOn` must fail `ExhaustionOnlyLeadsToDisconnect`.
-- Cite from: `rn_region_send_alloc`, `rn_region_send_free`,
-  `rn_region_send_free_fragment`, `rn_region_exhaust`,
-  `rn_connection_memory_decide`, `rn_region_reset`.
-
-### 12. `ClientSession` (the client object's life across connections)
-
-Added after the inventory, ahead of the connect, disconnect and reconnect API. Written, run
-and recorded: `tla/ClientSession.tla`, `tla/README-ClientSession.md`, group `clientsession`.
-
-- CONSTANTS `MaxSessions = 3`, `MaxCreates = 2`; `Defect`, `UnresetField` select a witness.
-- VARIABLES: `st` (NONE, DISCONNECTED, the three handshake stages, CONNECTED, seven error
-  states), `cur`, `conn` (one field per row of the reset inventory, Init or a session tag),
-  `reason`, `kept` (lifetime counters, config), `link`.
-- Actions: `Create`, `Destroy`, `Connect`, `HandshakeStep`, `Deny`, `TokenExpires`, `Timer`,
-  `ServerDisconnect`, `ClientDisconnect`, `DisconnectFromError`, `Send`, `ServerSend`,
-  `Deliver`, `Lose`; every exit from a connection goes through one `Reset`.
-- Properties: `ConnectOnlyFromDisconnected`, `NoSendUnlessConnected`, `ResetIsInit`,
-  `RecordIsCurrent`, `ReconnectObservesNothing`, `ReasonKeptUntilNextConnection`; LIVE
-  `ConnectReachesConnectedOrError`.
-- Reversed witnesses: `MCClientSessionUnreset.cfg` (Reset skips `replay_window`) must fail
-  `ReconnectObservesNothing`; `MCClientSessionConnectAnywhere.cfg` must fail
-  `ConnectOnlyFromDisconnected`.
-- Cite from: the client's single reset function and connect, written by
-  rocketnet-client-connect-disconnect-reconnect (owed; `tla/COVERAGE.tsv`).
-
-### 13. `ServerSession` (the server object's life and the per-slot reset)
-
-Added with module 12. Written, run and recorded: `tla/ServerSession.tla`,
-`tla/README-ServerSession.md`, group `serversession`.
-
-- CONSTANTS `SlotCount = 2`, `MaxSessions = 2`, `MaxTokens = 2`, `MaxStarts = 2`,
-  `MaxCreates = 1`; `Defect`, `UnresetField` select a witness.
-- VARIABLES: `state` (NONE, STOPPED, RUNNING), per slot `st`, `sess`, `rec` (the
-  same per-connection record), `reason`; `kept` (used-token history, keys, config, lifetime
-  counters, kept across stop and start per STANDARD.md:2913); `draining`; `link`.
-- Actions: `Create`, `Destroy`, `Start`, `Stop`, `DrainStep(i)`,
-  `DisconnectAll`, `DrainDone`, `ClientConnects(i, t)`, `Establish(i)`, `Deny(i)`,
-  `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)`, `ServerSend(i)`, `ClientSend`,
-  `Deliver`, `Lose`; every exit from a slot's connection goes through one `Reset(i)`.
-- Properties: `StartOnlyFromStopped`, `NoSendUnlessConnected`, `ResetIsInit`,
-  `RecordIsCurrent`, `SlotReuseObservesNothing`, `NoClientWhileStopped`,
-  `StopDisconnectsAll`, `ReasonKeptWithinRun`, `ResetTouchesOnlyItsSlot`,
-  `TokenAdmitsOnce`; LIVE `HandshakeResolves`.
-- Reversed witnesses: `MCServerSessionUnresetSlot.cfg` must fail `SlotReuseObservesNothing`;
-  `MCServerSessionStopLeavesClient.cfg` must fail `NoClientWhileStopped`;
-  `MCServerSessionTouchesOtherSlot.cfg` must fail `ResetTouchesOnlyItsSlot`.
-- Cite from: the server's per-slot reset, start, stop and `disconnect_all_clients`, written by
-  rocketnet-client-connect-disconnect-reconnect and rocketnet-per-connection-reset-is-complete
-  (owed; `tla/COVERAGE.tsv`).
-
-### 14. `RNSimFaults` (the DST's crash, restart and clock-skew injector)
-
-Written, run and recorded before its code: `tla/RNSimFaults.tla`, `tla/MCRNSimFaults.tla`,
-group `rnsimfaults`; the design is `docs/DST.md` sections 3 and 7.
-
-- CONSTANTS `Clients = {C1, C2}`, `Server = S0`, `MaxSessions = 6`, `MaxClientCrashes = 1`,
-  `MaxServerCrashes = 1`, `MaxDisconnects = 1`, `MaxTime = 1`, `MaxInFlight = 2`,
-  `Scale = 200` (clock units per step), `Offset` and `Rate` per peer at the design's extremes
-  (one client 50 units ahead at 201 per step, one 50 behind at 199, the server on time),
-  `OffsetBound = 50`, `DriftBound = 1`; rule switches `FreshOnRestart` and `CrashSilences`
-  select a witness, and `CompareGeneration` and `CompareIncarnation` drop one receiver
-  compare for a probe.
-- VARIABLES: `phase` per peer (up, crashed, restarting); per client `cst` (idle,
-  connecting, connected), `gen` (the session generation, from the global counter
-  `nextGen`), `cinc` (the incarnation its session was admitted under), `restarted` (rebuilt
-  and not connected since) and the ghost tag `sid` (from the counter `nextSid`); `genFirst`
-  (the first session to take each generation); `incarnation` (the server incarnation, a
-  separate counter); `srv` (the server's session records); `net` (packets stamped with
-  generation and incarnation); `t`; `clock` per peer; `faults`; `clientCrashes`,
-  `serverCrashes`, `disconnects`; the ghosts `lastAct` and `lastDel`.
-- Actions: `Crash(p)`, `Restart(p)`, `Rejoin(p)`, `Tick`, `EndFaults`, `Lose(m)`, and the
-  outside events `Connect(c)`, `Establish(c)`, `Disconnect(c)`, `ClientTimeout(c)`,
-  `ServerTimeout(r)`, `ClientSend(c)`, `ServerSend(r)`, `Deliver(m)`, `Refuse(m)`. A receiver
-  takes a packet only when its generation and, separately, its incarnation equal the
-  receiving session's. With the global generation counter the generation compare alone
-  keeps deliveries on their own session; the incarnation compare is a second, independent
-  check.
-- Properties: `TypeOK`, `CrashedPeerSilent`, `RestartIsFresh`,
-  `DeliverOnlyToLiveGeneration`, `LiveSessionOnCurrentIncarnation`, `SkewBounded`; ACTION
-  `ClockMonotone`; LIVE `EveryLiveClientConnects` (weak fairness on restarts, the
-  handshake, the timeouts and the end of the fault window).
-- Reversed witnesses: `MCRNSimFaultsBrokenRestartKeepsSession.cfg` must fail
-  `RestartIsFresh`; `MCRNSimFaultsBrokenCrashedSends.cfg` must fail `CrashedPeerSilent`.
-- Cite from: the injector, `dst_faults.h`, written by rocketnet-dst-fault-injectors (owed;
-  `tla/COVERAGE.tsv`).
-
-Modules 1 to 5 are what the request names: client and server connection and security,
-with the ack layer under the keep-alive rule. Module 1 goes first because modules 3 to 5
-read its received state and F1 lives in it. M15 and M16 get no module; their reasons are
-in their sections.
-
----
-
-## What this inventory did not do
-
-- No module was written and TLC was not run. `tla/` and `tla/RUNS.tsv` do not exist yet;
-  the first module card creates them.
-- The Darwin `msgx` pump (`sdk/rocketnet_platform.cpp`) was outside START and was not
-  read.
-- F1 to F11 are recorded here and in the card's report. None is fixed here:
-  - F1 is a defect.
-  - F2, F3 and F4 are gaps against the standard.
-  - F5 to F8 are questions for the maintainer.
-  - F9 to F11 are observations.
+The findings and proposed state-machine narratives above are a historical design review of source snapshot `5cb7613`; they are not a current implementation audit or a substitute for the measured rows in `tla/RUNS.tsv`. F1 is fixed by commit `5ab9e5c8ea4d31d385d19e5d3178e38ff6591d27`; its historical trace remains as the regression rationale. The current checked-in module files are listed above.

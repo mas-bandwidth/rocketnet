@@ -20,14 +20,13 @@
 (* ghost `received` is that truth, trimmed to the range, and every rule    *)
 (* below is the window agreeing with it.                                   *)
 (*                                                                         *)
-(* Two rules from the fix cards are the point of this model, each with a   *)
-(* reversed witness in README-ReplayWindow.md that shows today's code      *)
-(* violates it:                                                            *)
+(* This model checks two rules from fix cards. The committed instance uses  *)
+(* corrected code values; reversed configs preserve witnesses for F1 (fixed *)
+(* by commit 5ab9e5c8ea4d31d385d19e5d3178e38ff6591d27) and OV-34.          *)
 (*                                                                         *)
-(*   F1 (rnfix-replay-long-skip-clears-window-r2, rocketnet#189).  On a    *)
-(*   skip of a full window or more, advance clears the whole ring.  The    *)
-(*   code (sdk/rocketnet_replay.cpp:54-60) clears window[0] to window[3]:  *)
-(*   ClearedWords < Words leaves stale bits that read as received.         *)
+(*   F1: on a skip of a full window or more, the current implementation   *)
+(*   clears the whole ring in rocketnet_replay_advance. The reversed        *)
+(*   witness sets ClearedWords < Words and recreates the fixed defect.     *)
 (*                                                                         *)
 (*   OV-34 (rnfix-replay-advanced-after-connect-check-r2).  The server     *)
 (*   advances the session window only for a mapping that holds a slot.    *)
@@ -50,8 +49,7 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
     Words,             \* words in the ring: ROCKETNET_HISTORY_PACKETS / 64
     WordBits,          \* bits per word: 64 in the code
-    ClearedWords,      \* words the long-skip branch clears; the rule: Words.
-                       \* today's code: 4 (sdk/rocketnet_replay.cpp:56-59)
+    ClearedWords,      \* words the long-skip branch clears; current code uses Words.
     MaxSeq,            \* the highest sequence this instance explores
     GateBeforeAdvance  \* BOOLEAN: the server checks the slot before it
                        \* advances (the rule) or after (today's code)
@@ -113,11 +111,11 @@ AckReports(s) == InRange(s) /\ window[Bit(s)]
 
 (***************************************************************************)
 (* rocketnet_replay_advance (sdk/rocketnet_replay.cpp:42-70), as the code  *)
-(* is shaped.  Above the high-water mark the entries the advance skips     *)
+(* is parameterized. Above the high-water mark, advance clears skipped bits. *)
 (* past are cleared first, so a sequence far ahead does not inherit bits   *)
 (* from the previous lap: a skip shorter than W clears each skipped        *)
 (* sequence's bit (the loop at :63-64); a skip of W or more clears words   *)
-(* 0..ClearedWords-1 (:56-59).  Then the bit for s is set (:69).           *)
+(* 0..ClearedWords-1; the committed instance uses Words. Then s is set.  *)
 (*                                                                         *)
 (* The ghost follows the truth: s joins received, and whatever has left    *)
 (* the retained range is forgotten -- the window can no longer speak for   *)
