@@ -466,7 +466,7 @@ static void windows_socket_errors_prefilter_read( struct rocketnet_client_transp
 // sends no zero-length datagram (it asserts packet_bytes > 0), so the empty
 // one goes in the second leg only. Then from the raw test socket, a source
 // the client did not dial: every datagram, the empty one included, counts
-// CLIENT_RECEIVE_FOREIGN_SOURCE (sdk/rocketnet_client_transport.cpp:1137-1142)
+// CLIENT_RECEIVE_FOREIGN_SOURCE (sdk/rocketnet_client_transport.cpp:1141-1146)
 // and none reaches the prefilter. The case proves each datagram is counted
 // once, the I/O thread keeps receiving and the client stays connected.
 static void windows_client_drops_oversize_and_garbage( bool ipv6 )
