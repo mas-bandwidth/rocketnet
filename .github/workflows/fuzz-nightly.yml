@@ -251,3 +251,81 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+  fuzz-windows:
+    name: nightly fuzz windows
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: fuzz-nightly-windows-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus-win
+          key: fuzz-corpus-win-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-win-
+
+      - name: Configure and build the libFuzzer targets with clang-cl
+        shell: bash
+        run: |
+          set -euo pipefail
+          VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          if [ -x "$VSWHERE" ]; then
+            VS_WIN=$("$VSWHERE" -latest -requires Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath | tr -d "\r")
+          else
+            VS_WIN=""
+          fi
+          if [ -z "$VS_WIN" ]; then
+            echo "TOOL-MISSING clang-cl (Microsoft.VisualStudio.Component.VC.Llvm.Clang) on $RUNNER_NAME"
+            exit 1
+          fi
+          VS_POSIX=$(cygpath -u "$VS_WIN")
+          export PATH="$VS_POSIX/VC/Tools/Llvm/x64/bin:$VS_POSIX/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja:$PATH"
+          command -v clang-cl
+          cmake -B build-fuzz -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DROCKETNET_BUILD_FUZZERS=ON
+          cmake --build build-fuzz --target fuzz_rocketnet_fuzz fuzz_rocketnet_fuzz_message fuzz_rocketnet_fuzz_connect_token fuzz_rocketnet_fuzz_receive_structured --parallel 4
+
+      - name: Fuzz each target for 10 minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          T="${{ github.event.inputs.max_total_time || '600' }}"
+          for pair in \
+            "rocketnet_fuzz:fuzz/corpus" \
+            "rocketnet_fuzz_message:fuzz/corpus_message" \
+            "rocketnet_fuzz_connect_token:fuzz/corpus_connect_token" \
+            "rocketnet_fuzz_receive_structured:fuzz/corpus_receive_structured"; do
+            target="${pair%%:*}"
+            seeds="${pair#*:}"
+            mkdir -p "corpus-win/${target}"
+            echo "fuzzing fuzz_${target} for ${T}s with the wire dictionary"
+            # the Ninja build writes the executables to bin/, not build-fuzz/:
+            # CMakeLists.txt:64-65 sets CMAKE_RUNTIME_OUTPUT_DIRECTORY to bin/ for a top-level build
+            ./"bin/fuzz_${target}.exe" \
+              "corpus-win/${target}" "${seeds}" \
+              -dict=fuzz/rocketnet.dict \
+              -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=2048 -timeout=25
+          done
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-windows-${{ replace(matrix.ref, '/', '-') }}
+          path: |
+            crash-*
+            oom-*
+            timeout-*
+            leak-*
+          if-no-files-found: ignore
