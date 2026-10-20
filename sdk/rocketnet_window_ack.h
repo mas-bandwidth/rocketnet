@@ -82,6 +82,8 @@ struct rn_window_ack_t
     double srtt;                    // smoothed RTT (RFC 6298)
     double rttvar;                  // RTT variation (RFC 6298)
     double rto;                     // current clamped RTO; there is no back-off (tla/RNResendTiming.tla)
+    double rsrtt;                   // RakNet's estimated RTT: 5% toward each sample
+    double rdev;                    // RakNet's RTT deviation: 5% toward |rtt - rsrtt|
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
@@ -126,6 +128,46 @@ struct rn_window_ack_t
 static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
 {
     return ack->rto < ack->resend_interval ? ack->rto : ack->resend_interval;
+}
+
+// RakNet's rto (docs/RAKNET-RELIABILITY.md 9 "RTO", CC.cpp:288-314): the
+// + 30 ms term, the 2 s cap, and the 2 s value while the round-trip time is
+// unknown. These are the fixed constants of the receipt deadline; the formula
+// around them adapts to the path.
+#define RN_RTO_ADD_S                      0.030
+#define RN_RTO_UNKNOWN_S                  2.0
+#define RN_RTO_CAP_S                      2.0
+
+// The one RTO function of the receipt deadline: RakNet's
+//   min( 2 x srtt + 4 x rttvar + 30 ms, configured_max ),
+// never below configured_min. The caller passes the public config's floor and
+// cap. The floor defaults to rto_min_ms (10 ms), which is below the formula's
+// 30 ms term on every accepted path, so the default behaves exactly as
+// RakNet's no-floor formula; a caller may raise it, for example to 0.1 s. The
+// two estimates are RakNet's own: the first sample sets both, and each later
+// sample moves each 5% (rn_window_ack_on_ack). There is no back-off.
+static inline double rn_window_ack_compute_rto( double srtt, double rttvar, double configured_min, double configured_max )
+{
+    double rto = 2.0 * srtt + 4.0 * rttvar + RN_RTO_ADD_S;
+    if ( rto < configured_min )
+        rto = configured_min;
+    if ( rto > configured_max )
+        rto = configured_max;
+    return rto;
+}
+
+// The receipt deadline of an UNRELIABLE_WITH_ACK_RECEIPT packet, in seconds
+// after its send: RakNet's rto from rn_window_ack_compute_rto, 2 s while the
+// round-trip time is unknown. It is independent of the resend timer: an
+// unreliable send is never resent, and an acknowledgement that arrives after
+// the resend rto but before this deadline reports ACKED (tla/RNReceipts.tla
+// LossOnlyAfterReceiptDeadline). The floor is the public rto_min_ms; the cap
+// is RN_RTO_CAP_S.
+static inline double rn_window_ack_receipt_loss_delay( const rn_window_ack_t * ack )
+{
+    if ( !ack->has_rtt )
+        return RN_RTO_UNKNOWN_S;
+    return rn_window_ack_compute_rto( ack->rsrtt, ack->rdev, ack->rto_min, RN_RTO_CAP_S );
 }
 
 // The resend delay of a chunk of a block: the RTO alone, not the 100 ms cap,
