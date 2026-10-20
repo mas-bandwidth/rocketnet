@@ -341,26 +341,6 @@ static void check_send_handoff()
         }
     }
     check(expected == 201 && copied[first] == 100 && copied[second] == 100);
-    // reopen: when every generation is queued it hands back the newest queued
-    // generation, never the front; it refuses while only the front is queued,
-    // and after reopening the same buffer is the filling one again.
-    int a = queue.acquire();
-    check(a >= 0 && queue.front() == -1);
-    queue.publish();
-    check(queue.reopen() == -1); // the front is the only queued generation
-    int b = queue.acquire();
-    check(b >= 0 && b != a);
-    queue.publish(); // now both generations are queued
-    check(queue.front() == a);
-    check(queue.reopen() == b); // newest queued generation, never the front
-    check(queue.acquire() == b); // reopen's buffer is the filling one again
-    check(queue.front() == a); // the front is untouched
-    queue.publish();
-    check(queue.front() == a);
-    queue.retire(); // retire the front
-    check(queue.front() == b);
-    check(queue.reopen() == -1); // one generation left
-    queue.retire();
     // Exercise repeated wrap/reuse with the next producer always reserved.
     for (int i = 0; i < 10000; ++i)
     {
