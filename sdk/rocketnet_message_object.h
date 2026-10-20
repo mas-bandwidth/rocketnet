@@ -77,6 +77,14 @@ struct rn_message_link_t
     void (*abort_packet)( void * transport, struct rocketnet_packet_context_t * context );
     void (*send_packets)( void * transport );
 
+    // How many payload frames the transport may still start this update.
+    // NULL (the client's link, the unit suite's fakes): no transport-side
+    // cap. The server's link reads it so a rotation advances only over
+    // clients that had a chance to send.
+    int (*send_capacity_available)( void * transport );
+    // Connected peers whose next send round must remain available.
+    int (*send_connected_count)( void * transport );
+
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots
     // Observe). The server's link answers
     // rocketnet_server_transport_client_connection_id, which differs for every
@@ -178,6 +186,10 @@ struct rn_message_object_t
     int batch_count;                            // the entries the last receive handed out
     int32_t batch_connection[ROCKETNET_RECEIVE_BATCH_MESSAGES];
     uint32_t batch_entry[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    // The send pass's rotation: the first connection to offer a frame next
+    // update. A cap below the client count then serves every client in turn
+    // instead of always serving the low indices.
+    int send_next_connection;
 
     // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame
