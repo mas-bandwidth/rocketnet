@@ -18,11 +18,6 @@
 #include <stdint.h>
 #include <string.h>
 
-// The lifecycle card that lands after this one renames start, finish, receive,
-// release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_packets. The header at this
-// base still declares the old names, so this example uses them.
-
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
 #define BIG_BYTES           ( 200 * 1024 )

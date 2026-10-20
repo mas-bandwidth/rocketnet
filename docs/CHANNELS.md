@@ -1462,7 +1462,7 @@ counter for each violation in section 13.3.
 
 Why a connection ended is read with `rocketnet_client_disconnect_reason` and
 `rocketnet_server_disconnect_reason`, an `enum rocketnet_disconnect_reason_t`
-(`sdk/rocketnet.h:338-347`): `NONE`, `CONFIG_MISMATCH`, `CONFIG_TIMEOUT`,
+(`sdk/rocketnet.h:316-324`): `NONE`, `CONFIG_MISMATCH`,
 `PROTOCOL_VIOLATION`, `RELIABLE_TIMEOUT`, `MESSAGE_MEMORY_EXHAUSTED`, and, on
 the client only, `SERVER_DISCONNECTED`: the client accepted the server's
 disconnect packet (`rocketnet_server_disconnect_client`, `rocketnet_server_stop`

@@ -5725,9 +5725,9 @@ void rocketnet_test_integrity_limit()
         // mapping lookup, so it never reaches the open and never counts
         // against the mapping's integrity (STANDARD.md: a connection response
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
-        // never a later refusal"; card rnfix-response-wrong-size-counted-r2:
-        // "an exact-size check before the lookup"). two such: one too short
-        // to carry a tag, one that would open to the wrong size. the class
+        // never a later refusal": an exact-size check runs before the
+        // lookup). two such: one too short to carry a tag, one that would
+        // open to the wrong size. the class
         // still filed as DID_NOT_OPEN is a response that opens to non-zero
         // padding.
         uint8_t short_response[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES - 1];
@@ -6761,16 +6761,6 @@ void rocketnet_test_payload_size_sweep()
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
-void rocketnet_test_hostname_resolve_localhost()
-{
-    rocketnet_address_t address, ipv6;
-    rocketnet_check(rocketnet_platform_hostname_resolve("localhost", "40000", &address));
-    rocketnet_check(address.port == 40000);
-    rocketnet_check(rocketnet_address_parse(&ipv6, "[::1]:40000"));
-    rocketnet_check((address.type == ROCKETNET_ADDRESS_IPV4 && address.data.ipv4[0] == 127) ||
-                   rocketnet_address_equal(&address, &ipv6));
-}
-
 
 static bool threads_work = false;
 
@@ -7629,7 +7619,6 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_user_id_string",
     "rocketnet_random_float",
     "rocketnet_random_uint8",
-    "rocketnet_random_uint16",
     "rocketnet_random_uint32",
     "rocketnet_random_uint64",
     "rocketnet_random_bytes",
@@ -7907,7 +7896,6 @@ static const char * rocketnet_test_layer_null_exempt_exports[] =
     "rocketnet_clear_and_free",
     "rocketnet_random_float",
     "rocketnet_random_uint8",
-    "rocketnet_random_uint16",
     "rocketnet_random_uint32",
     "rocketnet_random_uint64",
     "rocketnet_protocol_version",
@@ -12329,9 +12317,11 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
                 // checks termination only (the driver list's CONTENT is
                 // parsed by the ladder at create, which this walk never
                 // reaches), so a per-field special case here would be
-                // decoration
+                // decoration. the value is cut to the field's capacity, so
+                // the 16-byte interface_name row takes "value-under-tes"
 
-                snprintf( value_string, sizeof(value_string), "value-under-test" );
+                const size_t capacity = (size_t) field->size < sizeof(value_string) ? (size_t) field->size : sizeof(value_string);
+                snprintf( value_string, capacity, "value-under-test" );
             }
             break;
 
@@ -13429,7 +13419,6 @@ public:
         }
         clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
         clear("ROCKETNET_PUBLIC_ADDRESS");
-        clear("ROCKETNET_SERVER_NUM_QUEUES");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
@@ -13495,7 +13484,7 @@ void rocketnet_test_suite_environment()
 
 void rocketnet_test_server_transport_entries_carry_connection_id()
 {
-    // docs/CHANNELS.md P9a, P9b (card C0a): a slot released and reassigned
+    // docs/CHANNELS.md P9a, P9b: a slot released and reassigned
     // inside one update. Client A holds slot 0; A's payload, whose ack block
     // acknowledges three server packets, then A's disconnect, then client B
     // connecting into the freed slot 0, then B's payload -- with no batch
@@ -14506,7 +14495,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
     { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
     { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
-    { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
     { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },

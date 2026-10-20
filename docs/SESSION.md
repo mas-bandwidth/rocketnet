@@ -181,11 +181,12 @@ entries. With max_clients 1 and 300-second development tokens, the server
 admitted two clean connect/disconnect cycles and denied the third fresh token
 with the slot free. The denial was counted as
 `CONNECTION_RESPONSE_ADMITTED_SET_FULL` and sent as the same denied packet a
-full server sends. The set is removed. Its counters
-(`CONNECTION_RESPONSE_ADMITTED_SET_FULL`,
-`CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED` and
-`CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`) keep their indices, because
-indices are the contract, and always read zero. The reversed witness
+full server sends. The set is removed. Two of its counters
+(`CONNECTION_RESPONSE_ADMITTED_SET_FULL` and
+`CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED`) keep their slots in
+sdk/rocketnet_counters.h and always read zero;
+`CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`, which nothing incremented, is
+removed from the registry. The reversed witness
 `MCRNSecurityTablesHoldUntilExpire.cfg` reproduces the denial in the model.
 `server_admits_sequential_fresh_tokens_past_twice_max_clients` reproduced it
 in the code before the fix, failing at the third cycle with

@@ -166,9 +166,6 @@ float rocketnet_random_float( void );
 /** @brief Returns a cryptographically generated 8-bit value. @return Value in [0, 255]. */
 uint8_t rocketnet_random_uint8( void );
 
-/** @brief Returns a cryptographically generated 16-bit value. @return Value in [0, 65535]. */
-uint16_t rocketnet_random_uint16( void );
-
 /** @brief Returns a cryptographically generated 32-bit value. @return Value in [0, UINT32_MAX]. */
 uint32_t rocketnet_random_uint32( void );
 
