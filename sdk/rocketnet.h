@@ -939,7 +939,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint
 /// is ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES long, or NULL for all zeros. The
 /// output is ROCKETNET_CONNECT_TOKEN_BYTES long and connect_token_bytes is its
 /// size; a short buffer is refused with ROCKETNET_STATUS_INVALID_ARGUMENT and
-/// nothing is written. Reads no clock.
+/// nothing is written. A timeout_seconds of zero or below, or an
+/// expire_timestamp at or before create_timestamp, is refused with
+/// ROCKETNET_STATUS_INVALID_ARGUMENT and nothing is written. Reads no clock.
 /// Returns ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT,
 /// ROCKETNET_STATUS_INVALID_PROTOCOL_ID, ROCKETNET_STATUS_INVALID_ADDRESS or
 /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. Secret keys are never logged.
