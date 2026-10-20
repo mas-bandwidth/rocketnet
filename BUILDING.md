@@ -100,15 +100,15 @@ architecture in its own clang pass, so the vendored sodium builds its x86 asm
 into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
 is embedded once with the host `xxd` and the generated header is
 architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
-the compiler-flag check (`CMakeLists.txt:174`, `CMakeLists.txt:177`) drops it for a fat compile while the stack protector
+the compiler-flag check (`CMakeLists.txt:189`, `CMakeLists.txt:192`) drops it for a fat compile while the stack protector
 and the other Release flags stay on both slices.
 
 Against a universal build, `tools/check_package.py build-universal` passes the
-build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py:56`)
+build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py:125`)
 and `tools/check_dll_consumer.py --build build-universal` adds one `-arch` per
 library slice (`tools/check_dll_consumer.py:184`); each refuses a consumer
-executable whose `lipo -archs` lacks a slice (`tools/check_package.py:73`,
-`tools/check_dll_consumer.py:256`).
+executable whose `lipo -archs` lacks a slice (`tools/check_package.py:140`,
+`tools/check_dll_consumer.py:255`).
 
 The Xcode generator needs Xcode installed, and its license accepted once by an
 administrator (`sudo xcodebuild -license`); until then `xcodebuild` refuses and
@@ -126,7 +126,7 @@ configuration in the path, and a multi-config generator such as Xcode appends
 the configuration to them, so its executables and libraries land in
 `bin/Release/`. The unit suite opens the shared libraries by the paths
 `bin/librocketnet.dylib` and `bin/librocketnet_dev.dylib` relative to the
-working directory, then by the bare names (`sdk/rocketnet_tests.cpp:14674-14676`,
+working directory, then by the bare names (`sdk/rocketnet_tests.cpp:14671-14673`,
 `test_unit_api_polish.cpp:154-158`, `test_unit_connect_token_vectors.cpp:644-648`);
 `DYLD_LIBRARY_PATH` is where `dlopen` looks for a bare name, so it points
 those lookups at `bin/Release/`.
