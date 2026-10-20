@@ -74,8 +74,12 @@ static void plan_make_token( uint8_t * token )
     rocketnet_write_signed_connect_data( &signed_fields, token );
 }
 
+extern void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable );
+
 static void client_memory_plan_non_step_driven()
 {
+    rocketnet_client_transport_set_memory_plan_seam_for_test( true );
+
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     plan_make_token( token );
 
@@ -107,11 +111,15 @@ static void client_memory_plan_non_step_driven()
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
+    rocketnet_client_transport_set_memory_plan_seam_for_test( false );
+
     check( plan_bytes >= allocated );
 }
 
 static void client_memory_plan_step_driven()
 {
+    rocketnet_client_transport_set_memory_plan_seam_for_test( true );
+
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     plan_make_token( token );
 
@@ -142,6 +150,8 @@ static void client_memory_plan_step_driven()
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_client_transport_set_memory_plan_seam_for_test( false );
 
     check( plan_bytes >= allocated );
 }
