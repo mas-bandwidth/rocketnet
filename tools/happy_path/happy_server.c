@@ -23,21 +23,21 @@
 
 static const char * reliability_names[8] =
 {
-    "ROCKETNET_UNRELIABLE",
-    "ROCKETNET_UNRELIABLE_SEQUENCED",
-    "ROCKETNET_RELIABLE",
-    "ROCKETNET_RELIABLE_ORDERED",
-    "ROCKETNET_RELIABLE_SEQUENCED",
-    "ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT",
-    "ROCKETNET_RELIABLE_WITH_ACK_RECEIPT",
-    "ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT"
+    "ROCKETNET_RELIABILITY_UNRELIABLE",
+    "ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED",
+    "ROCKETNET_RELIABILITY_RELIABLE",
+    "ROCKETNET_RELIABILITY_RELIABLE_ORDERED",
+    "ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED",
+    "ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT",
+    "ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT",
+    "ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT"
 };
 
 static const char happy_pattern[] = "rocketnet-happy-path";
 
 int main( int argc, char ** argv )
 {
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -53,6 +53,11 @@ int main( int argc, char ** argv )
     config.transport = "portable";
 
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, &config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     if ( !server )
     {
         printf( "error: failed to create server\n" );
@@ -84,7 +89,7 @@ int main( int argc, char ** argv )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 const int mode = bytes > 0 ? data[0] : -1;
                 const int ok = mode >= 0 && mode < 8 &&
@@ -98,7 +103,7 @@ int main( int argc, char ** argv )
                     bad = 1;
                 }
                 fflush( stdout );
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
             }
         }
 
@@ -120,7 +125,7 @@ int main( int argc, char ** argv )
             break;
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
         rocketnet_server_send_packets( server );

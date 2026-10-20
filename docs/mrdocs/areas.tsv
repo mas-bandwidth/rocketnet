@@ -1,6 +1,5 @@
 # area	files	symbol_ere
 platform	sdk/rocketnet_platform.h	-
-cpp	sdk/rocketnet.hpp	^rocketnet::
 counters	sdk/rocketnet_counters.h	counter|_stats(_t)?(::|$)|^ROCKETNET_COUNTER|api_misuse_count
 reliability	-	^ROCKETNET_(UNRELIABLE|RELIABLE|PRIORITY_|RECEIPT_)|receipt
 configuration	-	config|_CONFIG_TABLE|required_memory|host_memory_estimate|_sized(::|$)|connection_bytes|connection_sizing|^ROCKETNET_MAX_

@@ -123,8 +123,22 @@ void backend_keypair_from_seed_matches_the_library()
     sodium_memzero( library_secret_key, sizeof(library_secret_key) );
 }
 
+// a NULL argument is API misuse: the guard records it and fires rocketnet_assert, which traps in a build with asserts on.
+// The refusal is what this case checks, so the assert goes to a counting hook for its span (the misuse pattern of
+// test_unit_counter_classes.cpp and test_unit_public_not_released_counters.cpp) and the default is restored after.
+static int backend_keypair_from_seed_asserts;
+
+static void backend_keypair_from_seed_assert_hook( const char *, const char *, const char *, int )
+{
+    backend_keypair_from_seed_asserts++;
+}
+
 void backend_keypair_from_seed_null_refused()
 {
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    rocketnet_set_assert_callback( backend_keypair_from_seed_assert_hook );
+    backend_keypair_from_seed_asserts = 0;
+
     uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
     backend_seed_fill( seed, 0x61 );
 
@@ -151,6 +165,11 @@ void backend_keypair_from_seed_null_refused()
     memcpy( secret_key, secret_reference, sizeof(secret_key) );
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, public_key, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_unit_check( memcmp( public_key, public_reference, sizeof(public_key) ) == 0 );
+
+#if ROCKETNET_ASSERTS
+    rocketnet_unit_check( backend_keypair_from_seed_asserts == 3 );
+#endif
+    rocketnet_set_assert_callback( saved_assert );
 }
 
 REGISTER_UNIT_TEST( backend_keypair_from_seed_round_trip );

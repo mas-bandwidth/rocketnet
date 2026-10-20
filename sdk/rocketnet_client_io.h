@@ -517,6 +517,12 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_dri
     const struct rocketnet_client_transport_config_t * config, double time,
     const rocketnet_client_driver_operations_t * operations, void * driver_context );
 
+// Unit tests only: as create_step_driven, with the Unix timestamp supplied by
+// the test so token expiry is deterministic and no wall clock is read.
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
+    const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
+    const rocketnet_client_driver_operations_t * operations, void * driver_context );
+
 // As the step-driven create above, and when status is not NULL it is written
 // with ROCKETNET_STATUS_OK or the refusal's section-2.1 code (a config whose
 // step_driven field asks for a driver with no non-blocking step is refused).

@@ -188,8 +188,8 @@ static void boundary_drain(boundary_pair_t * pair,std::vector<boundary_received_
     }
 }
 static void boundary_step(boundary_pair_t * pair,std::vector<boundary_received_t> * got) {
-    pair->time+=0.01; check(rocketnet_message_server_update(pair->server,pair->time)==ROCKETNET_MESSAGE_OK);
-    check(rocketnet_message_client_update(pair->client,pair->time)==ROCKETNET_MESSAGE_OK); boundary_drain(pair,got);
+    pair->time+=0.01; check(rocketnet_message_server_update(pair->server,pair->time)==ROCKETNET_UPDATE_OK);
+    check(rocketnet_message_client_update(pair->client,pair->time)==ROCKETNET_UPDATE_OK); boundary_drain(pair,got);
     rocketnet_message_server_send_packets(pair->server); rocketnet_message_client_send_packets(pair->client);
 }
 static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {
@@ -205,7 +205,7 @@ static void boundary_check_counter(const rocketnet_counters_t * counters,int ind
 
 static void unreliable_promotion_every_mode()
 {
-    const int modes[3]={ROCKETNET_UNRELIABLE,ROCKETNET_UNRELIABLE_SEQUENCED,ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT};
+    const int modes[3]={ROCKETNET_RELIABILITY_UNRELIABLE,ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT};
     for(int m=0;m<3;++m) {
         const int reliability=modes[m];
         static const int channels[]=BOUNDARY_TEST_CHANNELS;
@@ -214,8 +214,8 @@ static void unreliable_promotion_every_mode()
             boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
             // The fixture transport exceeds the packet cap, so the packet cap bounds each record.
             const int record_capacity=ROCKETNET_MAX_PAYLOAD_BYTES;
-            const int header=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? 3+3+3+(channel>=256?2:1) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
-            const int one_packet_capacity=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? record_capacity :
+            const int header=reliability==ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? 3+3+3+(channel>=256?2:1) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+            const int one_packet_capacity=reliability==ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? record_capacity :
                 (record_capacity<ROCKETNET_MESSAGE_SINGLE_BYTES ? record_capacity : ROCKETNET_MESSAGE_SINGLE_BYTES);
             const int edge=one_packet_capacity-header-1;
             int sizes[10]={1404,1405,1406,edge-1,edge,edge+1,edge*2,edge*4,16384,16385};
@@ -229,7 +229,7 @@ static void unreliable_promotion_every_mode()
             static const int promotion_counters[3]={ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE,
                 ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT};
             const rocketnet_counters_t * cc=rocketnet_message_client_counters(pair.client);
-            const int expected_channel=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? channel : 0;
+            const int expected_channel=reliability==ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? channel : 0;
             for(int i=0;i<size_count;++i) {
                 const int bytes=sizes[i];
                 const bool promote=bytes>edge;
@@ -261,8 +261,8 @@ static void unreliable_promotion_every_mode()
                 }
 
                 std::vector<uint8_t> follow=boundary_data((uint32_t)(200+m*64+c*8+i),16);
-                const int follow_reliability=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ?
-                    ROCKETNET_RELIABLE_SEQUENCED : ROCKETNET_UNRELIABLE;
+                const int follow_reliability=reliability==ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ?
+                    ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED : ROCKETNET_RELIABILITY_UNRELIABLE;
                 check(rocketnet_message_client_send(pair.client,channel,follow_reliability,follow.data(),16)!=0);
                 got.clear();
                 int found_follow=0;
@@ -272,7 +272,7 @@ static void unreliable_promotion_every_mode()
                         if(got[k].data==follow) found_follow++;
                 }
                 check(found_follow==1 && got.size()==1 && got[0].data==follow);
-                check(got[0].channel==(follow_reliability==ROCKETNET_RELIABLE_SEQUENCED ? expected_channel : 0));
+                check(got[0].channel==(follow_reliability==ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED ? expected_channel : 0));
             }
             // A large start may finish short; promotion follows the bytes
             // committed at finish, not the reservation capacity.
@@ -312,8 +312,8 @@ static void unreliable_promotion_every_mode()
         boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
         std::vector<uint8_t> too_big=boundary_data((uint32_t)(7+m),16385);
         const int reliability=modes[m];
-        const int promotion_counter=reliability==ROCKETNET_UNRELIABLE ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE :
-            reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED :
+        const int promotion_counter=reliability==ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE :
+            reliability==ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED :
             ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT;
         const rocketnet_counters_t * client_counters=rocketnet_message_client_counters(pair.client);
         const rocketnet_counters_t * server_counters=rocketnet_message_server_counters(pair.server);
@@ -341,7 +341,7 @@ static void unreliable_promotion_every_mode()
         for(int m=0;m<3;++m) for(int c=0;c<BOUNDARY_TEST_CHANNEL_COUNT;++c) {
             const int reliability=modes[m];
             const int channel=channels[c];
-            const int expected_channel=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? channel : 0;
+            const int expected_channel=reliability==ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? channel : 0;
             boundary_pair_t pair; boundary_setup(&pair,true); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
             const rocketnet_counters_t * cc=rocketnet_message_client_counters(pair.client);
             const int sizes[4]={65535,65536,max_bytes,max_bytes+1};
@@ -383,7 +383,7 @@ static void unreliable_promotion_every_mode()
     // A huge code-1 size is refused before record-overhead arithmetic can overflow.
     boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
     const rocketnet_counters_t * cc=rocketnet_message_client_counters(pair.client);
-    check(rocketnet_message_client_start(pair.client,0,ROCKETNET_UNRELIABLE_SEQUENCED,INT_MAX)==NULL);
+    check(rocketnet_message_client_start(pair.client,0,ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,INT_MAX)==NULL);
     check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)==1);
     check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED)==0);
     check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==0);

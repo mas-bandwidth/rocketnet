@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_message.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_read_write.h"
 
 #include <string.h>
@@ -184,7 +185,16 @@ int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * wr
 // sequencing, ordering, channel, fragment, fragments, each only when its
 // code or flags carry it, then the data.
 
-int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record )
+#if defined(ROCKETNET_MESSAGE_COPY_TEST_HOOKS)
+static volatile uint64_t rn_message_payload_copies = 0;
+
+uint64_t rn_message_payload_copy_count()
+{
+    return rocketnet_platform_atomic_add_u64( &rn_message_payload_copies, 0 );
+}
+#endif
+
+static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record, int copy )
 {
     rocketnet_assert( writer );
     rocketnet_assert( rocketnet_message_record_valid( record ) );
@@ -195,6 +205,8 @@ int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, co
     const int header = rocketnet_message_flags_header_bytes( flags );
     if ( header + record->bytes > rocketnet_message_writer_space( writer ) )
         return 0;                                                   // never split: the record ends this packet (CHANNELS.md 9.3)
+    if ( !copy && record->data != writer->payload + writer->bytes + header )
+        return 0;                                                   // in place: the data starts where its header ends
 
     const int code = record->code;
     uint8_t * p = writer->payload + writer->bytes;
@@ -220,11 +232,27 @@ int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, co
         rocketnet_write_uint16( &p, (uint16_t) record->fragments );
     }
     rocketnet_assert( p - ( writer->payload + writer->bytes ) == header );
-    rocketnet_write_bytes( &p, record->data, record->bytes );       // the one copy, store to frame (CHANNELS.md R5)
+    if ( copy )
+    {
+#if defined(ROCKETNET_MESSAGE_COPY_TEST_HOOKS)
+        rocketnet_platform_atomic_add_u64( &rn_message_payload_copies, 1 );
+#endif
+        rocketnet_write_bytes( &p, record->data, record->bytes );   // the one copy, store to frame (CHANNELS.md R5)
+    }
 
     writer->bytes += header + record->bytes;
     writer->records++;
     return 1;
+}
+
+int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record )
+{
+    return rocketnet_message_writer_put( writer, record, 1 );
+}
+
+int rocketnet_message_writer_add_in_place( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record )
+{
+    return rocketnet_message_writer_put( writer, record, 0 );
 }
 
 int rocketnet_message_writer_finish( struct rocketnet_message_writer_t * writer )

@@ -13,7 +13,10 @@
 // Receive workers dequeue completions in batches and publish private double
 // buffers, following the existing GSO/XDP receive ownership contract.
 
-#define ROCKETNET_IOCP_DEFAULT_WORKERS 4
+// One worker by default: workers race on the one completion port and each
+// publishes its own buffer, so more than one reorders a client's datagrams
+// at the drain, which the reliable layer answers with resends.
+#define ROCKETNET_IOCP_DEFAULT_WORKERS 1
 #define ROCKETNET_IOCP_MAX_WORKERS 32
 #define ROCKETNET_IOCP_SEND_QUEUE_SIZE 16384
 #define ROCKETNET_IOCP_RECEIVES_PER_WORKER 128
@@ -87,4 +90,19 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_test_hold_completions( rocketnet_server_iocp_t * iocp, bool hold );
 bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view );
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp );
+
+// The fault seam. The next count events at a fault point fail with status, as
+// the host fails them: a send or receive completion reports status as its
+// completion status; a send or receive post is refused before the Winsock
+// call, with status as its error, and starts no I/O. Any thread may arm it.
+enum rocketnet_server_iocp_test_fault_t
+{
+    ROCKETNET_IOCP_TEST_FAULT_SEND_COMPLETION,
+    ROCKETNET_IOCP_TEST_FAULT_RECEIVE_COMPLETION,
+    ROCKETNET_IOCP_TEST_FAULT_SEND_POST,
+    ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST,
+    ROCKETNET_IOCP_TEST_NUM_FAULTS
+};
+void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status );
+int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault );
 #endif

@@ -306,6 +306,7 @@ static const char * const counters_appended_names[] =
     "MESSAGE_PROMOTED_UNRELIABLE",
     "MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED",
     "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
+    "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
@@ -851,11 +852,11 @@ static void counters_conservation_reports_the_first_unbalanced_family()
 #if ROCKETNET_ASSERTS
     void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
     counters_expected_null_asserts = 0;
-    rocketnet_assert_function( counters_expected_null_assert );
+    rocketnet_set_assert_callback( counters_expected_null_assert );
 #endif
     check( rocketnet_counters_conserved( NULL, report, sizeof(report) ) == 0 );
 #if ROCKETNET_ASSERTS
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
     check( counters_expected_null_asserts == 1 );
 #endif
     check( rocketnet_api_misuse_count() == misuse_before + 1 );
