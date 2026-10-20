@@ -143,7 +143,8 @@ awk -F'\t' 'NR>1 {n[$6]++; if ($7=="bench") b[$6]++} END {for (g in n) printf "|
 
 ## Initial migration measurements
 
-At the initial 47-case migration snapshot, cases were measured on Linux with the pinned runner and JAR above,
+At the initial 47-case migration snapshot, cases were measured on Linux with the pinned runner and JAR above.
+The table below lists those groups and their scope.
 | Group | Cases | Scope |
 |---|---:|---|
 | `link` | 11 | All historical Link configurations |
