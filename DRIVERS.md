@@ -72,6 +72,28 @@ calls them on the main thread once per update, after packet processing, and
 nothing else writes the driver's replay map. XDP is the only built-in backend
 that reports it.
 
+## Per-update send and receive budgets
+
+Every driver receives at least twice what it sends in one update:
+`receive_capacity >= 2 * send_budget`, checked by
+`test_unit_receive_budget_twice_send.cpp` and locked by a
+`ROCKETNET_STATIC_ASSERT` beside each driver's constants. The send budget
+is what one update stages or submits; the receive capacity is the bank,
+ring, staging or completion budget the send path can fill while it waits.
+The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
+(`sdk/rocketnet_constants.h`, 16000) bounds every driver's drain.
+
+| Driver | Send budget | Receive capacity |
+| --- | --- | --- |
+| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
+| msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
+| loopback | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 2048 per endpoint (`sdk/rocketnet_driver_loopback.h:26`) |
+| gso | 4096 (`sdk/rocketnet_server_gso.h:49`) | 8192 per queue (`sdk/rocketnet_server_gso.h:57`) |
+| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:49`,`sdk/rocketnet_server_uring.h:70`) | 4096 receive buffers per queue;16000 bank (`sdk/rocketnet_server_uring.h:55`,`sdk/rocketnet_server_uring.h:69`) |
+| xdp | 4096 (`sdk/rocketnet_constants.h:57`) | 16384 staging (`sdk/rocketnet_constants.h:58`) |
+| iocp | 2048 (`sdk/rocketnet_server_iocp.h:22`) | 4096 queue (`sdk/rocketnet_server_iocp.h:24`) |
+| rio | 2048 per phase (`sdk/rocketnet_server_rio.h:34`) | 4096 posted receives (`sdk/rocketnet_server_rio.h:35`) |
+
 ## UDP coalescing
 
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
