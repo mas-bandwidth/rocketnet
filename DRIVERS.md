@@ -430,3 +430,14 @@ The Linux connection-type label is an IPv4 main-table heuristic. It does not
 model policy routing or multipath entries without a direct output-interface
 attribute, and may report the wired fallback for those configurations. This
 label does not choose the transport route or limit IPv6 endpoint support.
+
+## Bounded server payload sends
+
+Unstaged server transports reserve at least one payload slot per configured
+client, with a minimum of 256 slots. A lower test capacity exercises contention.
+The message send pass starts after the last served connection and offers one
+frame per connection per round. Full capacity leaves queued reliable work due
+for the next update. In-place unreliable writes use only surplus capacity above
+a complete round of connected peers; otherwise they join the queue so application call order cannot
+starve another connection or that connection's reliable work. Control packets
+use the transport's separate send path.
