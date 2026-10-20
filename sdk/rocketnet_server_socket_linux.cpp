@@ -1585,7 +1585,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     if ( rocketnet_server_xdp_o_len == 0 )
     {
-        rocketnet_error( "could not load server_xdp program: this build has no server_xdp.o (no clang with the BPF target at configure time)" );
+        rocketnet_error( "could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)" );
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }

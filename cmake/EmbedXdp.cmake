@@ -20,6 +20,11 @@ set(xdp_header "${OUTPUT_DIR}/rocketnet_server_xdp.h")
 file(REMOVE "${xdp_object}")
 
 if(CLANG)
+    # Clang may report a vendor component that the distribution's UAPI
+    # include directory omits (x86_64-pc-linux-gnu vs x86_64-linux-gnu).
+    if(NOT EXISTS "/usr/include/${MULTIARCH}/asm/types.h")
+        string(REGEX REPLACE "^([^-]+)-(pc|unknown)-linux-" "\\1-linux-" MULTIARCH "${MULTIARCH}")
+    endif()
     execute_process(COMMAND "${CLANG}" -D__linux__ -D__BPF__ -ffreestanding -O2 -g
             "-I/usr/include/${MULTIARCH}" -Isdk
             -fdebug-compilation-dir=. "-ffile-prefix-map=${SOURCE_DIR}=." "-ffile-prefix-map=${OUTPUT_DIR}=."

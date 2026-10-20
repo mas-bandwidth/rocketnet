@@ -30,8 +30,9 @@ with a clang that has the BPF target, against the kernel UAPI headers
 configure that finds no such clang prints
 `XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create`,
 and that build's `xdp` transport refuses at create with
-`could not load server_xdp program: this build has no server_xdp.o (no clang with the BPF target at configure time)`,
-so `auto` falls to the next rung. The server host needs no compiler, no
+`could not load server_xdp program: this build has no server_xdp.o (XDP disabled or no clang with the BPF target at configure time)`,
+so `auto` falls to the next rung. `-DROCKETNET_XDP=OFF` explicitly selects
+the same disabled-object path. The server host needs no compiler, no
 `make`, no kernel headers and no temporary directory to start `xdp`.
 
 `make` is the front door. It configures `build/` as **Release** and runs the
