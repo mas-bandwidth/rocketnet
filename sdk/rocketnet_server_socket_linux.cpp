@@ -2147,8 +2147,10 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
     if ( flow_index < 0 )
     {
-        // Slow path after both generations were queued. A worker may have
-        // retired one since the last flush; recovery needs no extra update.
+        // Defensive slow path: no producer generation is published. With
+        // rocketnet_send_handoff_t::publish retaining the producer buffer,
+        // normal flushes do not reach it; rocketnet_server_socket_test_inactive_generation
+        // builds this state. Recovery needs no extra update.
         rocketnet_platform_mutex_acquire( &socket->send_mutex );
         rocketnet_server_socket_acquire_send_buffer( socket );
         flow_index = socket->send_flow_index.load( std::memory_order_relaxed );
@@ -2321,8 +2323,11 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
         if ( index >= 0 && socket->send_buffer[index].num_packets > 0 )
         {
-            socket->send_handoff.publish();
-            socket->send_flow_index.store( -1, std::memory_order_relaxed );
+            // tla/RNDriverSendStaging.tla Publish: retain the last producer buffer.
+            // A busy worker leaves this generation staged for the next
+            // transport send_packets call (Publish retry rule).
+            if ( socket->send_handoff.publish() )
+                socket->send_flow_index.store( -1, std::memory_order_relaxed );
         }
         rocketnet_server_socket_acquire_send_buffer( socket );
         rocketnet_platform_mutex_release( &socket->send_mutex );
@@ -2476,7 +2481,14 @@ bool rocketnet_server_socket_test_inactive_generation()
         rocketnet_server_socket_finish_packet(server, aborted_id, aborted, 32);
         rocketnet_server_socket_abort_packet(server, aborted_id, aborted);
         valid &= socket->send_buffer[generation].packet_info[1].packet_bytes == 0;
-        rocketnet_server_socket_send_packets(server);
+        // Construct the legacy inactive state for the defensive entry-point
+        // checks below; normal publish retains the final producer buffer.
+        rocketnet_send_handoff_t<ROCKETNET_XDP_NUM_BUFFERS> & handoff = socket->send_handoff;
+        handoff.queued[(handoff.head + handoff.count) % ROCKETNET_XDP_NUM_BUFFERS] = handoff.filling;
+        handoff.count++;
+        socket->send_handoff.filling = -1;
+        socket->send_flow_index.store(-1);
+        rocketnet_server_socket_acquire_send_buffer(socket);
     }
     // After both flushes the producer is already staging the newest reopened
     // generation (never the front); finish_base refuses a pointer from before

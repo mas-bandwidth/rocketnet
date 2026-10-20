@@ -318,9 +318,12 @@ static void check_send_handoff()
     check(second >= 0 && second != first);
     for (int i = 0; i < 100; ++i) packets[second][i] = i + 101;
     copied[first] = 32;
-    queue.publish();
+    // rocketnet_send_handoff_t::publish keeps the producer generation while
+    // the worker owns the other one, so the second flush queues nothing and
+    // the producer keeps the same storage, never a queued buffer.
+    check(!queue.publish());
     for (int i = 0; i < 10000; ++i)
-        check(queue.acquire() == -1 && queue.front() == first);
+        check(queue.acquire() == second && queue.front() == first && queue.count == 1);
     int expected = 33;
     while (queue.front() >= 0)
     {
@@ -334,6 +337,11 @@ static void check_send_handoff()
             queue.retire();
             if (index == first)
             {
+                // rocketnet_server_transport_send_packets retries XDP
+                // publication on every call; that next flush publishes the
+                // retained generation once the first is retired.
+                check(queue.front() == -1 && queue.acquire() == second);
+                check(queue.publish());
                 check(queue.front() == second);
                 check(queue.acquire() == first);
                 memset(packets[first], 0, sizeof(packets[first]));

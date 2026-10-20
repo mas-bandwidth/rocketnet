@@ -118,8 +118,15 @@ the create log line names each feature as yes or no.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
-once for a staging generation; the backend retains ownership until it can
-safely reuse that storage. None
+for staged work; the backend retains ownership until it can safely reuse
+that storage. XDP retries a flush on each `send_packets` call, including when
+no new commit advances the transport counter. With two staging buffers,
+`rocketnet_send_handoff_t::publish` queues at most one and keeps the other
+for producers until the worker retires the queued generation. The next flush
+publishes the retained work. `RNDriverSendStaging.Publish`, `WorkerRetire`
+and `RetryFlushPublishes` model this rule. Packet-slot capacity is still
+`ROCKETNET_XDP_SEND_QUEUE_SIZE` per buffer; retaining producer storage does
+not permit an unbounded backlog. None
 of these rules sets a frame, packet-send or ACK rate.
 
 ## Creation and shutdown
