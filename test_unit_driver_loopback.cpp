@@ -769,3 +769,5 @@ REGISTER_UNIT_TEST( driver_loopback_refuses_past_max_endpoints );
 REGISTER_UNIT_TEST( wire_totals_staged_finish_counts_exactly );
 REGISTER_UNIT_TEST( pending_wire_totals_expire_and_reuse_slots );
 REGISTER_UNIT_TEST( loopback_server_batch_drops_packet_larger_than_stride );
+
+#include "test_unit_driver_results_checked.cpp"

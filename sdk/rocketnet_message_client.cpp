@@ -145,13 +145,13 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t send_kbps )
 {
-    return rocketnet_message_client_create_ex( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, NULL );
+    return rocketnet_message_client_create_ex( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, NULL, 0 );
 }
 
 struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status )
+                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited )
 {
     int ignored = ROCKETNET_STATUS_OK;
     if ( !status )
@@ -207,7 +207,7 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * c
 
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
-    rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( context, &link, 0, 1, message_config, memory, memory_bytes, kbps, 0.0 );
+    rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( context, &link, 0, 1, message_config, memory, memory_bytes, kbps, 0.0, reserve_unlimited != 0 );
     *status = client ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY;
     return client;
 }

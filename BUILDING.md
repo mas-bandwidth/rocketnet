@@ -11,8 +11,18 @@ compatibility separately from the wire version; see the ABI rules below.
 Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
 
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
-CMake 4.2 or later (the Windows block below says why). On Linux and macOS the
-Makefile is the front door:
+CMake 4.2 or later (the Windows block below says why). On Linux the build is
+tested with gcc 13.3.0 and 15.2.0 and with clang 18.1.3 and 21.1.8, in Debug and
+Release: with each compiler the static and shared libraries, `./bin/test` and
+`./bin/functional` build, and the unit suite passes. Functional results are
+recorded per compiler and configuration: the matrix also exposes outstanding
+receive-weather counter failures and an intermittent io_uring lifecycle
+failure; an isolated rerun is not a full-suite pass. The `linux / clang` job in
+`.github/workflows/nightly.yml` builds and runs both suites with clang; the
+Linux build-and-test rows in `.github/workflows/ci.yml` build the library and
+both suites with the default compiler (gcc), and ci.yml uses clang only for the
+fuzz-smoke legs and the embedded XDP program. On Linux and macOS the Makefile is
+the front door:
 
     make
 
@@ -58,13 +68,37 @@ create is functional; `test_server_keyless_config_has_no_keys` checks the
 config the gate reads, without creating a transport.
 
 The functional suite takes its loopback ports from the OS. Every loopback
-server and socket it opens binds port 0 and reads back the port the OS gave.
-An address that must carry a real port takes a free one from the OS through
+server and socket it opens binds port 0 and reads back the port the OS gave,
+except the restart case, which reserves a port below the kernel's ephemeral
+range so a sibling's port-0 bind cannot take it between rebinds. An address
+that must carry a real port takes a free one from the OS through
 `rocketnet_test_free_port`, which binds a scratch socket to
-`127.0.0.1:0`, reads the port, and closes it. Two `./bin/functional` runs
-may share a machine at the same time. The one exception is the root-only XDP
-veth case (`ROCKETNET_TEST_XDP_VETH`), which makes a fixed namespace and veth
-pair and binds port 40411 on it; it skips without root.
+`127.0.0.1:0`, reads the port, and closes it; its callers hand that port to
+an xdp create the commit barrier refuses before any bind. Two
+`./bin/functional` runs may share a machine at the same time. What holds then:
+
+- The lifecycle cases read their after counts with `posix_settled_counts`,
+  which polls until the counts equal the before counts or 10 seconds pass, so
+  a joined thread the kernel has not yet reaped is not counted as a leak, and
+  a thread, descriptor or umem really left still fails the case.
+- `posix_server_create_destroy_1000` runs 250 cycles on the gso and io_uring
+  cells and 1000 on the others, so two suites at once stay under the 120
+  second case limit; the counts are compared after the first cycle and the
+  last, so a leak per cycle still fails.
+- `posix_server_restart_same_port_100` reserves a port below the kernel's
+  ephemeral range in a slice its cell alone scans and binds it again 100
+  times, so a sibling suite's port-0 binds cannot take it between rebinds.
+- A server create on a free loopback port is retried up to three times on
+  address-in-use, so a sibling process that takes the granted port in the gap
+  between the free-port proof and the bind does not fail the create.
+- The root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`) makes a fixed
+  namespace and veth pair and binds port 40411 on it; it skips without root.
+
+Two `tools/run_examples.py` runs may also share a machine: each example
+pair runs in its own temporary directory on its own free port, the client
+starts only after the server has written its keys, and a server that cannot
+bind before then is retried on a new port, at most three tries
+(tools/run_examples.py).
 
 Many-client load runs use the dedicated load harness:
 
@@ -77,6 +111,34 @@ eight reliability modes, and the server-to-client message is reliable-ordered),
 verifying loopback scale up to 1000 concurrent clients across five pass criteria
 (`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
 `unreliable_integrity`, and `counters_agree`).
+
+### Test binaries and their tiers
+
+Every test binary is in exactly one tier. A unit binary opens no socket,
+starts no thread, never sleeps and reads time only as an argument (the test
+clock starts at 1000.0). A binary that opens a real socket, starts a thread,
+sleeps or reads the wall clock is functional, and CI runs it only in a step
+named functional, never as a unit step.
+
+| Binary | Tier | Why | Where it runs |
+| --- | --- | --- | --- |
+| `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
+| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt) | by hand |
+| `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
+| `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
+| `functional` | functional | real sockets and transports | CI `Run functional suite` |
+| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
+| `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
+| `test_xdp` | functional | the AF_XDP driver | `./bin/functional` on Linux |
+| `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
+| `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp:31-44,59) | `./bin/functional` on macOS |
+| `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp:96,293,360) | `functional.exe` on Windows |
+| `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp:155,546,590,618) | CI `Functional: lifecycle binary` |
+| `test_driver` | functional | netlink route reads, and the portable driver on loopback sockets with sleep-wait loops (test_driver.cpp:193-217) | CI `Functional: native driver contract` |
+
+The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
+`rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
+simulator and the test clock, with no socket and no sleep.
 
 Dependencies, per platform, as CI installs them:
 

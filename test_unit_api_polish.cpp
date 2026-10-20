@@ -24,6 +24,7 @@
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <type_traits>
 
@@ -377,6 +378,157 @@ static void api_polish_null_client_state_is_invalid()
     rocketnet_set_assert_callback( NULL );
 }
 REGISTER_UNIT_TEST( api_polish_null_client_state_is_invalid );
+
+// --- a client index before CONNECTED is 0, never an assert ---------------------
+
+static int g_polish_asserts = 0;
+
+static void api_polish_count_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition; (void) function; (void) file; (void) line;
+    g_polish_asserts++;
+}
+
+static double g_polish_index_now = 1000.0;
+static double api_polish_index_clock( void * ) { return g_polish_index_now; }
+
+#define API_POLISH_INDEX_PROTOCOL 0x1D3C0FFEE0A11CE5ULL
+
+static void api_polish_client_index_is_zero_until_connected()
+{
+    rocketnet_set_quiet( true );
+    rocketnet_set_assert_callback( api_polish_count_assert );
+    g_polish_asserts = 0;
+    g_polish_index_now = 1000.0;
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x5C ^ i );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_config_t server_config;
+    check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.protocol_id = API_POLISH_INDEX_PROTOCOL;
+    server_config.max_clients = 1;
+    server_config.transport = "loopback";
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    check( server != NULL );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    const char * addresses[] = { address };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_production_connect_token( backend_secret, server_public, API_POLISH_INDEX_PROTOCOL, addresses, 1,
+        0x1D, 1000, 1ULL << 40, 300, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.transport = "loopback";
+    client_config.step_driven = true;
+    client_config.time_callback = api_polish_index_clock;
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    check( client != NULL );
+
+    // before connect: no connection, index 0
+    check( rocketnet_client_index( client ) == 0 );
+    check( g_polish_asserts == 0 );
+
+    // while connecting: the client holds no server slot yet; index 0, no assert
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( client ) == 0 );
+    check( g_polish_asserts == 0 );
+
+    for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
+        check( rocketnet_client_update( client, g_polish_index_now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_send_packets( client );
+        check( rocketnet_server_update( server, g_polish_index_now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_send_packets( server );
+        if ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED )
+            check( rocketnet_client_index( client ) == 0 );
+        g_polish_index_now += 0.01;
+    }
+    check( g_polish_asserts == 0 );
+
+    // connected: the index is the server slot the client holds
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( client ) == 0 );
+    check( rocketnet_server_client_connected( server, 0 ) );
+    check( g_polish_asserts == 0 );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+    rocketnet_set_assert_callback( NULL );
+    rocketnet_set_quiet( false );
+}
+REGISTER_UNIT_TEST( api_polish_client_index_is_zero_until_connected );
+// --- ruling 10: enumeration and queries describe the same ABI types -----------
+
+static void api_polish_abi_layouts()
+{
+    const char * expected[] =
+    {
+        "rocketnet_client_config_t", "rocketnet_server_config_t", "rocketnet_receipt_t",
+        "rocketnet_address_type_t", "rocketnet_client_transport_config_t",
+        "rocketnet_server_transport_config_t", "rocketnet_client_transport_stats_t",
+        "rocketnet_server_transport_stats_t", "rocketnet_server_transport_client_stats_t",
+        "rocketnet_packet_context_t", "rocketnet_frame_sync_stats_t", "rocketnet_message_config_t"
+    };
+    const size_t count = sizeof(expected) / sizeof(expected[0]);
+    bool seen[sizeof(expected) / sizeof(expected[0])] = {};
+    for ( size_t i = 0; i < count; ++i )
+    {
+        const char * name = rocketnet_abi_layouts( i );
+        check( name != NULL );
+        size_t j = 0;
+        while ( j < count && strcmp( name, expected[j] ) != 0 )
+            ++j;
+        check( j < count );
+        check( !seen[j] );
+        seen[j] = true;
+        check( rocketnet_abi_type_size( name ) != SIZE_MAX );
+        check( rocketnet_abi_field_count( name ) >= 0 );
+    }
+    check( rocketnet_abi_layouts( count ) == NULL );
+    check( rocketnet_abi_layouts( SIZE_MAX ) == NULL );
+    check( rocketnet_abi_type_size( "rocketnet_address_type_t" ) == sizeof( enum rocketnet_address_type_t ) );
+    check( rocketnet_abi_field_count( "rocketnet_address_type_t" ) == 0 );
+    check( rocketnet_abi_field_offset( "rocketnet_address_type_t", "value" ) == SIZE_MAX );
+    check( rocketnet_abi_field_size( "rocketnet_address_type_t", "value" ) == SIZE_MAX );
+}
+REGISTER_UNIT_TEST( api_polish_abi_layouts );
+
+// --- ruling 11: server abort_message past max_clients counts misuse ------------
+
+static void api_polish_server_abort_message_misuse()
+{
+    rocketnet_server_config_t config;
+    check( rocketnet_server_dev_config( &config ) == ROCKETNET_STATUS_OK );
+    config.max_clients = 16;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    check( server != NULL );
+
+    rocketnet_set_assert_callback( api_polish_quiet_assert );
+    const uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_server_abort_message( server, 16 );
+    check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_server_abort_message( server, 100 );
+    check( rocketnet_api_misuse_count() == before + 2 );
+    rocketnet_set_assert_callback( NULL );
+
+    rocketnet_server_destroy( server );
+}
+REGISTER_UNIT_TEST( api_polish_server_abort_message_misuse );
 
 // --- the production minter refuses a token no peer accepts ---------------------
 

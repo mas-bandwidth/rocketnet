@@ -89,13 +89,19 @@ static int rocketnet_unit_worker( const char * name )
     setvbuf( stderr, NULL, _IOLBF, 0 );
 #endif
 
-    // init reads this before the suite installs its config isolation.
+    // init reads this before the suite installs its config isolation. The
+    // unit suite must never run against a pin-selected real-socket driver, so
+    // both transport pins are cleared for every case, like LOG_LEVEL above.
 #if defined(_WIN32)
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
+    const int cleared_server = _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
+    const int cleared_client = _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
 #else
     const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
+    const int cleared_server = unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const int cleared_client = unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 #endif
-    if ( cleared != 0 )
+    if ( cleared != 0 || cleared_server != 0 || cleared_client != 0 )
         return 1;
 
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
@@ -112,6 +118,22 @@ static int rocketnet_unit_worker( const char * name )
     }
 
     rocketnet_unit_prepare();
+
+    // the suite's config isolation clears every transport variable above. Two
+    // cases create a client transport through the public API before stepping
+    // it themselves; run those step-driven, after the isolation, so the unit
+    // suite starts no client I/O thread.
+    if ( strcmp( name, "token_time_game_clock_admits_a_fixed_token" ) == 0 ||
+         strcmp( name, "public_link_simulator_revision_1_prefixes" ) == 0 )
+    {
+#if defined(_WIN32)
+        if ( _putenv_s( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) != 0 )
+            return 1;
+#else
+        if ( setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
+            return 1;
+#endif
+    }
     rocketnet_channels_prepare_log( name );
     int result = rocketnet_channels_run_named( name );
     if ( result == 2 )
