@@ -569,6 +569,35 @@ ROCKETNET_EXPORT void rocketnet_set_quiet( bool flag );
 /// @param level ROCKETNET_LOG_LEVEL_NONE through ROCKETNET_LOG_LEVEL_SPAM; a value outside the enum is ignored.
 ROCKETNET_EXPORT void rocketnet_set_log_level( enum rocketnet_log_level_t level );
 
+/// @brief Turns the library's network-thread priority calls on or off.
+///
+/// On (the default), the library sets the priority of the network threads it
+/// creates, right after it creates each one: SCHED_RR at
+/// sched_get_priority_min( SCHED_RR ) on Linux and macOS, and
+/// THREAD_PRIORITY_TIME_CRITICAL on Windows, where it also requests a 1 ms
+/// timer period (timeBeginPeriod( 1 )) from rocketnet_init to rocketnet_term.
+/// Off, it makes none of these calls. A game that sets its own thread
+/// priorities turns it off.
+///
+/// The setting is process-wide. Set it before rocketnet_init to skip the timer
+/// period. Threads created after a change follow the new value; a thread
+/// already running keeps what it got. docs/CLIENT-IO.md and DRIVERS.md list the
+/// threads.
+/// @param enabled true (the default) makes the calls; false makes none.
+ROCKETNET_EXPORT void rocketnet_set_thread_priority( bool enabled );
+
+/// @brief Reads whether the library's network-thread priority calls are on.
+/// @return true (the default) when on; false after rocketnet_set_thread_priority( false ).
+ROCKETNET_EXPORT bool rocketnet_get_thread_priority( void );
+
+/// @brief Counts the priority, affinity and timer period calls the operating system refused.
+///
+/// Process-wide, since the process started. A refusal never fails a create or
+/// rocketnet_init: the thread runs at its default priority. The first refusal
+/// of each call kind logs one warning (docs/ERRORS-AND-LOGGING.md).
+/// @return The number of refused calls.
+ROCKETNET_EXPORT uint64_t rocketnet_get_thread_priority_refusals( void );
+
 /// @brief Reads the current process-wide log level.
 /// The level currently in force, so a caller that moves the level for a bounded
 /// stretch can restore what it found rather than guessing. This relaxed atomic
