@@ -16,7 +16,7 @@
 // RNSlots Observe and Admit: a free slot discards, connect resets and binds,
 // the next update is unchanged, a reassigned slot resets to the new
 // connection, and a disconnect drops the binding.
-static void slots_observe_and_admit()
+static void test_slots_observe_and_admit()
 {
     struct rn_slots_t slots;
     rn_slots_init( &slots, 4 );
@@ -68,7 +68,7 @@ static void slots_observe_and_admit()
 // one batch. Observe sees the final owner B; A's entries carry A's id and are
 // discarded, and B's own entries carry B's id and are applied. A free slot
 // discards everything.
-static void slots_same_batch_churn_discards_the_old_connection()
+static void test_slots_same_batch_churn_discards_the_old_connection()
 {
     struct rn_slots_t slots;
     rn_slots_init( &slots, 2 );
@@ -97,5 +97,5 @@ static void slots_same_batch_churn_discards_the_old_connection()
     check( rn_slots_admit( &slots, 0, 100 ) == RN_SLOTS_DISCARD );
 }
 
-REGISTER_UNIT_TEST( slots_observe_and_admit );
-REGISTER_UNIT_TEST( slots_same_batch_churn_discards_the_old_connection );
+REGISTER_UNIT_TEST( test_slots_observe_and_admit );
+REGISTER_UNIT_TEST( test_slots_same_batch_churn_discards_the_old_connection );

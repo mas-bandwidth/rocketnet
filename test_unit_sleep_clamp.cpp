@@ -18,7 +18,7 @@
 
 #define check rocketnet_unit_check
 
-static void sleep_clamp_bounds_negative_nan_and_huge()
+static void test_sleep_clamp_bounds_negative_nan_and_huge()
 {
     check( rocketnet_sleep_clamp( -1.0 ) == 0.0 );
     check( rocketnet_sleep_clamp( -DBL_MAX ) == 0.0 );
@@ -44,4 +44,4 @@ static void sleep_clamp_bounds_negative_nan_and_huge()
     rocketnet_sleep( -INFINITY );
 }
 
-REGISTER_UNIT_TEST( sleep_clamp_bounds_negative_nan_and_huge );
+REGISTER_UNIT_TEST( test_sleep_clamp_bounds_negative_nan_and_huge );

@@ -143,7 +143,7 @@ static const rn_standard_vector_t standard_prefilter_table[] =
     RN_STANDARD_VECTOR( "t5.reject-value", "050000000000" ),
 };
 
-static void standard_prefilter_vectors()
+static void test_standard_prefilter_vectors()
 {
     const int count = (int) ( sizeof( standard_prefilter_table ) / sizeof( standard_prefilter_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_prefilter_table, count, standard_prefilter_generate ) == count );
@@ -162,4 +162,4 @@ static void standard_prefilter_vectors()
     rocketnet_unit_check( standard_prefilter_generate( "t5.no-such-vector", scratch, 2 ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_prefilter_vectors );
+REGISTER_UNIT_TEST( test_standard_prefilter_vectors );

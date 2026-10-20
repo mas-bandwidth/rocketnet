@@ -254,15 +254,15 @@ static void address_equality_property()
     }
 }
 
-void rocketnet_test_address_acceptance_table()
+void test_rocketnet_test_address_acceptance_table()
 {
     address_acceptance_table();
 }
 
-void rocketnet_test_address_equality_property()
+void test_rocketnet_test_address_equality_property()
 {
     address_equality_property();
 }
 
-REGISTER_UNIT_TEST( rocketnet_test_address_acceptance_table );
-REGISTER_UNIT_TEST( rocketnet_test_address_equality_property );
+REGISTER_UNIT_TEST( test_rocketnet_test_address_acceptance_table );
+REGISTER_UNIT_TEST( test_rocketnet_test_address_equality_property );

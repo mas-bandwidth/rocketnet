@@ -196,10 +196,10 @@ static void half_open_handshake_deadline_wins_when_earlier()
     half_open_server_teardown( &test );
 }
 
-static void half_open_mapping_idle_deadline()
+static void test_half_open_mapping_idle_deadline()
 {
     half_open_idle_timeout_removes_and_refreshes();
     half_open_handshake_deadline_wins_when_earlier();
 }
 
-REGISTER_UNIT_TEST( half_open_mapping_idle_deadline );
+REGISTER_UNIT_TEST( test_half_open_mapping_idle_deadline );

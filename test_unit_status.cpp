@@ -57,7 +57,7 @@ static const struct
     { ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED, "TRANSPORT_FAMILIES_UNSUPPORTED" },
 };
 
-static void status_names_cover_every_code()
+static void test_status_names_cover_every_code()
 {
     check( ROCKETNET_STATUS_OK == 0 );
     check( ROCKETNET_STATUS_COUNT == 27 );
@@ -79,9 +79,9 @@ static void status_names_cover_every_code()
     }
 }
 
-REGISTER_UNIT_TEST( status_names_cover_every_code );
+REGISTER_UNIT_TEST( test_status_names_cover_every_code );
 
-static void status_name_out_of_range_is_unknown()
+static void test_status_name_out_of_range_is_unknown()
 {
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -1 ), "unknown" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
@@ -90,12 +90,12 @@ static void status_name_out_of_range_is_unknown()
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "unknown" ) == 0 );
 }
 
-REGISTER_UNIT_TEST( status_name_out_of_range_is_unknown );
+REGISTER_UNIT_TEST( test_status_name_out_of_range_is_unknown );
 
 // An env override is parsed as a 32-bit integer, refused past INT32 range
 // or on ERANGE, leaving the output untouched on refusal
 // (sdk/rocketnet_config.cpp, rocketnet_config_parse_int_value).
-static void config_int_parse_refuses_out_of_range()
+static void test_config_int_parse_refuses_out_of_range()
 {
     int out = 77;
 
@@ -126,12 +126,12 @@ static void config_int_parse_refuses_out_of_range()
     check( out == 77 );
 }
 
-REGISTER_UNIT_TEST( config_int_parse_refuses_out_of_range );
+REGISTER_UNIT_TEST( test_config_int_parse_refuses_out_of_range );
 
 // An env var name is built into a caller buffer, refused when it does not
 // fit, the terminator counted (sdk/rocketnet_config.cpp,
 // rocketnet_config_env_var_name and rocketnet_config_env_var_name_for).
-static void config_env_var_names_refuse_short_buffers()
+static void test_config_env_var_names_refuse_short_buffers()
 {
     char buffer[128];
 
@@ -149,4 +149,4 @@ static void config_env_var_names_refuse_short_buffers()
     check( !rocketnet_config_env_var_name_for( long_transport, "max_clients", buffer, (int) sizeof( buffer ) ) );
 }
 
-REGISTER_UNIT_TEST( config_env_var_names_refuse_short_buffers );
+REGISTER_UNIT_TEST( test_config_env_var_names_refuse_short_buffers );

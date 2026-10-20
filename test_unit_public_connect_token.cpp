@@ -125,7 +125,7 @@ static int public_token_connection_request( const uint8_t * token, uint8_t * pac
     return *packet_bytes;
 }
 
-void public_connect_token_round_trip()
+void test_public_connect_token_round_trip()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
@@ -177,7 +177,7 @@ void public_connect_token_round_trip()
     rocketnet_unit_check( memcmp( opened.user_data, expected_user_data, ROCKETNET_USER_DATA_BYTES ) == 0 );
 }
 
-void public_connect_token_wrong_server_key_refused()
+void test_public_connect_token_wrong_server_key_refused()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
@@ -205,7 +205,7 @@ void public_connect_token_wrong_server_key_refused()
                                                                other_server_public_key, other_server_secret_key ) == 0 );
 }
 
-void public_connect_token_wrong_protocol_id_refused()
+void test_public_connect_token_wrong_protocol_id_refused()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
@@ -262,7 +262,7 @@ static void public_token_expected_null_assert( const char *, const char *, const
 }
 #endif
 
-void public_connect_token_null_or_short_buffer_refused()
+void test_public_connect_token_null_or_short_buffer_refused()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
@@ -335,7 +335,7 @@ void public_connect_token_null_or_short_buffer_refused()
 // fixed ephemeral key would repeat the sealed block, tied to every token the
 // backend ever minted for that server
 
-void public_connect_token_sealed_block_varies()
+void test_public_connect_token_sealed_block_varies()
 {
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
@@ -369,8 +369,8 @@ void public_connect_token_sealed_block_varies()
     rocketnet_unit_check( memcmp( token_a, token_b, ROCKETNET_CONNECT_TOKEN_BYTES ) != 0 );
 }
 
-REGISTER_UNIT_TEST( public_connect_token_round_trip );
-REGISTER_UNIT_TEST( public_connect_token_wrong_server_key_refused );
-REGISTER_UNIT_TEST( public_connect_token_wrong_protocol_id_refused );
-REGISTER_UNIT_TEST( public_connect_token_null_or_short_buffer_refused );
-REGISTER_UNIT_TEST( public_connect_token_sealed_block_varies );
+REGISTER_UNIT_TEST( test_public_connect_token_round_trip );
+REGISTER_UNIT_TEST( test_public_connect_token_wrong_server_key_refused );
+REGISTER_UNIT_TEST( test_public_connect_token_wrong_protocol_id_refused );
+REGISTER_UNIT_TEST( test_public_connect_token_null_or_short_buffer_refused );
+REGISTER_UNIT_TEST( test_public_connect_token_sealed_block_varies );

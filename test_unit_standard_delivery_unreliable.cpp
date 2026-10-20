@@ -215,10 +215,10 @@ static const rn_standard_vector_t standard_delivery_table[] =
     RN_STANDARD_VECTOR( "m6.code1-hold-full-trace", "0100040001000002000301006f000101007a" ),
 };
 
-static void standard_delivery_unreliable_vectors()
+static void test_standard_delivery_unreliable_vectors()
 {
     const int count = (int) ( sizeof( standard_delivery_table ) / sizeof( standard_delivery_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_delivery_table, count, standard_delivery_generate ) == count );
 }
 
-REGISTER_UNIT_TEST( standard_delivery_unreliable_vectors );
+REGISTER_UNIT_TEST( test_standard_delivery_unreliable_vectors );

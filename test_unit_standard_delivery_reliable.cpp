@@ -269,10 +269,10 @@ static int standard_delivery_reliable_generate( const char * id, uint8_t * out, 
     return -1;
 }
 
-static void standard_delivery_reliable_vectors()
+static void test_standard_delivery_reliable_vectors()
 {
     const int count = (int) ( sizeof( standard_delivery_reliable_table ) / sizeof( standard_delivery_reliable_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_delivery_reliable_table, count, standard_delivery_reliable_generate ) == count );
 }
 
-REGISTER_UNIT_TEST( standard_delivery_reliable_vectors );
+REGISTER_UNIT_TEST( test_standard_delivery_reliable_vectors );

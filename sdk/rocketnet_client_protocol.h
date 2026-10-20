@@ -58,7 +58,7 @@ typedef void ( * rocketnet_client_retire_keys_t )( void * context );
     The declaration manifest is deliberately independent of the RESET/KEEP
     inventory in rocketnet_connection_reset.h. Tests compare the two by name,
     offset and size. Adding a member here without an inventory decision names
-    that exact member in connection_reset_inventory_covers_every_field.
+    that exact member in test_connection_reset_inventory_covers_every_field.
 */
 #define ROCKETNET_CLIENT_PROTOCOL_LAYOUT_FIELDS( X ) \
     X( filter_value, uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] ) \

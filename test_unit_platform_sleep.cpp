@@ -27,7 +27,7 @@ struct rocketnet_platform_sleep_plan_t
 extern rocketnet_platform_sleep_plan_t rocketnet_platform_sleep_plan( double time );
 extern bool rocketnet_platform_sleep_tail_yields( double remaining );
 
-static void platform_sleep_plan_exact_values()
+static void test_platform_sleep_plan_exact_values()
 {
     rocketnet_platform_sleep_plan_t plan;
 
@@ -68,7 +68,7 @@ static void platform_sleep_plan_exact_values()
     rocketnet_unit_check( plan.yield_only );
 }
 
-static void platform_sleep_tail_yields_at_most_50_us()
+static void test_platform_sleep_tail_yields_at_most_50_us()
 {
     rocketnet_unit_check( rocketnet_platform_sleep_tail_yields( 0.00005 ) );
     rocketnet_unit_check( rocketnet_platform_sleep_tail_yields( 0.00001 ) );
@@ -79,5 +79,5 @@ static void platform_sleep_tail_yields_at_most_50_us()
     rocketnet_unit_check( !rocketnet_platform_sleep_tail_yields( nan( "" ) ) );
 }
 
-REGISTER_UNIT_TEST( platform_sleep_plan_exact_values );
-REGISTER_UNIT_TEST( platform_sleep_tail_yields_at_most_50_us );
+REGISTER_UNIT_TEST( test_platform_sleep_plan_exact_values );
+REGISTER_UNIT_TEST( test_platform_sleep_tail_yields_at_most_50_us );

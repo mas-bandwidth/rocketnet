@@ -119,7 +119,7 @@ static void test_address_ipv6_with_port_fits_the_buffer()
 // (sdk/rocketnet_address.cpp:318) returns the same four bytes.
 // ---------------------------------------------------------------------------
 
-static void address_load_ipv4_round_trips()
+static void test_address_load_ipv4_round_trips()
 {
     uint32_t ipv4;
     const uint8_t ipv4_bytes[4] = { 203, 0, 113, 10 };
@@ -158,7 +158,7 @@ static void address_load_ipv4_round_trips()
 // and the NONE fallback for a zeroed address.
 // ---------------------------------------------------------------------------
 
-static void address_to_string_without_port_each_type()
+static void test_address_to_string_without_port_each_type()
 {
     char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
 
@@ -187,7 +187,7 @@ static void address_to_string_without_port_each_type()
 // decodes.
 // ---------------------------------------------------------------------------
 
-static void wycheproof_files_load_and_count()
+static void test_wycheproof_files_load_and_count()
 {
     std::vector<wycheproof_test_t> tests;
     int num_tests = 0;
@@ -272,7 +272,7 @@ static void wycheproof_files_load_and_count()
 // the strict reader refuses malformed JSON and bad hex.
 // ---------------------------------------------------------------------------
 
-static void wycheproof_reader_refuses_malformed_json()
+static void test_wycheproof_reader_refuses_malformed_json()
 {
     wyj::node_t node;
     rocketnet_unit_check( !wyj::parse_text( "{\"a\": [1, 2", node ) );
@@ -295,7 +295,7 @@ static void wycheproof_reader_refuses_malformed_json()
 
 REGISTER_UNIT_TEST( test_base64_decode_data_never_returns_negative );
 REGISTER_UNIT_TEST( test_address_ipv6_with_port_fits_the_buffer );
-REGISTER_UNIT_TEST( address_load_ipv4_round_trips );
-REGISTER_UNIT_TEST( address_to_string_without_port_each_type );
-REGISTER_UNIT_TEST( wycheproof_files_load_and_count );
-REGISTER_UNIT_TEST( wycheproof_reader_refuses_malformed_json );
+REGISTER_UNIT_TEST( test_address_load_ipv4_round_trips );
+REGISTER_UNIT_TEST( test_address_to_string_without_port_each_type );
+REGISTER_UNIT_TEST( test_wycheproof_files_load_and_count );
+REGISTER_UNIT_TEST( test_wycheproof_reader_refuses_malformed_json );

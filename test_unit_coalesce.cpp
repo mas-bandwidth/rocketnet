@@ -15,7 +15,7 @@
 
 #include "sdk/rocketnet_coalesce.h"
 
-static void coalesce_split_by_stride_round_trips()
+static void test_coalesce_split_by_stride_round_trips()
 {
     int offsets[64];
     int lengths[64];
@@ -59,7 +59,7 @@ static void coalesce_split_by_stride_round_trips()
     rocketnet_unit_check( lengths[63] == 100 );
 }
 
-static void coalesce_split_refuses_past_max()
+static void test_coalesce_split_refuses_past_max()
 {
     int offsets[64];
     int lengths[64];
@@ -101,7 +101,7 @@ static void coalesce_test_address( struct rocketnet_address_t * address, uint8_t
     address->port = port;
 }
 
-static void coalesce_send_run_equal_sizes_and_tail()
+static void test_coalesce_send_run_equal_sizes_and_tail()
 {
     struct rocketnet_address_t to[5];
     for ( int i = 0; i < 5; i++ )
@@ -140,7 +140,7 @@ static void coalesce_send_run_equal_sizes_and_tail()
     rocketnet_unit_check( rocketnet_coalesce_send_run( aborted_first, to, 2, 64, 65000 ) == 0 );
 }
 
-static void coalesce_send_run_stops_on_destination_and_abort()
+static void test_coalesce_send_run_stops_on_destination_and_abort()
 {
     struct rocketnet_address_t to[4];
     for ( int i = 0; i < 4; i++ )
@@ -166,7 +166,7 @@ static void coalesce_send_run_stops_on_destination_and_abort()
     rocketnet_unit_check( rocketnet_coalesce_send_run( larger, to, 4, 64, 65000 ) == 1 );
 }
 
-REGISTER_UNIT_TEST( coalesce_split_by_stride_round_trips );
-REGISTER_UNIT_TEST( coalesce_split_refuses_past_max );
-REGISTER_UNIT_TEST( coalesce_send_run_equal_sizes_and_tail );
-REGISTER_UNIT_TEST( coalesce_send_run_stops_on_destination_and_abort );
+REGISTER_UNIT_TEST( test_coalesce_split_by_stride_round_trips );
+REGISTER_UNIT_TEST( test_coalesce_split_refuses_past_max );
+REGISTER_UNIT_TEST( test_coalesce_send_run_equal_sizes_and_tail );
+REGISTER_UNIT_TEST( test_coalesce_send_run_stops_on_destination_and_abort );

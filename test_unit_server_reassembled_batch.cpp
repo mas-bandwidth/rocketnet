@@ -96,7 +96,7 @@ static bool srb_payload_matches( const uint8_t * data, int client, int k )
     return memcmp( data, expected, SRB_PAYLOAD_BYTES ) == 0;
 }
 
-static void server_reassembled_batch_holds_legitimate_load()
+static void test_server_reassembled_batch_holds_legitimate_load()
 {
     const int num_slots = ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
@@ -278,7 +278,7 @@ static void server_reassembled_batch_holds_legitimate_load()
     const uint64_t batch_full = server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] - batch_full_before;
     const uint64_t reassembled = server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] - reassembled_before;
     if ( batch_full != 0 || num_delivered != SRB_TOTAL_PAYLOADS )
-        printf( "server_reassembled_batch_holds_legitimate_load: reassembled %llu delivered %d BATCH_FULL %llu (delivered capacity %d)\n",
+        printf( "test_server_reassembled_batch_holds_legitimate_load: reassembled %llu delivered %d BATCH_FULL %llu (delivered capacity %d)\n",
                 (unsigned long long) reassembled, num_delivered, (unsigned long long) batch_full, server.reassembly->delivered_capacity );
     check( reassembled == SRB_TOTAL_PAYLOADS );
     check( batch_full == 0 );
@@ -309,10 +309,10 @@ static void server_reassembled_batch_holds_legitimate_load()
     rocketnet_server_acks_destroy( server.acks );
     rocketnet_reassembly_set_destroy( server.reassembly );
 
-    printf( "server_reassembled_batch_holds_legitimate_load\n" );
+    printf( "test_server_reassembled_batch_holds_legitimate_load\n" );
 }
 
-REGISTER_UNIT_TEST( server_reassembled_batch_holds_legitimate_load );
+REGISTER_UNIT_TEST( test_server_reassembled_batch_holds_legitimate_load );
 
 // The delivered arena is sized by bytes beside the count: what one update
 // can complete is its drained fragments plus the payloads half-held in
@@ -320,7 +320,7 @@ REGISTER_UNIT_TEST( server_reassembled_batch_holds_legitimate_load );
 // payload stays inside the reassembly budget, as it did when the arena was
 // connections x slots x max payload.
 
-static void server_reassembly_large_payload_small_geometry_fits_the_budget()
+static void test_server_reassembly_large_payload_small_geometry_fits_the_budget()
 {
     const uint64_t budget = (uint64_t) ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024;
 
@@ -371,10 +371,10 @@ static void server_reassembly_large_payload_small_geometry_fits_the_budget()
     check( rocketnet_server_reassembly_delivered_bytes( 1, 8, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1 ) == 0 );
     check( rocketnet_reassembly_memory_required_delivered( 1, 8, 16384, 4, 16383 ) == 0 );
 
-    printf( "server_reassembly_large_payload_small_geometry_fits_the_budget\n" );
+    printf( "test_server_reassembly_large_payload_small_geometry_fits_the_budget\n" );
 }
 
-REGISTER_UNIT_TEST( server_reassembly_large_payload_small_geometry_fits_the_budget );
+REGISTER_UNIT_TEST( test_server_reassembly_large_payload_small_geometry_fits_the_budget );
 
 // The byte bound is enforced, not only planned: completions pack at the
 // 16-byte stride, and one that would run past the arena's bytes counts
@@ -407,7 +407,7 @@ static int srb_complete_payload( struct rocketnet_reassembly_set_t * set, uint32
     return set->completed_bytes;
 }
 
-static void server_reassembly_delivered_packs_by_bytes()
+static void test_server_reassembly_delivered_packs_by_bytes()
 {
     struct rocketnet_counters_t counters_storage;
     memset( &counters_storage, 0, sizeof(counters_storage) );
@@ -448,7 +448,7 @@ static void server_reassembly_delivered_packs_by_bytes()
     check( set->delivered_bytes == 2 * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( 4100 ) );
     rocketnet_reassembly_set_destroy( set );
 
-    printf( "server_reassembly_delivered_packs_by_bytes\n" );
+    printf( "test_server_reassembly_delivered_packs_by_bytes\n" );
 }
 
-REGISTER_UNIT_TEST( server_reassembly_delivered_packs_by_bytes );
+REGISTER_UNIT_TEST( test_server_reassembly_delivered_packs_by_bytes );

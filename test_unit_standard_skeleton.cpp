@@ -31,7 +31,7 @@ static int standard_skeleton_generate( const char * id, uint8_t * out, int capac
     return -1;
 }
 
-static void standard_skeleton_vectors()
+static void test_standard_skeleton_vectors()
 {
     const int count = (int) ( sizeof( standard_skeleton_table ) / sizeof( standard_skeleton_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_skeleton_table, count, standard_skeleton_generate ) == 1 );
@@ -56,4 +56,4 @@ static void standard_skeleton_vectors()
     rocketnet_unit_check( standard_skeleton_generate( "t3.no-such-vector", scratch, 2 ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_skeleton_vectors );
+REGISTER_UNIT_TEST( test_standard_skeleton_vectors );

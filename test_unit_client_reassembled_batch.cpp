@@ -95,7 +95,7 @@ static bool crb_payload_matches( const uint8_t * data, int k )
     return memcmp( data, expected, CRB_PAYLOAD_BYTES ) == 0;
 }
 
-static void client_reassembled_batch_holds_half_received_load()
+static void test_client_reassembled_batch_holds_half_received_load()
 {
     const int num_slots = ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
@@ -292,7 +292,7 @@ static void client_reassembled_batch_holds_half_received_load()
     const uint64_t batch_full = client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL] - batch_full_before;
 
     if ( drained != ROCKETNET_NUM_CLIENT_PACKETS || reassembled != CRB_TOTAL_PAYLOADS || batch_full != 0 || delivered != CRB_TOTAL_PAYLOADS )
-        printf( "client_reassembled_batch_holds_half_received_load: drained %d reassembled %llu delivered %d BATCH_FULL %llu (delivered capacity %d)\n",
+        printf( "test_client_reassembled_batch_holds_half_received_load: drained %d reassembled %llu delivered %d BATCH_FULL %llu (delivered capacity %d)\n",
                 drained, (unsigned long long) reassembled, delivered, (unsigned long long) batch_full, client.reassembly->delivered_capacity );
 
     check( drained == ROCKETNET_NUM_CLIENT_PACKETS );
@@ -312,4 +312,4 @@ static void client_reassembled_batch_holds_half_received_load()
     rocketnet_reassembly_set_destroy( server.reassembly );
 }
 
-REGISTER_UNIT_TEST( client_reassembled_batch_holds_half_received_load );
+REGISTER_UNIT_TEST( test_client_reassembled_batch_holds_half_received_load );

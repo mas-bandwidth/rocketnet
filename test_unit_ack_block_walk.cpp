@@ -54,11 +54,11 @@ static void check_bits_match_ring( struct rocketnet_ack_endpoint_t * ep )
     }
 }
 
-// ack_block_walk_visits_only_unacknowledged: a full-window run visits every
+// test_ack_block_walk_visits_only_unacknowledged: a full-window run visits every
 // held record once and a second identical run visits nothing; record new
 // records and the walk touches only them.
 
-static void ack_block_walk_visits_only_unacknowledged()
+static void test_ack_block_walk_visits_only_unacknowledged()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
     struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t*)
@@ -103,14 +103,14 @@ static void ack_block_walk_visits_only_unacknowledged()
     rocketnet_free( NULL, acked );
     rocketnet_free( NULL, ep );
 }
-REGISTER_UNIT_TEST( ack_block_walk_visits_only_unacknowledged );
+REGISTER_UNIT_TEST( test_ack_block_walk_visits_only_unacknowledged );
 
-// ack_block_walk_lost_packet_does_not_stall: a lost packet never stalls the
+// test_ack_block_walk_lost_packet_does_not_stall: a lost packet never stalls the
 // walk -- rounds of new records each ack fully and visit exactly the new
 // unacknowledged ones -- and once it leaves the window nothing visits it; a
 // batch deferral re-surfaces the deferred record.
 
-static void ack_block_walk_lost_packet_does_not_stall()
+static void test_ack_block_walk_lost_packet_does_not_stall()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
     struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t*)
@@ -222,16 +222,16 @@ static void ack_block_walk_lost_packet_does_not_stall()
 
     rocketnet_free( NULL, ep );
 }
-REGISTER_UNIT_TEST( ack_block_walk_lost_packet_does_not_stall );
+REGISTER_UNIT_TEST( test_ack_block_walk_lost_packet_does_not_stall );
 
-// ack_block_walk_bits_match_ring: after each process_block, the shadow
+// test_ack_block_walk_bits_match_ring: after each process_block, the shadow
 // bitmaps equal the ring -- the held bit of a slot is set iff its record holds
 // a sequence at or above the window low, and the unacked bit iff it is held
 // and not acknowledged. Drives normal records, a burned sequence, an alias
 // write N above an unacknowledged record, a refused stale write, and a
 // deferral.
 
-static void ack_block_walk_bits_match_ring()
+static void test_ack_block_walk_bits_match_ring()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
     struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t*)
@@ -321,4 +321,4 @@ static void ack_block_walk_bits_match_ring()
     rocketnet_free( NULL, acked );
     rocketnet_free( NULL, ep );
 }
-REGISTER_UNIT_TEST( ack_block_walk_bits_match_ring );
+REGISTER_UNIT_TEST( test_ack_block_walk_bits_match_ring );

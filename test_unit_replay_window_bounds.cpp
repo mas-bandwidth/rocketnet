@@ -12,7 +12,7 @@
 
 #include "rocketnet_history.h"
 
-static void replay_window_bounds_pinned()
+static void test_replay_window_bounds_pinned()
 {
     rocketnet_unit_check( ROCKETNET_HISTORY_PACKETS_MIN == 4096 );
     rocketnet_unit_check( ROCKETNET_HISTORY_PACKETS_MAX == 32768 );
@@ -21,4 +21,4 @@ static void replay_window_bounds_pinned()
     rocketnet_unit_check( ROCKETNET_HISTORY_PACKETS % 64 == 0 );
 }
 
-REGISTER_UNIT_TEST( replay_window_bounds_pinned );
+REGISTER_UNIT_TEST( test_replay_window_bounds_pinned );

@@ -154,7 +154,7 @@ static int client_io_decrypt_consume( client_io_decrypt_fixture_t * f, rocketnet
 // step. Both records carry the opened verdict, their sequence and the
 // plaintext behind the wire header; the step ran both AEADs and update's
 // consume runs none, and delivers both payloads.
-static void client_io_decrypt_opens_before_publish()
+static void test_client_io_decrypt_opens_before_publish()
 {
     static client_io_decrypt_fixture_t f;
     client_io_decrypt_setup( &f );
@@ -199,12 +199,12 @@ static void client_io_decrypt_opens_before_publish()
     rocketnet_client_io_return( &f.io );
     client_io_decrypt_teardown( &f );
 }
-REGISTER_UNIT_TEST( client_io_decrypt_opens_before_publish );
+REGISTER_UNIT_TEST( test_client_io_decrypt_opens_before_publish );
 
 // IoCheck's replay check on the I/O thread's window comes before the AEAD
 // (CheapRefusalsFirst): the same sealed datagram twice in one step opens once,
 // the copy's record is already_received, and update counts it once.
-static void client_io_decrypt_replay_refused_before_open()
+static void test_client_io_decrypt_replay_refused_before_open()
 {
     static client_io_decrypt_fixture_t f;
     client_io_decrypt_setup( &f );
@@ -236,12 +236,12 @@ static void client_io_decrypt_replay_refused_before_open()
     rocketnet_client_io_return( &f.io );
     client_io_decrypt_teardown( &f );
 }
-REGISTER_UNIT_TEST( client_io_decrypt_replay_refused_before_open );
+REGISTER_UNIT_TEST( test_client_io_decrypt_replay_refused_before_open );
 
 // RetireKeys then IoDropKeys (NoOpenWithoutKeys): publish and take, retire,
 // then a sealed datagram. The retire wakes the I/O thread; the step reads retired at
 // the top of the drain, zeroes its copy and opens nothing: the record is raw.
-static void client_io_decrypt_no_open_after_retire()
+static void test_client_io_decrypt_no_open_after_retire()
 {
     static client_io_decrypt_fixture_t f;
     client_io_decrypt_setup( &f );
@@ -282,14 +282,14 @@ static void client_io_decrypt_no_open_after_retire()
     rocketnet_client_io_return( &f.io );
     client_io_decrypt_teardown( &f );
 }
-REGISTER_UNIT_TEST( client_io_decrypt_no_open_after_retire );
+REGISTER_UNIT_TEST( test_client_io_decrypt_no_open_after_retire );
 
 // UpdateConsume counts every verdict in its arrival position (SingleWriter):
 // genuine, forged (one byte flipped), genuine. The I/O thread's records are
 // opened, did_not_open, opened; update counts did_not_open once, and the
 // integrity failure runs after the first genuine record is accepted and before
 // the third is consumed.
-static void client_io_decrypt_verdicts_counted_in_order()
+static void test_client_io_decrypt_verdicts_counted_in_order()
 {
     static client_io_decrypt_fixture_t f;
     client_io_decrypt_setup( &f );
@@ -341,12 +341,12 @@ static void client_io_decrypt_verdicts_counted_in_order()
     rocketnet_client_io_return( &f.io );
     client_io_decrypt_teardown( &f );
 }
-REGISTER_UNIT_TEST( client_io_decrypt_verdicts_counted_in_order );
+REGISTER_UNIT_TEST( test_client_io_decrypt_verdicts_counted_in_order );
 
 // A copy of a genuine datagram from any source but the dialed server stays raw
 // and leaves the I/O thread's window alone: update drops it as junk, so the
 // genuine copy that follows from the server still opens and is delivered.
-static void client_io_decrypt_other_source_stays_raw()
+static void test_client_io_decrypt_other_source_stays_raw()
 {
     static client_io_decrypt_fixture_t f;
     client_io_decrypt_setup( &f );
@@ -376,4 +376,4 @@ static void client_io_decrypt_other_source_stays_raw()
     rocketnet_client_io_return( &f.io );
     client_io_decrypt_teardown( &f );
 }
-REGISTER_UNIT_TEST( client_io_decrypt_other_source_stays_raw );
+REGISTER_UNIT_TEST( test_client_io_decrypt_other_source_stays_raw );

@@ -51,11 +51,11 @@ static int standard_security_and_conformance_generate( const char * id, uint8_t 
     return -1;
 }
 
-static void standard_security_and_conformance_vectors()
+static void test_standard_security_and_conformance_vectors()
 {
     const int count = (int) ( sizeof( standard_security_and_conformance_table ) / sizeof( standard_security_and_conformance_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_security_and_conformance_table, count, standard_security_and_conformance_generate ) == 1 );
     rocketnet_unit_check( standard_security_and_conformance_generate( "t19.no-such-vector", 0, 0 ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_security_and_conformance_vectors );
+REGISTER_UNIT_TEST( test_standard_security_and_conformance_vectors );

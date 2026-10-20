@@ -64,7 +64,7 @@ static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_cli
 // Stop with a handed-off ring: the I/O thread sends the ring in flight (both
 // packets) and then exits on the same step. wake_calls 2: the hand-off wakes
 // once, stop wakes again. RNClientIo Stop, IoExit.
-static void client_io_stop_sends_in_flight_ring_first()
+static void test_client_io_stop_sends_in_flight_ring_first()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
@@ -103,12 +103,12 @@ static void client_io_stop_sends_in_flight_ring_first()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_stop_sends_in_flight_ring_first );
+REGISTER_UNIT_TEST( test_client_io_stop_sends_in_flight_ring_first );
 
 // Stop with nothing handed off and a datagram waiting: the step exits at once,
 // sends nothing, does not receive, does not wait. RNClientIo IoExit (no
 // receive, no publish, no wait).
-static void client_io_stop_exits_with_nothing_new()
+static void test_client_io_stop_exits_with_nothing_new()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
@@ -146,7 +146,7 @@ static void client_io_stop_exits_with_nothing_new()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_stop_exits_with_nothing_new );
+REGISTER_UNIT_TEST( test_client_io_stop_exits_with_nothing_new );
 
 // Handing off after stop asserts once through the installed non-aborting hook.
 // RNClientIo Stop (nothing new after stop); the assert compiles out in a
@@ -163,7 +163,7 @@ static void client_io_stop_hand_off_assert_hook( const char * condition, const c
     client_io_stop_hand_off_asserts++;
 }
 
-static void client_io_hand_off_after_stop_asserts()
+static void test_client_io_hand_off_after_stop_asserts()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) =
         rn_assert_function;
@@ -206,7 +206,7 @@ static void client_io_hand_off_after_stop_asserts()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_hand_off_after_stop_asserts );
+REGISTER_UNIT_TEST( test_client_io_hand_off_after_stop_asserts );
 
 // the bounded destroy-wait harness: a step-driven transport on a wrapper of
 // the fake driver whose receive (called once per I/O step) counts steps,
@@ -325,7 +325,7 @@ static rocketnet_client_transport_t * destroy_wait_transport_create( destroy_wai
 // its own 2 s deadline (a SENDING ring is in flight), so the whole destroy
 // takes at most 4 s of test time. Nothing is sent (the committed slot is
 // dropped, not handed off).
-static void client_io_destroy_handoff_wait_is_bounded()
+static void test_client_io_destroy_handoff_wait_is_bounded()
 {
     destroy_wait_harness_t h = {};
     h.clock.now = 1000.0;
@@ -352,13 +352,13 @@ static void client_io_destroy_handoff_wait_is_bounded()
     rocketnet_unit_check( h.fake.destroy_calls == 1 );
     rocketnet_unit_check( h.fake.num_sent == 0 );
 }
-REGISTER_UNIT_TEST( client_io_destroy_handoff_wait_is_bounded );
+REGISTER_UNIT_TEST( test_client_io_destroy_handoff_wait_is_bounded );
 
 // The post-stop step loop, bounded: no committed fill slots, but a ring stuck
 // in SENDING keeps the I/O core in flight, so the step loop never reaches
 // EXITED without the deadline. Destroy gives up at the 2 s deadline (1 ms per
 // step) and returns; nothing is dropped because destroy handed off nothing.
-static void client_io_destroy_step_loop_is_bounded()
+static void test_client_io_destroy_step_loop_is_bounded()
 {
     destroy_wait_harness_t h = {};
     h.clock.now = 1000.0;
@@ -380,4 +380,4 @@ static void client_io_destroy_step_loop_is_bounded()
     rocketnet_unit_check( h.clock.dropped == 0 );
     rocketnet_unit_check( h.fake.destroy_calls == 1 );
 }
-REGISTER_UNIT_TEST( client_io_destroy_step_loop_is_bounded );
+REGISTER_UNIT_TEST( test_client_io_destroy_step_loop_is_bounded );

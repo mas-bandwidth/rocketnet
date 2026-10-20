@@ -13,7 +13,7 @@
 
 #define check rocketnet_unit_check
 
-static void reliable_disabled_before_and_enabled_after()
+static void test_reliable_disabled_before_and_enabled_after()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -34,7 +34,7 @@ static void reliable_disabled_before_and_enabled_after()
     rn_arena_destroy( arena );
 }
 
-REGISTER_UNIT_TEST( reliable_disabled_before_and_enabled_after );
+REGISTER_UNIT_TEST( test_reliable_disabled_before_and_enabled_after );
 
 struct reliable_test_packet_t
 {
@@ -101,7 +101,7 @@ static void reliable_test_config( rocketnet_message_config_t * config )
     config->resend_delay_max_ms = 400;
 }
 
-static void reliable_exactly_once_any_order_under_loss_dup_reorder()
+static void test_reliable_exactly_once_any_order_under_loss_dup_reorder()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -144,9 +144,9 @@ static void reliable_exactly_once_any_order_under_loss_dup_reorder()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( reliable_exactly_once_any_order_under_loss_dup_reorder );
+REGISTER_UNIT_TEST( test_reliable_exactly_once_any_order_under_loss_dup_reorder );
 
-static void reliable_chunked_delivered_whole()
+static void test_reliable_chunked_delivered_whole()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -178,9 +178,9 @@ static void reliable_chunked_delivered_whole()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( reliable_chunked_delivered_whole );
+REGISTER_UNIT_TEST( test_reliable_chunked_delivered_whole );
 
-static void reliable_packet_fit_boundary()
+static void test_reliable_packet_fit_boundary()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -221,9 +221,9 @@ static void reliable_packet_fit_boundary()
     rn_arena_destroy( sender.arena );
 }
 
-REGISTER_UNIT_TEST( reliable_packet_fit_boundary );
+REGISTER_UNIT_TEST( test_reliable_packet_fit_boundary );
 
-static void rnchannel_reliable_witness_replays()
+static void test_rnchannel_reliable_witness_replays()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -262,7 +262,7 @@ static void rnchannel_reliable_witness_replays()
     rn_arena_destroy( node.arena );
 }
 
-REGISTER_UNIT_TEST( rnchannel_reliable_witness_replays );
+REGISTER_UNIT_TEST( test_rnchannel_reliable_witness_replays );
 
 static uint64_t reliable_allocator_calls;
 
@@ -280,7 +280,7 @@ static void reliable_counted_free( void * context, void * memory )
     free( memory );
 }
 
-static void reliable_no_allocation_after_create()
+static void test_reliable_no_allocation_after_create()
 {
     rocketnet_term();
     check( rocketnet_set_allocator( reliable_counted_malloc, reliable_counted_free ) == ROCKETNET_STATUS_OK );
@@ -310,11 +310,11 @@ static void reliable_no_allocation_after_create()
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( reliable_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_reliable_no_allocation_after_create );
 
 // A control record frees its number's descriptor and is never an application
 // view (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp).
-static void reliable_control_record_frees_its_number()
+static void test_reliable_control_record_frees_its_number()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -344,12 +344,12 @@ static void reliable_control_record_frees_its_number()
     rn_arena_destroy( node.arena );
 }
 
-REGISTER_UNIT_TEST( reliable_control_record_frees_its_number );
+REGISTER_UNIT_TEST( test_reliable_control_record_frees_its_number );
 
 // A channel set whose mask does not enable code 2 refuses it
 // (rn_channels_dispatch, sdk/rocketnet_channel.cpp, by wire code): counted
 // TYPE_NOT_ENABLED, the error set, and no delivery.
-static void reliable_record_on_a_disabled_mask_is_refused()
+static void test_reliable_record_on_a_disabled_mask_is_refused()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -378,12 +378,12 @@ static void reliable_record_on_a_disabled_mask_is_refused()
     rn_arena_destroy( node.arena );
 }
 
-REGISTER_UNIT_TEST( reliable_record_on_a_disabled_mask_is_refused );
+REGISTER_UNIT_TEST( test_reliable_record_on_a_disabled_mask_is_refused );
 
 // A record whose number layer 3 never accepted is a violation
 // (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp): counted
 // PROTOCOL_VIOLATION, the error set, and no delivery.
-static void reliable_record_without_a_live_number_is_refused()
+static void test_reliable_record_without_a_live_number_is_refused()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -409,4 +409,4 @@ static void reliable_record_without_a_live_number_is_refused()
     rn_arena_destroy( node.arena );
 }
 
-REGISTER_UNIT_TEST( reliable_record_without_a_live_number_is_refused );
+REGISTER_UNIT_TEST( test_reliable_record_without_a_live_number_is_refused );

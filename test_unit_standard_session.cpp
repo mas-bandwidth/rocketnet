@@ -118,7 +118,7 @@ static const rn_standard_vector_t standard_session_table[] =
     RN_STANDARD_VECTOR( "t13.keep-alive-suppression", "00010001000001" ),
 };
 
-static void standard_session_vectors()
+static void test_standard_session_vectors()
 {
     const int count = (int) ( sizeof( standard_session_table ) / sizeof( standard_session_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_session_table, count, rocketnet_session_generate ) == 1 );
@@ -131,4 +131,4 @@ static void standard_session_vectors()
                           bytes[4] == 0 && bytes[5] == 0 && bytes[6] == 1 );
 }
 
-REGISTER_UNIT_TEST( standard_session_vectors );
+REGISTER_UNIT_TEST( test_standard_session_vectors );

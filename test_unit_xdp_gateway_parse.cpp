@@ -76,7 +76,7 @@ static const char * netstat_header =
     "Kernel IP routing table\n"
     "Destination     Gateway         Genmask         Flags   MSS Window  irtt Iface\n";
 
-static void xdp_gateway_parse_matches_the_default_route_and_its_neighbor()
+static void test_xdp_transport_gateway_parse_matches_the_default_route_and_its_neighbor()
 {
     char netstat[2048];
     snprintf( netstat, sizeof(netstat), "%s%s", netstat_header,
@@ -106,7 +106,7 @@ static void xdp_gateway_parse_matches_the_default_route_and_its_neighbor()
     check( !mac_from_neigh( neigh, "10.0.0.7", "eth1", mac ) );
 }
 
-static void xdp_gateway_parse_neighbor_address_is_a_whole_token()
+static void test_xdp_transport_gateway_parse_neighbor_address_is_a_whole_token()
 {
     // 10.0.0.1 is a substring of 10.0.0.12, listed first
 
@@ -119,7 +119,7 @@ static void xdp_gateway_parse_neighbor_address_is_a_whole_token()
     check( strcmp( mac, "02:00:00:00:00:01" ) == 0 );
 }
 
-static void xdp_gateway_parse_interface_is_a_whole_token()
+static void test_xdp_transport_gateway_parse_interface_is_a_whole_token()
 {
     // eth1 is a substring of eth10, listed first, in both tables
 
@@ -141,7 +141,7 @@ static void xdp_gateway_parse_interface_is_a_whole_token()
     check( strcmp( mac, "02:00:00:00:00:01" ) == 0 );
 }
 
-static void xdp_gateway_parse_only_the_default_route_wins()
+static void test_xdp_transport_gateway_parse_only_the_default_route_wins()
 {
     // a non-default UG route (and a UGH host route) listed before the default
 
@@ -156,35 +156,9 @@ static void xdp_gateway_parse_only_the_default_route_wins()
     check( strcmp( gateway, "10.0.0.1" ) == 0 );
 }
 
-#else
-
-static void xdp_gateway_parse_matches_the_default_route_and_its_neighbor()
-{
-    printf( "xdp_gateway_parse_matches_the_default_route_and_its_neighbor [SKIPPED AF_XDP is Linux only]\n" );
-    fflush( stdout );
-}
-
-static void xdp_gateway_parse_neighbor_address_is_a_whole_token()
-{
-    printf( "xdp_gateway_parse_neighbor_address_is_a_whole_token [SKIPPED AF_XDP is Linux only]\n" );
-    fflush( stdout );
-}
-
-static void xdp_gateway_parse_interface_is_a_whole_token()
-{
-    printf( "xdp_gateway_parse_interface_is_a_whole_token [SKIPPED AF_XDP is Linux only]\n" );
-    fflush( stdout );
-}
-
-static void xdp_gateway_parse_only_the_default_route_wins()
-{
-    printf( "xdp_gateway_parse_only_the_default_route_wins [SKIPPED AF_XDP is Linux only]\n" );
-    fflush( stdout );
-}
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_parse_matches_the_default_route_and_its_neighbor );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_parse_neighbor_address_is_a_whole_token );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_parse_interface_is_a_whole_token );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_parse_only_the_default_route_wins );
 
 #endif
-
-REGISTER_UNIT_TEST( xdp_gateway_parse_matches_the_default_route_and_its_neighbor );
-REGISTER_UNIT_TEST( xdp_gateway_parse_neighbor_address_is_a_whole_token );
-REGISTER_UNIT_TEST( xdp_gateway_parse_interface_is_a_whole_token );
-REGISTER_UNIT_TEST( xdp_gateway_parse_only_the_default_route_wins );

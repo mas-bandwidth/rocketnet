@@ -53,7 +53,7 @@ static std::string prefilter_seed_path( const char * name )
     return root + "/fuzz/corpus/" + name;
 }
 
-static void fuzz_prefilter_seed_names_match_outcomes()
+static void test_fuzz_prefilter_seed_names_match_outcomes()
 {
     const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     for ( size_t i = 0; i < sizeof(prefilter_seeds) / sizeof(prefilter_seeds[0]); i++ )
@@ -87,4 +87,4 @@ static void fuzz_prefilter_seed_names_match_outcomes()
     }
 }
 
-REGISTER_UNIT_TEST( fuzz_prefilter_seed_names_match_outcomes );
+REGISTER_UNIT_TEST( test_fuzz_prefilter_seed_names_match_outcomes );

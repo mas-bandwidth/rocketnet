@@ -67,7 +67,7 @@ static void check_equal( const uint8_t * a, const uint8_t * b )
     check( a[3] == b[3] );
 }
 
-static void keyed_filter_value_known_answers()
+static void test_keyed_filter_value_known_answers()
 {
     uint8_t out[4];
 
@@ -97,7 +97,7 @@ static void keyed_filter_value_known_answers()
     check_equal( out, expected_c );
 }
 
-static void keyed_filter_value_inputs_are_the_standards()
+static void test_keyed_filter_value_inputs_are_the_standards()
 {
     static const uint8_t magic[16] = { 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
                                        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 };
@@ -158,5 +158,5 @@ static void keyed_filter_value_inputs_are_the_standards()
     check( memcmp( base, out, 4 ) != 0 );
 }
 
-REGISTER_UNIT_TEST( keyed_filter_value_known_answers );
-REGISTER_UNIT_TEST( keyed_filter_value_inputs_are_the_standards );
+REGISTER_UNIT_TEST( test_keyed_filter_value_known_answers );
+REGISTER_UNIT_TEST( test_keyed_filter_value_inputs_are_the_standards );

@@ -137,8 +137,8 @@ jobs:
           # per-pump cases run unpinned above; the pinned cells run the
           # transport-matrix socket cases, as .github/workflows/ci.yml:322-373 does
           for transport in portable msgx; do
-            for case in test_transport_udp_loopback test_transport_ipv6_loopback \
-                        test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured; do
+            for case in test_loopback_transport_udp test_loopback_transport_ipv6 \
+                        test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured; do
               env ROCKETNET_SERVER_TRANSPORT=$transport ROCKETNET_CLIENT_TRANSPORT=$transport \
                 arch -x86_64 ./bin/functional --run "$case"
             done
