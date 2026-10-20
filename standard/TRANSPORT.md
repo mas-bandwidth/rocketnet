@@ -3632,13 +3632,15 @@ an input ([t1.4 Conventions](#t1.4)).
     the budget is spent and the server can record no further sources; the
     verifications such requests cost are bounded by the handshake work budget
     of item 10.
-12. A server SHOULD refuse a request whose token identifier is claimed by a
-    different source address, and MUST refuse one that finds no free
-    encryption mapping slot, before any signature, seal or keypair work. The
-    first valid request for a token records its claim for the source address;
-    the claim ends at the handshake deadline or when a response binds the
-    token. A full mapping table refuses with no reply and is counted as a
-    refusal.
+ 12. A server SHOULD refuse a request whose token identifier is claimed by a
+     different source address, and MUST refuse one that finds no free
+     encryption mapping slot, before any signature, seal or keypair work. The
+     first valid request for a token records its claim for the source address;
+     the claim ends at the handshake deadline or when a response binds the
+     token. A full mapping table refuses with no reply and is counted as a
+     refusal. The request-claim table and the response-binding table are
+     independent capacities: claim pressure cannot consume or evict a still
+     live response binding.
 
 The values this section introduces are:
 

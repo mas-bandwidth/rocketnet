@@ -2227,6 +2227,47 @@ void rocketnet_test_used_token_history()
     rocketnet_used_token_history_destroy( history );
 }
 
+void rocketnet_test_used_token_claim_cannot_evict_binding()
+{
+    // claim pressure must not consume or evict binding-history capacity: the
+    // response-binding table and the request-claim table are independent
+    const uint64_t now = 1000;
+    const uint64_t expire = now + 300;
+
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 4 );
+    rocketnet_check( history );
+
+    struct rocketnet_address_t address_a, address_b;
+    rocketnet_check( rocketnet_address_parse( &address_a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "10.0.0.2:30000" ) );
+
+    // a live response binding for token 1
+    uint8_t id_a[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( id_a, 1 );
+    rocketnet_used_token_history_record( history, id_a, &address_a, expire, now );
+    rocketnet_check( !rocketnet_used_token_history_check( history, id_a, &address_b, now ) );
+
+    // fill the claim table with live claims for four distinct tokens
+    for ( int i = 2; i <= 5; i++ )
+    {
+        uint8_t claim_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_test_token_id( claim_id, i );
+        rocketnet_check( rocketnet_used_token_history_claim_record( history, claim_id, &address_b, 1005.0, 1000.0 ) == 1 );
+    }
+
+    // the claim table is full: a fifth fresh claim is refused, and the
+    // refusal must not evict token 1's still-live binding
+    {
+        uint8_t claim_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_test_token_id( claim_id, 6 );
+        rocketnet_check( rocketnet_used_token_history_claim_record( history, claim_id, &address_b, 1005.0, 1000.0 ) == 0 );
+        rocketnet_check( !rocketnet_used_token_history_check( history, id_a, &address_b, now ) );
+        rocketnet_check( rocketnet_used_token_history_check( history, id_a, &address_a, now ) );
+    }
+
+    rocketnet_used_token_history_destroy( history );
+}
+
 void rocketnet_test_encryption_map()
 {
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
@@ -14601,6 +14642,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_counters", rocketnet_test_counters },
     { "test_response_wrong_size_counted", rocketnet_test_response_wrong_size_counted },
     { "test_used_token_history", rocketnet_test_used_token_history },
+    { "test_used_token_claim_cannot_evict_binding", rocketnet_test_used_token_claim_cannot_evict_binding },
     { "test_encryption_map", rocketnet_test_encryption_map },
     { "test_encryption_map_iterator", rocketnet_test_encryption_map_iterator },
     { "test_server_update_sweep", rocketnet_test_server_update_sweep },

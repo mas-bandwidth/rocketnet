@@ -12,25 +12,24 @@
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 
-// The used-token history from the standard. The one-live-connection rule
-// needs no table of its own: the claim and the history refuse a token from a
-// second address before the signature verify, a connected address is refused
-// at the top of the request path, and the client-id check refuses a second
-// live connection for a token's client id (sdk/rocketnet_server_protocol.cpp).
-// The admitted-token set that held every token until it expired is gone,
-// because it denied ordinary churn (docs/SESSION.md 1.6).
-//
-// The history binds a token identifier to the first source address that
-// opened a response under it; the binding lives until the token expires. The
-// request claim binds the same identifier to the first source address that
-// presented a valid request, before any asymmetric work, and lives only until
-// the handshake deadline or the response binding: one token buys one half-open
-// mapping, and a replay from a second address waits until the first mapping
-// dies. One table holds both time fields: fixed capacity, oldest-first
-// eviction for bindings, no eviction of a live claim, and entries expire with
-// their deadlines. Lookup is constant time in the number of clients: chained
-// buckets under a per-run SipHash of the identifier, so an attacker cannot
-// craft identifiers that collide.
+// The used-token history from the standard uses two independent capacity
+// tables. The response-binding table binds a token identifier to the first
+// source address that opened a response under it; the binding lives until the
+// token expires. The request-claim table binds the same identifier to the
+// first source address that presented a valid request, before any asymmetric
+// work, and lives only until the handshake deadline or the response binding:
+// one token buys one half-open mapping, and a replay from a second address
+// waits until the first mapping dies. The two tables are independent, so
+// claim pressure cannot consume or evict response-binding capacity. Each
+// table is fixed-capacity with bound-first eviction for bindings, no
+// eviction of a live claim, and entries that expire with their deadlines.
+// Lookup is constant time in the number of clients: chained buckets under a
+// per-run SipHash of the identifier, so an attacker cannot craft identifiers
+// that collide. The one-live-connection rule needs no table of its own: the
+// claim and the history refuse a token from a second address before the
+// signature verify, a connected address is refused at the top of the request
+// path, and the client-id check refuses a second live connection for a
+// token's client id (sdk/rocketnet_server_protocol.cpp).
 
 struct rocketnet_used_token_history_t;
 
