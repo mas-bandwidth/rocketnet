@@ -4,16 +4,18 @@
 (* direction of session traffic.                                           *)
 (*                                                                         *)
 (* The state is struct rocketnet_replay_protection_t                       *)
-(* (sdk/rocketnet_encryption_map.h:31-35): a high-water mark               *)
-(* highest_opened and a ring of ROCKETNET_REPLAY_WINDOW_BITS bits, stored  *)
-(* as ROCKETNET_HISTORY_PACKETS / 64 words of 64 (sdk/rocketnet_replay.h:  *)
-(* 26-30 ties the two constants together).  Two operations own it,         *)
-(* sdk/rocketnet_replay.cpp: already_received (the check before the open)  *)
-(* and advance (the mark after the open).  A third reads it: the ack block *)
-(* builder, sdk/rocketnet_ack.cpp:48-52 and 54-137, enumerates the same    *)
-(* bits between the floor and the high-water mark, so what the window says *)
-(* is what the peer is told was received (STANDARD.md, Replay Protection   *)
-(* and Acks).                                                              *)
+(* (sdk/rocketnet_encryption_map.h): a high-water mark highest_opened and  *)
+(* a ring of ROCKETNET_REPLAY_WINDOW_BITS bits, stored as                  *)
+(* ROCKETNET_HISTORY_PACKETS / 64 words of 64 (the static_assert beside    *)
+(* ROCKETNET_REPLAY_WINDOW_BITS in sdk/rocketnet_replay.h ties the two     *)
+(* constants together).  Two operations own it, in                         *)
+(* sdk/rocketnet_replay.cpp: rocketnet_replay_already_received (the check  *)
+(* before the open) and rocketnet_replay_advance (the mark after the       *)
+(* open).  A third reads it: the ack block builder in sdk/rocketnet_ack.cpp *)
+(* (rocketnet_ack_replay_bit and rocketnet_ack_block_build) enumerates the *)
+(* same bits between the floor and the high-water mark, so what the window *)
+(* says is what the peer is told was received (STANDARD.md, Replay         *)
+(* Protection and Acks).                                                   *)
 (*                                                                         *)
 (* The window has one job: inside the retained range (highest - W,         *)
 (* highest], a bit is set exactly for the sequences that have opened.  The *)
@@ -36,9 +38,9 @@
 (*                                                                         *)
 (* This is replay_session only.  The handshake window (replay_handshake)  *)
 (* is the same struct, but handshake packets are exempt from replay        *)
-(* marking and only raise its highest_opened                              *)
-(* (sdk/rocketnet_server_protocol.cpp:883-889 and 949-950;                 *)
-(* sdk/rocketnet_client_protocol.cpp:511-512); advance never runs on it,   *)
+(* marking and only raise its highest_opened (the connection response    *)
+(* branch of rocketnet_server_process_sealed_packet, and                   *)
+(* rocketnet_client_process_challenge); advance never runs on it,          *)
 (* and nothing here speaks for it.                                         *)
 (*                                                                         *)
 (* A second ghost, processed, records what a slot actually processed: the  *)
@@ -55,7 +57,7 @@ CONSTANTS
     GateBeforeAdvance  \* BOOLEAN: check the slot before advance (current code)
                        \* or after advance (the reversed witness)
 
-W == Words * WordBits  \* ROCKETNET_REPLAY_WINDOW_BITS (sdk/rocketnet_replay.h:26)
+W == Words * WordBits  \* ROCKETNET_REPLAY_WINDOW_BITS (sdk/rocketnet_replay.h)
 
 ASSUME /\ Words \in Nat \ {0}
        /\ WordBits \in Nat \ {0}
@@ -75,16 +77,19 @@ vars == <<highest, window, received, processed, connected>>
 Seqs == 1..MaxSeq
 
 (***************************************************************************)
-(* The ring.  A sequence lives at bit s % W (sdk/rocketnet_replay.cpp:11,  *)
-(* 17, 23; sdk/rocketnet_ack.cpp:50), and bit b lives in word b div 64.    *)
+(* The ring.  A sequence lives at bit s % W (rocketnet_replay_bit,        *)
+(* rocketnet_replay_set_bit and rocketnet_replay_clear_bit in              *)
+(* sdk/rocketnet_replay.cpp; rocketnet_ack_replay_bit in                   *)
+(* sdk/rocketnet_ack.cpp), and bit b lives in word b div 64.               *)
 (***************************************************************************)
 Bit(s)  == s % W
 Word(b) == b \div WordBits
 
 (***************************************************************************)
 (* The retained range.  already_received refuses s <= highest - W as too   *)
-(* old (sdk/rocketnet_replay.cpp:35-37); the ack builder's floor is        *)
-(* highest - W + 1, never below 1 (sdk/rocketnet_ack.cpp:70-72).  The two  *)
+(* old (rocketnet_replay_already_received); the ack builder's floor is     *)
+(* highest - W + 1, never below 1 (floor_sequence in                       *)
+(* rocketnet_ack_block_build).  The two                                    *)
 (* agree: the range is Floor..highest, W sequences wide once highest >= W. *)
 (***************************************************************************)
 Floor == IF highest >= W THEN highest - W + 1 ELSE 1
@@ -92,7 +97,7 @@ Floor == IF highest >= W THEN highest - W + 1 ELSE 1
 InRange(s) == s >= Floor /\ s <= highest
 
 (***************************************************************************)
-(* rocketnet_replay_already_received (sdk/rocketnet_replay.cpp:27-40).    *)
+(* rocketnet_replay_already_received (sdk/rocketnet_replay.cpp).          *)
 (* Above the high-water mark: not received.  Below the range: refused as   *)
 (* too old, indistinguishable from received.  Inside: the ring bit.        *)
 (***************************************************************************)
@@ -102,7 +107,7 @@ AlreadyReceived(s) ==
     ELSE window[Bit(s)]
 
 (***************************************************************************)
-(* What the ack block says about s (sdk/rocketnet_ack.cpp:54-137): the     *)
+(* What the ack block says about s (rocketnet_ack_block_build): the       *)
 (* builder walks from largest = highest down to the floor reading the      *)
 (* same ring bit, so a sequence is reported received exactly when it is    *)
 (* in range and its bit is set.  Truncation (max_ranges, the 0xFFFF run    *)
@@ -111,12 +116,14 @@ AlreadyReceived(s) ==
 AckReports(s) == InRange(s) /\ window[Bit(s)]
 
 (***************************************************************************)
-(* rocketnet_replay_advance (sdk/rocketnet_replay.cpp:42-70), as the code  *)
-(* is parameterized. Above the high-water mark, advance clears skipped bits. *)
-(* past are cleared first, so a sequence far ahead does not inherit bits   *)
-(* from the previous lap: a skip shorter than W clears each skipped        *)
-(* sequence's bit (the loop at :63-64); a skip of W or more clears words   *)
-(* 0..ClearedWords-1; the committed instance uses Words. Then s is set.  *)
+(* rocketnet_replay_advance (sdk/rocketnet_replay.cpp).  Above the        *)
+(* high-water mark the entries the advance skips past are cleared first,   *)
+(* so a sequence far ahead does not inherit bits from the previous lap: a  *)
+(* skip shorter than W clears each skipped sequence's bit (its loop over   *)
+(* rocketnet_replay_clear_bit); a skip of W or more clears words           *)
+(* 0..ClearedWords-1, and the code clears the whole ring with memset, so   *)
+(* the committed instance uses ClearedWords = Words.  Then the bit for s   *)
+(* is set (rocketnet_replay_set_bit).                                      *)
 (*                                                                         *)
 (* The ghost follows the truth: s joins received, and whatever has left    *)
 (* the retained range is forgotten -- the window can no longer speak for   *)
@@ -130,7 +137,7 @@ Cleared(s) ==
                                    THEN FALSE ELSE window[b]]
 
 Advance(s) ==
-    /\ ~AlreadyReceived(s)                  \* the assert at :46; the caller checked
+    /\ ~AlreadyReceived(s)                  \* advance asserts it; the caller checked
     /\ IF s > highest
          THEN /\ window'  = [Cleared(s) EXCEPT ![Bit(s)] = TRUE]
               /\ highest' = s
@@ -140,7 +147,7 @@ Advance(s) ==
 
 Init ==
     /\ highest = 0                          \* a new mapping is zeroed:
-    /\ window = [b \in 0..W-1 |-> FALSE]    \* sdk/rocketnet_encryption_map.cpp:140
+    /\ window = [b \in 0..W-1 |-> FALSE]    \* memset in rocketnet_encryption_map_add
     /\ received = {}
     /\ processed = {}
     /\ connected = FALSE                    \* client_index is -1 until the response
@@ -150,14 +157,17 @@ Init ==
 (***************************************************************************)
 
 \* A session packet with sequence s arrives at the server and opens under
-\* the session keys (sdk/rocketnet_server_protocol.cpp:901-972).  The
-\* already-received check at :901 refuses a duplicate or a too-old sequence
-\* before the open, so an opened packet is never one the window refuses.
-\* After the open the code advances at :962 and only then, at :967, ignores
-\* the packet when the mapping has no slot.  Under the rule the slot is
-\* checked first and a packet on a pending mapping leaves the window alone.
-\* The client (sdk/rocketnet_client_protocol.cpp:689, :713) is the same pair
-\* on a window that is always connected.
+\* the session keys (rocketnet_server_process_sealed_packet in
+\* sdk/rocketnet_server_protocol.cpp).  Its rocketnet_replay_already_received
+\* check refuses a duplicate or a too-old sequence before the open, so an
+\* opened packet is never one the window refuses.  After the open the code
+\* ignores the packet when the mapping has no slot (client_index == -1) and
+\* only then calls rocketnet_replay_advance, so a packet on a pending mapping
+\* leaves the window alone: GateBeforeAdvance = TRUE.  The client
+\* (rocketnet_client_open_session_packet and
+\* rocketnet_client_consume_session_record in
+\* sdk/rocketnet_client_protocol.cpp) is the same pair on a window that is
+\* always connected.
 Receive(s) ==
     /\ s \in Seqs
     /\ ~AlreadyReceived(s)
@@ -169,7 +179,8 @@ Receive(s) ==
     /\ UNCHANGED connected
 
 \* The connection response opens and the mapping takes a slot
-\* (sdk/rocketnet_server_protocol.cpp:710-713).  Once only; a mapping that
+\* (rocketnet_client_slots_assign in rocketnet_server_process_connection_response).
+\* Once only; a mapping that
 \* loses its slot is removed, and a new one starts from Init.
 Connect ==
     /\ ~connected
@@ -221,8 +232,8 @@ ReceivedIsRefused ==
 BelowFloorIsRefused ==
     \A s \in Seqs : s < Floor => AlreadyReceived(s)
 
-\* The high-water mark is itself received (the assert at
-\* sdk/rocketnet_ack.cpp:94: largest is always marked).
+\* The high-water mark is itself received (rocketnet_ack_block_build asserts
+\* first_run >= 1: largest is always marked).
 HighestIsReceived ==
     highest > 0 => highest \in received /\ window[Bit(highest)]
 

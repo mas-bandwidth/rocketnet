@@ -266,12 +266,15 @@ covered at deployed size is the 64-bit sequence and ack-range width
 (`uint64` marks, `u16` ack run caps); those are wire-representation
 obligations, not ring-size behaviour.
 
-The mid run exceeds the 110-second runner budget, so it is a bench case, and
-a manual exploration under the same two workers completes: 34,603,033
+The mid run exceeds the 110-second runner budget, so it is a bench case. A
+manual exploration under the same two workers completed before the comment-only
+header edit of `ReplayWindow.tla` changed the case's fingerprint: 34,603,033
 generated / 3,145,729 distinct states in 445.380 s, exit 0, with every
-invariant and `Monotone` passing. The record carries `mode = manual` and the
-bench row names the measured time. This checks a full lap at `W = 21` rather
-than extrapolating it from the formula.
+invariant and `Monotone` passing. The current record in `RUNS.tsv` is the
+bounded run at the current fingerprint, exit 124 at the 110-second budget, so
+the case is unverified at that fingerprint until a manual run repeats it. The
+earlier run checked a full lap at `W = 21` rather than extrapolating it from
+the formula.
 
 What the mid instance does not cover is the deployed ring's width: 64 words of
 64 bits (4096 bits) and a 64-bit sequence space. Going from 21 to 4096 bits
