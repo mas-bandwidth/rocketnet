@@ -2665,7 +2665,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 4. A server MUST refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
 5. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 6. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request from a source that has spent the failed-signature budget in the current window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`.
+7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and, once the failed-signature budget of the current window is spent, a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
 8. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 9. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 10. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
@@ -2701,7 +2701,7 @@ list is ignored in that state.
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
-| no mapping | request | failed-signature budget spent | ignore, count | no mapping |
+| no mapping | request | failed-signature budget spent and the source has a recorded failure in the window | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
 | no mapping | request | no free slot | send connection denied | no mapping |
@@ -3593,9 +3593,13 @@ an input ([t1.4 Conventions](#t1.4)).
    has elapsed since the last matching connection request from its address,
    unless the handshake deadline elapses first. A connection request whose
    connection salt matches the mapping refreshes the idle deadline.
-5. A client MUST abandon an attempt when the connect token's expire timestamp
-   has passed. An attempt MUST NOT run past that timestamp, whether or not its
-   own lifetime has elapsed.
+5. A client MUST NOT begin an attempt with a token whose expire timestamp is
+   not later than its current time, and MUST send no packet for it. In
+   requesting cookie (1), sending connection request (2) and sending connection
+   response (3) the client MUST abandon the attempt for connect token expired
+   (-7) once the token's lifetime, its expire timestamp less its create
+   timestamp, has elapsed on the client's clock since the attempt began. The
+   check does not apply in connected (4).
 6. An endpoint MUST end an established connection when the connection timeout
    has elapsed with no packet received from the peer. The connection timeout is
    the timeout seconds field of the connect token
@@ -3617,7 +3621,11 @@ an input ([t1.4 Conventions](#t1.4)).
 11. A server SHOULD apply the failed-signature budget before the signature
     verification. When it does, a request from a source that has already
     failed in the current failed-signature window MUST be refused before the
-    verification runs and counted as a refusal.
+    verification runs and counted as a refusal. The budget MUST NOT refuse a
+    request from a source with no recorded failure in the window, even when
+    the budget is spent and the server can record no further sources; the
+    verifications such requests cost are bounded by the handshake work budget
+    of item 10.
 
 The values this section introduces are:
 
@@ -3928,6 +3936,15 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_PASSED_FRAGMENT` | `expected` | `none` |
 | `XDP_KERNEL_DROPPED_FIRST_FRAGMENT` | `refusal` | `none` |
 | `MESSAGE_SEND_NOT_CONNECTED` | `expected` | `none` |
+| `MESSAGE_BAD_FORM` | `refusal` | `none` |
+| `MESSAGE_TRUNCATED` | `refusal` | `none` |
+| `MESSAGE_BAD_FLAGS` | `refusal` | `none` |
+| `MESSAGE_BAD_LENGTH` | `refusal` | `none` |
+| `MESSAGE_BAD_SIZE` | `refusal` | `none` |
+| `MESSAGE_BAD_CONTROL` | `refusal` | `none` |
+| `MESSAGE_NUMBER_OUTSIDE_WINDOW` | `refusal` | `none` |
+| `MESSAGE_SLOT_COLLISION` | `refusal` | `none` |
+| `MESSAGE_DUPLICATE_ORDERING` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4045,7 +4062,10 @@ b1 00 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00
 9b 86 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84
 f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
 01 00 00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00
-00
+00 ab 9f e2 5c 00 00 00 7d 98 4f 4e 00 00 00 58
+b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
+f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
+00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

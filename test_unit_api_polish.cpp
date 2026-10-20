@@ -144,18 +144,12 @@ static api_polish_dev_writer_t api_polish_dev_writer()
 {
     api_polish_dev_writer_t writer = NULL;
 #if defined(_WIN32)
-    HMODULE library = LoadLibraryA( "rocketnet_dev.dll" );
-    if ( library == NULL )
-        library = LoadLibraryA( "bin\\rocketnet_dev.dll" );
+    HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
     check( library != NULL );
     writer = (api_polish_dev_writer_t) (void *) GetProcAddress( library, "rocketnet_write_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) (void *) GetProcAddress( library, "rocketnet_set_log_callback" );
 #else
-    const char * names[] = { "bin/librocketnet_dev.so", "librocketnet_dev.so",
-                             "bin/librocketnet_dev.dylib", "librocketnet_dev.dylib" };
-    void * library = NULL;
-    for ( size_t i = 0; i < sizeof( names ) / sizeof( names[0] ) && library == NULL; i++ )
-        library = dlopen( names[i], RTLD_NOW | RTLD_LOCAL );
+    void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
     check( library != NULL );
     writer = (api_polish_dev_writer_t) dlsym( library, "rocketnet_write_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) dlsym( library, "rocketnet_set_log_callback" );
@@ -323,3 +317,47 @@ static void api_polish_null_client_state_is_invalid()
     rocketnet_set_assert_callback( NULL );
 }
 REGISTER_UNIT_TEST( api_polish_null_client_state_is_invalid );
+
+// --- the production minter refuses a token no peer accepts ---------------------
+
+// a timeout of zero or below (t13.2: a production server refuses both), and an
+// expire stamp at or before the create stamp (the token is already expired when
+// it is made), are refused with INVALID_ARGUMENT and the output is untouched
+static void api_polish_production_token_refuses_dead_tokens()
+{
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    const char * addresses[] = { "127.0.0.1:40000" };
+    const uint64_t create = 1000;
+
+    struct dead_token_case_t { uint64_t expire; int32_t timeout_seconds; };
+    const dead_token_case_t cases[] =
+    {
+        { create + 30, 0 },             // no lifetime: timeout zero
+        { create + 30, -1 },            // no timeout: a production server refuses it
+        { create, 10 },                 // expire == create
+        { create - 1, 10 },             // expire < create
+        { 0, 10 },                      // expire already past at the create stamp
+    };
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        memset( token, 0xA5, sizeof( token ) );
+        check( rocketnet_write_production_connect_token( backend_secret, server_public, 0x1234ULL, addresses, 1, 7,
+                                                         create, cases[i].expire, cases[i].timeout_seconds, NULL,
+                                                         token, sizeof( token ) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+        for ( size_t j = 0; j < sizeof( token ); j++ )
+            check( token[j] == 0xA5 );
+    }
+
+    // the smallest live token still mints
+    check( rocketnet_write_production_connect_token( backend_secret, server_public, 0x1234ULL, addresses, 1, 7,
+                                                     create, create + 1, 1, NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( api_polish_production_token_refuses_dead_tokens );
