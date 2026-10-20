@@ -20,9 +20,11 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
@@ -323,7 +325,195 @@ static void server_default_config_max_clients_is_1000()
     check( sized.max_clients == 1000 );
 }
 
+// The public client and server configs have one revision, the whole struct
+// (docs/ABI-EVOLUTION.md section 4): the plain default fills every field, and
+// the plain create reads every field, the four simulated_* link-simulator
+// controls included. Every case runs in memory: the loopback transport, step
+// driven, time from 1000.0, no socket and no clock.
+
+#define PUBLIC_CONFIG_PROTOCOL 0x0C0F16A11FEDULL
+
+struct public_config_identity_t
+{
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+};
+
+static double public_config_now = 1000.0;
+static double public_config_clock( void * ) { return public_config_now; }
+
+static void public_config_identity( public_config_identity_t * identity )
+{
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x3C ^ i );
+    check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( identity->server_public, identity->server_secret ) == ROCKETNET_STATUS_OK );
+}
+
+static void public_config_server( struct rocketnet_server_config_t * config, const public_config_identity_t * identity )
+{
+    check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
+    config->protocol_id = PUBLIC_CONFIG_PROTOCOL;
+    config->max_clients = 1;
+    memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
+    memcpy( config->server_public_key, identity->server_public, sizeof( config->server_public_key ) );
+    memcpy( config->server_secret_key, identity->server_secret, sizeof( config->server_secret_key ) );
+    config->transport = "loopback";
+}
+
+static void public_config_client( struct rocketnet_client_config_t * config )
+{
+    check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
+    config->transport = "loopback";
+    config->step_driven = true;
+    config->time_callback = public_config_clock;
+}
+
+static void public_config_token( uint16_t port, const public_config_identity_t * identity, uint8_t * token )
+{
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
+    const char * addresses[] = { address };
+    check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
+        PUBLIC_CONFIG_PROTOCOL, addresses, 1, 0xC0F1, 1000, 1ULL << 40, 300, NULL,
+        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+}
+
+// pumps a loopback pair for four simulated seconds; returns whether the
+// client reached CONNECTED
+static bool public_config_pair_connects( int server_loss_percent )
+{
+    public_config_identity_t identity;
+    public_config_identity( &identity );
+
+    struct rocketnet_server_config_t server_config;
+    public_config_server( &server_config, &identity );
+    server_config.simulated_loss_percent = server_loss_percent;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    check( server != NULL );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    public_config_token( rocketnet_server_port( server ), &identity, token );
+
+    struct rocketnet_client_config_t client_config;
+    public_config_client( &client_config );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    check( client != NULL );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+
+    double time = 1000.0;
+    for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
+        public_config_now = time;
+        rocketnet_client_update( client, time );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server, time );
+        rocketnet_server_send_packets( server );
+        time += 0.01;
+    }
+    const bool connected = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+    return connected;
+}
+
+static void public_config_plain_create_applies_simulation()
+{
+    rocketnet_set_quiet( 1 );
+    const bool development = rocketnet_public_link_simulator_development();
+
+    // a production posture refuses a nonzero simulated_* value once it reaches
+    // the transport: the plain create carries simulated_loss_percent = 25 there
+
+    rocketnet_public_link_simulator_test_development( 0 );
+    {
+        public_config_identity_t identity;
+        public_config_identity( &identity );
+
+        struct rocketnet_server_config_t server_config;
+        public_config_server( &server_config, &identity );
+        server_config.simulated_loss_percent = 25;
+        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+        check( server != NULL );
+        const enum rocketnet_status_t server_start = rocketnet_server_start( server );
+        check( server_start == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+        rocketnet_server_destroy( server );
+
+        uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        public_config_token( 1, &identity, token );
+        struct rocketnet_client_config_t client_config;
+        public_config_client( &client_config );
+        client_config.simulated_loss_percent = 25;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        check( client != NULL );
+        const enum rocketnet_status_t client_connect = rocketnet_client_connect( client, token );
+        check( client_connect == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+        rocketnet_client_destroy( client );
+    }
+
+    // a development posture honours it: the server's total loss, set through
+    // the plain create, keeps the pair from connecting; none connects. (A
+    // step-driven client sends through its I/O rings, which bypass the client
+    // link simulator, so the client's own loss is pinned by the refusal above.)
+
+    rocketnet_public_link_simulator_test_development( 1 );
+    check( public_config_pair_connects( 0 ) );
+    const bool server_loss_connects = public_config_pair_connects( 100 );
+    check( !server_loss_connects );
+
+    rocketnet_public_link_simulator_test_development( development ? 1 : 0 );
+    rocketnet_set_quiet( 0 );
+}
+
+static void public_config_default_fills_every_field()
+{
+    // the plain default and the sized default at sizeof write the same whole
+    // struct, whatever the caller's memory held before
+
+    struct rocketnet_client_config_t client_a, client_b, client_sized;
+    memset( &client_a, 0xAB, sizeof( client_a ) );
+    memset( &client_b, 0x5C, sizeof( client_b ) );
+    memset( &client_sized, 0xE7, sizeof( client_sized ) );
+    check( rocketnet_client_default_config( &client_a ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_default_config( &client_b ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_default_config_sized( &client_sized, sizeof( client_sized ) ) == ROCKETNET_STATUS_OK );
+    check( client_a.simulated_loss_percent == 0 );
+    check( client_a.simulated_latency_ms == 0 );
+    check( client_a.simulated_jitter_ms == 0 );
+    check( client_a.simulated_duplicate_percent == 0 );
+    check( memcmp( &client_a, &client_b, sizeof( client_a ) ) == 0 );
+    check( memcmp( &client_a, &client_sized, sizeof( client_a ) ) == 0 );
+    // the default, then a sized read at sizeof: a whole, valid struct
+    check( rocketnet_client_validate_config_sized( &client_a, sizeof( client_a ) ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_config_t server_a, server_b, server_sized, dev_a, dev_sized;
+    memset( &server_a, 0xAB, sizeof( server_a ) );
+    memset( &server_b, 0x5C, sizeof( server_b ) );
+    memset( &server_sized, 0xE7, sizeof( server_sized ) );
+    memset( &dev_a, 0xAB, sizeof( dev_a ) );
+    memset( &dev_sized, 0x5C, sizeof( dev_sized ) );
+    check( rocketnet_server_default_config( &server_a ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_default_config( &server_b ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_default_config_sized( &server_sized, sizeof( server_sized ) ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_dev_config( &dev_a ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_dev_config_sized( &dev_sized, sizeof( dev_sized ) ) == ROCKETNET_STATUS_OK );
+    check( server_a.simulated_loss_percent == 0 );
+    check( server_a.simulated_latency_ms == 0 );
+    check( server_a.simulated_jitter_ms == 0 );
+    check( server_a.simulated_duplicate_percent == 0 );
+    check( memcmp( &server_a, &server_b, sizeof( server_a ) ) == 0 );
+    check( memcmp( &server_a, &server_sized, sizeof( server_a ) ) == 0 );
+    check( memcmp( &dev_a, &dev_sized, sizeof( dev_a ) ) == 0 );
+    check( rocketnet_server_validate_config_sized( &server_a, sizeof( server_a ) ) == ROCKETNET_STATUS_OK );
+}
+
 REGISTER_UNIT_TEST( sized_config_accepts_every_known_size );
 REGISTER_UNIT_TEST( sized_config_message_revision_1_reads_budget_defaults );
 REGISTER_UNIT_TEST( sized_config_refuses_unknown_size );
 REGISTER_UNIT_TEST( server_default_config_max_clients_is_1000 );
+REGISTER_UNIT_TEST( public_config_plain_create_applies_simulation );
+REGISTER_UNIT_TEST( public_config_default_fills_every_field );
