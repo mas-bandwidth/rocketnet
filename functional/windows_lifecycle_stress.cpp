@@ -177,34 +177,47 @@ static struct rocketnet_client_t * windows_create_client()
     return client;
 }
 
-static void windows_connect_client_to_server( struct rocketnet_client_t * client, struct rocketnet_server_t * server,
-                                              const char * server_address, uint64_t client_id, int expected_connected )
+// Skip one 0.1s client send interval each time the client handshake state moves
+// (as functional/posix_lifecycle_stress.cpp does), so the next update sends
+// immediately without sleeping 200ms per connect on the 10 Hz send_rate timer.
+static double windows_connect_client_to_server( struct rocketnet_client_t * client, struct rocketnet_server_t * server,
+                                                const char * server_address, uint64_t client_id, int expected_connected )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_dev_connect_token( server_address, client_id, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
 
+    double client_clock_offset = 0.0;
+    enum rocketnet_client_state_t previous_state = rocketnet_client_state( client );
     const double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
     {
         const double now = rocketnet_platform_time();
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_client_update( client, now + client_clock_offset ) == ROCKETNET_UPDATE_OK );
         rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
-        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+        const enum rocketnet_client_state_t state = rocketnet_client_state( client );
+        if ( state == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_num_connected_clients( server ) == expected_connected &&
              rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
             break;
-        rocketnet_platform_sleep( 0.001 );
+        if ( state != previous_state )
+        {
+            previous_state = state;
+            client_clock_offset += 0.1;
+            continue;
+        }
+        rocketnet_platform_sleep( 0.0005 );
     }
 
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     rocketnet_check( rocketnet_server_num_connected_clients( server ) == expected_connected );
     rocketnet_check( rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) == 1 );
+    return client_clock_offset;
 }
 
-static void windows_exchange_one_reliable_message( struct rocketnet_client_t * client, struct rocketnet_server_t * server, uint32_t tag )
+static void windows_exchange_one_reliable_message( struct rocketnet_client_t * client, struct rocketnet_server_t * server, uint32_t tag, double client_clock_offset )
 {
     const uint64_t slot = rocketnet_client_index( client );
     uint8_t to_server[8];
@@ -224,6 +237,7 @@ static void windows_exchange_one_reliable_message( struct rocketnet_client_t * c
     memcpy( server_out, to_client, 8 );
     rocketnet_check( rocketnet_server_finish_message( server, slot, 8 ) != 0 );
 
+    client_clock_offset += 0.1;
     bool server_got = false;
     bool client_got = false;
     const double start = rocketnet_platform_time();
@@ -232,7 +246,7 @@ static void windows_exchange_one_reliable_message( struct rocketnet_client_t * c
         const double now = rocketnet_platform_time();
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_client_update( client, now + client_clock_offset ) == ROCKETNET_UPDATE_OK );
         rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
 
         if ( !server_got )
@@ -280,8 +294,8 @@ static void windows_warmup_transports()
         char address[64];
         snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
         struct rocketnet_client_t * client = windows_create_client();
-        windows_connect_client_to_server( client, server, address, (uint64_t) ( 10 + t ), 1 );
-        windows_exchange_one_reliable_message( client, server, (uint32_t) t );
+        const double offset = windows_connect_client_to_server( client, server, address, (uint64_t) ( 10 + t ), 1 );
+        windows_exchange_one_reliable_message( client, server, (uint32_t) t, offset );
         rocketnet_client_disconnect( client );
         rocketnet_client_destroy( client );
         rocketnet_server_destroy( server );
@@ -429,8 +443,8 @@ void windows_server_restart_same_port()
 
             struct rocketnet_client_t * client = windows_create_client();
             const uint64_t client_id = (uint64_t) ( 1000 + t * 1000 + i );
-            windows_connect_client_to_server( client, server, bind_address, client_id, 1 );
-            windows_exchange_one_reliable_message( client, server, (uint32_t) ( t * 1000 + i ) );
+            const double offset = windows_connect_client_to_server( client, server, bind_address, client_id, 1 );
+            windows_exchange_one_reliable_message( client, server, (uint32_t) ( t * 1000 + i ), offset );
 
             rocketnet_client_destroy( client );
             rocketnet_server_destroy( server );
@@ -474,8 +488,8 @@ void windows_client_connect_disconnect_cycles()
         {
             struct rocketnet_client_t * client = windows_create_client();
             const uint64_t client_id = (uint64_t) ( 10000 + t * 1000 + i );
-            windows_connect_client_to_server( client, server, server_address, client_id, 1 );
-            windows_exchange_one_reliable_message( client, server, (uint32_t) ( t * 1000 + i ) );
+            const double offset = windows_connect_client_to_server( client, server, server_address, client_id, 1 );
+            windows_exchange_one_reliable_message( client, server, (uint32_t) ( t * 1000 + i ), offset );
 
             rocketnet_client_disconnect( client );
             rocketnet_client_destroy( client );
