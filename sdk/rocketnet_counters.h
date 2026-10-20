@@ -694,8 +694,8 @@
     /* because its reliability is outside the enabled mask, a receive of an */ \
     /* application record whose code the mask does not admit, an unreliable */ \
     /* record dropped because the send budget could not pay the packet that */ \
-    /* would carry it, and the counters the sequenced and receipt cards need, */ \
-    /* appended now so those cards run without touching this header. An ordered */ \
+    /* would carry it, and the counters the sequenced and receipt types use. */ \
+    /* An ordered */ \
     /* record behind its channel's read index is MESSAGE_ORDERING_BEHIND (7.2: */ \
     /* layer 3 already caught the duplicates, so it is a violation). */ \
     /* appended: indices are the contract. */ \
@@ -728,14 +728,6 @@
     /* own counter now. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR: Counts connection responses whose follow-up packet could not be written. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
     X( CONNECTION_RESPONSE_INTERNAL_ERROR, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
-    \
-    /* A request from an address that holds a handshake in flight, carrying */ \
-    /* a different salt than the mapping's, is answered with the mapping's */ \
-    /* stored challenge, so nothing increments this counter now. It stays */ \
-    /* declared because the indices are the contract. appended: indices are */ \
-    /* the contract. */ \
-    /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_MAPPING_SALT_MISMATCH: Counts requests refused because an in-flight mapping has a different cookie salt. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
-    X( CONNECTION_REQUEST_MAPPING_SALT_MISMATCH, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
     /* History was overwritten before its ACK, and the peer had acknowledged */ \
     /* a sequence at least ROCKETNET_LOSS_PACKET_THRESHOLD above it: the */ \
@@ -796,14 +788,6 @@
     X( XDP_KERNEL_DROPPED_WRONG_EPOCH, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_XDP_KERNEL_PASSED_IPV6_EXTENSION: Counts packets passed by the kernel prefilter because they contain an IPv6 extension header. Unit: occurrences. Class: expected; family: none. */ \
     X( XDP_KERNEL_PASSED_IPV6_EXTENSION, EXPECTED, NONE ) \
-    \
-    /* A connection response that opened for a token already in the */ \
-    /* admitted-token set. Retired with the set (docs/SESSION.md 1.6): the */ \
-    /* client-id check refuses the second of two addresses holding one */ \
-    /* token while the first is connected. appended: indices are the */ \
-    /* contract, so it keeps its index and always reads zero. */ \
-    /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED: Counts retired counter slot; it stays zero while the client-id check handles this refusal. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
-    X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     \
     /* A client hand-off deferred because the other send ring is still */ \
     /* handed off or sending (docs/CLIENT-IO.md, Reuse only after sent; a */ \
