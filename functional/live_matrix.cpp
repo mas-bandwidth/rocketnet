@@ -49,6 +49,9 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #define LIVE_MATRIX_MAX_SEQUENCES           256
 #define LIVE_MATRIX_TINY                    ROCKETNET_LIVE_HEADER_BYTES
 #define LIVE_MATRIX_TOKEN_TIMEOUT           10.0            // the development connect token's timeout_seconds
+// Use the unlimited create-time reserve policy with this same runtime ceiling.
+// The matrix pays its working storage explicitly; it does not need two seconds
+// of payload reserve at the ceiling in every size class.
 #define LIVE_MATRIX_SEND_KBPS               10000000        // ROCKETNET_SEND_BUDGET_MAX_KBPS: the wire, not the budget, is the limit
 // Each send_packets writes at most max_packets_per_update packets, reliable
 // first (sdk/rocketnet_endpoint.cpp rn_endpoint_next_packet_bytes): the
@@ -630,7 +633,7 @@ static void live_matrix_connect( struct live_matrix_t * m )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, live_matrix_now( m ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-    m->client = rocketnet_message_client_create( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS );
+    m->client = rocketnet_message_client_create_ex( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->client );
 
     const double start = rocketnet_platform_time();
@@ -1117,7 +1120,7 @@ void live_message_matrix_loopback()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
 
-    m->server = rocketnet_message_server_create( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS );
+    m->server = rocketnet_message_server_create_ex( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->server );
     snprintf( m->server_address, sizeof( m->server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( m->server ) ) );
 
