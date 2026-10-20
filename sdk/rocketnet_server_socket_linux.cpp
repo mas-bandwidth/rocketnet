@@ -1723,6 +1723,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         if ( posix_memalign( &socket->buffer, getpagesize(), buffer_size ) ) 
         {
+            rocketnet_allocation_refused();
             rocketnet_error( "server could not allocate buffer" );
             rocketnet_server_socket_destroy( server_socket );
             return NULL;

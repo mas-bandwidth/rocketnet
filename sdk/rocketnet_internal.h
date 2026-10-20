@@ -200,7 +200,7 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
         || defined(_M_AMD64)    || defined(__x86_64)    || defined(__x86_64__)  \
         || defined(_M_X64)      || defined(__bfin__)
     #define ROCKETNET_LITTLE_ENDIAN 1
-  #elif defined(_MSC_VER) && defined(_M_ARM)
+  #elif defined(_MSC_VER) && ( defined(_M_ARM) || defined(_M_ARM64) )
     #define ROCKETNET_LITTLE_ENDIAN 1
   #else
     #error Unknown machine endianess detected. Please define ROCKETNET_LITTLE_ENDIAN or ROCKETNET_BIG_ENDIAN.
