@@ -156,6 +156,21 @@ void rocketnet_log_level_override_apply( const char * value )
                     value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level.load( std::memory_order_relaxed ) );
 }
 
+void rocketnet_set_thread_priority( bool enabled )
+{
+    rocketnet_platform_set_thread_priority_enabled( enabled );
+}
+
+bool rocketnet_get_thread_priority( void )
+{
+    return rocketnet_platform_thread_priority_enabled();
+}
+
+uint64_t rocketnet_get_thread_priority_refusals( void )
+{
+    return rocketnet_platform_thread_priority_refusals();
+}
+
 enum rocketnet_log_level_t rocketnet_get_log_level( void )
 {
     return (enum rocketnet_log_level_t) log_level.load( std::memory_order_relaxed );
@@ -502,9 +517,23 @@ double rocketnet_time()
     return rocketnet_platform_time();
 }
 
+// a negative, zero or NaN request sleeps not at all, and a request longer
+// than ROCKETNET_SLEEP_MAX_SECONDS (or infinite) sleeps that long, so the
+// platform's microsecond conversion never overflows
+double rocketnet_sleep_clamp( double seconds )
+{
+    if ( !( seconds > 0.0 ) )
+        return 0.0;
+    if ( seconds > ROCKETNET_SLEEP_MAX_SECONDS )
+        return ROCKETNET_SLEEP_MAX_SECONDS;
+    return seconds;
+}
+
 void rocketnet_sleep( double seconds )
 {
-    rocketnet_platform_sleep( seconds );
+    const double clamped = rocketnet_sleep_clamp( seconds );
+    if ( clamped > 0.0 )
+        rocketnet_platform_sleep( clamped );
 }
 
 void rocketnet_clear_and_free( void * context, void * p, size_t p_size )
@@ -554,13 +583,6 @@ float rocketnet_random_float()
 uint8_t rocketnet_random_uint8()
 {
     uint8_t value;
-    randombytes_buf( &value, sizeof(value) );
-    return value;
-}
-
-uint16_t rocketnet_random_uint16()
-{
-    uint16_t value;
     randombytes_buf( &value, sizeof(value) );
     return value;
 }

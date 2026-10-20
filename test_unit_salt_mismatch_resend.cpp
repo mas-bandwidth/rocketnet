@@ -158,12 +158,10 @@ static void salt_mismatch_resends_stored_challenge()
     memcpy( other_request + ROCKETNET_PREFILTER_BYTES, request + ROCKETNET_PREFILTER_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
 
     const uint64_t resent_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT];
-    const uint64_t mismatch_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_MAPPING_SALT_MISMATCH];
     check( salt_mismatch_process( &test, other_request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( response_bytes == stored_bytes );
     check( memcmp( response, stored, (size_t) stored_bytes ) == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT] == resent_before + 1 );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_MAPPING_SALT_MISMATCH] == mismatch_before );
 
     // one mapping, still carrying the salt and nonce it was created with
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );

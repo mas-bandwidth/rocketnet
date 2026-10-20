@@ -317,7 +317,6 @@ enum rocketnet_disconnect_reason_t
 {
     ROCKETNET_DISCONNECT_REASON_NONE                            = 0,   ///< No connection has ended, or the connection is up
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH                 = 1,   ///< The two ends' WIRE config fields differ
-    ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT                  = 2,   ///< The config exchange did not finish in time
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = 3,   ///< The peer sent what the protocol forbids
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT                = 4,   ///< A reliable message went unacknowledged past reliable_timeout_ms
     ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED        = 5,   ///< The connection's region had no room for an operation it must not drop
@@ -569,6 +568,35 @@ ROCKETNET_EXPORT void rocketnet_set_quiet( bool flag );
 /// @param level ROCKETNET_LOG_LEVEL_NONE through ROCKETNET_LOG_LEVEL_SPAM; a value outside the enum is ignored.
 ROCKETNET_EXPORT void rocketnet_set_log_level( enum rocketnet_log_level_t level );
 
+/// @brief Turns the library's network-thread priority calls on or off.
+///
+/// On (the default), the library sets the priority of the network threads it
+/// creates, right after it creates each one: SCHED_RR at
+/// sched_get_priority_min( SCHED_RR ) on Linux and macOS, and
+/// THREAD_PRIORITY_TIME_CRITICAL on Windows, where it also requests a 1 ms
+/// timer period (timeBeginPeriod( 1 )) from rocketnet_init to rocketnet_term.
+/// Off, it makes none of these calls. A game that sets its own thread
+/// priorities turns it off.
+///
+/// The setting is process-wide. Set it before rocketnet_init to skip the timer
+/// period. Threads created after a change follow the new value; a thread
+/// already running keeps what it got. docs/CLIENT-IO.md and DRIVERS.md list the
+/// threads.
+/// @param enabled true (the default) makes the calls; false makes none.
+ROCKETNET_EXPORT void rocketnet_set_thread_priority( bool enabled );
+
+/// @brief Reads whether the library's network-thread priority calls are on.
+/// @return true (the default) when on; false after rocketnet_set_thread_priority( false ).
+ROCKETNET_EXPORT bool rocketnet_get_thread_priority( void );
+
+/// @brief Counts the priority, affinity and timer period calls the operating system refused.
+///
+/// Process-wide, since the process started. A refusal never fails a create or
+/// rocketnet_init: the thread runs at its default priority. The first refusal
+/// of each call kind logs one warning (docs/ERRORS-AND-LOGGING.md).
+/// @return The number of refused calls.
+ROCKETNET_EXPORT uint64_t rocketnet_get_thread_priority_refusals( void );
+
 /// @brief Reads the current process-wide log level.
 /// The level currently in force, so a caller that moves the level for a bounded
 /// stretch can restore what it found rather than guessing. This relaxed atomic
@@ -633,7 +661,7 @@ ROCKETNET_EXPORT uint64_t rocketnet_protocol_version( void );
 /// @brief Returns monotonic elapsed time in seconds from an unspecified process-local origin. @return Nondecreasing platform clock value; use the same clock for all time-taking calls.
 ROCKETNET_EXPORT double rocketnet_time( void );
 
-/// @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; provide a finite nonnegative value representable by the platform. This blocks the calling thread.
+/// @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; a negative, zero or NaN value returns at once, and a value above 2000 seconds sleeps 2000 seconds. This blocks the calling thread.
 ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 
 /// -----------------------------------------
@@ -954,8 +982,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config( struct
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config_sized( struct rocketnet_client_config_t * config, size_t config_bytes );
 
 /// ROCKETNET_STATUS_OK when create would accept the config's own values, else
-/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule. The
-/// environment is not read. NULL means the defaults.
+/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule. It
+/// runs the one check create runs: every field's range, the transport list's
+/// parse, the simulated_* fields (nonzero is refused by a production library),
+/// and the message rules. The environment is not read. Safe before init. NULL
+/// means the defaults.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config );
 /// Validates a known-size client config; an unknown non-NULL size logs and
 /// returns ROCKETNET_STATUS_INVALID_ARGUMENT.
@@ -980,7 +1011,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_write_dev_connect_token( cons
 #endif /// #if ROCKETNET_DEVELOPMENT
 
 /// A DISCONNECTED client. Create reads no clock and opens no socket. NULL
-/// config is the defaults; NULL on a refused config or memory block.
+/// config is the defaults. Returns NULL on a config validate_config refuses, on
+/// a refused memory block, and before rocketnet_init (logged, and counted in
+/// rocketnet_api_misuse_count).
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes );
 
 /// Create with a config config_bytes long; an unknown size is refused with a
@@ -1135,8 +1168,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config( struct roc
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /// ROCKETNET_STATUS_OK when create would accept the config's own values, else
-/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule. The
-/// environment is not read and the keys are not checked. NULL means the
+/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule. It
+/// runs the one check create runs: every field's range, the transport list's
+/// parse, the simulated_* fields (nonzero is refused by a production library),
+/// and the message rules. The environment is not read and the keys are not
+/// checked (start refuses a config with none). Safe before init. NULL means the
 /// defaults.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config );
 /// Validates a known-size server config; an unknown non-NULL size logs and
@@ -1152,8 +1188,10 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory_sized( const struct roc
 /// Address is where clients reach the server, "a.b.c.d:port" or "[v6]:port"; a
 /// port of 0 takes an ephemeral port (read it back with rocketnet_server_port
 /// once started). The server is created stopped and binds nothing. NULL config
-/// is the defaults, which start refuses until keys are given. A NULL address
-/// is a counted no-op that returns NULL.
+/// is the defaults, which start refuses until keys are given. Returns NULL on a
+/// config validate_config refuses, on a refused memory block, and before
+/// rocketnet_init (logged, and counted in rocketnet_api_misuse_count). A NULL
+/// address is a counted no-op that returns NULL.
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes );
 
 /// Create with a config config_bytes long; an unknown size is refused with a

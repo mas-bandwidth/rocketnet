@@ -584,6 +584,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
             iocp->active_workers.fetch_sub( 1, std::memory_order_relaxed );
             goto failed;
         }
+        // each worker takes the server thread priority from this thread,
+        // right after its create, as the GSO queue threads do
+        rocketnet_platform_server_thread_priority( worker->thread );
         if ( fail_stage == 3 ) goto failed;
     }
     for ( int i = 0; i < num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )

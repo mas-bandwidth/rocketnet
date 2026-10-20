@@ -9,6 +9,9 @@
     message, receives the echo, prints its state changes and disconnect
     reason, and disconnects.
 
+    The server address is 127.0.0.1 at the port from --port <n>, else the
+    ROCKETNET_EXAMPLE_PORT environment variable, else the default 40000.
+
     --wrong-protocol mints the token for another protocol id; the server
     refuses it, which shows the token is bound to the title. That refusal is
     the expected result. Run the server first, then this program. See
@@ -18,13 +21,41 @@
 #include "rocketnet.h"
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
 #define PROTOCOL_ID 0x636c69656e747331ull
-#define SERVER_ADDRESS "127.0.0.1:40000"
+#define DEFAULT_PORT 40000
 #define KEY_FILE "client_server.keys"
+
+// the port comes from --port <n>, else ROCKETNET_EXAMPLE_PORT, else the
+// default; returns 0 for a value that is not 1 to 65535
+
+static int example_port( int argc, char ** argv, int * port )
+{
+    const char * text = getenv( "ROCKETNET_EXAMPLE_PORT" );
+    for ( int i = 1; i < argc; i++ )
+    {
+        if ( strcmp( argv[i], "--port" ) == 0 )
+        {
+            if ( i + 1 >= argc ) return 0;
+            text = argv[++i];
+        }
+    }
+    if ( !text )
+    {
+        *port = DEFAULT_PORT;
+        return 1;
+    }
+    char * end = NULL;
+    const long value = strtol( text, &end, 10 );
+    if ( end == text || *end != 0 || value < 1 || value > 65535 )
+        return 0;
+    *port = (int) value;
+    return 1;
+}
 static int hex_value( char c )
 {
     if ( c >= '0' && c <= '9' ) return c - '0';
@@ -51,9 +82,7 @@ static int read_hex( FILE * file, const char * label, uint8_t * bytes, int count
 }
 static const char * reason_name( int reason )
 {
-    static const char * names[] = { "none", "config mismatch", "config timeout", "protocol violation",
-                                    "reliable timeout", "message memory exhausted" };
-    return reason >= 0 && reason < 6 ? names[reason] : "unknown";
+    return rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) reason );
 }
 static void state_changed( void * context, enum rocketnet_client_state_t previous, enum rocketnet_client_state_t current )
 {
@@ -63,13 +92,24 @@ static void state_changed( void * context, enum rocketnet_client_state_t previou
 
 int main( int argc, char ** argv )
 {
-    const int wrong_protocol = argc > 1 && strcmp( argv[1], "--wrong-protocol" ) == 0;
+    int wrong_protocol = 0;
+    for ( int i = 1; i < argc; i++ )
+        if ( strcmp( argv[i], "--wrong-protocol" ) == 0 )
+            wrong_protocol = 1;
+    int port = 0;
+    char address[32];
+    if ( !example_port( argc, argv, &port ) )
+    {
+        printf( "FAIL: the port is not 1 to 65535 (--port <n> or ROCKETNET_EXAMPLE_PORT)\n" );
+        return 1;
+    }
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", port );
     struct rocketnet_client_config_t config;
     struct rocketnet_client_t * client = NULL;
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    const char * server_addresses[1] = { SERVER_ADDRESS };
+    const char * server_addresses[1] = { address };
     int result = 1;
     int sent = 0;
     int received = 0;
