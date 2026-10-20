@@ -187,15 +187,28 @@ an `EVFILT_USER` trigger (`sdk/rocketnet_platform.cpp`, the kqueue wake). The
 thread is a plain `pthread_create` with default attributes
 (`rocketnet_platform_thread_create`). Right after the create, the creating
 thread makes one call on it, the flow library's setting, unchanged: `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )`
-(`rocketnet_platform_client_thread_priority`, `sdk/rocketnet_platform.cpp:3135`).
+(`rocketnet_platform_client_thread_priority` in `sdk/rocketnet_platform.cpp`,
+through `rocketnet_platform_network_thread_priority`).
 That is the only thing the library sets on its macOS network threads: no QoS
-class, no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and no App Nap call (a
-search of `sdk/` for `qos_class`, `NSProcessInfo` and `LSAppNapIsDisabled`
-finds nothing). `rocketnet_set_thread_priority( false )` turns the call off
-(`docs/CLIENT-IO.md`, Thread priority). Apart from it, the only scheduling
-policy the SDK sets is the Mach time-constraint policy on the thread that waits
-in frame sync, put back to the standard policy afterwards
-(`sdk/rocketnet_frame_sync.cpp:180`).
+class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
+function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and
+no App Nap call (a search of `sdk/` for `qos_class`, `NSProcessInfo` and
+`LSAppNapIsDisabled` finds nothing). `rocketnet_set_thread_priority( false )`
+turns the call off (`docs/CLIENT-IO.md`, Thread priority), and with it off the
+library makes no scheduling call on any thread. Apart from it, the only
+scheduling policy the SDK sets is the Mach time-constraint policy on the thread
+that waits in frame sync, put back to the standard policy afterwards
+(`rocketnet_frame_sync_elevate_priority` and
+`rocketnet_frame_sync_restore_priority` in `sdk/rocketnet_frame_sync.cpp`);
+`rocketnet_frame_sync_elevate_priority` returns before that call when
+`rocketnet_platform_thread_priority_enabled` is false.
+
+The functional case `thread_priority_timing_receive_gaps`
+(`functional/thread_priority_timing.cpp`, `priority_timing_run`) reads the I/O
+thread's scheduling and QoS class from inside the thread and checks both: the
+class is never `QOS_CLASS_USER_INTERACTIVE`, on or off, and with the switch on
+the thread reads back `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` or the
+create counted a refusal.
 
 A game that wants the client's I/O on a thread it owns sets `step_driven = 1`
 in `rocketnet_client_config_t` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1`): the
