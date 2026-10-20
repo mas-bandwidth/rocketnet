@@ -110,6 +110,7 @@ struct rocketnet_server_gso_recv_buffer_t
     uint64_t dropped_source;
     uint64_t gro_batches;
     uint64_t syscalls;
+    uint64_t receive_errors;
     rocketnet_address_t from[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     int packet_bytes[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     alignas(16) uint8_t packet_data[ROCKETNET_GSO_RECV_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
@@ -191,10 +192,49 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_dropped_size;
     uint64_t counter_receive_dropped_overflow;
     uint64_t counter_receive_dropped_source;
+    uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
 
     struct rocketnet_server_socket_process_packets_t process_packets;
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    // the test seam: the next recvmmsg calls on any worker, and the next
+    // sendmmsg calls of a flush, answer -1 with the given errno without
+    // reaching the kernel
+    std::atomic<int> test_fail_receives{0};
+    std::atomic<int> test_fail_receive_error{0};
+    int test_fail_sends;
+    int test_fail_send_error;
+#endif
 };
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+
+// development library only: the create flags every following create ORs in,
+// so a transport-level case can force the plain tiers
+
+static std::atomic<int> rocketnet_server_gso_test_create_flags{0};
+
+void rocketnet_server_gso_test_force_create_flags( int flags )
+{
+    rocketnet_server_gso_test_create_flags.store( flags );
+}
+
+void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error )
+{
+    rocketnet_assert( gso );
+    gso->test_fail_receive_error.store( error );
+    gso->test_fail_receives.store( count > 0 ? count : 0 );
+}
+
+void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error )
+{
+    rocketnet_assert( gso );
+    gso->test_fail_send_error = error;
+    gso->test_fail_sends = count > 0 ? count : 0;
+}
+
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
 // ---------------------------------------------------------------------------
 
@@ -447,7 +487,17 @@ static void rocketnet_server_gso_worker( void * data )
                 queue->messages[i].msg_hdr.msg_controllen = sizeof(queue->controls[i]);
             }
 
-            int count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
+            int count;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            int pending = queue->gso->test_fail_receives.load();
+            if ( pending > 0 && queue->gso->test_fail_receives.compare_exchange_strong( pending, pending - 1 ) )
+            {
+                count = -1;
+                errno = queue->gso->test_fail_receive_error.load();
+            }
+            else
+#endif
+            count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
 
             // every recvmmsg counts, empty ones included -- an instrument
             // that hides the misses cannot argue the syscall win. the 1ms
@@ -455,6 +505,12 @@ static void rocketnet_server_gso_worker( void * data )
             // heartbeat, not the receive path.
 
             buffer->syscalls++;
+
+            // a failed call other than an empty socket is counted; the
+            // worker goes back to poll and tries again
+
+            if ( count < 0 && errno != EAGAIN && errno != EWOULDBLOCK )
+                buffer->receive_errors++;
 
             if ( count <= 0 )
                 break;
@@ -470,6 +526,15 @@ static void rocketnet_server_gso_worker( void * data )
                 // past 64KB.
 
                 if ( queue->messages[i].msg_hdr.msg_flags & MSG_TRUNC )
+                {
+                    buffer->dropped_size++;
+                    continue;
+                }
+
+                // a zero-length datagram is below the smallest packet a
+                // server reads: the size pass counts it, as io_uring's does
+
+                if ( message_bytes == 0 )
                 {
                     buffer->dropped_size++;
                     continue;
@@ -552,6 +617,10 @@ uint64_t rocketnet_server_gso_allocation_bytes(int queues)
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
 {
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    flags |= rocketnet_server_gso_test_create_flags.load();
+#endif
+
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
 
@@ -777,6 +846,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW] = gso->counter_receive_dropped_overflow;
     counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
+    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,7 +1071,17 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
         int sent = 0;
         while ( sent < num_messages )
         {
-            int result = sendmmsg( fd, &gso->send_headers[sent], (unsigned int) ( num_messages - sent ), 0 );
+            int result;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            if ( gso->test_fail_sends > 0 )
+            {
+                gso->test_fail_sends--;
+                result = -1;
+                errno = gso->test_fail_send_error;
+            }
+            else
+#endif
+            result = sendmmsg( fd, &gso->send_headers[sent], (unsigned int) ( num_messages - sent ), 0 );
 
             if ( result > 0 )
             {
@@ -1103,8 +1183,10 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         gso->counter_receive_dropped_size += buffer->dropped_size;
         gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
         gso->counter_receive_dropped_source += buffer->dropped_source;
+        gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
         buffer->syscalls = 0;
+        buffer->receive_errors = 0;
         buffer->dropped_size = 0;
         buffer->dropped_overflow = 0;
         buffer->dropped_source = 0;

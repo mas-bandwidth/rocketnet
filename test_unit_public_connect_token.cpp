@@ -274,7 +274,7 @@ void public_connect_token_null_or_short_buffer_refused()
     public_token_fill_user_data( user_data );
 
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     public_token_expected_null_asserts = 0;
     rocketnet_set_assert_callback( public_token_expected_null_assert );
 #endif
@@ -301,7 +301,7 @@ void public_connect_token_null_or_short_buffer_refused()
         rocketnet_unit_check( token[i] == 0xa5 );
 
 #if ROCKETNET_ASSERTS
-    saved_assert = rocketnet_assert_function_pointer;
+    saved_assert = rn_assert_function;
     public_token_expected_null_asserts = 0;
     rocketnet_set_assert_callback( public_token_expected_null_assert );
 #endif

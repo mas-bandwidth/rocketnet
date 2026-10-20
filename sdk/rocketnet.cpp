@@ -62,17 +62,17 @@ static void default_assert_function( const char * condition, const char * functi
     #endif
 }
 
-rocketnet_assert_callback_t rocketnet_assert_function_pointer = default_assert_function;
+rocketnet_assert_callback_t rn_assert_function = default_assert_function;
 
 void rocketnet_set_assert_callback( rocketnet_assert_callback_t callback )
 {
     if ( callback )
     {
-        rocketnet_assert_function_pointer = callback;
+        rn_assert_function = callback;
     }
     else
     {
-        rocketnet_assert_function_pointer = default_assert_function;
+        rn_assert_function = default_assert_function;
     }
 }
 
@@ -80,7 +80,7 @@ void rocketnet_set_assert_callback( rocketnet_assert_callback_t callback )
 
 static std::atomic<bool> log_quiet{ false };
 
-void rocketnet_quiet( bool flag )
+void rocketnet_set_quiet( bool flag )
 {
    log_quiet.store( flag, std::memory_order_relaxed );
 }
@@ -167,7 +167,7 @@ const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
     {
         case ROCKETNET_LOG_LEVEL_NONE:  return "none";
         case ROCKETNET_LOG_LEVEL_ERROR: return "error";
-        case ROCKETNET_LOG_LEVEL_WARN:  return "warning";
+        case ROCKETNET_LOG_LEVEL_WARN:  return "warn";
         case ROCKETNET_LOG_LEVEL_INFO:  return "info";
         case ROCKETNET_LOG_LEVEL_DEBUG: return "debug";
         case ROCKETNET_LOG_LEVEL_SPAM:  return "spam";
@@ -178,7 +178,7 @@ const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
 // docs/ERRORS-AND-LOGGING.md 2.1 item 4: the count includes the success value.
 int rocketnet_num_status_codes( void )
 {
-    return ROCKETNET_NUM_STATUS_CODES;
+    return ROCKETNET_STATUS_COUNT;
 }
 
 // One row per code, in the enum's order. The array is unsized so the static
@@ -213,7 +213,7 @@ static const char * const rocketnet_status_names[] =
     "FLOW_ID_RESERVED",
 };
 
-static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_NUM_STATUS_CODES,
+static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_STATUS_COUNT,
                "every status code has exactly one name" );
 
 // the identifier without the ROCKETNET_STATUS_ prefix, and "unknown" (never
@@ -221,7 +221,7 @@ static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names
 const char * rocketnet_status_name( enum rocketnet_status_t status )
 {
     const int value = (int) status;
-    if ( value < 0 || value >= ROCKETNET_NUM_STATUS_CODES )
+    if ( value < 0 || value >= ROCKETNET_STATUS_COUNT )
         return "unknown";
     return rocketnet_status_names[value];
 }
@@ -361,6 +361,24 @@ void rocketnet_default_free_function( void * context, void * p )
 }
 
 static void * (*rocketnet_malloc_function)( void * context, size_t bytes ) = rocketnet_default_malloc_function;
+
+// the allocations rocketnet_malloc has refused on this thread, ever: a size
+// past the header overhead or a NULL from the installed allocator. A driver
+// open reads it before and after a create (sdk/rocketnet_driver.cpp), so a
+// create that returned NULL after a refusal reports OUT_OF_MEMORY
+static thread_local uint64_t rocketnet_allocation_refusals_on_this_thread = 0;
+
+uint64_t rocketnet_allocation_refusals()
+{
+    return rocketnet_allocation_refusals_on_this_thread;
+}
+
+// counts a failed allocation made outside rocketnet_malloc (a page-aligned
+// buffer a driver registers with the kernel) as a refusal on this thread
+void rocketnet_allocation_refused()
+{
+    ++rocketnet_allocation_refusals_on_this_thread;
+}
 static void (*rocketnet_free_function)( void * context, void * p ) = rocketnet_default_free_function;
 
 static std::mutex rocketnet_lifecycle_mutex;
@@ -439,7 +457,10 @@ void * rocketnet_malloc( void * context, size_t bytes )
     const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     if ( bytes > SIZE_MAX - overhead )
+    {
+        ++rocketnet_allocation_refusals_on_this_thread;
         return NULL;
+    }
     void * (*allocate)( void *, size_t );
     void (*release)( void *, void * );
     {
@@ -451,6 +472,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
     void * base = allocate( context, bytes + overhead );
     if ( !base )
     {
+        ++rocketnet_allocation_refusals_on_this_thread;
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         --rocketnet_allocations;
         return NULL;

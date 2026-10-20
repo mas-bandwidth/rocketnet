@@ -786,8 +786,20 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     const bool dual_stack = rocketnet_platform_client_dual_stack();
     const bool ipv6_available = rocketnet_platform_client_ipv6_available();
+
+    // on macOS an IPv4 server's client binds IPv4. Darwin picks the ephemeral
+    // port of a dual stack IPv6 socket without regard to the IPv4 sockets
+    // already bound, and delivers an IPv4 datagram to the IPv4 socket on that
+    // port, so a dual stack client sharing a port never hears its server. An
+    // IPv4 socket's ephemeral port is never one another IPv4 socket holds.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    const bool ipv4_server_dual_stack = false;
+#else
+    const bool ipv4_server_dual_stack = dual_stack;
+#endif
+
     const int bind_family = rocketnet_platform_client_bind_family(
-        client_transport->protocol.server_address.type, ipv6_available, dual_stack );
+        client_transport->protocol.server_address.type, ipv6_available, ipv4_server_dual_stack );
 
     if ( bind_family == ROCKETNET_ADDRESS_NONE )
     {
@@ -852,7 +864,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
 
         const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
-        const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config };
+        int driver_status = ROCKETNET_STATUS_OK;
+        const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config, &driver_status };
         // the step-driven create (unit tests) opens the caller's operations
         // in place of the candidate's backend
         const rocketnet_client_driver_operations_t * operations = step_driven_operations ? step_driven_operations :
@@ -860,6 +873,20 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( rocketnet_client_driver_open( operations, step_driven_operations ? step_driven_driver_context : client_transport->context,
                 &driver_config, &bind_address, &client_transport->io ) )
             granted_driver = candidate;
+
+        // a rung that failed for want of memory is not a refusal: the create
+        // ends with OUT_OF_MEMORY and never falls to the next candidate
+        // (rocketnet_client_driver_config_t.status, sdk/rocketnet_driver.h);
+        // any other failed open is a refusal and falls
+
+        if ( granted_driver < 0 && driver_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
+        {
+            rocketnet_error( "client transport create: the %s transport could not allocate its endpoint", rocketnet_driver_name( candidate ) );
+            rocketnet_client_transport_destroy( client_transport );
+            if ( status )
+                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+            return NULL;
+        }
 
         if ( granted_driver < 0 )
         {
@@ -2015,6 +2042,10 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketn
     if ( !rocketnet_api_null_guard( client_transport ) )
         return NULL;
     rocketnet_assert( client_transport );
+    // SEND_FAILED is the driver's own cumulative count, assigned on read; the
+    // driver's count is atomic, so the I/O thread may be sending meanwhile
+    if ( client_transport->io.operations && client_transport->io.operations->send_failures )
+        client_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = client_transport->io.operations->send_failures( client_transport->io.instance );
     return &client_transport->counters;
 }
 

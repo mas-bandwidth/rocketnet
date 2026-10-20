@@ -53,6 +53,16 @@ ACK behavior already has protocol tests in the unit suite. The keyless-config
 create is functional; `test_server_keyless_config_has_no_keys` checks the
 config the gate reads, without creating a transport.
 
+The functional suite takes its loopback ports from the OS. Every loopback
+server and socket it opens binds port 0 and reads back the port the OS gave.
+An address that must carry a real port takes a free one from the OS through
+`rocketnet_test_free_port` (functional/harness.inc:228), which binds a
+scratch socket to `127.0.0.1:0`, reads the port, and closes it. Two
+`./bin/functional` runs may share a machine at the same time. The one
+exception is the root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`), which
+makes a fixed namespace and veth pair and binds port 40411 on it
+(functional/rocketnet_functional_tests.cpp:7213); it skips without root.
+
 Dependencies, per platform, as CI installs them:
 
     # Linux -- the build links the XDP dataplane, and liburing is the bench
@@ -314,7 +324,9 @@ set by `ulimit -s` on glibc, and on Windows the executable's 1 MiB default
 reserve). `total_bytes` is their sum and is never below `required_memory`.
 `exclusions` names what is not counted: kernel socket accounting beyond the
 requests (Linux doubles each buffer request), the AF_XDP fill and completion
-rings libxdp sizes, libbpf/libxdp and the XDP program's maps, the io_uring
+rings (the server asks for 2048 entries each, `XSK_RING_PROD__DEFAULT_NUM_DESCS`
+and `XSK_RING_CONS__DEFAULT_NUM_DESCS`, in `rocketnet_xdp_umem_config`,
+sdk/rocketnet_xdp_socket_config.h), libbpf/libxdp and the XDP program's maps, the io_uring
 submission, completion and provided buffer rings, thread guard pages
 and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
