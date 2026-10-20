@@ -60,7 +60,7 @@ Two forms are common for this. The SDK uses the size argument.
 | Today's layout | Unchanged: every config struct keeps its revision 1 layout | Changes: a `size` member goes first and every offset moves, an incompatible change at revision 1 |
 | Existing callers | Compile and run unchanged on the unsized entry points | Must be rebuilt, and must set the field |
 | Forgetting it | Not possible on a sized call: the size is a parameter | A zeroed or stale `size` reads as an unknown size, or worse, as a wrong known one |
-| C | `rocketnet_client_default_config_sized( &config, sizeof( config ) )` | `config.size = sizeof( config );` before every use |
+| C | `(rocketnet_client_default_config)( &config, sizeof( config ) )` | `config.size = sizeof( config );` before every use |
 | C#, other FFI | The binding passes `Marshal.SizeOf<T>()` (or the language's equivalent) as one more integer argument; the struct marshals as a plain blittable struct | The binding sets a field the marshaller does not know is special; a struct copied or defaulted by the runtime carries `size = 0` |
 | One struct, two calls | The default call and the create call each carry the size, so neither depends on what the other left in the struct | The size travels in the struct, so a struct defaulted by one library revision and passed to another carries the first one's size |
 
@@ -88,8 +88,8 @@ The sized entry points, each declared beside its unsized form:
 
 | Struct | Sized defaults | Sized queries | Sized creates |
 | :--- | :--- | :--- | :--- |
-| `rocketnet_client_config_t` | `rocketnet_client_default_config_sized` | `rocketnet_client_validate_config_sized`, `rocketnet_client_required_memory_sized` | `rocketnet_client_create_sized` |
-| `rocketnet_server_config_t` | `rocketnet_server_default_config_sized`, `rocketnet_server_dev_config_sized` | `rocketnet_server_validate_config_sized`, `rocketnet_server_required_memory_sized` | `rocketnet_server_create_sized` |
+| `rocketnet_client_config_t` | `rocketnet_client_default_config` | `rocketnet_client_validate_config`, `rocketnet_client_required_memory` | `rocketnet_client_create` |
+| `rocketnet_server_config_t` | `rocketnet_server_default_config`, `rocketnet_server_dev_config` | `rocketnet_server_validate_config`, `rocketnet_server_required_memory` | `rocketnet_server_create` |
 
 Each sized create takes one config struct and its size, checked by the rule.
 A sized create refuses an unknown size before any other check: it
@@ -181,17 +181,19 @@ declarations before its first call. They pin this rule three ways:
 
 ## 7. Sized Queries
 
-The config-reading queries have sized forms alongside their revision-1
-unsized forms. The sized validation and required-memory calls accept each
-entry in the config's known-size list and refuse every other non-NULL size
-with the standard size-mismatch log. `rocketnet_server_dev_config_sized`
+Each config-reading query has one sized form with a same-named convenience
+macro passing `sizeof(*config)`; no unsized form remains. The sized
+validation and required-memory calls accept each entry in the config's
+known-size list and refuse every other non-NULL size with the standard
+size-mismatch log (required-memory returns 0). `rocketnet_server_dev_config`
 applies the same rule before writing. A NULL config retains each call's
 existing default or counted-no-op behavior.
 
-The client and server creates return a handle or `NULL`; the sized forms take
-the config size and write no separate status code, a size refusal included. A
-game that needs both a handle and a status uses the log line and
-`rocketnet_api_misuse_count`.
+The client and server creates return a handle or `NULL` and write the
+outcome through a final status out-parameter (the owner ruling of 2026-10-20,
+section 9): `ROCKETNET_STATUS_OK` with the handle, or the refusal's code with
+NULL. One sized form per side remains; the `_sized` creates are removed, and
+the same-named convenience macros pass `sizeof(*config)`.
 
 ## 8. The Public Counter and Stat Enums
 
@@ -226,9 +228,15 @@ count, and a member with no internal counter and no code path is not admitted.
 first released ABI. The lifecycle API changed the calling contract once
 before 1.0.0; no earlier ABI was released, so the release starts at 1:
 
-- `rocketnet_client_create` and `rocketnet_client_create_sized` take no
-  connect token; the token moves to the new `rocketnet_client_connect`.
-- `rocketnet_server_create` and `_sized` bind nothing; the new
+- `rocketnet_client_create` takes no connect token and reports through a
+  final status out-parameter (the owner ruling of 2026-10-20: one sized form
+  per side, `_sized` removed, same-named convenience macro passing
+  `sizeof(*config)`; the same holds for `rocketnet_server_create` and for
+  the `default_config`/`validate_config` pair on each side;
+  `sdk/rocketnet.h:1031`, `sdk/rocketnet.h:1220`,
+  `sdk/rocketnet_api.cpp:529`, `sdk/rocketnet_api.cpp:1228`); the token moves
+  to the new `rocketnet_client_connect`.
+- `rocketnet_server_create` binds nothing; the new
   `rocketnet_server_start`, `rocketnet_server_stop` and
   `rocketnet_server_running` run the transport, and
   `rocketnet_server_disconnect_all_clients` is new.
