@@ -93,14 +93,8 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
 #error driver selection is runtime now (#106): drop ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO and select with config driver or ROCKETNET_SERVER_TRANSPORT
 #endif // #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
 
-#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS 256
-// The send ring holds one slot per configured client: the v1.0 profile is
-// 1000 light clients at 10 Hz, each sending one packet per update, and every
-// client must be served every update. The capacity a transport enforces is
-// send_capacity; create reads it from max_clients with a floor of the
-// historical 256 slots, and a unit seam can lower it at create.
-#define ROCKETNET_SERVER_MIN_SEND_PACKETS    256
-#define ROCKETNET_SERVER_MAX_SEND_PACKETS    ROCKETNET_MAX_CLIENTS
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
+                         "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
 
 struct rocketnet_server_send_buffer_t
 {

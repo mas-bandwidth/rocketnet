@@ -11,20 +11,24 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Unit suite (./bin/test) | ✅ | ✅ | ✅ |
 | Functional suite (./bin/functional) | ✅ | ✅ | ✅ |
 | Functional suite repeated, zero flakes | OWED | OWED | OWED |
-| Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows) | ✅ | ❌ | OWED |
-| Leaks (LSan, the leaks tool, App Verifier's leak layer) | ✅ | ❌ | OWED |
-| libFuzzer (corpus replay and fuzz runs) | ❌ | ❌ | ✅ |
-| Lifecycle stress (init/term, create/destroy, restart, destroy under traffic) | ❌ | ❌ | ✅ |
-| Hard-killed peer never stalls receive | ❌ | ❌ | ❌ |
-| Socket error paths (oversize, runt, garbage, zero-length, failed sends) | ❌ | ✅ | ✅ |
+| Transport matrix, every cell fifty times | OWED | OWED | OWED |
+| Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows) | ✅ | PLANNED | OWED |
+| Leaks (LSan, the leaks tool, App Verifier's leak layer) | ✅ | PLANNED | OWED |
+| libFuzzer (corpus replay and fuzz runs; clang-cl on Windows) | PLANNED | ✅ | ✅ |
+| Toolchain matrix (MSVC, clang-cl and ARM64 on Windows; Xcode universal arm64 and x86_64 on macOS; gcc and clang on Linux) | ✅ | ✅ | ✅ |
+| Lifecycle stress (init/term, create/destroy, restart, destroy under traffic) | PLANNED | ✅ | ✅ |
+| Hard-killed peer never stalls receive | PLANNED | ✅ | PLANNED |
+| Socket error paths (oversize, runt, garbage, zero-length, failed sends) | PLANNED | ✅ | ✅ |
 | Network thread priority | ✅ | ✅ | ✅ |
 | Examples (run_examples.py) | ❌ | ❌ | ❌ |
+| Example soak (example_soak) | ❌ | ❌ | ❌ |
 | 1000 clients, load harness | OWED | OWED | ✅ |
 | 1000 light clients (10 Hz, 1 packet per update) | OWED | OWED | OWED |
 | Soak (30 minutes per transport under impairment) | OWED | ✅ | OWED |
-| Nightlies (every nightly job's steps green on this branch) | ❌ | ❌ | ❌ |
-| CI (ci.yml, every step green on this branch) | ❌ | ❌ | ❌ |
-| complete | 31% | 31% | 44% |
+| Main API calls under 0.1 ms each, Release, under load | PLANNED | PLANNED | PLANNED |
+| Nightlies (every nightly job's steps green on this branch) | PLANNED | OWED | OWED |
+| CI (ci.yml, every step green on this branch) | PLANNED | PLANNED | PLANNED |
+| complete | 30% | 45% | 40% |
 
 ## Platform-specific tests
 
@@ -32,13 +36,13 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | test | platform | status |
 |---|:---:|:---:|
-| UDP connection reset (SIO_UDP_CONNRESET) never stalls receive | Windows | ❌ |
+| UDP connection reset (SIO_UDP_CONNRESET) never stalls receive | Windows | PLANNED |
 | Application Verifier | Windows | ✅ |
-| Toolchain matrix (clang-cl and ARM64 on Windows; gcc and clang on Linux) | Windows | ✅ |
-| Toolchain matrix (clang-cl and ARM64 on Windows; gcc and clang on Linux) | Linux | ❌ |
 | App Nap and timer coalescing keep client timing | macOS | ✅ |
-| Universal arm64 and x86_64 build, Xcode generator | macOS | ✅ |
-| complete | 4 of 6 | 67% |
+| MemorySanitizer (msan.yml) | Linux | PLANNED |
+| Big-endian system build and suites | Linux | PLANNED |
+| Live XDP fleet test (the XDP server on space, a client on every fleet machine) | Linux | PLANNED |
+| complete | 2 of 6 | 33% |
 
 ## Tests per transport
 
@@ -46,7 +50,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | test | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned) | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned) | ✅ | PLANNED | ✅ | ✅ | PLANNED | PLANNED | PLANNED | PLANNED |
 | Every matrix cell fifty times, zero flakes | OWED | OWED | OWED | OWED | OWED | OWED | OWED | OWED |
 | complete | 50% | 0% | 50% | 50% | 0% | 0% | 0% | 0% |
 
@@ -60,30 +64,30 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Functional suite on each server transport | msgx | ✅ |
 | Functional suite on each server transport | gso | ✅ |
 | Functional suite on each server transport | io_uring | ✅ |
-| Functional suite on each server transport | portable | ❌ |
+| Functional suite on each server transport | portable | PLANNED |
 | Functional suite on each server transport | iocp | ✅ |
 | Functional suite on each server transport | rio | ✅ |
-| Hard-killed peer or ICMP error never stalls receive | xdp | ❌ |
-| Hard-killed peer or ICMP error never stalls receive | msgx | ❌ |
-| Hard-killed peer or ICMP error never stalls receive | gso | ❌ |
-| Hard-killed peer or ICMP error never stalls receive | io_uring | ❌ |
-| Hard-killed peer or ICMP error never stalls receive | portable | ❌ |
-| Hard-killed peer or ICMP error never stalls receive | iocp | ❌ |
-| Hard-killed peer or ICMP error never stalls receive | rio | ❌ |
+| Hard-killed peer or ICMP error never stalls receive | xdp | PLANNED |
+| Hard-killed peer or ICMP error never stalls receive | msgx | ✅ |
+| Hard-killed peer or ICMP error never stalls receive | gso | PLANNED |
+| Hard-killed peer or ICMP error never stalls receive | io_uring | PLANNED |
+| Hard-killed peer or ICMP error never stalls receive | portable | PLANNED |
+| Hard-killed peer or ICMP error never stalls receive | iocp | PLANNED |
+| Hard-killed peer or ICMP error never stalls receive | rio | PLANNED |
 | Socket error paths | xdp | ✅ |
 | Socket error paths | msgx | ✅ |
 | Socket error paths | gso | ✅ |
 | Socket error paths | io_uring | ✅ |
-| Socket error paths | portable | ❌ |
-| Socket error paths | iocp | ❌ |
-| Socket error paths | rio | ❌ |
+| Socket error paths | portable | PLANNED |
+| Socket error paths | iocp | PLANNED |
+| Socket error paths | rio | PLANNED |
 | Lifecycle stress | xdp | ✅ |
-| Lifecycle stress | msgx | ❌ |
+| Lifecycle stress | msgx | ✅ |
 | Lifecycle stress | gso | ✅ |
 | Lifecycle stress | io_uring | ✅ |
-| Lifecycle stress | portable | ❌ |
-| Lifecycle stress | iocp | ❌ |
-| Lifecycle stress | rio | ❌ |
+| Lifecycle stress | portable | PLANNED |
+| Lifecycle stress | iocp | PLANNED |
+| Lifecycle stress | rio | PLANNED |
 | Soak under impairment, flat resources | xdp | OWED |
 | Soak under impairment, flat resources | msgx | ✅ |
 | Soak under impairment, flat resources | gso | OWED |
@@ -105,21 +109,76 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | 1000 light clients (10 Hz, 1 packet per update) | portable | OWED |
 | 1000 light clients (10 Hz, 1 packet per update) | iocp | OWED |
 | 1000 light clients (10 Hz, 1 packet per update) | rio | OWED |
-| 1000 clients over the LAN, every guarantee checked | xdp | OWED |
-| 1000 clients over the LAN, every guarantee checked | msgx | OWED |
-| 1000 clients over the LAN, every guarantee checked | gso | OWED |
-| 1000 clients over the LAN, every guarantee checked | io_uring | OWED |
-| 1000 clients over the LAN, every guarantee checked | portable | OWED |
-| 1000 clients over the LAN, every guarantee checked | iocp | OWED |
-| 1000 clients over the LAN, every guarantee checked | rio | OWED |
-| Sanitizers per transport | xdp | ❌ |
-| Sanitizers per transport | msgx | ❌ |
-| Sanitizers per transport | gso | ❌ |
-| Sanitizers per transport | io_uring | ❌ |
-| Sanitizers per transport | portable | ❌ |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | xdp | OWED |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | msgx | OWED |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | gso | OWED |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | io_uring | OWED |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | portable | OWED |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | iocp | OWED |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | rio | OWED |
+| Sanitizers per transport | xdp | OWED |
+| Sanitizers per transport | msgx | PLANNED |
+| Sanitizers per transport | gso | OWED |
+| Sanitizers per transport | io_uring | OWED |
+| Sanitizers per transport | portable | OWED |
 | Sanitizers per transport | iocp | ✅ |
 | Sanitizers per transport | rio | ✅ |
 | Application Verifier | portable | ✅ |
 | Application Verifier | iocp | ✅ |
 | Application Verifier | rio | ✅ |
-| complete | 22 of 66 | 33% |
+| complete | 24 of 66 | 36% |
+
+## Release-wide tests
+
+Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/roadmap/render.py)
+
+| test | status |
+|---|:---:|
+| Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x | PLANNED |
+| Security pass: per-client resource exhaustion disconnects the client | PLANNED |
+| Receipt loss reported after its own deadline | PLANNED |
+| Source format in the netcode style (clang-format check) | PLANNED |
+| TLA+ ledger current (tla/CASES.tsv and tla/COVERAGE.tsv match the models) | PLANNED |
+| TLA+ model check: link (19 required) | PLANNED |
+| TLA+ model check: clientconnection (14 required, 9 bench) | PLANNED |
+| TLA+ model check: replaywindow (2 required, 1 bench) | PLANNED |
+| TLA+ model check: rnsendstore (1 required) | PLANNED |
+| TLA+ model check: rnring (5 required) | PLANNED |
+| TLA+ model check: rnsendspans (3 required) | PLANNED |
+| TLA+ model check: rnwindow (7 required) | PLANNED |
+| TLA+ model check: receiveorder (4 required) | PLANNED |
+| TLA+ model check: rndriversendstaging (2 required) | PLANNED |
+| TLA+ model check: rnsecuritytables (13 required) | PLANNED |
+| TLA+ model check: serverconnection (5 required) | PLANNED |
+| TLA+ model check: rnconnectionmemory (3 required) | PLANNED |
+| TLA+ model check: rnsendbudget (4 required) | PLANNED |
+| TLA+ model check: rnreceipts (5 required) | PLANNED |
+| TLA+ model check: rnchannel (9 required) | PLANNED |
+| TLA+ model check: rnslots (12 required) | PLANNED |
+| TLA+ model check: rnchanneltypes (11 required) | PLANNED |
+| TLA+ model check: rnsenthistory (3 required) | PLANNED |
+| TLA+ model check: rnscheduler (3 required) | PLANNED |
+| TLA+ model check: rnresendtiming (3 required) | PLANNED |
+| TLA+ model check: rnfilterepochs (3 required) | PLANNED |
+| TLA+ model check: rnuringdriver (4 required) | PLANNED |
+| TLA+ model check: fragmentsandacks (18 required, 6 bench) | PLANNED |
+| TLA+ model check: rnblocks (2 required) | PLANNED |
+| TLA+ model check: rnclientio (8 required) | PLANNED |
+| TLA+ model check: rnendpoint (5 required, 2 bench) | PLANNED |
+| TLA+ model check: rnxdpreplay (3 required) | PLANNED |
+| TLA+ model check: rnxdpreceivering (2 required) | PLANNED |
+| TLA+ model check: rnriodriver (4 required) | PLANNED |
+| TLA+ model check: rnflows (2 required) | PLANNED |
+| TLA+ model check: rnclientiodecrypt (5 required) | PLANNED |
+| TLA+ model check: rnlivefleetrun (3 required) | PLANNED |
+| TLA+ model check: clientsession (5 required) | PLANNED |
+| TLA+ model check: serversession (10 required) | PLANNED |
+| TLA+ model check: rnoutgoingbuild (4 required) | PLANNED |
+| TLA+ model check: rnsimfaults (3 required) | PLANNED |
+| TLA+ model check: rnclientreceivequit (5 required) | PLANNED |
+| TLA+ model check: rnserversendfair (4 required) | PLANNED |
+| TLA+ model check: sendhandoff (3 required) | PLANNED |
+| CBMC bounded proofs of the untrusted-input readers to the full packet size (Frama-C route for C++) | PLANNED |
+| Frama-Clang WP trial on rocketnet_ack_block_read | PLANNED |
+| Holistic review: six independent whole-system reviewers | PLANNED |
+| complete | 0% |

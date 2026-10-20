@@ -106,10 +106,11 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
     return -1;
 }
 
+// Re-pin t17 because the ACK-debt threshold now records one eliciting packet.
 static const rn_standard_vector_t standard_timing_and_counters_table[] =
 {
     RN_STANDARD_VECTOR( "t17.timing-defaults", "0a0000000000000005000000000000000a000000000000000300000000000000"
-    "3c000000000000000a000000000000000a000000000000004000000000000000"
+    "3c000000000000000a000000000000000a000000000000000100000000000000"
     "00040000000000005a000000000000000a00000000000000" ),
     // Vector reflects the nine message-violation counters and CLIENT_RECEIVE_FOREIGN_SOURCE appended in sdk/rocketnet_counters.h.
     RN_STANDARD_VECTOR( "t18.counter-registry",
