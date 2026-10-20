@@ -268,11 +268,3 @@ before 1.0.0; no earlier ABI was released, so the release starts at 1:
   naming, and the status count is `ROCKETNET_STATUS_COUNT`, like every other
   `_COUNT`. Removing and renaming these exports before the first release keeps
   ABI 1: no released binary was ever linked against the old names.
-
-No public struct's layout changes. The public client and server configs fold
-their two unreleased revisions into one before the release: revision 1 is the
-whole struct, `ROCKETNET_CLIENT_CONFIG_BYTES_2`, `ROCKETNET_SERVER_CONFIG_BYTES_2`
-and the `ROCKETNET_CLIENT_CONFIG_KNOWN_BYTES` and
-`ROCKETNET_SERVER_CONFIG_KNOWN_BYTES` lists leave the public header, and no
-export changes (`tools/exports.txt`).
-

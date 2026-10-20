@@ -13,9 +13,9 @@
 // same read the entry points use, with a simulated table of known sizes), and
 // one compiled against a newer, unknown, larger struct.
 //
-// Every case runs in memory, with no clock, sockets or network: a create that
-// accepts its sizes reaches the create's own NULL guard (a counted no-op) and
-// stops there; a create that refuses a size stops before it, uncounted.
+// Plain entry points use the current config implementation
+// (sdk/rocketnet_api.cpp:498, :1206); the regressions below check full defaults
+// and simulation fields through them.
 
 #include "test_unit_registry.h"
 
