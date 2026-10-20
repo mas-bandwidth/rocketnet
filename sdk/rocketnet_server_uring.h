@@ -52,6 +52,16 @@ struct rocketnet_server_uring_t;
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
 #define ROCKETNET_URING_RECV_BUFFER_BYTES                                 2048
 
+// the per-call completion budgets: receive_packets takes at most
+// ROCKETNET_URING_RECEIVE_BUDGET completions (one receive bank's worth) and
+// send_packets at most ROCKETNET_URING_SEND_BUDGET (a whole staging of sends
+// and a completion queue of receives besides), each budget its own, so a
+// call returns under sustained traffic. completions past a budget stay in
+// the completion queue for the next call, counted REAP_DEFERRED.
+
+#define ROCKETNET_URING_RECEIVE_BUDGET          ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+#define ROCKETNET_URING_SEND_BUDGET    ( ROCKETNET_URING_SEND_QUEUE_SIZE + ROCKETNET_URING_ENTRIES * 2 )
+
 // counters, readable any time from the main thread; indexes into the array
 // rocketnet_server_uring_counters fills
 
@@ -64,7 +74,9 @@ struct rocketnet_server_uring_t;
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE                6      // source address the boundary could not convert
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS                    7      // the multishot ended because the buffer ring was empty (ENOBUFS)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                  9
+#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that spent its completion budget with completions left for the next call (deferred, not dropped)
+#define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, retired by a later call
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 11
 
 // true when the library was built with liburing and this kernel accepts the
 // ring, the opcodes and the provided buffer ring the driver needs. the probe
@@ -107,6 +119,42 @@ void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t 
 // so the kernel completes each with a failed CQE.
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error );
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
+#endif
+
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+// unit suite only (the test hook library): a driver over a fake completion
+// source, with no kernel ring and no socket. the source stands in for the
+// completion queue: peek copies at most max completions, oldest first, and
+// consumes none; advance consumes the count peek returned; ready is how many
+// it holds. submitted is called with the user_data of every queued
+// submission entry when the driver submits (each send, each multishot arm,
+// each cancel). a receive completion names its buffer in flags the way the
+// kernel does (IORING_CQE_F_BUFFER, the id above IORING_CQE_BUFFER_SHIFT);
+// every buffer of a fake driver holds one datagram of
+// ROCKETNET_URING_TEST_PAYLOAD_BYTES from 127.0.0.1, which a completion with
+// res ROCKETNET_URING_RECV_BUFFER_BYTES delivers. a wait returns at once.
+// rocketnet_server_uring_destroy destroys a fake driver. NULL when the
+// driver is not built.
+
+#define ROCKETNET_URING_TEST_PAYLOAD_BYTES                                 100
+
+struct rocketnet_server_uring_test_completion_t
+{
+    uint64_t user_data;
+    int32_t res;
+    uint32_t flags;
+};
+
+struct rocketnet_server_uring_test_source_t
+{
+    void * context;
+    int ( *peek )( void * context, struct rocketnet_server_uring_test_completion_t * completions, int max );
+    void ( *advance )( void * context, int count );
+    int ( *ready )( void * context );
+    void ( *submitted )( void * context, uint64_t user_data );
+};
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * context, int num_queues, const struct rocketnet_server_uring_test_source_t * source );
 #endif
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
