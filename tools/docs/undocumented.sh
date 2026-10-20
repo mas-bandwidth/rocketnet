@@ -148,6 +148,7 @@ item_re = re.compile(r"^\s+\d+\)\s+(.*?):\s+(.*\S)\s*$")
 raw_entries = []
 cur_file = None
 cur_line = None
+block_entries = []
 
 with open(log_path, encoding="utf-8", errors="replace") as f:
     for raw in f:
@@ -162,6 +163,7 @@ with open(log_path, encoding="utf-8", errors="replace") as f:
             else:
                 cur_file = p.rsplit("/", 1)[-1]
             cur_line = int(m_loc.group(2))
+            block_entries = []
             continue
         if cur_file is not None:
             m_item = item_re.match(line)
@@ -177,26 +179,41 @@ with open(log_path, encoding="utf-8", errors="replace") as f:
                     kind = "brief"
                 else:
                     continue
-                raw_entries.append((cur_file, cur_line, raw_sym, kind))
+                entry = [cur_file, cur_line, raw_sym, kind, ""]
+                raw_entries.append(entry)
+                block_entries.append(entry)
+            elif "|" in line:
+                for entry in block_entries:
+                    entry[4] += line + "\n"
             elif not line.strip():
                 cur_file = None
                 cur_line = None
+                block_entries = []
 
 pending_records = {}
-for rel_file, lineno, raw_sym, kind in raw_entries:
+for rel_file, lineno, raw_sym, kind, source in raw_entries:
     if kind == "record":
         pending_records.setdefault(rel_file, []).append((lineno, raw_sym))
 for k in pending_records:
     pending_records[k].sort(reverse=True)
 
 rows = set()
-for rel_file, lineno, raw_sym, kind in raw_entries:
+for rel_file, lineno, raw_sym, kind, source in raw_entries:
     qsym = qualify(rel_file, lineno, raw_sym, kind, pending_records)
     area = classify(rel_file, qsym)
     if filter_area and area != filter_area:
         continue
-    rows.add((rel_file, lineno, qsym, kind, area))
+    rows.add((rel_file, lineno, qsym, kind, area, source))
 
-for rel_file, lineno, qsym, kind, area in sorted(rows, key=lambda r: (r[0], r[1], r[2], r[3], r[4])):
+ordered = sorted(rows, key=lambda r: (r[0], r[1], r[2], r[3], r[4]))
+for rel_file, lineno, qsym, kind, area, source in ordered:
     print(f"{rel_file}\t{lineno}\t{qsym}\t{kind}\t{area}")
+
+functions = [row for row in ordered
+             if row[3] == "function" and re.search(r"\bROCKETNET_EXPORT\b", row[5])]
+if functions:
+    sys.stderr.write(
+        f"error: {len(functions)} undocumented public function(s); "
+        "add a brief to each in the public header\n")
+    sys.exit(1)
 PY
