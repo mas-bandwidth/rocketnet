@@ -14610,6 +14610,14 @@ void rocketnet_unit_prepare()
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
+    // the unit suite runs over the loopback driver with no sockets, so a
+    // transport pin in the environment must not reach it: the pin replaces
+    // the candidate list at create and the ladder falls through to a real
+    // driver. Both pins are cleared for the run, as posix_pair_create does
+    // around its creates (functional/posix_socket_errors.cpp). A case that
+    // tests pin handling itself sets and reads its own pins after this.
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
     if ( rocketnet_unit_environment == NULL )
         rocketnet_unit_environment = new rocketnet_test_environment_t();
 }

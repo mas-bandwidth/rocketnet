@@ -1041,7 +1041,18 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 // of which this moves.
 static void posix_heap_keep( bool keep )
 {
-#if defined(__GLIBC__)
+#if defined(__SANITIZE_ADDRESS__)
+    (void) keep;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+    (void) keep;
+#elif defined(__GLIBC__)
+    posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
+    posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
+#else
+    (void) keep;
+#endif
+#elif defined(__GLIBC__)
     posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
     posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
 #else
