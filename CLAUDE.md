@@ -47,36 +47,26 @@ XDP or portable. Any third implementation drops into that same seam.
 
 **Owns:** socket lifecycle and tuning, threads/time, `rocketnet_address_t`, the
 6-byte `{type, epoch, filter value}` prefilter header, packet buffering and batching, the
-whole XDP dataplane including Ethernet/IP/UDP synthesis, crypto primitives —
-and, on the connection protocol, the general acks: every session packet's
-sealed plaintext opens with an ack block, and the transport surfaces the
-acknowledged packet ids per update. Delivery notification is the primitive;
-the transport informs and never resends. Fragmentation and reassembly are the
-transport's own self-contained mechanism: a payload requested above the
-wire's capacity at start_packet splits into type 9 fragments at finish and
-reassembles per connection on the far side, unreliable semantics standing —
-a lost fragment loses the whole payload, counted, never resent.
+whole XDP dataplane including Ethernet/IP/UDP synthesis, crypto primitives, the
+secure connect handshake, client slots, channels (unreliable, sequenced, reliable
+ordered, reliable unordered), delivery receipts and retransmission, and packet
+fragmentation and reassembly.
 
 **Leaves to the caller:** serialization and bit packing (absolutely — this is
-the design), reliability policy on top of the notifications, sequencing,
-payload encryption above the seal, DNS, and on the
-direct path all connection semantics.
-`rocketnet_server_socket_t` has no client table; `ROCKETNET_MAX_CLIENTS` is only an
-array-sizing constant.
+the design), payload encryption above the seal (if desired), DNS, and game
+simulation logic.
 
-## Current state: the secure connect is landed
+## Current state: the messaging tier is landed
 
-The transport tier is the library: netcode-style connect tokens on public
+The transport and messaging tiers are landed: netcode-style connect tokens on public
 key crypto (no secret shared between backend and servers), the
 address-validated two-RTT handshake, per-connection derived keys, sealed
-packets opening with the general ack block, fragmentation, and server-side
-client slots — `client_transport` and `server_transport` over the runtime
-driver ladder (portable everywhere; xdp and gso on linux; msgx ahead of
-portable on macOS; iocp behind portable on windows). `client.c` and
-`server.c` connect out of the box under the published dev keys.
-
-What remains is REQUIREMENTS.md's tail: reliability, flows and broadcast
-above the transport. docs/roadmap.sexp is the live ordering (ROADMAP.md renders it).
+packets opening with the general ack block, fragmentation, channels and
+reliability (unreliable, sequenced, reliable ordered, reliable unordered),
+receipts, and server-side client slots — `client_transport` and
+`server_transport` over the runtime transport ladder (portable everywhere;
+xdp and gso on linux; msgx ahead of portable on macOS; iocp behind portable
+on windows). Examples connect out of the box under the published dev keys.
 
 ## The scaling story, in one paragraph
 
@@ -191,10 +181,10 @@ For hosts where XDP is not available — AWS GameLift and similar, no
 `rocketnet_server_gso_linux.cpp` behind the same seam, Linux only,
 unprivileged. Since #106 selection is runtime, not compile time: one Linux
 build carries xdp, gso and portable, and the transport walks the config's
-ordered candidate list at create (`driver` field / `ROCKETNET_DRIVER`,
+ordered candidate list at start (`transport` field / `ROCKETNET_SERVER_TRANSPORT`,
 default `auto` = xdp,gso,portable) — first grant wins, pins refuse loudly,
-the granted tier is reported by `rocketnet_server_transport_driver` and one
-create log line. The config system is one X-macro table per transport in
+the granted tier is reported by `rocketnet_server_transport_name` and one
+start log line. The config system is one X-macro table per transport in
 `rocketnet.h` deriving struct, defaults, env names (`ROCKETNET_` +
 uppercased field), parse and validation; precedence default < struct < env,
 overrides logged with the displaced value, validation refuses and never
