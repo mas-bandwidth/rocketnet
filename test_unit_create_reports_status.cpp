@@ -462,4 +462,3 @@ static void create_reports_status_null_config_macro()
     rocketnet_set_assert_callback( saved_assert );
 }
 REGISTER_UNIT_TEST( create_reports_status_null_config_macro );
-
