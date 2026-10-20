@@ -4424,6 +4424,7 @@ bool rocketnet_platform_client_ipv6_available()
     SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
     if ( probe == INVALID_SOCKET )
         return false;
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) probe );
     closesocket( probe );
     return true;
 #else

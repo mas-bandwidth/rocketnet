@@ -446,6 +446,7 @@ bool rocketnet_server_rio_available()
     SOCKET socket = WSASocketW( AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_REGISTERED_IO );
     if ( socket == INVALID_SOCKET )
         return false;
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) socket );
     RIO_EXTENSION_FUNCTION_TABLE table;
     const bool available = rocketnet_rio_load_table( socket, &table );
     closesocket( socket );
