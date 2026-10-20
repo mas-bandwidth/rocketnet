@@ -528,9 +528,23 @@ double rocketnet_time()
     return rocketnet_platform_time();
 }
 
+// a negative, zero or NaN request sleeps not at all, and a request longer
+// than ROCKETNET_SLEEP_MAX_SECONDS (or infinite) sleeps that long, so the
+// platform's microsecond conversion never overflows
+double rocketnet_sleep_clamp( double seconds )
+{
+    if ( !( seconds > 0.0 ) )
+        return 0.0;
+    if ( seconds > ROCKETNET_SLEEP_MAX_SECONDS )
+        return ROCKETNET_SLEEP_MAX_SECONDS;
+    return seconds;
+}
+
 void rocketnet_sleep( double seconds )
 {
-    rocketnet_platform_sleep( seconds );
+    const double clamped = rocketnet_sleep_clamp( seconds );
+    if ( clamped > 0.0 )
+        rocketnet_platform_sleep( clamped );
 }
 
 void rocketnet_clear_and_free( void * context, void * p, size_t p_size )
@@ -580,13 +594,6 @@ float rocketnet_random_float()
 uint8_t rocketnet_random_uint8()
 {
     uint8_t value;
-    randombytes_buf( &value, sizeof(value) );
-    return value;
-}
-
-uint16_t rocketnet_random_uint16()
-{
-    uint16_t value;
     randombytes_buf( &value, sizeof(value) );
     return value;
 }
