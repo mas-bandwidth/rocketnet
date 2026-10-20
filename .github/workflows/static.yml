@@ -25,7 +25,9 @@ name: static analysis
 
 on:
   push:
-    branches: [ main, 'sprint/**' ]
+    # main and the branch v1.0 lands on, named by name: a sprint/** filter
+    # would start this gate on every worker branch push as well.
+    branches: [ main, sprint/rocketnet-proof ]
   pull_request:
   workflow_dispatch:
 

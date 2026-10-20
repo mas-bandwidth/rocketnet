@@ -84,13 +84,18 @@ name: CI
 
 on:
   push:
-    branches: [ main, 'sprint/**' ]
+    branches: [ main, sprint/rocketnet-proof ]
   pull_request:
-  # Filtering push to main and sprint/** means a feature branch no longer runs
-  # the matrix twice -- once for the push, once for its PR; sprint/** is where
-  # sprint work lands by direct commits, with no pull request to run it. workflow_dispatch keeps a
-  # deliberate way to run it on a branch, which is the capability the filter
-  # would otherwise silently remove. (serialize's ci.yml, same reasoning.)
+  # Filtering push to main and sprint/rocketnet-proof means a feature branch no
+  # longer runs the matrix twice -- once for the push, once for its PR.
+  # sprint/rocketnet-proof is named by name, not by sprint/**: every worker
+  # pushes a sprint/<card> branch, and a sprint/** filter would start this
+  # matrix on every one of those pushes, dozens an hour, for work the pull
+  # request filter already runs. sprint/rocketnet-proof is where v1.0 lands, by
+  # direct land commits with no pull request to run them, so naming that branch
+  # is what puts this gate on the landing. workflow_dispatch keeps a deliberate
+  # way to run it on any other branch, which is the capability the filter would
+  # otherwise silently remove. (serialize's ci.yml, same reasoning.)
   workflow_dispatch:
 
 # a superseded commit's run is not a gate on anything -- the gate is the head
@@ -947,10 +952,34 @@ jobs:
   # against a known baseline. The per-commit gate takes asan's memory-safety
   # findings and ubsan's, both of which are immediate and unambiguous.
 
+  # SPLIT INTO TWO PARALLEL LEGS, not shortened. One job ran two unit-suite
+  # passes, the functional suite, three lifecycle binaries and a python control
+  # in series on one runner. The same reasoning and the same trade as tsan
+  # below: each leg now pays the sanitizer build once in parallel and builds
+  # only the targets it runs. NOTHING WAS DROPPED OR SHORTENED -- the same two
+  # unit passes, the functional suite, the lifecycle binaries and the control,
+  # still per commit, still with -fno-sanitize-recover=all.
+  #
+  # MEASURED, AND OWED. On the Linux member this card ran on, the sanitized
+  # build alone is 55s (4.85s configure, 55.36s whole-tree Debug with
+  # asan+ubsan, ninja --parallel 12, nice 19, on a shared 16-core member) and
+  # one pass of ./bin/test under asan+ubsan is 161s, so the undivided job's
+  # floor was over 221s before its second pass, its functional suite and its
+  # lifecycle binaries. Those are MEMBER numbers on a contended box, not fleet
+  # numbers: what each leg actually costs on a fleet runner is OWED, and until
+  # it is measured the 3-minute bound below is unproven for both legs. It stays
+  # at 3 either way -- a job that runs long is split or trimmed, never given a
+  # longer limit. OWED TOO: build-and-test-windows leg b, which this member
+  # cannot measure at all (no MSVC, no Windows runner reachable from here).
+
   sanitizers:
-    name: asan + ubsan
+    name: asan + ubsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [unit suite, functional suite]
     steps:
 
       - uses: actions/checkout@v4
@@ -981,16 +1010,23 @@ jobs:
           -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
-      - name: Build
-        run: cmake --build build --parallel
+      - name: Build the sanitized unit suite
+        if: matrix.leg == 'unit suite'
+        run: cmake --build build --target test --parallel
+
+      - name: Build the sanitized functional suite and the lifecycle binaries
+        if: matrix.leg == 'functional suite'
+        run: cmake --build build --target functional test_lifecycle test_driver test_sodium --parallel
 
       - name: Run unit tests
+        if: matrix.leg == 'unit suite'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./bin/test
 
       - name: Run unit tests with the driver pin preserved
+        if: matrix.leg == 'unit suite'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
@@ -999,6 +1035,7 @@ jobs:
         run: ./bin/test
 
       - name: Run functional suite under sanitizers
+        if: matrix.leg == 'functional suite'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
@@ -1006,6 +1043,7 @@ jobs:
         run: ./bin/functional
 
       - name: Allocation lifecycle under sanitizers
+        if: matrix.leg == 'functional suite'
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
@@ -1017,6 +1055,7 @@ jobs:
           ./bin/test_sodium
 
       - name: Inactive XDP index negative control
+        if: matrix.leg == 'functional suite'
         run: python3 tools/check_xdp_guard_control.py
 
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.

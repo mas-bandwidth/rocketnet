@@ -118,6 +118,23 @@ class CheckTlaCoverageTest(unittest.TestCase):
         code, out = run_check(root)
         self.assertEqual(code, 0, out)
 
+    def test_owed_row_cited_without_the_tla_prefix_is_refused(self):
+        root = self.plant_basic_repo()
+        (root / "sdk" / "rocketnet_send_budget.h").write_text(
+            "// RNSendBudget.tla Init.\nvoid rocketnet_send_budget_init(void);\n")
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": "-",
+            "module": "RNSendBudget",
+            "status": "owed",
+            "owed_by": "some-card",
+            "note": "RNSendBudget models the send budget; no code implements it yet.",
+        })
+        code, out = run_check(root)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("RNSendBudget: rn-send-budget is owed but "
+                      "sdk/rocketnet_send_budget.h cites RNSendBudget.tla", out)
+
     def test_real_coverage_passes(self):
         code, out = run_check(REPO_ROOT, ["--all"])
         self.assertEqual(code, 0, out)

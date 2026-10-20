@@ -71,7 +71,9 @@ def check_row(row):
 
 def owed_but_cited(rows):
     """An owed row says no code implements its model; a model that a file
-    under sdk/ cites is implemented, so its owed row is stale."""
+    under sdk/ cites is implemented, so its owed row is stale. The citation
+    counts with or without the tla/ prefix: sdk/rocketnet_client_receive_
+    handshake.h writes RNClientIo.tla bare, seven times."""
     failures = []
     sdk = ROOT / "sdk"
     texts = {}
@@ -83,10 +85,12 @@ def owed_but_cited(rows):
         if row.get("status", "") != "owed":
             continue
         module = row["module"]
-        cite = f"tla/{module}.tla"
-        citing = [name for name, text in texts.items() if cite in text]
-        if citing:
-            failures.append(f"{module}: {row.get('machine', '')} is owed but {citing[0]} cites {cite}")
+        forms = (f"tla/{module}.tla", f"{module}.tla")
+        for name, text in texts.items():
+            cite = next((form for form in forms if form in text), None)
+            if cite:
+                failures.append(f"{module}: {row.get('machine', '')} is owed but {name} cites {cite}")
+                break
     return failures
 
 
