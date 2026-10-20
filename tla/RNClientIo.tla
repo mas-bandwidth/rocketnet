@@ -380,9 +380,12 @@ IoSend(r) ==
 
 \* the kernel completes a posted send, ok or with an error; either way the
 \* slot is done (an error moves send_errors in the code and releases the
-\* slot the same way, so the model needs no second action)
+\* slot the same way, so the model needs no second action).  One socket's
+\* datagram sends complete in the order they were posted, so the oldest
+\* posted slot (the lowest; IoSend posts in slot order) completes first.
 Complete(r, s) ==
     /\ s \in posted[r]
+    /\ \A t \in posted[r] : s <= t
     /\ posted' = [posted EXCEPT ![r] = posted[r] \ {s}]
     /\ sent' = [sent EXCEPT ![r] = sent[r] \cup {s}]
     /\ inSend' = (inSend /\ posted'[r] # {})

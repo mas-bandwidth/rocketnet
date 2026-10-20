@@ -485,7 +485,8 @@ Windows portable client therefore posts its sends and never waits in one:
   tla/RNClientIo.tla `NoFreeBeforeComplete`, `StopEventuallyFrees`).
 
 The model is tla/RNClientIo.tla with `IoNeverBlocksOnSend` and
-`NoFreeBeforeComplete` and the liveness `PostedEventuallyCompletes`; its
+`NoFreeBeforeComplete` and the liveness `StopEventuallyFrees` (with
+`PostedEventuallyCompletes` checked by hand, tla/README-RNClientIo.md); its
 reversed witnesses are `MCRNClientIoBrokenBlockingSend.cfg` (the send held in
 the step) and `MCRNClientIoBrokenSentBeforeComplete.cfg` (the ring Sent at
 post). The unit cases `client_io_overlapped_ring_sent_only_after_last_completion`,

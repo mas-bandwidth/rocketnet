@@ -3907,8 +3907,8 @@ void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 // are signalled WaitForMultipleObjects reports the wake and the wake is
 // consumed (IoWake's wake' = FALSE). The signalled handle is reset before the
 // return, so a wake set after the reset is kept for the next wait. While
-// overlapped sends are outstanding their event joins the set last (IoWake on
-// compSig); it is reset by rocketnet_platform_wake_reap_sends, not here.
+// overlapped sends are outstanding their event joins the set last (IoWake once the
+// ring's sends complete); it is reset by rocketnet_platform_wake_reap_sends, not here.
 bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
 {
     rocketnet_assert( wake );

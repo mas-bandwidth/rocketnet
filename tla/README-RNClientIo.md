@@ -302,17 +302,30 @@ returns only when the kernel does; with it set, `WSASendTo` returns 0 or
 `IoSend(r)` takes the handed-off ring and posts all its slots in one step
 (the post loop touches only slots the I/O thread owns, so no other action can
 see it half done); `posted` holds the outstanding sends. `Complete(r, s)` is
-the kernel, outside both threads: an ok and an error completion release the
-slot the same way (the code counts the error in `send_errors`), so one action
-models both. `IoFinishRing` needs every posted send completed, `IoWait` may
+the kernel, outside both threads, completing one posted slot at a time in
+post order (one socket's datagram sends), so a ring with two slots passes
+through a state with one send complete and one outstanding: an ok and an
+error completion release the slot the same way (the code counts the error in
+`send_errors`), so one action models both. `IoFinishRing` needs every posted send completed, `IoWait` may
 block with a ring posted and none of its sends complete yet, `IoWake` also
 returns once the ring's sends have completed (the completion event in the
 wait set), and `IoExit` needs no send outstanding. The two defect switches
 are defined `FALSE` in the module and overridden by their witness configs
 through `MCTrue` (`MCRNClientIo.tla`), so the other configs are unchanged.
 `IoNeverBlocksOnSend` and `NoFreeBeforeComplete` are checked in
-`MCRNClientIo.cfg` with `PostedEventuallyCompletes` and `StopEventuallyFrees`
-under `SpecFair`, which is weakly fair on `Complete` and on `Free`.
+`MCRNClientIo.cfg` with `StopEventuallyFrees` under `SpecFair`, which is
+weakly fair on `Complete` and on `Free`. To fit the runner's 110 s budget the
+committed config checks `StopEventuallyFrees` in place of
+`StopEventuallyJoins` (Freed comes only after Joined, so it is the stronger
+property) and leaves out `PostedEventuallyCompletes` (a send is posted only
+from a HandedOff ring, a ring with a posted send is Sending by
+`NoFreeBeforeComplete`, and `HandedOffEventuallySent` takes it to Sent, where
+none is posted). The committed run records 422,409 states generated and
+95,184 distinct in 104 s on two workers. The same instance with every
+property, `StopEventuallyJoins` and `PostedEventuallyCompletes` included (17
+temporal branches), passes when run by hand with TLC 2.19 (exit 0, 43 s on
+eight workers, 95,184 distinct), outside the budget, so it has no row in
+`RUNS.tsv`.
 
 ## Runs
 
