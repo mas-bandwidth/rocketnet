@@ -1484,6 +1484,11 @@ void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_
         return;
     if ( rn_server_destination_refused( destination_id ) )
         return;
+    if ( destination_id >= (uint64_t) server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
     int slot;
     if ( !rn_server_slot( server, destination_id, &slot ) )
         return;

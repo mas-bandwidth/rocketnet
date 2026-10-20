@@ -13,6 +13,12 @@ the configuration system decides what happens at create.
 Build and platform instructions live in [BUILDING.md](BUILDING.md); the wire
 format lives in [STANDARD.md](STANDARD.md).
 
+Main API calls must never block or wait; the Release-under-load target is
+under 0.1 ms (100 microseconds) per call and generally not noticeable on a
+profiler compared with the rest of the game. Client and server create calls
+may be somewhat slower but must still be fast without a noticeable stall;
+these are contract targets, with load-run measurement due after features land.
+
 ## Start and stop
 
 Call `rocketnet_init` once before creating a client or a server, and check its

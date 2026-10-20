@@ -456,7 +456,7 @@ if(ROCKETNET_BUILD_TESTS)
         test.cpp test_channels.cpp test_unit_unreliable_promotion.cpp test_unit_channel_violation_counters.cpp
         sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
-    target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
+    target_compile_definitions(test_wide PRIVATE ROCKETNET_INTERNAL_WIDE_BUILD=1 ROCKETNET_MAX_CHANNELS=512
         ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
