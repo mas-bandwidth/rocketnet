@@ -1939,6 +1939,21 @@ static void message_objects_client_clock_starts_at_first_update()
     check( client );
     mo_net_connect( net, 0 );
 
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_set_assert_callback( mo_assert_hook );
+    mo_asserts = 0;
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+    check( rocketnet_message_client_update( client, NAN ) == ROCKETNET_UPDATE_OK );
+    check( !client->object.clock_started );
+    check( rocketnet_api_misuse_count() == misuse_before + 1 );
+    check( client->object.time == 0.0 );
+    check( e->time == 0.0 );
+    check( rocketnet_message_client_update( client, INFINITY ) == ROCKETNET_UPDATE_OK );
+    check( !client->object.clock_started );
+    check( rocketnet_api_misuse_count() == misuse_before + 2 );
+    check( client->object.time == 0.0 );
+    check( e->time == 0.0 );
+
     // the public client binds the flag; the server does not
     {
         rn_message_link_t bound;
@@ -1951,6 +1966,9 @@ static void message_objects_client_clock_starts_at_first_update()
     double time = MO_T0;
     check( rocketnet_message_server_update( server, time ) == ROCKETNET_UPDATE_OK );
     check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == misuse_before + 2 );
+    check( client->object.clock_started );
+    check( client->object.clock_origin == MO_T0 );
     check( e->time == 0.0 );                                    // the client transport's first update is its 0.0
     check( net->server->time == MO_T0 );                        // the server transport reads the game's time
     check( client->object.time == MO_T0 );                      // the object's own clock is the game's time
@@ -2004,6 +2022,7 @@ static void message_objects_client_clock_starts_at_first_update()
     check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
+    rocketnet_set_assert_callback( saved_assert );
     rocketnet_message_client_destroy( client );
     rocketnet_message_server_destroy( server );
     mo_net_free( net );

@@ -445,14 +445,17 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
     rn_message_object_close_in_place( object );
 
-    time = rocketnet_clamp_update_time( object->time, time, NULL );
+    bool time_clamped = false;
+    time = rocketnet_clamp_update_time( object->time, time, &time_clamped );
+    if ( time_clamped && !object->clock_started )
+        return result;
     object->time = time;
 
-    // the transport's clock: a client transport seeded at 0.0 at create starts
-    // counting at this first update, so its connect timers and token lifetime
-    // run from the first update the game makes, whatever its clock reads then.
-    // The object's own clock (budgets, resends, timeouts) is the game's time.
-    if ( !object->clock_started )
+    // sdk/rocketnet_message_server.cpp:448-463 leaves both clocks untouched on
+    // a rejected first sample. The client transport starts its clock at the
+    // first valid update, so connect timers and token lifetime start there; the
+    // object's own clock (budgets, resends, timeouts) reads game time.
+    if ( !object->clock_started && !time_clamped )
     {
         object->clock_started = 1;
         object->clock_origin = object->link.clock_from_first_update ? time : 0.0;
