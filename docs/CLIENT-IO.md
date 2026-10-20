@@ -576,7 +576,7 @@ Windows portable client therefore posts its sends and never waits in one:
 
 - **The driver interface.** `rocketnet_client_driver_operations_t` gains two
   optional callbacks, both or none, `post_send` and `reap_sends`
-  (`sdk/rocketnet_driver.h:143-144`). With them NULL the I/O step keeps the
+  (`sdk/rocketnet_driver.h:157-158`). With them NULL the I/O step keeps the
   synchronous `send` and `send_batch`, so Linux and macOS are unchanged
   (`sdk/rocketnet_driver_builtin.cpp:117-133` sets them only under
   `ROCKETNET_PLATFORM_HAS_OVERLAPPED_SEND`).
@@ -586,19 +586,19 @@ Windows portable client therefore posts its sends and never waits in one:
   (`sdk/rocketnet_client_io.h:396-416`; tla/RNClientIo.tla `IoSend`). On
   Windows a post is one `WSASendTo` with a `WSAOVERLAPPED` record from the
   wake's pool of 512, which returns 0 or `WSA_IO_PENDING` without waiting
-  (`sdk/rocketnet_platform.cpp:4204`).
+  (`sdk/rocketnet_platform.cpp:4203`).
 - **Complete.** The step then reaps: `rocketnet_client_io_reap`
   (`sdk/rocketnet_client_io.h:163`) reads the driver's completed sends,
   decrements `outstanding` for each and moves `send_errors` for an error
   completion, and marks the ring Sent only when `outstanding` reaches zero
   (tla/RNClientIo.tla `Complete`, `IoFinishRing`). On Windows
-  `rocketnet_platform_wake_reap_sends` (`sdk/rocketnet_platform.cpp:4224`)
+  `rocketnet_platform_wake_reap_sends` (`sdk/rocketnet_platform.cpp:4223`)
   resets the pool's one manual-reset event first, then reads each record
   with `WSAGetOverlappedResult` and `fWait` FALSE, so a completion after the
   scan signals the next wait.
 - **The wait.** The completion event joins the wake's existing
   `WaitForMultipleObjects` set while sends are outstanding
-  (`sdk/rocketnet_platform.cpp:4140`), so a completion ends the I/O thread's
+  (`sdk/rocketnet_platform.cpp:4139`), so a completion ends the I/O thread's
   wait like the wake and the socket do (tla/RNClientIo.tla `IoWake`). An
   event in the existing set was chosen over an alertable wait with a
   completion routine: the wait already exists and needs one more handle,
@@ -610,7 +610,7 @@ Windows portable client therefore posts its sends and never waits in one:
   (`sdk/rocketnet_client_io.h:571`). `rocketnet_platform_wake_destroy`
   cancels any record still in use with `CancelIoEx` and waits for each with
   `WSAGetOverlappedResult` before it closes the event, and the driver
-  destroys the wake before the socket (`sdk/rocketnet_platform.cpp:4097`;
+  destroys the wake before the socket (`sdk/rocketnet_platform.cpp:4096`;
   tla/RNClientIo.tla `NoFreeBeforeComplete`, `StopEventuallyFrees`).
 
 The model is tla/RNClientIo.tla with `IoNeverBlocksOnSend` and
@@ -623,12 +623,15 @@ post). The unit cases `client_io_overlapped_ring_sent_only_after_last_completion
 `client_io_overlapped_destroy_waits_for_completions` pin the bookkeeping on
 the fake driver's overlapped table, and the functional case
 `client_send_buffer_pressure_windows` runs eight step-driven clients
-(`functional/rocketnet_functional_tests.cpp:678`), so the I/O step and every
+(`functional/rocketnet_functional_tests.cpp:680`), so the I/O step and every
 driver send run on the game thread inside `send_packets` and `update`
-(`sdk/rocketnet_client_transport.cpp:1793`), fills the 256-slot ring every frame
-and checks that no one of those calls is held past one 60 Hz frame
-(`functional/rocketnet_functional_tests.cpp:746`). It uses only the public API,
-so the same case runs at BASE against the synchronous send.
+(`sdk/rocketnet_client_transport.cpp:1820`), fills the hand-off ring every
+frame and prints the longest of those calls
+(`functional/rocketnet_functional_tests.cpp:746`). It is a measurement, not a
+timing gate: on loopback the sender's call also carries the receiver's
+delivery, so the longest call is 10-25 ms on captain with the synchronous send
+and the overlapped one alike. It calls nothing BASE lacks, so the same case
+runs at BASE against the synchronous send.
 
 ## What is left out
 

@@ -295,7 +295,7 @@ Windows kernel held for 0.94 s. TLC exits 12: **`Invariant IoNeverBlocksOnSend
 is violated`** at the first `IoSend`. Against the code, by hand: with
 `post_send` NULL the step calls the driver's `send` or `send_batch` and
 returns only when the kernel does; with it set, `WSASendTo` returns 0 or
-`WSA_IO_PENDING` at once (`sdk/rocketnet_platform.cpp:3952`).
+`WSA_IO_PENDING` at once (`sdk/rocketnet_platform.cpp:4203`).
 
 ## The overlapped send
 

@@ -257,9 +257,9 @@ list above is unchanged.
 
 `rocketnet_client_driver_operations_t` (`sdk/rocketnet_driver.h`, the
 native driver interface, not a public C export) appends two optional
-members after `wake`: `post_send` and `reap_sends`
-(`sdk/rocketnet_driver.h:135-136`). They are both set or both NULL. A table
-initialised with the eight earlier members leaves them NULL, and NULL keeps
+members after `send_failures`: `post_send` and `reap_sends`
+(`sdk/rocketnet_driver.h:157-158`). They are both set or both NULL. A table
+initialised with the nine earlier members leaves them NULL, and NULL keeps
 the synchronous `send` and `send_batch` of the I/O step, so every existing
 backend, including `test/driver_extension/backend.cpp`'s four-member table,
 compiles and behaves as before. Only the Windows portable client sets them
