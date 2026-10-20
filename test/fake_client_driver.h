@@ -3,18 +3,18 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// An in-memory fake client driver for the I/O step's unit tests (docs/
+// An in-memory fake client transport for the I/O step's unit tests (docs/
 // CLIENT-IO.md "The I/O step", tla/RNClientIo.tla): no socket, no thread, no
-// time; wait never blocks. Unit tests drive the step with this driver on the
+// time; wait never blocks. Unit tests drive the step with this transport on the
 // test's thread. Four callbacks are required (create/destroy/send/receive);
 // wait, wake, send_batch and receive_batch are optional, and the three
-// static const rocketnet_client_driver_operations_t tables expose the three
-// subsets in the driver struct's member order.
+// static const rocketnet_client_transport_io_operations_t tables expose the three
+// subsets in the transport struct's member order.
 
 #pragma once
 
-#ifndef ROCKETNET_FAKE_CLIENT_DRIVER_H
-#define ROCKETNET_FAKE_CLIENT_DRIVER_H
+#ifndef ROCKETNET_FAKE_CLIENT_TRANSPORT_H
+#define ROCKETNET_FAKE_CLIENT_TRANSPORT_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
@@ -34,7 +34,7 @@ struct rocketnet_fake_client_datagram_t
     uint8_t data[ROCKETNET_MAX_PACKET_BYTES];
 };
 
-struct rocketnet_fake_client_driver_t
+struct rocketnet_fake_client_transport_io_t
 {
     rocketnet_fake_client_datagram_t inbound[ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
     int inbound_head;
@@ -49,7 +49,7 @@ struct rocketnet_fake_client_driver_t
 
 // create returns its context argument (the test passes the fake as the
 // context) and leaves bind unchanged.
-static void * rocketnet_fake_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
+static void * rocketnet_fake_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     (void) config;
     (void) bind;
@@ -57,16 +57,16 @@ static void * rocketnet_fake_client_create( void * context, const rocketnet_clie
 }
 
 // destroy counts.
-static void rocketnet_fake_client_destroy( void * driver )
+static void rocketnet_fake_client_destroy( void * transport )
 {
-    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->destroy_calls++;
 }
 
 // send appends to sent.
-static void rocketnet_fake_client_send( void * driver, const rocketnet_address_t * to, const uint8_t * data, int bytes )
+static void rocketnet_fake_client_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 {
-    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->send_calls++;
     assert( fake->num_sent < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
     rocketnet_fake_client_datagram_t * dg = &fake->sent[fake->num_sent++];
@@ -77,9 +77,9 @@ static void rocketnet_fake_client_send( void * driver, const rocketnet_address_t
 
 // receive pops one inbound datagram into the caller's buffer, copying at most
 // the capacity, and returns its bytes, or 0 when drained.
-static int rocketnet_fake_client_receive( void * driver, rocketnet_address_t * from, uint8_t * data, int capacity )
+static int rocketnet_fake_client_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
-    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->receive_calls++;
     if ( fake->inbound_count == 0 )
         return 0;
@@ -93,9 +93,9 @@ static int rocketnet_fake_client_receive( void * driver, rocketnet_address_t * f
 }
 
 // send_batch appends each send.
-static void rocketnet_fake_client_send_batch( void * driver, const rocketnet_platform_send_t * sends, int count )
+static void rocketnet_fake_client_send_batch( void * transport, const rocketnet_platform_send_t * sends, int count )
 {
-    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->send_batch_calls++;
     for ( int i = 0; i < count; i++ )
     {
@@ -109,9 +109,9 @@ static void rocketnet_fake_client_send_batch( void * driver, const rocketnet_pla
 
 // receive_batch pops up to max_packets into packet_data + i * packet_stride,
 // writing from[i] and packet_bytes[i], and returns the count.
-static int rocketnet_fake_client_receive_batch( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+static int rocketnet_fake_client_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
-    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->receive_batch_calls++;
     int got = 0;
     while ( got < max_packets && fake->inbound_count > 0 )
@@ -131,9 +131,9 @@ static int rocketnet_fake_client_receive_batch( void * driver, rocketnet_address
 // wait counts, records the timeout and readable, returns
 // wake || ( readable && inbound_count > 0 ) (a datagram counts only when
 // readable is true), and clears wake; it never blocks.
-static bool rocketnet_fake_client_wait( void * driver, bool readable, double timeout_seconds )
+static bool rocketnet_fake_client_wait( void * transport, bool readable, double timeout_seconds )
 {
-    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->wait_calls++;
     fake->last_wait_timeout = timeout_seconds;
     fake->last_wait_readable = readable;
@@ -143,31 +143,31 @@ static bool rocketnet_fake_client_wait( void * driver, bool readable, double tim
 }
 
 // wake sets wake and counts.
-static void rocketnet_fake_client_wake( void * driver )
+static void rocketnet_fake_client_wake( void * transport )
 {
-    rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->wake_calls++;
     fake->wake = true;
 }
 
 // The three tables: base (four required), io (four plus wait and wake), batch
-// (all eight), each in rocketnet_client_driver_operations_t member order.
+// (all eight), each in rocketnet_client_transport_io_operations_t member order.
 
-static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_base =
+static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_base =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     NULL, NULL, NULL, NULL
 };
 
-static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_io =
+static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_io =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake
 };
 
-static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_batch =
+static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_batch =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
@@ -178,7 +178,7 @@ static const rocketnet_client_driver_operations_t rocketnet_fake_client_operatio
 // Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). Appends past
 // ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS assert.
 
-inline void rocketnet_fake_client_push( rocketnet_fake_client_driver_t * fake, const rocketnet_address_t * from, const uint8_t * data, int bytes )
+inline void rocketnet_fake_client_push( rocketnet_fake_client_transport_io_t * fake, const rocketnet_address_t * from, const uint8_t * data, int bytes )
 {
     assert( fake->inbound_count < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
     rocketnet_fake_client_datagram_t * dg = &fake->inbound[( fake->inbound_head + fake->inbound_count ) % ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
@@ -188,4 +188,4 @@ inline void rocketnet_fake_client_push( rocketnet_fake_client_driver_t * fake, c
     fake->inbound_count++;
 }
 
-#endif // #ifndef ROCKETNET_FAKE_CLIENT_DRIVER_H
+#endif // #ifndef ROCKETNET_FAKE_CLIENT_TRANSPORT_H

@@ -1522,7 +1522,7 @@ XDP_HOST_SKIPPED( xdp_host_udp_length_drops )
 
 #endif // #if ROCKETNET_XDP_FILTER_HOST
 
-// The xdp driver's default queue rule: create and the memory plan take the
+// The xdp transport's default queue rule: create and the memory plan take the
 // same count when num_xdp_queues is zero or negative. The xdp branch of
 // rocketnet_builtin_server_memory_plan exists on Linux only.
 

@@ -22,9 +22,9 @@ static void * socket_create( void * context, rocketnet_address_t * bind )
     if (socket) ++external_test_creates;
     return socket;
 }
-static void * server_create( void * context, const rocketnet_server_driver_config_t *, rocketnet_address_t * bind )
+static void * server_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 { return socket_create(context, bind); }
-static void * client_create( void * context, const rocketnet_client_driver_config_t *, rocketnet_address_t * bind )
+static void * client_create( void * context, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * bind )
 { return socket_create(context, bind); }
 static void destroy( void * socket )
 {
@@ -57,11 +57,11 @@ static void replay_mark( void *, const rocketnet_address_t * address, uint32_t h
 }
 static void replay_commit( void * ) {}
 
-static const rocketnet_server_driver_operations_t server_operations =
+static const rocketnet_server_transport_io_operations_t server_operations =
 {
-    ROCKETNET_DRIVER_FLUSH_ON_UPDATE, server_create, destroy, stop,
+    ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, server_create, destroy, stop,
     NULL, NULL, NULL, NULL, NULL, send_batch, receive_batch,
     NULL, replay_forget, replay_mark, replay_commit
 };
-static const rocketnet_client_driver_operations_t client_operations = { client_create, destroy, send, receive };
-extern const rocketnet_driver_backend_t external_test_driver = { &server_operations, &client_operations };
+static const rocketnet_client_transport_io_operations_t client_operations = { client_create, destroy, send, receive };
+extern const rocketnet_transport_backend_t external_test_transport = { &server_operations, &client_operations };

@@ -14,13 +14,13 @@
 // never named by an ack block.
 //
 // The first two cases drive the ack endpoint and the block builder directly.
-// The rest cause real refusals on the in-memory loopback driver, time from
+// The rest cause real refusals on the in-memory loopback transport, time from
 // 1000.0, no socket, on the server and on the client, and compare each run
 // with a control that sends the same real packets and makes no refused call:
 // the ack blocks (every real packet acked, no unknown sequence), the loss
 // counters and stats, rtt, the replay window (every later packet delivered,
 // none refused), and on the message layer the reliable channel's resends and
-// the resend delay estimate. The lease table is not driven here: on the loopback driver
+// the resend delay estimate. The lease table is not driven here: on the loopback transport
 // a fill phase holds at most the payload ring's 256 frames plus
 // ROCKETNET_SEND_ARENA_SLOTS arena frames, below its refusal point (half its
 // capacity, sdk/rocketnet_packet_lease.h:37). The server assigns the sequence
@@ -194,7 +194,7 @@ REGISTER_UNIT_TEST( sequence_burn_receiver_block_skips_unopened );
 
 // ---- real refused starts over the loopback transports --------------------
 //
-// A transport pair on the in-memory loopback driver, stepped from 1000.0 by
+// A transport pair on the in-memory loopback transport, stepped from 1000.0 by
 // 10 ms, no socket. The burning side fills its own capacity with real packets
 // and then calls start_packet until it refuses for real (SEND_RING_FULL or
 // SEND_ARENA_FULL counts each refusal). Client refusals spend their sequence;
@@ -244,7 +244,7 @@ static bool sequence_burn_pair_setup( struct sequence_burn_pair_t * pair )
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
 
     pair->server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     rocketnet_unit_check( pair->server != NULL );
@@ -262,7 +262,7 @@ static bool sequence_burn_pair_setup( struct sequence_burn_pair_t * pair )
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.step_driven = 1;
     client_config.time_callback = sequence_burn_time_callback;
 
@@ -774,7 +774,7 @@ static bool sequence_burn_message_pair_setup( struct sequence_burn_message_pair_
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
 
     pair->server = rocketnet_message_server_create( NULL, "127.0.0.1:0", &server_config, NULL, NULL, 0, 0 );
     rocketnet_unit_check( pair->server != NULL );
@@ -793,7 +793,7 @@ static bool sequence_burn_message_pair_setup( struct sequence_burn_message_pair_
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.step_driven = 1;
     client_config.time_callback = sequence_burn_time_callback;
 

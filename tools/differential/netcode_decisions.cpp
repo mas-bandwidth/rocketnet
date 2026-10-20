@@ -757,7 +757,7 @@ static int netcode_decide_live( int case_id, uint64_t now, char * reason, size_t
 }
 #endif
 
-// --- driver --------------------------------------------------------------
+// --- transport --------------------------------------------------------------
 
 static int parse_case_table( const char * path )
 {

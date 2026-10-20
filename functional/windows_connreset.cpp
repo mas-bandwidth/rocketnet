@@ -53,7 +53,7 @@ static void windows_connreset_check( bool condition, const char * expression, in
 
 struct windows_connreset_transport_t
 {
-    const char * driver;        // the server transport pinned by the config
+    const char * transport;        // the server transport pinned by the config
     bool plain;                 // iocp with USO and URO disabled
     bool ipv6;
 };
@@ -61,7 +61,7 @@ struct windows_connreset_transport_t
 static void windows_connreset_clear_env()
 {
     // the case pins its own transports: an ambient pin must not override them
-    _putenv_s( "ROCKETNET_DRIVER", "" );
+    _putenv_s( "ROCKETNET_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
 }
@@ -79,14 +79,14 @@ static struct rocketnet_server_transport_t * windows_connreset_server( const win
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
-    snprintf( config.driver, sizeof( config.driver ), "%s", transport->driver );
+    snprintf( config.transport, sizeof( config.transport ), "%s", transport->transport );
 
     char bind[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( bind, sizeof( bind ), "%s:%d", windows_connreset_host( transport->ipv6 ), port );
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, bind, &config );
     rocketnet_server_iocp_test_force_flags( 0 );
     windows_connreset_require( server != NULL );
-    windows_connreset_require( strcmp( rocketnet_server_transport_driver( server ), transport->driver ) == 0 );
+    windows_connreset_require( strcmp( rocketnet_server_transport_transport( server ), transport->transport ) == 0 );
     return server;
 }
 
@@ -101,7 +101,7 @@ static struct rocketnet_client_transport_t * windows_connreset_client( const cha
     windows_connreset_require( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof( config.driver ), "%s", "portable" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
     windows_connreset_require( client != NULL );
     return client;
@@ -348,7 +348,7 @@ static const char * windows_connreset_label( const windows_connreset_transport_t
     if ( transport->plain )
         return transport->ipv6 ? "iocp (USO and URO off) ipv6" : "iocp (USO and URO off) ipv4";
     static char label[64];
-    snprintf( label, sizeof( label ), "%s %s", transport->driver, transport->ipv6 ? "ipv6" : "ipv4" );
+    snprintf( label, sizeof( label ), "%s %s", transport->transport, transport->ipv6 ? "ipv6" : "ipv4" );
     return label;
 }
 

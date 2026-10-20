@@ -22,7 +22,7 @@ machine exists. Each finding is in one of these classes.
 | clock | the transition reads a clock instead of taking time as an argument | yes |
 | entropy | the transition draws from the system random source (`randombytes_buf`, `crypto_box_keypair`). The draw is an input from outside the state, the same as a clock read | yes |
 | behaviour global | the transition reads a value outside its state struct, a global or a counter, and that value decides what it does | yes |
-| I/O | the transition calls the transport, a driver or a socket, or runs interleaved with those calls | yes |
+| I/O | the transition calls the transport, a transport or a socket, or runs interleaved with those calls | yes |
 | allocation | the transition allocates | yes |
 | construction | allocation or a random draw in `create`, outside every transition | no: recorded, because the struct cannot yet be supplied by the caller |
 | write-only instrumentation | a counter, tally or log that the transition writes and nothing in the machine reads back. Logs read the log level global (`rocketnet.cpp:88`) and print with a clock (`rocketnet.cpp:239`). They never change a result | no: recorded, see "Write-only instrumentation" |

@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Deterministic instruction-count scenario on the in-process loopback driver:
+    Deterministic instruction-count scenario on the in-process loopback transport:
     one process, no sockets, no threads (step_driven = true), no wall clock
     (caller-passed time starting at 1000.0 with fixed dt = 0.01), and all
     random bytes drawn from a fixed splitmix64 seed installed before
@@ -178,18 +178,18 @@ void run_client_frame(bool setup_only)
     rocketnet_server_transport_dev_config(&server_config);
     server_config.max_clients = 2;
     server_config.game_clock_epoch = 1000;
-    strcpy(server_config.driver, "loopback");
+    strcpy(server_config.transport, "loopback");
     rocketnet_server_transport_t * server =
         rocketnet_server_transport_create(NULL, "127.0.0.1:42000", &server_config);
     CHECK(server != NULL);
-    CHECK(strcmp(rocketnet_server_transport_driver(server), "loopback") == 0);
+    CHECK(strcmp(rocketnet_server_transport_io_name(server), "loopback") == 0);
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     CHECK(rocketnet_write_dev_connect_token("127.0.0.1:42000", 1001ULL, 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
-    strcpy(client_config.driver, "loopback");
+    strcpy(client_config.transport, "loopback");
     client_config.step_driven = true;
     client_config.game_clock_epoch = 1000;
     client_config.time_callback = sim_time_callback;
@@ -295,11 +295,11 @@ void run_server_tick(bool setup_only)
     rocketnet_server_transport_dev_config(&server_config);
     server_config.max_clients = SERVER_TICK_CLIENTS;
     server_config.game_clock_epoch = 1000;
-    strcpy(server_config.driver, "loopback");
+    strcpy(server_config.transport, "loopback");
     rocketnet_server_transport_t * server =
         rocketnet_server_transport_create(NULL, "127.0.0.1:42001", &server_config);
     CHECK(server != NULL);
-    CHECK(strcmp(rocketnet_server_transport_driver(server), "loopback") == 0);
+    CHECK(strcmp(rocketnet_server_transport_io_name(server), "loopback") == 0);
 
     rocketnet_client_transport_t * clients[SERVER_TICK_CLIENTS] = {};
     for (int c = 0; c < SERVER_TICK_CLIENTS; ++c)
@@ -310,7 +310,7 @@ void run_server_tick(bool setup_only)
 
         rocketnet_client_transport_config_t client_config;
         rocketnet_client_transport_default_config(&client_config);
-        strcpy(client_config.driver, "loopback");
+        strcpy(client_config.transport, "loopback");
         client_config.step_driven = true;
         client_config.game_clock_epoch = 1000;
         client_config.time_callback = sim_time_callback;

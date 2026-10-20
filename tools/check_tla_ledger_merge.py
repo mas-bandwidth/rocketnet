@@ -2,7 +2,7 @@
 """The four TLA ledgers merge clean when two TLA cards each append rows.
 
 The four ledgers (tla/CASES.tsv, tla/COVERAGE.tsv, tla/RUNS.tsv and
-tla/README.md) merge with git's union driver, so two TLA cards that append
+tla/README.md) merge with git's union transport, so two TLA cards that append
 rows land without conflict. An edit to an existing row next to another
 branch's append comes out doubled, refused by tlacheck for CASES.tsv and
 RUNS.tsv and by tools/check_tla_coverage.py for COVERAGE.tsv; a doubled

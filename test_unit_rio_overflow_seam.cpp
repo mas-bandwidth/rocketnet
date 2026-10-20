@@ -14,7 +14,7 @@
 
 #if defined(_WIN32)
 
-// Implemented only by the isolated test-instrumented RIO driver copy.
+// Implemented only by the isolated test-instrumented RIO transport copy.
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                   int * repost_calls, int * pending_receives, int * guard_hit );
 

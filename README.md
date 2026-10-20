@@ -20,7 +20,7 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
   transports, App Nap and QoS, socket errors, the firewall prompt, lldb and
   verification on a Mac.
 - [docs/PLATFORMS.md](docs/PLATFORMS.md) — supported, nightly, and unsupported platform rows and the CI workflows that prove them.
-- [DRIVERS.md](DRIVERS.md) — native transport driver registry, capabilities, and extension interface.
+- [TRANSPORTS.md](TRANSPORTS.md) — native transport transport registry, capabilities, and extension interface.
 - [sdk/rocketnet.h](sdk/rocketnet.h) — the public header, and the authority
   wherever a contract is written down.
 - [examples/README.md](examples/README.md) — the feature-focused examples series, starting with hello.

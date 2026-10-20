@@ -37,7 +37,7 @@
 // the fake first, so the fake's own callbacks read the same pointer
 struct drop_counters_driver_t
 {
-    rocketnet_fake_client_driver_t fake;
+    rocketnet_fake_client_transport_io_t fake;
     rocketnet_address_t from[DROP_COUNTERS_MAX_SCRIPT];
     int reported[DROP_COUNTERS_MAX_SCRIPT];
     int head, count;
@@ -118,7 +118,7 @@ static void drop_counters_token( uint8_t * token )
     rocketnet_write_signed_connect_data( &signed_fields, token );
 }
 
-static rocketnet_client_transport_t * drop_counters_create( drop_counters_driver_t * driver, const rocketnet_client_driver_operations_t * operations, drop_counters_clock_t * clock )
+static rocketnet_client_transport_t * drop_counters_create( drop_counters_driver_t * driver, const rocketnet_client_transport_io_operations_t * operations, drop_counters_clock_t * clock )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     drop_counters_token( token );
@@ -138,7 +138,7 @@ static uint64_t drop_counters_value( rocketnet_client_transport_t * transport, i
 
 static void drop_counters_run( bool batch )
 {
-    rocketnet_client_driver_operations_t operations = batch ? rocketnet_fake_client_operations_batch : rocketnet_fake_client_operations_io;
+    rocketnet_client_transport_io_operations_t operations = batch ? rocketnet_fake_client_operations_batch : rocketnet_fake_client_operations_io;
     operations.receive = drop_counters_receive;
     if ( batch )
         operations.receive_batch = drop_counters_receive_batch;
@@ -210,7 +210,7 @@ static void client_receive_counts_prefilter_drops_without_io_core()
 {
     rocketnet_public_link_simulator_test_development( 1 );
 
-    rocketnet_client_driver_operations_t operations = rocketnet_fake_client_operations_io;
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
     operations.receive = drop_counters_receive;
 
     drop_counters_driver_t * driver = new drop_counters_driver_t();
@@ -258,7 +258,7 @@ REGISTER_UNIT_TEST( client_receive_counts_prefilter_drops_without_io_core );
 // foreign source (sdk/rocketnet_client_transport.cpp:1296-1301)
 static void client_receive_foreign_source_not_counted_after_disconnect()
 {
-    rocketnet_client_driver_operations_t operations = rocketnet_fake_client_operations_io;
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
     operations.receive = drop_counters_receive;
 
     drop_counters_driver_t * driver = new drop_counters_driver_t();

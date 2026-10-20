@@ -51,7 +51,7 @@ jobs:
 
       - name: Enforce P=32 frame budget (portable)
         run: |
-          python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --driver portable
+          python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport portable
 
   macos-frame-budget:
     name: frame budget (${{ matrix.ref }} / macos-15 msgx report-only)
@@ -112,7 +112,7 @@ jobs:
 
       - name: Report P=32 frame budget (msgx, report-only)
         run: |
-          python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --driver msgx --report-only
+          python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport msgx --report-only
 
   windows-frame-budget:
     name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
@@ -137,4 +137,4 @@ jobs:
         run: cmake --build build --config Release --target client_main_thread_cost --parallel
 
       - name: Report P=32 frame budget (portable, report-only)
-        run: python tools/check_frame_budget.py --bin ./bin/Release/client_main_thread_cost.exe --driver portable --report-only
+        run: python tools/check_frame_budget.py --bin ./bin/Release/client_main_thread_cost.exe --transport portable --report-only

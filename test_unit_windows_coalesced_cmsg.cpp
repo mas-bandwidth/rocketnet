@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The IOCP driver's read of the UDP_COALESCED_INFO control message
+// The IOCP transport's read of the UDP_COALESCED_INFO control message
 // (rocketnet_iocp_coalesced_stride) over a WSAMSG built in memory: pure, no
 // socket, no wall clock. The stride is copied only when the header's
 // cmsg_len covers a whole DWORD, WSA_CMSG_LEN( sizeof( DWORD ) ).
@@ -21,7 +21,7 @@
 
 #define check rocketnet_unit_check
 
-// Implemented by the IOCP driver (rocketnet_server_iocp_windows.cpp).
+// Implemented by the IOCP transport (rocketnet_server_iocp_windows.cpp).
 DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message );
 
 struct coalesced_cmsg_buffer_t

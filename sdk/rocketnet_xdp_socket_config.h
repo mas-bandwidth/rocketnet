@@ -8,7 +8,7 @@
 // attach flags (XDP_FLAGS_*), which libxdp never reads here because the
 // program is loaded by the server, not by libxdp
 // (XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD). The first attempt asks for zero copy;
-// a driver without zero-copy support refuses that bind, and the fallback asks
+// a transport without zero-copy support refuses that bind, and the fallback asks
 // for copy. Both ask for the need-wakeup flag. Header only, so the kernel-tier
 // suite binds through the same config as the server.
 //

@@ -269,7 +269,7 @@ generated, 672 distinct).
   (no Free buffer), and waits again, which returns at once again: a spin
   until `update` exposes buffer 0 and returns it, about a frame of a busy
   core for any hitch of more than `ROCKETNET_NUM_CLIENT_PACKETS` replies. In
-  the design as written the fourth step is `wait( driver, false, timeout )`:
+  the design as written the fourth step is `wait( transport, false, timeout )`:
   the full buffer waits on the wake alone, and the `Return` at the end of the
   next `update` wakes it because owed is set.
 

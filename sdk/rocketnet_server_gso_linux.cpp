@@ -9,10 +9,10 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-// The GSO transport driver (#97). See rocketnet_server_gso.h for the shape
+// The GSO transport transport (#97). See rocketnet_server_gso.h for the shape
 // and the framing; this file is the machinery.
 //
-// The receive side is the XDP driver's pattern on portable primitives: one
+// The receive side is the XDP transport's pattern on portable primitives: one
 // socket per queue in an SO_REUSEPORT group, one worker thread per socket,
 // each worker draining its own socket with recvmmsg into its own double
 // buffer -- zero shared state between queues -- and the main thread flipping
@@ -67,7 +67,7 @@
 #endif
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing,
-// exactly as in the xdp driver: each field between walls is touched by a
+// exactly as in the xdp transport: each field between walls is touched by a
 // different thread, and without the walls those fields would share cache
 // lines. Nothing goes wrong if you remove them -- it just gets slow.
 
@@ -622,7 +622,7 @@ static void rocketnet_server_gso_worker( void * data )
                     const int remaining = message_bytes - offset;
                     const int this_segment = remaining < segment_bytes ? remaining : segment_bytes;
 
-                    // the same cheap pass every driver makes before staging:
+                    // the same cheap pass every transport makes before staging:
                     // below the smallest packet a server reads, or above the
                     // receive ceiling, never reaches the protocol
 
@@ -688,7 +688,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         num_queues = ROCKETNET_GSO_DEFAULT_QUEUES;
 
     // refuse, never clamp (#106's validation law): a queue count past this
-    // driver's geometry is a configuration error named here, not a silently
+    // transport's geometry is a configuration error named here, not a silently
     // different server
 
     if ( num_queues > ROCKETNET_GSO_MAX_QUEUES )
@@ -749,7 +749,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->features |= ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT;
 
     // the runtime probes, each a real setsockopt against a real socket in
-    // the group -- the #81 probe's checks as the driver's own selection
+    // the group -- the #81 probe's checks as the transport's own selection
     // inputs. failure is a tier, not an error.
 
     if ( ( flags & ROCKETNET_SERVER_GSO_DISABLE_SEGMENT ) == 0 )
@@ -909,7 +909,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
 }
 
-// the builtin driver's receive_drops hook: the size
+// the builtin transport's receive_drops hook: the size
 // pass's drops (sdk/rocketnet_server_gso_linux.cpp:532-586), split at the receive
 // ceiling; main thread, as the fold into these totals is (:1209-1210)
 
@@ -936,7 +936,7 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
 
     const int slot = gso->send.num_packets.fetch_add( 1, std::memory_order_relaxed );
 
-    // the same lower bound the xdp driver learned to check: an app that
+    // the same lower bound the xdp transport learned to check: an app that
     // stages forever without flushing wraps the counter negative, and a
     // negative index is an out-of-bounds write, not a dropped packet
 
@@ -1134,9 +1134,9 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
         // socket shares the same bound address and port, so replies carry
         // the same 4-tuple whichever socket sent them, and the group's send
         // buffer headroom adds up instead of funneling through one socket.
-        // the deeper TX property the xdp driver has -- per-queue sender
+        // the deeper TX property the xdp transport has -- per-queue sender
         // threads -- is deliberately not reproduced here: transmit is
-        // main-thread by the phase contract, and this driver is the middle
+        // main-thread by the phase contract, and this transport is the middle
         // tier, not parity.
 
         const int fd = gso->queues[gso->send_rotation++ % (uint64_t) gso->num_queues].fd;
@@ -1272,7 +1272,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         for ( uint32_t i = 0; i < buffer->num_packets; i++ )
         {
             // bound by the process ARRAYS, never the queue depth -- the
-            // lesson the xdp driver's staging overflow taught is baked in
+            // lesson the xdp transport's staging overflow taught is baked in
             // here from day one
 
             if ( gso->process_packets.num_packets >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )

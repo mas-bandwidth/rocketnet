@@ -26,7 +26,7 @@ struct rocketnet_server_socket_t;
 // condition list both this check and that script derive from. Read-only by
 // contract: it may create and close probe descriptors (an AF_XDP socket
 // never bound, a BPF program never attached) but never changes machine
-// state. create() runs it first and refuses without it; the driver ladder
+// state. create() runs it first and refuses without it; the transport ladder
 // and the test suite call it directly so a refusal is named without ever
 // touching the committing path.
 
@@ -45,7 +45,7 @@ void rocketnet_server_socket_allow_commit();
 
 // the R4 interrupt-line matcher, pure string logic exported for the
 // fixture test: does this /proc/interrupts line belong to this interface?
-// bounded-token semantics -- '-' allowed before (driver-prefixed names
+// bounded-token semantics -- '-' allowed before (transport-prefixed names
 // like i40e-ens1f0-TxRx-0), never a bare substring ("lo" must not match
 // "velocity0").
 

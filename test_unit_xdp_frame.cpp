@@ -632,26 +632,26 @@ static void xdp_receive_dispatches_both_families_counted()
 
 static void xdp_ladder_keeps_xdp_for_ipv6()
 {
-    const int linux_server[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
-    struct rocketnet_driver_ladder_t ladder;
+    const int linux_server[] = { ROCKETNET_TRANSPORT_XDP, ROCKETNET_TRANSPORT_GSO, ROCKETNET_TRANSPORT_PORTABLE };
+    struct rocketnet_transport_ladder_t ladder;
 
-    rocketnet_unit_check( rocketnet_driver_ladder_parse( "auto", linux_server, 3, &ladder ) );
-    rocketnet_unit_check( ladder.num_candidates == 3 && ladder.candidates[0] == ROCKETNET_DRIVER_XDP );
+    rocketnet_unit_check( rocketnet_transport_ladder_parse( "auto", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( ladder.num_candidates == 3 && ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
 
-    rocketnet_unit_check( rocketnet_driver_ladder_parse( "gso,xdp,portable", linux_server, 3, &ladder ) );
-    rocketnet_unit_check( ladder.num_candidates == 3 && ladder.candidates[1] == ROCKETNET_DRIVER_XDP );
+    rocketnet_unit_check( rocketnet_transport_ladder_parse( "gso,xdp,portable", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( ladder.num_candidates == 3 && ladder.candidates[1] == ROCKETNET_TRANSPORT_XDP );
 
-    rocketnet_unit_check( rocketnet_driver_ladder_parse( "xdp", linux_server, 3, &ladder ) );
-    rocketnet_unit_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_DRIVER_XDP );
+    rocketnet_unit_check( rocketnet_transport_ladder_parse( "xdp", linux_server, 3, &ladder ) );
+    rocketnet_unit_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
 }
 
 // A server create that pins xdp with an IPv6 address is not refused for its
-// family: the ladder hands it to the xdp driver, whose create meets this
+// family: the ladder hands it to the xdp transport, whose create meets this
 // process's commit barrier (the unit suite forbids an XDP data plane) and
 // refuses there, before any socket opens. No line says the transport serves
 // IPv4 only, and the status is not INVALID_TRANSPORT_LIST. The xdp row
 // exists only on Linux: elsewhere a pin of it falls to the auto order, whose
-// drivers open a real socket, so off Linux the case is a named skip.
+// transports open a real socket, so off Linux the case is a named skip.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
@@ -669,17 +669,17 @@ static void xdp_ipv6_capture( void *, enum rocketnet_log_level_t level, const ch
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-static void xdp_ipv6_pin_reaches_the_xdp_driver_at_create()
+static void xdp_ipv6_pin_reaches_the_xdp_transport_at_create()
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     int num_available = 0;
-    const int * available = rocketnet_server_driver_availability( &num_available );
+    const int * available = rocketnet_server_transport_io_availability( &num_available );
     bool xdp_available = false;
     for ( int i = 0; i < num_available; i++ )
-        xdp_available = xdp_available || available[i] == ROCKETNET_DRIVER_XDP;
+        xdp_available = xdp_available || available[i] == ROCKETNET_TRANSPORT_XDP;
     if ( !xdp_available )
     {
-        printf( "xdp_ipv6_pin_reaches_the_xdp_driver_at_create [SKIPPED: this build has no xdp row]\n" );
+        printf( "xdp_ipv6_pin_reaches_the_xdp_transport_at_create [SKIPPED: this build has no xdp row]\n" );
         return;
     }
 
@@ -698,7 +698,7 @@ static void xdp_ipv6_pin_reaches_the_xdp_driver_at_create()
     memset( config.server_public_key, 0x43, 32 );
     memset( config.server_secret_key, 0x44, 32 );
     config.protocol_id = 1;
-    strcpy( config.driver, "xdp" );
+    strcpy( config.transport, "xdp" );
 
     const enum rocketnet_log_level_t level = rocketnet_get_log_level();
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
@@ -719,7 +719,7 @@ static void xdp_ipv6_pin_reaches_the_xdp_driver_at_create()
     rocketnet_unit_check( xdp_ipv6_family_refusals == 0 );
     rocketnet_unit_check( xdp_ipv6_barrier_lines == 1 );
 #else
-    printf( "xdp_ipv6_pin_reaches_the_xdp_driver_at_create [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
+    printf( "xdp_ipv6_pin_reaches_the_xdp_transport_at_create [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
 #endif
 }
 
@@ -739,4 +739,4 @@ REGISTER_UNIT_TEST( xdp_receive_ipv6_extension_dropped_counted );
 REGISTER_UNIT_TEST( xdp_frame_ipv4_unchanged );
 REGISTER_UNIT_TEST( xdp_receive_dispatches_both_families_counted );
 REGISTER_UNIT_TEST( xdp_ladder_keeps_xdp_for_ipv6 );
-REGISTER_UNIT_TEST( xdp_ipv6_pin_reaches_the_xdp_driver_at_create );
+REGISTER_UNIT_TEST( xdp_ipv6_pin_reaches_the_xdp_transport_at_create );

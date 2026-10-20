@@ -3,14 +3,14 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The Windows Registered I/O (RIO) server driver's region layout and request
+// The Windows Registered I/O (RIO) server transport's region layout and request
 // contexts, pure: no syscall, no allocation, no global state, no Windows
-// header, so the Windows driver and the Linux unit suite share it. RIO
+// header, so the Windows transport and the Linux unit suite share it. RIO
 // addresses a registered buffer by 32-bit Offset and Length (the RIO_BUF
 // struct), so every offset here fits in 32 bits. This is the byte-level
 // counterpart of sdk/rocketnet_uring_codec.h: the byte-level parts of the
-// driver (carving one registered region, the 64-bit request contexts) are
-// written and unit tested here, and the driver links the RIO
+// transport (carving one registered region, the 64-bit request contexts) are
+// written and unit tested here, and the transport links the RIO
 // API for the socket and completion queues itself.
 
 #ifndef ROCKETNET_RIO_LAYOUT_H

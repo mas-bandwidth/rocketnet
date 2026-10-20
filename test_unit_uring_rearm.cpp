@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The io_uring re-arm and destroy-bound cases. Both run through the driver's
-// development-only seam: a fake driver with queues but no kernel ring, whose
+// The io_uring re-arm and destroy-bound cases. Both run through the transport's
+// development-only seam: a fake transport with queues but no kernel ring, whose
 // arm calls can be told to find no submission entry, and the end condition
 // of destroy's wait loop (rocketnet_server_uring_destroy_wait_over) run with
 // every round completing or every round silent. No socket, no ring, no wall
@@ -59,7 +59,7 @@ static void uring_rearm_retries_a_failed_arm()
 
     rocketnet_server_uring_test_destroy_fake( uring );
 #else
-    printf( "uring_rearm_retries_a_failed_arm [SKIPPED the io_uring driver and its test seam need Linux with liburing]\n" );
+    printf( "uring_rearm_retries_a_failed_arm [SKIPPED the io_uring transport and its test seam need Linux with liburing]\n" );
 #endif
 }
 
@@ -79,7 +79,7 @@ static void uring_destroy_wait_is_bounded()
     const int silent_rounds = rocketnet_server_uring_test_destroy_wait_rounds( false, 1000 );
     rocketnet_unit_check( silent_rounds == 5 );
 #else
-    printf( "uring_destroy_wait_is_bounded [SKIPPED the io_uring driver and its test seam need Linux with liburing]\n" );
+    printf( "uring_destroy_wait_is_bounded [SKIPPED the io_uring transport and its test seam need Linux with liburing]\n" );
 #endif
 }
 

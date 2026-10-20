@@ -1,7 +1,7 @@
 # RNXdpReplay: kernel replay protection with a read-only high-water map
 
 `tla/RNXdpReplay.tla` is the design of kernel replay protection for the XDP
-server driver: a BPF hash map `server_xdp_replay_map` that the XDP program
+server transport: a BPF hash map `server_xdp_replay_map` that the XDP program
 (`server_xdp/server_xdp.c`) only reads, and that the transport writes once per
 server update from the session replay windows (`sdk/rocketnet_replay.h`,
 `highest_opened`). The worked example of a replay model is
@@ -30,11 +30,11 @@ are rows of `tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
   counting `ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED`; otherwise go on.
   The kernel never updates or deletes an entry, so a forged sequence far
   ahead passes to userspace, fails the AEAD open there, and moves nothing.
-- Userspace, once per update after packet processing and before the driver
+- Userspace, once per update after packet processing and before the transport
   flush: FORGET the old address of every slot that held a mark and is no
   longer connected (or whose mapping changed address); then MARK every
   connected slot whose `highest_opened` is nonzero and differs from what it
-  last marked. The driver applies all forgets, then all marks, in one commit.
+  last marked. The transport applies all forgets, then all marks, in one commit.
   The map lags the truth by at most one update and is never ahead of it.
 - Sizing: the kernel window is 16 behind the high-water; the userspace window
   stays `ROCKETNET_REPLAY_WINDOW_BITS` (4096). A genuine packet within 16 of
@@ -87,7 +87,7 @@ Actions, each against the design sentence it models:
 - `Walk`: forgets first (every address with `marked[a] # 0` and no live
   session), then marks (every live session with `opened[a] # 0` and
   `opened[a] # marked[a]`), into the pending sets; `marked` records them.
-- `Commit`: the driver applies all forgets, then all marks, to `kmap`. The
+- `Commit`: the transport applies all forgets, then all marks, to `kmap`. The
   only action that writes `kmap` in the design.
 
 `Connect`, `UserOpen`, `Release` and `Walk` are userspace steps of one

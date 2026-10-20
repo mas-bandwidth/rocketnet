@@ -13,7 +13,7 @@ happy-path: build
 	cd tools/happy_path && nice -n 19 go build -o ../../bin/happy_path happy_path.go
 	./bin/happy_path
 
-# driver selection is runtime now (#106): one build carries every driver its
+# transport selection is runtime now (#106): one build carries every transport its
 # platform has, and ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT (or
 # the config's transport field) select at create -- the functional suite against
 # each rung is the matrix proving the abstraction, e.g.

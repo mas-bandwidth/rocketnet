@@ -1217,7 +1217,7 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
 // ON-LINK REPLY: the one case that attaches a program and moves traffic, so it
 // runs only inside a virtme-ng guest (it skips on a host). A veth pair has
 // its peer end in a network namespace with no default route; the example
-// server runs with the xdp driver on the near end, the example client runs in
+// server runs with the xdp transport on the near end, the example client runs in
 // the namespace, and every frame the server sends must carry the peer end's
 // MAC as its destination. The namespace and the veth pair are removed on
 // every exit path.
@@ -1533,7 +1533,7 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
     }
     if ( !server_was_xdp )
     {
-        printf( "  FAIL the server did not start with the xdp driver on " ONLINK_NEAR "\n" );
+        printf( "  FAIL the server did not start with the xdp transport on " ONLINK_NEAR "\n" );
         ok = false;
     }
     if ( !client_connected || !exchanged )

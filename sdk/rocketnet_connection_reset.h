@@ -53,7 +53,7 @@ struct rn_message_object_t;
     X( RESET, has_mark ) X( RESET, marked_value ) X( RESET, marked_address )
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( X ) \
-    X( RESET, packet_leases ) X( KEEP, context ) X( KEEP, bound_port ) X( KEEP, driver ) \
+    X( RESET, packet_leases ) X( KEEP, context ) X( KEEP, bound_port ) X( KEEP, transport ) \
     X( KEEP, io ) X( KEEP, thread ) X( KEEP, mutex ) X( KEEP, quit ) \
     X( KEEP, receive_buffer_index ) X( RESET, received_packets ) X( KEEP, receive_buffer ) \
     X( KEEP, time ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \

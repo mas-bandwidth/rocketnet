@@ -58,7 +58,7 @@ when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
 The functional-only sibling binaries are `test_serialize` (a real clock and
 `rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
-`usleep`), `test_driver`, `test_transport_control`, `test_lifecycle`,
+`usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
 `test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
@@ -520,13 +520,13 @@ list in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_CLIENT_SEND_BUFFER_BYTES
 * Environment: ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES
 * Environment: ROCKETNET_CLIENT_PACKETS_IN_FLIGHT
-* Environment: ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_CLIENT_PACKETS_PER_UPDATE
 * Environment: ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES
 * Environment: ROCKETNET_CLIENT_SEQUENCED_HOLDS
 * Environment: ROCKETNET_CLIENT_RECEIPT_RING
-* Environment: ROCKETNET_CLIENT_RTO_INITIAL_MS
-* Environment: ROCKETNET_CLIENT_RTO_MIN_MS
-* Environment: ROCKETNET_CLIENT_RTO_MAX_MS
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS
 * Environment: ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS
 * Environment: ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT
 * Environment: ROCKETNET_CLIENT_SIMULATED_LATENCY_MS
@@ -554,13 +554,13 @@ list in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_SEND_BUFFER_BYTES
 * Environment: ROCKETNET_SERVER_SEND_QUEUE_MESSAGES
 * Environment: ROCKETNET_SERVER_PACKETS_IN_FLIGHT
-* Environment: ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_SERVER_PACKETS_PER_UPDATE
 * Environment: ROCKETNET_SERVER_UNRELIABLE_DELIVERIES
 * Environment: ROCKETNET_SERVER_SEQUENCED_HOLDS
 * Environment: ROCKETNET_SERVER_RECEIPT_RING
-* Environment: ROCKETNET_SERVER_RTO_INITIAL_MS
-* Environment: ROCKETNET_SERVER_RTO_MIN_MS
-* Environment: ROCKETNET_SERVER_RTO_MAX_MS
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_MIN_MS
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_MAX_MS
 * Environment: ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS
 * Environment: ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT
 * Environment: ROCKETNET_SERVER_SIMULATED_LATENCY_MS
@@ -620,7 +620,7 @@ explicitly named platform skips. Failures retain the captured diagnostic log.
 
 ### Windows IOCP server
 
-Native transport authors: [DRIVERS.md](DRIVERS.md) describes registration,
+Native transport authors: [TRANSPORTS.md](TRANSPORTS.md) describes registration,
 capabilities, ownership and the independently built extension example.
 
 Select `transport = "iocp"` in the existing server config, or set

@@ -581,7 +581,7 @@ static void check_server_memory_budget( allocator_state & state )
     memset( config.server_secret_key, 0xCD, 32 );
     memset( config.backend_public_key, 0xEF, 32 );
     config.protocol_id = 1;
-    strcpy( config.driver, "portable" );
+    strcpy( config.transport, "portable" );
     const uint64_t plan = rocketnet_server_transport_required_memory( &config, "portable" );
     check( plan > 0 );
 
@@ -659,7 +659,7 @@ int main()
     check(host_estimate.total_bytes >= rocketnet_server_transport_required_memory(NULL, "portable"));
     check(rocketnet_server_transport_host_memory_estimate(&memory_config, "portable", &host_estimate));
 
-    // The client transport's plan: defaults, unknown/NULL/auto drivers and an
+    // The client transport's plan: defaults, unknown/NULL/auto transports and an
     // overflowing geometry all refuse to 0, a larger max payload plans larger,
     // and planning allocates nothing. A create-time counting-allocator match
     // needs a live socket, so it is left to bench/transport_memory.cpp.

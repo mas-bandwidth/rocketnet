@@ -294,7 +294,7 @@ def main():
     env.pop("ROCKETNET_TEST_VERBOSE", None)
 
     if functional:
-        # the functional suite opens loopback sockets and walks the driver
+        # the functional suite opens loopback sockets and walks the transport
         # ladder; its CI job invokes it with the ambient environment (and any
         # ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin) rather than the
         # unit suite's hostile config.
