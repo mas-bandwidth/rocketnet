@@ -145,8 +145,14 @@ static int rocketnet_server_request_cookie_mac( uint8_t * mac,
 static int rocketnet_server_address_is_advertised( const struct rocketnet_server_protocol_t * server,
                                                    struct rocketnet_address_t * addr )
 {
+    // dual_stack: a server bound at the IPv6 wildcard ("[::]"), which
+    // advertises the IPv6 wildcard beside the IPv4 wildcard. A server that
+    // names both families (second_public_address) advertises the two named
+    // addresses and is not dual_stack here.
+    static const uint16_t ipv6_wildcard[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
     const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6;
+                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
+                           memcmp( server->advertised_ipv6.data.ipv6, ipv6_wildcard, sizeof( ipv6_wildcard ) ) == 0;
 
     if ( addr->type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( addr ) )
         rocketnet_address_convert_ipv6_to_ipv4( addr );

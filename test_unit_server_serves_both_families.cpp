@@ -410,3 +410,31 @@ static void arrival_family_accepts_the_matching_ipv4_address()
     both_families_protocol_teardown( &test );
 }
 REGISTER_UNIT_TEST( arrival_family_accepts_the_matching_ipv4_address );
+
+// rocketnet_server_address_is_advertised: the IPv4 loopback stands for the
+// server only on an IPv6-wildcard ("[::]") server. A server that names a
+// public IPv4 and a public IPv6 address refuses a token naming 127.0.0.1.
+
+static void named_two_family_server_refuses_a_loopback_token()
+{
+    struct both_families_protocol_t test;
+    both_families_protocol_setup( &test );
+    check( rocketnet_address_parse( &test.server.advertised_ipv4, "203.0.113.5:9" ) );
+    check( rocketnet_address_parse( &test.server.advertised_ipv6, "[2001:db8::5]:9" ) );
+    const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x09, 0x00 };
+    const uint8_t foreign_ipv6[18] = { 0x01, 0x20, 0xb8, 0x0d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x09, 0x00 };
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    both_families_mint( request, loopback_ipv4, foreign_ipv6 );
+    struct rocketnet_address_t from;
+    check( rocketnet_address_parse( &from, "198.51.100.7:5444" ) );
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
+    const uint64_t before = test.counters.values[addr_counter];
+    const int result = rocketnet_server_protocol_process_connection_request( &test.server, &from, request, sizeof( request ),
+                                                                              ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes );
+    check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[addr_counter] == before + 1 );
+    both_families_protocol_teardown( &test );
+}
+REGISTER_UNIT_TEST( named_two_family_server_refuses_a_loopback_token );
