@@ -590,9 +590,9 @@ void rocketnet_test_client_io_windows_handoff_round_trip()
 // client_send_buffer_pressure_windows: one game thread per client, each
 // client created with the public step_driven config, so the client I/O step
 // (and so every driver send) runs on the game thread inside send_packets and
-// update (sdk/rocketnet_client_transport.cpp rocketnet_client_transport_send_packets,
+// update (sdk/rocketnet_client_transport.cpp:1793 in rocketnet_client_transport_send_packets,
 // the step_in_update branch). The case times each of those calls from the
-// game thread under ring pressure: every frame fills the 256-slot hand-off
+// game thread under ring pressure: every frame fills the 256-slot hand-off (:69)
 // ring with 1000-byte payloads until start_packet refuses, then sends.
 // What the overlapped send is for (docs/CLIENT-IO.md The Windows send,
 // tla/RNClientIo.tla IoNeverBlocksOnSend) is that no such call is held by the

@@ -107,11 +107,10 @@ struct rocketnet_client_io_t
     std::atomic<bool> quit;
     struct rocketnet_client_io_open_t open;
     // the overlapped send (tla/RNClientIo.tla IoSend, Complete, IoFinishRing);
-    // I/O thread only, except the two atomics any thread may read
+    // I/O thread only, except send_errors, which any thread may read
     int posted_ring;                            // the ring whose sends are posted, or -1
     int outstanding;                            // its posted sends not yet completed
     std::atomic<uint64_t> send_errors;          // sends refused at post or completed with an error
-    std::atomic<double> longest_send_seconds;   // the longest send phase of one ring on the I/O thread
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -147,7 +146,6 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->posted_ring = -1;
     io->outstanding = 0;
     io->send_errors.store( 0, std::memory_order_relaxed );
-    io->longest_send_seconds.store( 0.0, std::memory_order_relaxed );
 }
 
 // True when the driver posts overlapped sends (post_send and reap_sends).
@@ -395,7 +393,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     {
         const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
         const uint64_t committed = io->rings.committed[ring];
-        const double send_start = io->time( io->time_context );
         if ( overlapped )
         {
             // RNClientIo IoSend, overlapped: each slot's send is posted and
@@ -452,9 +449,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 io->driver->operations->send( io->driver->instance, &io->to[ring], packet_data, bytes );
             }
         }
-        const double send_seconds = io->time( io->time_context ) - send_start;
-        if ( send_seconds > io->longest_send_seconds.load( std::memory_order_relaxed ) )
-            io->longest_send_seconds.store( send_seconds, std::memory_order_relaxed );
         if ( !overlapped )
             rocketnet_client_send_rings_finish( &io->rings, ring );
         worked = true;
