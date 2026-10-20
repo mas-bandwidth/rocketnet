@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
+# 12.0: the Xcode 27 build system refuses 11.0 (its supported range starts at
+# 12.0), so it is the lowest target both the Xcode generator and the Command
+# Line Tools build on both universal slices. Set before project(); -D overrides.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
+endif()
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)

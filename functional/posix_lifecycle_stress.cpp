@@ -855,6 +855,77 @@ void rocketnet_test_posix_client_create_destroy_1000()
     }
 }
 
+// The port the restart case binds for its whole life. A kernel-chosen
+// ephemeral port is not the case's to keep: the discovery server releases it,
+// and any sibling test's client or scratch socket binding port 0 can take it
+// before the next rebind. On Linux a failing run saw the io_uring rung refuse
+// a discovered 127.0.0.1:44960 with errno 98 (EADDRINUSE), then exhaust the
+// ladder, because the port had gone to a socket that does not share the
+// driver's SO_REUSEPORT. Take a port below the kernel's ephemeral range
+// instead, in a slice this cell alone scans.
+static unsigned posix_reserved_restart_port( int cell_index )
+{
+    const unsigned first_port = 1025;
+    unsigned last_port = 29999;
+#if defined(__linux__)
+    FILE * port_range = fopen( "/proc/sys/net/ipv4/ip_local_port_range", "r" );
+    if ( !port_range )
+        return 0;
+    unsigned ephemeral_first = 0;
+    unsigned ephemeral_last = 0;
+    const int range_read = fscanf( port_range, "%u %u", &ephemeral_first, &ephemeral_last );
+    fclose( port_range );
+    if ( range_read != 2 || ephemeral_first <= first_port || ephemeral_last < ephemeral_first )
+        return 0;
+    if ( last_port >= ephemeral_first )
+        last_port = ephemeral_first - 1;
+#endif
+    if ( last_port < first_port )
+        return 0;
+
+    // the restart_same_port driver cases run concurrently in the suite and
+    // each reserves its own port. seeding every reservation on the same
+    // getpid() starts them all at the same port, so their probe-then-release
+    // reservations can pick the same port and one rebind fails with
+    // EADDRINUSE. seed on the cell index so each case scans a disjoint
+    // subrange.
+    const unsigned slice_count = (unsigned) posix_cell_count;
+    if ( slice_count == 0 )
+        return 0;
+    const unsigned port_count = last_port - first_port + 1;
+    const unsigned slice = port_count / slice_count;
+    const unsigned slice_index = (unsigned) cell_index % slice_count;
+    const unsigned base = first_port + slice_index * slice;
+    const unsigned remainder = ( slice_index == slice_count - 1 ) ? port_count % slice_count : 0;
+    const unsigned usable = slice + remainder;
+    if ( usable == 0 )
+        return 0;
+    unsigned port = base + (unsigned) getpid() % usable;
+    if ( port > last_port )
+        return 0;
+    for ( unsigned i = 0; i < usable; i++ )
+    {
+        const int fd = (int) socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+        if ( fd < 0 )
+            return 0;
+
+        struct sockaddr_in address;
+        memset( &address, 0, sizeof( address ) );
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl( INADDR_ANY );
+        address.sin_port = htons( (uint16_t) port );
+        const int result = bind( fd, (struct sockaddr*) &address, sizeof( address ) );
+        const int error = errno;
+        close( fd );
+        if ( result == 0 )
+            return port;
+        if ( error != EADDRINUSE && error != EACCES )
+            return 0;
+        port = base + ( port - base + 1 ) % usable;
+    }
+    return 0;
+}
+
 void rocketnet_test_posix_server_restart_same_port_100()
 {
     const char * case_name = "posix_server_restart_same_port_100";
@@ -870,12 +941,15 @@ void rocketnet_test_posix_server_restart_same_port_100()
 
         const posix_resource_counts_t before = posix_stable_counts();
 
-        // discover a free port, release it, and from then on bind that exact
-        // port again and again. The restart is what SO_REUSEADDR behaviour on
-        // BSD is on trial for; the client connects every round.
-        rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
-        const unsigned fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
-        rocketnet_server_transport_destroy( discovery );
+        unsigned fixed_port = 0;
+        if ( cell->xdp )
+        {
+            rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
+            fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
+            rocketnet_server_transport_destroy( discovery );
+        }
+        else
+            fixed_port = posix_reserved_restart_port( cell_index );
         posix_check( fixed_port != 0 );
 
         char fixed_address[64];
