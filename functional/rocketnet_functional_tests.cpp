@@ -5635,12 +5635,6 @@ static struct rocketnet_server_uring_t * rocketnet_test_server_uring_create_stal
     return rocketnet_server_uring_create( NULL, address, 2 );
 }
 
-// The probe deliberately abandons one driver whose destroy gave up waiting: the
-// kernel may still write into it, so the allocation lives to process exit. The
-// test owns that fixture by retaining the pointer here, which keeps it reachable
-// to the leak checker; no suppression names a rocketnet frame.
-static struct rocketnet_server_uring_t * rocketnet_test_server_uring_abandoned = NULL;
-
 void rocketnet_test_server_uring_probe()
 {
     if ( rocketnet_test_server_uring_skipped( "test_server_uring_probe" ) )
@@ -5698,7 +5692,6 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
     struct rocketnet_server_uring_t * stalled = rocketnet_test_server_uring_create_stalled( &stall_address );
     rocketnet_check( stalled );
-    rocketnet_test_server_uring_abandoned = stalled;
     const uint16_t stall_port = stall_address.port;
 
     const uint64_t leaked_bytes_before = rocketnet_server_uring_leaked_bytes();
