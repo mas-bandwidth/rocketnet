@@ -27,6 +27,7 @@
 (*   "first"      the first send on this link is lost                      *)
 (*   "alternate"  the 1st, 3rd, 5th ... sends are lost; even ones arrive   *)
 (*   "burst"      sends BurstStart .. BurstStart+BurstLen-1 are lost       *)
+(*   "everynth"   every BurstLen-th send (BurstLen, 2*BurstLen, ...) lost  *)
 (*   "arbitrary"  any in-flight copy may be dropped at any time (Drop)     *)
 (*                                                                         *)
 (* Patterned loss happens at Send, as the simulator decides it             *)
@@ -63,7 +64,7 @@ CONSTANTS
     BurstStart,   \* "burst": index of the first lost send, >= 1
     BurstLen      \* "burst": how many consecutive sends are lost, >= 1
 
-Patterns == {"none", "first", "alternate", "burst", "arbitrary"}
+Patterns == {"none", "first", "alternate", "burst", "everynth", "arbitrary"}
 
 ASSUME /\ Capacity \in Nat \ {0}
        /\ MaxDelay \in Nat
@@ -101,13 +102,17 @@ Copy == [pkt : Packets, due : 0..MaxDelay]
 (***************************************************************************)
 Horizon == 2 * ((BurstStart + BurstLen + 2) \div 2)
 
-NextCount == IF sent < Horizon THEN sent + 1 ELSE Horizon - 1
+NextCount ==
+    IF Pattern = "everynth"
+    THEN IF sent < BurstLen THEN sent + 1 ELSE 1
+    ELSE IF sent < Horizon THEN sent + 1 ELSE Horizon - 1
 
 LostAtSend(n) ==
     CASE Pattern = "none"      -> FALSE
       [] Pattern = "first"     -> n = 1
       [] Pattern = "alternate" -> n % 2 = 1
       [] Pattern = "burst"     -> n \in BurstStart .. BurstStart + BurstLen - 1
+      [] Pattern = "everynth"  -> n = BurstLen
       [] Pattern = "arbitrary" -> FALSE
 
 InFlight == Len(wire)
@@ -168,6 +173,16 @@ Reorder(i) ==
     /\ i \in DOMAIN wire /\ i + 1 \in DOMAIN wire
     /\ wire[i] # wire[i+1]
     /\ wire' = [wire EXCEPT ![i] = wire[i+1], ![i+1] = wire[i]]
+    /\ UNCHANGED <<sent, pulse>>
+
+\* The trailing w copies on the wire reverse order in place (window reversal).
+ReverseWindow(w) ==
+    /\ Reordering
+    /\ w \in 2..Len(wire)
+    /\ wire' = [i \in DOMAIN wire |->
+                    IF i <= Len(wire) - w
+                    THEN wire[i]
+                    ELSE wire[2 * Len(wire) - w + 1 - i]]
     /\ UNCHANGED <<sent, pulse>>
 
 \* Copy i picks up one more tick of jitter in flight.
