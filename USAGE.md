@@ -476,7 +476,7 @@ the server), `channel`, `reliability`, `bytes` and `data`, with the count in
 `num_messages`. Each returns true when it filled at least one message and false
 when nothing is pending. There is no per-update cap: what one call does not
 return waits for the next call in the same update, in order
-(`sdk/rocketnet_message_server.cpp:982-1009`). The queue holds the update's
+(`sdk/rocketnet_message_server.cpp:1012-1039`). The queue holds the update's
 messages client by client in index order, each client's in the order its
 connection delivered them: ordered messages in send order within their channel,
 and a sequenced message never older than one before it on its channel

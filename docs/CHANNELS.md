@@ -1337,7 +1337,7 @@ header; the internal transport and message layers are in
   `client_index` (index = 0, the server, on a client), its channel, its wire
   reliability, its length and a pointer to its bytes, never copied, and
   returns true; false when nothing is pending. The caller pumps it until
-  false, with no per-update cap (`sdk/rocketnet_message_server.cpp:982-1009`).
+  false, with no per-update cap (`sdk/rocketnet_message_server.cpp:1012-1039`).
   The queue is the update's deliveries connection by connection in index
   order, each connection's in its delivery order, never filtered by channel
   (`sdk/rocketnet_message_server.cpp:870-896`): ordered messages keep send
@@ -1371,7 +1371,7 @@ header; the internal transport and message layers are in
   `send_packets`.
 - **Admission.** Observe reads each slot's connection from
   `rocketnet_server_transport_client_connection_id` (P9a;
-  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:1076`), which
+  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:1119`), which
   differs for every connection a slot holds, so a reconnect of the same client
   id into the same slot inside one transport update resets the slot and
   announces its CONFIG (`sdk/rocketnet_message_server.cpp:521`). Each entry of
@@ -1379,7 +1379,7 @@ header; the internal transport and message layers are in
   (P9b): the server's link reads
   `rocketnet_server_transport_payload_connection_ids` and
   `rocketnet_server_transport_acked_connection_ids`
-  (`sdk/rocketnet_message_server.cpp:1083`, `:1090`), and the client's link
+  (`sdk/rocketnet_message_server.cpp:1129`, `:1136`), and the client's link
   tags every entry with 1, the id its object binds its one connection to at
   create (`sdk/rocketnet_message_client.cpp:75`,
   `sdk/rocketnet_message_server.cpp:301`). `rn_message_admit`
