@@ -1693,7 +1693,7 @@ static void ordered_no_allocation_after_create()
     int queued = 0;
     while ( send_message( d, 1, 16 ) )
         queued++;
-    check( queued == 64 );
+    check( queued == (int) d->region->queue );
     check( counter( d, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 1 );
     check( rn_ordered_decide( &d->ordered ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
