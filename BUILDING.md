@@ -119,12 +119,17 @@ for one command without changing `xcode-select`:
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
     cmake -B build-xcode -G Xcode
     cmake --build build-xcode --config Release --parallel 4
-    ./bin/Release/test
+    DYLD_LIBRARY_PATH=bin/Release ./bin/Release/test
 
 `CMakeLists.txt:49-54` sets the output directories to `bin/` with no
 configuration in the path, and a multi-config generator such as Xcode appends
 the configuration to them, so its executables and libraries land in
-`bin/Release/`.
+`bin/Release/`. The unit suite opens the shared libraries by the paths
+`bin/librocketnet.dylib` and `bin/librocketnet_dev.dylib` relative to the
+working directory, then by the bare names (`sdk/rocketnet_tests.cpp:14674-14676`,
+`test_unit_api_polish.cpp:154-158`, `test_unit_connect_token_vectors.cpp:644-648`);
+`DYLD_LIBRARY_PATH` is where `dlopen` looks for a bare name, so it points
+those lookups at `bin/Release/`.
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
