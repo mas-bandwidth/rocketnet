@@ -34,7 +34,6 @@ BLAKE2b key	crypto_generichash_KEYBYTES	32
 SipHash key	crypto_shorthash_KEYBYTES	16
 prefilter header	ROCKETNET_PREFILTER_BYTES	6
 filter value	ROCKETNET_FILTER_VALUE_BYTES	4
-prefilter magic	ROCKETNET_FILTER_MAGIC_BYTES	16
 sequence	ROCKETNET_SEQUENCE_BYTES	4
 per-packet overhead	ROCKETNET_PACKET_OVERHEAD_BYTES	26
 associated data	ROCKETNET_AD_BYTES	21

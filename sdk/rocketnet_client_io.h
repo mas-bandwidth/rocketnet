@@ -106,6 +106,7 @@ struct rocketnet_client_io_t
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
     struct rocketnet_client_io_open_t open;
+    uint64_t driver_faults;                     // a receive count or byte count this step refused
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -138,6 +139,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_NONE, std::memory_order_relaxed );
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
+    io->driver_faults = 0;
 }
 
 // tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -416,21 +418,46 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             uint8_t * packet_data = buffer->data + (size_t) io->fill_slots * ROCKETNET_FRAME_SIZE;
             const int got = io->driver->operations->receive_batch( io->driver->instance, from, packet_data,
                 ROCKETNET_FRAME_SIZE, packet_bytes, max_packets );
-            if ( got <= 0 )
-                break;
-            for ( int i = 0; i < got; i++ )
+            // a count past the slots asked for, or a byte count that is
+            // negative or past the stride, is a driver fault and is not stored
+            if ( got < 0 )
             {
+                io->driver_faults++;
+                break;
+            }
+            if ( got == 0 )
+                break;
+            int count = got;
+            if ( got > max_packets )
+            {
+                io->driver_faults++;
+                count = max_packets;
+            }
+            int accepted = 0;
+            for ( int i = 0; i < count; i++ )
+            {
+                if ( packet_bytes[i] < 0 || packet_bytes[i] > ROCKETNET_FRAME_SIZE )
+                {
+                    io->driver_faults++;
+                    continue;
+                }
+                if ( accepted != i )
+                    memmove( packet_data + (size_t) accepted * ROCKETNET_FRAME_SIZE,
+                        packet_data + (size_t) i * ROCKETNET_FRAME_SIZE, (size_t) packet_bytes[i] );
                 (void) rocketnet_client_receive_handshake_io_receive( handshake );
                 const int index = buffer->num_packets;
                 buffer->from[index] = from[i];
                 buffer->receive_time[index] = now;
-                buffer->packet_data[index] = buffer->data + (size_t) ( io->fill_slots + i ) * ROCKETNET_FRAME_SIZE;
+                buffer->packet_data[index] = buffer->data + (size_t) ( io->fill_slots + accepted ) * ROCKETNET_FRAME_SIZE;
                 buffer->packet_bytes[index] = (size_t) packet_bytes[i];
                 rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
                     (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
                 buffer->num_packets++;
+                accepted++;
             }
-            io->fill_slots += got;
+            if ( accepted == 0 )
+                break;
+            io->fill_slots += accepted;
             worked = true;
         }
         else
@@ -442,6 +469,11 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 ROCKETNET_MAX_PACKET_BYTES );
             if ( bytes == 0 )
                 break;
+            if ( bytes < 0 || bytes > ROCKETNET_MAX_PACKET_BYTES )
+            {
+                io->driver_faults++;
+                break;
+            }
             (void) rocketnet_client_receive_handshake_io_receive( handshake );
             const int index = buffer->num_packets;
             buffer->from[index] = from;
@@ -482,7 +514,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // (MCRNClientIoBrokenFullWaitReadable.cfg, FullWaitsOnWake). The owed flag
     // was stored above before this wait, so the return at the end of the next
     // update wakes it.
-    if ( block && !worked && !quitting )
+    if ( block && !worked && !quitting && io->driver->operations->wait )
     {
         const bool readable = rocketnet_client_receive_handshake_io_wait( handshake );
         io->driver->operations->wait( io->driver->instance, readable, io->guard_timeout_seconds );

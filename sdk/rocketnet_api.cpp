@@ -1355,7 +1355,9 @@ static uint64_t rn_server_running_counter( const struct rocketnet_server_t * ser
 // marks it KICKED with reason NONE and disconnects it at the transport through
 // the link; a slot the transport holds connected that the message layer has
 // not yet observed is disconnected at the transport (tla/RNSlots.tla
-// PublicDisconnect).
+// PublicDisconnect). The whole loop is one step: every connected slot ends in
+// this same call, and a slot still in the handshake is left as it is
+// (tla/ServerSession.tla DisconnectAll).
 void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1571,6 +1573,11 @@ void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_
         return;
     if ( rn_server_destination_refused( destination_id ) )
         return;
+    if ( destination_id >= (uint64_t) server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
     int slot;
     if ( !rn_server_slot( server, destination_id, &slot ) )
         return;
