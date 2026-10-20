@@ -46,6 +46,10 @@ slowest as a table. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
+The functional-only sibling binaries are `test_serialize` (a real clock and
+`rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
+`usleep`), `test_driver`, `test_transport_control`, `test_lifecycle`,
+`test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and
@@ -99,6 +103,15 @@ checkout, in PowerShell or cmd.exe:
 loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
 takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`
 line continuation, so on Windows write each command on one line.
+
+Configure with `-DROCKETNET_SANITIZE_ADDRESS=ON` (default `OFF`) to build every
+target with AddressSanitizer: `/fsanitize=address` and `/Zi` with
+`/INCREMENTAL:NO` at link under MSVC, and `-fsanitize=address` elsewhere. On
+Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
+`cmake --build build --config Release --parallel 4`), the build copies the MSVC
+AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
+into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
 
 `py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
 executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
@@ -187,7 +200,7 @@ default (`functional_cases` and `run_functional`,
 tools/macos/leaks_run.py:196 and :213). The table holds rows for other
 platforms behind `#if`; a case this build does not hold answers
 `unknown functional test` with exit 2 on its plain run
-(functional/rocketnet_functional_tests.cpp:8689), and the matrix lists
+(functional/rocketnet_functional_tests.cpp:8697), and the matrix lists
 it as SKIP with no leaks run. The soak takes longer than the default
 timeout, so the matrix runs with `--timeout 600`.
 

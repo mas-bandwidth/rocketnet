@@ -5627,6 +5627,14 @@ static bool rocketnet_test_server_uring_skipped( const char * test_name )
     return true;
 }
 
+#if defined( __GNUC__ ) || defined( __clang__ )
+__attribute__((noinline))
+#endif
+static struct rocketnet_server_uring_t * rocketnet_test_server_uring_create_stalled( rocketnet_address_t * address )
+{
+    return rocketnet_server_uring_create( NULL, address, 2 );
+}
+
 void rocketnet_test_server_uring_probe()
 {
     if ( rocketnet_test_server_uring_skipped( "test_server_uring_probe" ) )
@@ -5682,7 +5690,7 @@ void rocketnet_test_server_uring_probe()
 
     rocketnet_address_t stall_address;
     rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
-    struct rocketnet_server_uring_t * stalled = rocketnet_server_uring_create( NULL, &stall_address, 2 );
+    struct rocketnet_server_uring_t * stalled = rocketnet_test_server_uring_create_stalled( &stall_address );
     rocketnet_check( stalled );
     const uint16_t stall_port = stall_address.port;
 
