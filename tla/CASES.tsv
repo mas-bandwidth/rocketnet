@@ -223,3 +223,4 @@ MCLinkReverseWindow.cfg	MCLinkPatterns.tla	pass	-	check	link	required	-
 MCLinkReverseWindowBrokenOrder.cfg	MCLinkPatterns.tla	invariant	WindowOrderReversed	check	link	required	-
 MCLinkEveryNthBrokenCounter.cfg	MCLinkPatterns.tla	invariant	MCPatternsTypeOK	check	link	required	-
 MCLinkReverseWindowBreaksInOrder.cfg	MCLinkPatterns.tla	invariant	SurvivorsInOrder	check	link	required	-
+MCRNDriverSendStagingBrokenRefusesSend.cfg	MCRNDriverSendStaging.tla	invariant	NoRefusedSend	check	rndriversendstaging	required	-
