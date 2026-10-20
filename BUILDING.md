@@ -66,6 +66,18 @@ may share a machine at the same time. The one exception is the root-only XDP
 veth case (`ROCKETNET_TEST_XDP_VETH`), which makes a fixed namespace and veth
 pair and binds port 40411 on it; it skips without root.
 
+Many-client load runs use the dedicated load harness:
+
+    ./bin/load <clients> <seconds> [drop-one]
+
+The load tool runs the public API (`rocketnet_server_t` and `rocketnet_client_t`
+from `rocketnet.h`) under the light profile (10 Hz updates, one message per client
+per update in each direction: the client-to-server message rotates through all
+eight reliability modes, and the server-to-client message is reliable-ordered),
+verifying loopback scale up to 1000 concurrent clients across five pass criteria
+(`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
+`unreliable_integrity`, and `counters_agree`).
+
 Dependencies, per platform, as CI installs them:
 
     # Linux -- the build links the XDP dataplane, and liburing is the bench
