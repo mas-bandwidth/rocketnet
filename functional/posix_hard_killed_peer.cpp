@@ -1087,6 +1087,10 @@ static void rocketnet_posix_linux_seam_socket( bool mmsg, int error, bool expect
 
 // the gso worker: the error reaches the worker's next recvmmsg; the worker
 // must count it and keep receiving
+void rocketnet_server_gso_test_hold_receive( struct rocketnet_server_gso_t * gso, bool hold );
+bool rocketnet_server_gso_test_receive_held( struct rocketnet_server_gso_t * gso );
+void rocketnet_server_gso_test_receive_passes( struct rocketnet_server_gso_t * gso, uint64_t * error_pass, uint64_t * data_pass );
+
 static void rocketnet_posix_linux_seam_gso( int kind, int error )
 {
     rocketnet_posix_cell_t cell;
@@ -1094,20 +1098,28 @@ static void rocketnet_posix_linux_seam_gso( int kind, int error )
     int peer_port = 0;
     rocketnet_platform_socket_t * peer = rocketnet_posix_bind_any( "127.0.0.1", &peer_port );
 
-    const uint64_t before = rocketnet_platform_receive_weather_skipped();
-    rocketnet_platform_set_recvmmsg_error_for_testing( error );
-    const double deadline = rocketnet_platform_time() + 2.0;
-    if ( error == EINTR )
-        rocketnet_platform_sleep( 0.05 );
-    else
-        while ( rocketnet_platform_receive_weather_skipped() == before && rocketnet_platform_time() < deadline )
-            rocketnet_platform_sleep( 0.001 );
-    rocketnet_platform_set_recvmmsg_error_for_testing( 0 );
+    rocketnet_server_gso_test_hold_receive( cell.gso, true );
+    const double pause_deadline = rocketnet_platform_time() + 2.0;
+    while ( !rocketnet_server_gso_test_receive_held( cell.gso ) && rocketnet_platform_time() < pause_deadline )
+        rocketnet_platform_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_gso_test_receive_held( cell.gso ) );
 
     rocketnet_posix_peer_send( peer, "127.0.0.1", cell.port, 0x31 );
     rocketnet_posix_peer_send( peer, "127.0.0.1", cell.port, 0x32 );
+    rocketnet_posix_settle();
+    const uint64_t before = rocketnet_platform_receive_weather_skipped();
+    rocketnet_platform_set_recvmmsg_error_for_testing( error );
+    rocketnet_server_gso_test_hold_receive( cell.gso, false );
+
     const int got = rocketnet_posix_cell_drain( &cell, &peer_port, 1, 2, 2.0 );
     const uint64_t counted = rocketnet_platform_receive_weather_skipped() - before;
+    uint64_t error_pass = 0, data_pass = 0;
+    rocketnet_server_gso_test_receive_passes( cell.gso, &error_pass, &data_pass );
+    printf( "seam gso error_pass=%llu data_pass=%llu\n", (unsigned long long) error_pass, (unsigned long long) data_pass );
+    fflush( stdout );
+    rocketnet_check( error_pass != 0 );
+    rocketnet_check( data_pass == error_pass );
+
     printf( "seam arm=%s errno=%d got=%d counted=%llu\n", rocketnet_posix_cell_names[kind], error, got, (unsigned long long) counted );
     fflush( stdout );
     rocketnet_check( got == 2 );

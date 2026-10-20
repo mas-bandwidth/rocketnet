@@ -201,6 +201,11 @@ struct rocketnet_server_gso_t
     // the test seam: the next recvmmsg calls on any worker, and the next
     // sendmmsg calls of a flush, answer -1 with the given errno without
     // reaching the kernel
+    std::atomic<bool> test_hold_receive{false};
+    std::atomic<bool> test_receive_held{false};
+    std::atomic<uint64_t> test_receive_pass{0};
+    std::atomic<uint64_t> test_error_pass{0};
+    std::atomic<uint64_t> test_data_pass{0};
     std::atomic<int> test_fail_receives{0};
     std::atomic<int> test_fail_receive_error{0};
     int test_fail_sends;
@@ -218,6 +223,22 @@ static std::atomic<int> rocketnet_server_gso_test_create_flags{0};
 void rocketnet_server_gso_test_force_create_flags( int flags )
 {
     rocketnet_server_gso_test_create_flags.store( flags );
+}
+
+void rocketnet_server_gso_test_hold_receive( struct rocketnet_server_gso_t * gso, bool hold )
+{
+    gso->test_hold_receive.store( hold );
+}
+
+bool rocketnet_server_gso_test_receive_held( struct rocketnet_server_gso_t * gso )
+{
+    return gso->test_receive_held.load();
+}
+
+void rocketnet_server_gso_test_receive_passes( struct rocketnet_server_gso_t * gso, uint64_t * error_pass, uint64_t * data_pass )
+{
+    *error_pass = gso->test_error_pass.load();
+    *data_pass = gso->test_data_pass.load();
 }
 
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error )
@@ -470,6 +491,17 @@ static void rocketnet_server_gso_worker( void * data )
 
         poll( fds, 1, 1 );
 
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+        if ( queue->gso->test_hold_receive.load() )
+        {
+            queue->gso->test_receive_held.store( true );
+            while ( queue->gso->test_hold_receive.load() && !queue->quit.load() )
+                rocketnet_platform_sleep( 0.001 );
+            queue->gso->test_receive_held.store( false );
+        }
+        const uint64_t test_pass = queue->gso->test_receive_pass.fetch_add( 1 ) + 1;
+#endif
+
         rocketnet_platform_mutex_acquire( &queue->receive_mutex );
 
         const int on_index = (int) ( queue->receive_counter % 2 );
@@ -498,6 +530,9 @@ static void rocketnet_server_gso_worker( void * data )
             const int injected = rocketnet_platform_take_recvmmsg_error_for_testing();
             if ( injected != 0 )
             {
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+                queue->gso->test_error_pass.store( test_pass );
+#endif
                 errno = injected;
                 count = -1;
             }
@@ -522,6 +557,14 @@ static void rocketnet_server_gso_worker( void * data )
             // heartbeat, not the receive path.
 
             buffer->syscalls++;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            if ( count > 0 && queue->gso->test_error_pass.load() != 0 )
+            {
+                uint64_t empty = 0;
+                queue->gso->test_data_pass.compare_exchange_strong( empty, test_pass );
+            }
+#endif
+
 
             // a failed call other than an empty socket is counted. an EINTR
             // or a weather errno is then skipped and the drain goes on (the
