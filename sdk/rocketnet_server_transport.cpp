@@ -187,6 +187,7 @@ struct rocketnet_server_pending_wire_totals_t
 {
     rocketnet_address_t address;
     struct rocketnet_server_wire_totals_t totals;
+    double first_seen_time;
     bool used;
 };
 
@@ -358,11 +359,23 @@ static struct rocketnet_server_pending_wire_totals_t * rocketnet_server_pending_
         {
             memset( pending, 0, sizeof( *pending ) );
             pending->address = *address;
+            pending->first_seen_time = server_transport->time;
             pending->used = true;
             return pending;
         }
     }
     return NULL;
+}
+
+static void rocketnet_server_pending_wire_expire( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    const double deadline = server_transport->protocol.handshake_deadline_seconds;
+    for ( int i = 0; i < ROCKETNET_SERVER_PENDING_WIRE_TOTALS; i++ )
+    {
+        struct rocketnet_server_pending_wire_totals_t * pending = &server_transport->pending_wire_totals[i];
+        if ( pending->used && time - pending->first_seen_time >= deadline )
+            pending->used = false;
+    }
 }
 
 static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_transport_t * server_transport,
@@ -1689,6 +1702,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     server_transport->packet_leases.reset();
 
     server_transport->time = time;
+    rocketnet_server_pending_wire_expire( server_transport, time );
     rocketnet_server_link_drain( server_transport );
 
     rocketnet_server_update_stats( server_transport, time );

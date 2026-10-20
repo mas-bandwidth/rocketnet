@@ -294,6 +294,40 @@ static void thread_priority_windows_timer_refusal_counts_and_logs_once()
 #endif
 }
 
+// Frame sync's own priority step (sdk/rocketnet_frame_sync.cpp,
+// rocketnet_frame_sync_elevate_priority) honours the same switch: off, it
+// returns before any call, so it neither logs its "frame sync:" line nor
+// holds priority, and nothing reaches the call table. The step runs on a
+// frame sync that is never created: no timer, no thread, no wait.
+
+extern int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns );
+
+static int priority_frame_sync_lines;
+
+static void priority_frame_sync_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    (void) length;
+    if ( strstr( message, "frame sync:" ) != NULL )
+        priority_frame_sync_lines++;
+}
+
+static void thread_priority_off_frame_sync_takes_no_priority()
+{
+    priority_fake_install( false );
+    rocketnet_set_log_callback( priority_frame_sync_log_capture, NULL );
+    priority_frame_sync_lines = 0;
+    rocketnet_set_thread_priority( false );
+    const int held = rocketnet_frame_sync_elevate_priority_for_testing( 16666666 );
+    rocketnet_unit_check( priority_frame_sync_lines == 0 );
+    rocketnet_unit_check( held == 0 );
+    rocketnet_unit_check( priority_fake_count == 0 );
+    priority_fake_restore();
+}
+
+REGISTER_UNIT_TEST( thread_priority_off_frame_sync_takes_no_priority );
+
 REGISTER_UNIT_TEST( thread_priority_windows_timer_period_at_init_and_term );
 REGISTER_UNIT_TEST( thread_priority_windows_timer_refusal_counts_and_logs_once );
 
