@@ -193,11 +193,6 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 
     const bool reliable = record->code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED;
     // the mask is checked once, by wire code, in rn_channels_dispatch
-    if ( !reliable && record->code != ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED )
-    {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED );
-        return ROCKETNET_CHANNEL_DISPATCH_NONE;
-    }
 
     rn_region_t * region = channels->region;
     if ( record->channel >= channels->num_channels )

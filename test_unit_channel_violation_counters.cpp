@@ -190,9 +190,16 @@ static void violation_wide_reliable_sequenced_boundary_is_sent()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( violation_wide_reliable_sequenced_boundary_is_sent );
+#else
+
+static void violation_wide_reliable_sequenced_boundary_is_sent()
+{
+    printf( "violation_wide_reliable_sequenced_boundary_is_sent [SKIPPED wide channel tests require ROCKETNET_MAX_CHANNELS > 256]\n" );
+}
 
 #endif // #if ROCKETNET_MAX_CHANNELS > 256
+
+REGISTER_UNIT_TEST( violation_wide_reliable_sequenced_boundary_is_sent );
 
 // The remaining wire-check violations (STANDARD.md _Messages_ checks 1 to 4,
 // 9, 10 and 12) each move their own counter beside MESSAGE_PROTOCOL_VIOLATION,
