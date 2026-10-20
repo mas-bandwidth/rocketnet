@@ -495,16 +495,15 @@ jobs:
           ./bin/test_driver
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
-      - name: XDP source archive excludes incremental build output
+      # Linux: the embedded server_xdp.o is reproducible and equals a fresh
+      # compile of the current sources; elsewhere: the listed inputs exist.
+      - name: Embedded XDP object is reproducible and current
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_xdp_archive.py
 
-      - name: Compile the embedded XDP program without attaching it
+      - name: The build compiled and embedded the XDP program
         if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
-        run: |
-          xdp_compile_dir=$(mktemp -d "$PWD/build/xdp-archive.XXXXXX")
-          tar -xzf build/generated/rocketnet_server_xdp.tar.gz -C "$xdp_compile_dir"
-          make -C "$xdp_compile_dir" server_xdp.o
+        run: test -s build/generated/server_xdp.o
 
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions

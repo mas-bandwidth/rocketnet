@@ -133,23 +133,49 @@ function(rocketnet_use_sodium target)
     endif()
 endfunction()
 
-# Generate into this build tree. Multiple builds never rewrite the source header.
+# server_xdp.o is compiled here, at build time, and embedded in the library as
+# bytes (cmake/EmbedXdp.cmake); the server host needs no compiler. Only the
+# Linux xdp server transport includes the generated header.
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
-if(WIN32)
-    configure_file(sdk/rocketnet_server_xdp.h "${ROCKETNET_XDP_HEADER}" COPYONLY)
-else()
+set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
+option(ROCKETNET_XDP "Compile and embed the Linux XDP program" ON)
+set(ROCKETNET_BPF_CLANG "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_program(ROCKETNET_XXD xxd REQUIRED)
+    find_program(ROCKETNET_CLANG clang)
+    if(ROCKETNET_XDP AND ROCKETNET_CLANG)
+        execute_process(COMMAND "${ROCKETNET_CLANG}" -print-targets
+            OUTPUT_VARIABLE ROCKETNET_CLANG_TARGETS ERROR_QUIET)
+        if(ROCKETNET_CLANG_TARGETS MATCHES "[ \t\n]bpf[ \t]")
+            set(ROCKETNET_BPF_CLANG "${ROCKETNET_CLANG}")
+        endif()
+    endif()
+    execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
+        OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(NOT ROCKETNET_XDP)
+        message(STATUS "XDP off: ROCKETNET_XDP=OFF; no server_xdp.o is embedded")
+    elseif(NOT ROCKETNET_BPF_CLANG)
+        message(STATUS "XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create")
+    endif()
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
+        CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
             "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
             "-DXXD=${ROCKETNET_XXD}"
+            "-DCLANG=${ROCKETNET_BPF_CLANG}"
+            "-DMULTIARCH=${ROCKETNET_MULTIARCH}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
+        BYPRODUCTS "${ROCKETNET_XDP_OBJECT}"
         DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
         VERBATIM)
+    add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
+else()
+    add_custom_target(rocketnet_xdp_header)
 endif()
-add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
 
 set(ROCKETNET_SOURCE
     sdk/rocketnet.cpp
@@ -575,37 +601,13 @@ if(ROCKETNET_BUILD_TESTS)
         rocketnet_use_sodium(test_xdp)
         target_link_libraries(test_xdp PRIVATE RocketNet::Bpf RocketNet::Xdp Threads::Threads)
         rocketnet_warning_floor(test_xdp)
-        # test_xdp_filter loads server_xdp/server_xdp.c and runs crafted frames
-        # through it with BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to
-        # run). The object is built with the command server_xdp/Makefile uses.
-        find_program(ROCKETNET_CLANG clang)
-        if(ROCKETNET_CLANG)
-            execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
-                OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-            # -dumpmachine names the compiler's target triple, which for clang is
-            # x86_64-pc-linux-gnu while the distribution's asm headers sit under
-            # the multiarch directory (x86_64-linux-gnu). Use the triple's
-            # directory when it exists, otherwise the implicit include directory
-            # that actually carries asm/types.h.
-            set(ROCKETNET_MULTIARCH_INCLUDE "/usr/include/${ROCKETNET_MULTIARCH}")
-            if(NOT EXISTS "${ROCKETNET_MULTIARCH_INCLUDE}")
-                find_path(ROCKETNET_MULTIARCH_ASM_DIR asm/types.h
-                    PATHS ${CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES} NO_DEFAULT_PATH)
-                if(ROCKETNET_MULTIARCH_ASM_DIR)
-                    set(ROCKETNET_MULTIARCH_INCLUDE "${ROCKETNET_MULTIARCH_ASM_DIR}")
-                endif()
-            endif()
-            set(ROCKETNET_XDP_FILTER_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/server_xdp_filter_test.o")
-            add_custom_command(OUTPUT "${ROCKETNET_XDP_FILTER_OBJECT}"
-                COMMAND "${ROCKETNET_CLANG}" -D__linux__ -D__BPF__ -ffreestanding -O2 -g
-                    "-I${ROCKETNET_MULTIARCH_INCLUDE}" "-I${CMAKE_CURRENT_SOURCE_DIR}/sdk"
-                    -target bpf -c "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c"
-                    -o "${ROCKETNET_XDP_FILTER_OBJECT}"
-                DEPENDS ${ROCKETNET_XDP_SOURCES}
-                VERBATIM)
-            add_custom_target(rocketnet_xdp_filter_object DEPENDS "${ROCKETNET_XDP_FILTER_OBJECT}")
+        # test_xdp_filter loads server_xdp.o, the object the library embeds
+        # (cmake/EmbedXdp.cmake), and runs crafted frames through it with
+        # BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to run).
+        if(ROCKETNET_BPF_CLANG)
+            set(ROCKETNET_XDP_FILTER_OBJECT "${ROCKETNET_XDP_OBJECT}")
             add_executable(test_xdp_filter test_xdp_filter.cpp)
-            add_dependencies(test_xdp_filter rocketnet_xdp_filter_object)
+            add_dependencies(test_xdp_filter rocketnet_xdp_header)
             # xdp_on_link_reply_reaches_the_peer runs bin/server and bin/client
             if(TARGET server AND TARGET client)
                 add_dependencies(test_xdp_filter server client)
@@ -617,7 +619,7 @@ if(ROCKETNET_BUILD_TESTS)
             target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf)
             rocketnet_warning_floor(test_xdp_filter)
         else()
-            message(STATUS "clang not found: test_xdp_filter is not built")
+            # The configure message above explains why the object is absent.
         endif()
     endif()
     if(APPLE)

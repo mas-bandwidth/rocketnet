@@ -18,13 +18,14 @@
 (*                                                                         *)
 (* RECEIVE.  Every receive slice is posted at create.  receive_packets    *)
 (* first re-posts each slice a refused re-post left in the retry list;    *)
-(* then it dequeues the receive completion queue until it is empty,       *)
-(* copies each datagram into the fill bank of two banks (or counts it     *)
-(* dropped) and re-posts the slice.  A refused re-post waits in the retry *)
-(* list for the next receive_packets and is never retired, so a transient *)
-(* refusal never shrinks the receive depth.  Then receive_packets swaps   *)
-(* the banks: the old fill bank becomes the exposed bank whose views      *)
-(* process_packets returns until the next receive_packets.                *)
+(* then it dequeues at most one bank of receive completions, copies each  *)
+(* datagram into the fill bank of two banks (or counts it dropped), and   *)
+(* re-posts the slice.  A refused re-post waits in the retry list for the *)
+(* next receive_packets and is never retired, so a transient refusal      *)
+(* never shrinks the receive depth.  It swaps the banks when the queue is *)
+(* empty or the per-call bank limit is reached; the old fill bank becomes *)
+(* the exposed bank whose views process_packets returns until the next    *)
+(* receive_packets.                                                       *)
 (*                                                                         *)
 (* DESTROY.  closesocket completes every outstanding request with an      *)
 (* error; both queues are dequeued until every posted send and receive    *)
@@ -35,8 +36,8 @@
 (* SwitchWaitsDrain = FALSE lets SwitchPhase ignore the other phase's     *)
 (* outstanding count; FreeWaitsDrain = FALSE lets Free follow Close at    *)
 (* once; RetryRefused = FALSE restores the old rule that a refused        *)
-(* re-post retires its slice.  Those are the three reversed witnesses,    *)
-(* and TLC must reject each.                                              *)
+(* re-post retires its slice; ReceiveBounded = FALSE lets a call dequeue   *)
+(* past one bank.  TLC rejects each reversed witness.                     *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -45,11 +46,12 @@ CONSTANTS Slots,             \* frame slots per send phase
           MaxSteps,          \* datagrams the kernel delivers: ids 1..MaxSteps
           SwitchWaitsDrain,  \* SwitchPhase waits for the other phase to drain
           FreeWaitsDrain,    \* Free waits until every request is accounted for
-          RetryRefused       \* a refused re-post waits in the retry list
+          RetryRefused,      \* a refused re-post waits in the retry list
+          ReceiveBounded    \* receive_packets dequeues at most one bank
 
 ASSUME Slots \in Nat \ {0} /\ Slices \in Nat \ {0} /\ MaxSteps \in Nat
 ASSUME SwitchWaitsDrain \in BOOLEAN /\ FreeWaitsDrain \in BOOLEAN
-ASSUME RetryRefused \in BOOLEAN
+ASSUME RetryRefused \in BOOLEAN /\ ReceiveBounded \in BOOLEAN
 
 Phases     == {0, 1}
 SlotIds    == 1..Slots
@@ -59,6 +61,7 @@ Status     == {"ok", "fail"}
 SlotStates == {"Free", "Reserved", "Finished", "Posted"}
 SliceStates == {"Posted", "Completed", "Copied"}
 BankCapacity == Slices
+ReceiveCallLimit == IF ReceiveBounded THEN Slices ELSE MaxSteps
 
 VARIABLES slot,         \* slot[p][s]: the state of slot s of send phase p
           outstanding,  \* outstanding[p]: sends posted from phase p, not retired
@@ -75,12 +78,13 @@ VARIABLES slot,         \* slot[p][s]: the state of slot s of send phase p
           swapped,      \* the exposed bank as the last Swap left it
           view,         \* the datagram the transport last read; 0 for none
           recvCQ,       \* receive completions <<slice, status>> not dequeued
-          retry,        \* slices whose re-post was refused, waiting to retry
+          retry,        \* slices whose re-post was refused, waiting in the retry list
+          receiveCount, \* completions dequeued by the current receive_packets call
           socket        \* Running, Closing (closesocket called) or Freed
 
 sendVars == <<slot, outstanding, next, fill, sending, sendCQ>>
 recvVars == <<slice, held, received, consumed, fillBank, exposed, swapped,
-              view, recvCQ, retry>>
+              view, recvCQ, retry, receiveCount>>
 vars == <<sendVars, recvVars, socket>>
 
 Init ==
@@ -100,6 +104,7 @@ Init ==
     /\ view = 0
     /\ recvCQ = {}
     /\ retry = {}
+    /\ receiveCount = 0
     /\ socket = "Running"
 
 \* the fill threads run while the main thread is outside send_packets
@@ -195,7 +200,7 @@ KernelFillSlice(i) ==
           /\ UNCHANGED <<received, held>>
     /\ slice' = [slice EXCEPT ![i] = "Completed"]
     /\ UNCHANGED <<sendVars, consumed, fillBank, exposed, swapped, view,
-                   retry, socket>>
+                   retry, receiveCount, socket>>
 
 \* receive_packets, per completion: a failed status counts RECEIVE_FAILED;
 \* a datagram is copied into the fill bank when it has room, else counted
@@ -204,6 +209,7 @@ KernelFillSlice(i) ==
 \* RetryRefused it waits in the retry list, without it the slice is retired.
 DequeueReceive(i) ==
     /\ FillOpen
+    /\ receiveCount < ReceiveCallLimit
     /\ \E st \in Status :
           /\ <<i, st>> \in recvCQ
           /\ recvCQ' = recvCQ \ {<<i, st>>}
@@ -214,6 +220,7 @@ DequeueReceive(i) ==
                      \/ UNCHANGED fillBank
              ELSE UNCHANGED <<consumed, fillBank>>
     /\ held' = [held EXCEPT ![i] = 0]
+    /\ receiveCount' = receiveCount + 1
     /\ \/ /\ slice' = [slice EXCEPT ![i] = "Posted"]
           /\ retry' = retry \ {i}
        \/ /\ slice' = [slice EXCEPT ![i] = "Copied"]
@@ -232,16 +239,18 @@ RetryRepost(i) ==
        \/ /\ UNCHANGED slice
           /\ UNCHANGED retry
     /\ UNCHANGED <<sendVars, held, received, consumed, fillBank, exposed,
-                   swapped, view, recvCQ, socket>>
+                   swapped, view, recvCQ, receiveCount, socket>>
 
 \* receive_packets, once the receive queue is empty: swap the banks
 Swap ==
     /\ FillOpen
-    /\ recvCQ = {}
+    /\ \/ recvCQ = {}
+       \/ receiveCount = ReceiveCallLimit
     /\ exposed' = fillBank
     /\ swapped' = fillBank
     /\ fillBank' = {}
     /\ view' = 0
+    /\ receiveCount' = 0
     /\ UNCHANGED <<sendVars, slice, held, received, consumed, recvCQ,
                    retry, socket>>
 
@@ -250,7 +259,7 @@ TransportReads ==
     /\ FillOpen
     /\ \E d \in exposed : view' = d
     /\ UNCHANGED <<sendVars, slice, held, received, consumed, fillBank,
-                   exposed, swapped, recvCQ, retry, socket>>
+                   exposed, swapped, recvCQ, retry, receiveCount, socket>>
 
 -----------------------------------------------------------------------------
 (* DESTROY *)
@@ -268,7 +277,7 @@ Close ==
     /\ recvCQ' = recvCQ \cup {<<i, "fail">> : i \in {j \in SliceIds : slice[j] = "Posted"}}
     /\ slice' = [i \in SliceIds |-> IF slice[i] = "Posted" THEN "Completed" ELSE slice[i]]
     /\ UNCHANGED <<slot, outstanding, next, fill, sending, held, received,
-                   consumed, fillBank, exposed, swapped, view, retry>>
+                   consumed, fillBank, exposed, swapped, view, retry, receiveCount>>
 
 \* destroy dequeues both queues; nothing is re-posted
 Drain ==
@@ -282,7 +291,7 @@ Drain ==
                 /\ held' = [held EXCEPT ![i] = 0]
                 /\ slice' = [slice EXCEPT ![i] = "Copied"]
           /\ UNCHANGED <<sendVars, received, fillBank, exposed, swapped,
-                         view, retry>>
+                         view, retry, receiveCount>>
     /\ UNCHANGED socket
 
 \* every posted send and receive is accounted for
@@ -351,6 +360,7 @@ TypeOK ==
     /\ view \in 0..MaxSteps
     /\ recvCQ \subseteq SliceIds \X Status
     /\ retry \subseteq SliceIds
+    /\ receiveCount \in 0..(Slices + MaxSteps)
     /\ socket \in {"Running", "Closing", "Freed"}
 
 \* Reserve never returns a slot of a phase with outstanding sends: a slot a
@@ -384,6 +394,9 @@ RepostOnlyAfterCopy ==
     /\ \A i \in SliceIds : slice[i] = "Posted" => held[i] = 0
     /\ \A d \in 1..received : d \in consumed \/ \E i \in SliceIds : held[i] = d
     /\ fillBank \cup exposed \subseteq consumed
+
+\* a receive_packets call dequeues at most one bank of completions
+ReceiveCallBound == receiveCount <= Slices
 
 \* a transient refusal never removes a slice from the receive depth: while
 \* the socket runs every slice is posted, completed, or waiting in the
