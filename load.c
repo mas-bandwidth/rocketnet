@@ -13,6 +13,30 @@
       3. reliable_delivery
       4. unreliable_integrity
       5. counters_agree
+
+    Linux. ROCKETNET_SERVER_TRANSPORT pins the server transport and
+    ROCKETNET_CLIENT_TRANSPORT=portable the clients; the summary line's
+    server_driver= names the transport granted, and fds_end and threads_end
+    equal fds_start and threads_start on a clean run. The server cells:
+      portable   ROCKETNET_SERVER_TRANSPORT=portable
+      gso        ROCKETNET_SERVER_TRANSPORT=gso
+      gso plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1: the
+                 development library load links skips the UDP_SEGMENT and
+                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp:627-629)
+      io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring, where
+                 /proc/sys/kernel/io_uring_disabled reads 0
+      xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=1
+                 ROCKETNET_SERVER_NUM_OS_CPUS=1, run as root inside a virtme-ng
+                 guest booted with irqaffinity=0 isolcpus=1 nohz_full=1, on a
+                 veth pair whose far end sits in its own namespace:
+                 LOAD_SERVER_ADDRESS=<near address>:<port> binds the server
+                 (load.c:524; xdp discovers no port, sdk/rocketnet_drivers.inc:7)
+                 and LOAD_CLIENT_NETNS=/var/run/netns/<name> opens every client
+                 socket in the far namespace (load.c:597)
+    load raises RLIMIT_NOFILE to 65536 or the hard limit and refuses by name
+    when the result is below 2 fds per client plus 64 (load.c:217), so
+    `ulimit -n 512` fails a 1000-client run before it starts.
+    .github/workflows/nightly-soak.yml runs `load 1000 60` once per cell.
 */
 
 #if defined(__linux__) && !defined(_GNU_SOURCE)
@@ -463,7 +487,9 @@ int main( int argc, char ** argv )
     const long threads_start = count_threads();
     long fds_peak = fds_start;
     long threads_peak = threads_start;
-    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    /* silent unless ROCKETNET_LOG_LEVEL asks for logs (rocketnet_init applies it) */
+    if ( !getenv( "ROCKETNET_LOG_LEVEL" ) )
+        rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     struct rocketnet_server_transport_config_t server_tcfg;
     rocketnet_server_transport_dev_config( &server_tcfg );
