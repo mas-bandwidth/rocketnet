@@ -426,6 +426,38 @@ What the numbers show:
   connection timed out in any run: the I/O thread kept the session alive. The
   process activity above is what keeps the game's own frame loop on time.
 
+**What the case asserts.** In every condition the client stays connected for
+the whole 60 s with zero timeouts. At the default class, receive-to-update p99
+is at most two update intervals plus 10 ms (43.3 ms at 60 Hz), the receive
+handoff's floor. Under `taskpolicy -b` and with a background game thread the
+game loop's own sleep is coalesced, so those conditions assert the I/O
+thread's wake p99 under 5 ms instead of end-to-end latency.
+
+**Repeated runs.** Twenty sequential 60 s runs of each case at head, and four
+of `taskpolicy -b` with the I/O thread planted at `QOS_CLASS_BACKGROUND`, on
+the same machine while it carried other work (1-minute load average 2 to 237
+across the runs):
+
+| condition | build | pass | wake p99 (ms) | latency p99 (ms) | timeouts |
+|---|---|---|---|---|---|
+| default QoS | head | 20 / 20 | 1.36 to 1.43 | 36.0 to 37.9 | 0 |
+| `taskpolicy -b` | head | 10 / 20 | passes 1.36 to 1.90, fails 5.9 to 2418 | 381 to 10700 | 1 (one run) |
+| game thread background | head | 20 / 20 | 1.34 to 1.44 | 372 to 1314 | 0 |
+| `taskpolicy -b` | I/O thread planted background | 4 / 4 | 1.37 to 1.74 | 378 to 973 | 0 |
+
+What the repeated runs show:
+
+- The thread class does not protect the I/O thread from a background task
+  policy. Under `taskpolicy -b` the whole process is throttled, the thread's
+  `QOS_CLASS_USER_INTERACTIVE` request does not lift it, and on a busy machine
+  the I/O thread's wake p99 reaches 100 ms to 2.4 s; one run timed out. The
+  process activity under "What the game must do itself" is the mitigation;
+  the library's thread class alone is not.
+- The wake p99 bound does not tell the planted background class from the
+  explicit class: with the machine lightly loaded the planted build passes
+  it, and with the machine busy the head build fails it. What the bound
+  measures under `taskpolicy -b` is the machine's load, not the class.
+
 ## Per-platform cards
 
 **rocketnet-client-io-transport (lands first, platform-generic).** PATHS:
