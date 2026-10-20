@@ -308,6 +308,7 @@ static const char * const counters_appended_names[] =
     "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
     "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
     "SEND_FAILED",
+    "XDP_KERNEL_PASSED_FRAGMENT",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
