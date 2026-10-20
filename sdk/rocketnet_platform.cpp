@@ -1934,9 +1934,72 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode );
 
+// darwin binds a dual-stack IPv6 socket to a port an IPv4 socket on the host
+// already holds -- an explicit bind and the port-0 ephemeral pick alike --
+// and delivers IPv4 datagrams for that port to the IPv4 socket. A client
+// socket on such a port sends to an IPv4 server and never hears an answer:
+// every reply lands in the other socket. A port-0 dual-stack bind is
+// therefore checked against IPv4: a probe IPv4 socket binds the wildcard
+// address at the granted port, and EADDRINUSE names the port as held. The
+// socket on a held port stays open, so the next pick cannot return that
+// port; a fresh socket is bound, and the kept sockets close once a free port
+// is found. A fixed-port bind is the caller's choice and is never re-picked.
+
+#define ROCKETNET_PLATFORM_DUAL_STACK_PICKS 16
+
+static bool rocketnet_platform_ipv4_port_held( uint16_t port )
+{
+    int probe = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe < 0 )
+        return false;
+    sockaddr_in probe_address;
+    memset( &probe_address, 0, sizeof( probe_address ) );
+    probe_address.sin_family = AF_INET;
+    probe_address.sin_addr.s_addr = htonl( INADDR_ANY );
+    probe_address.sin_port = rocketnet_platform_htons( port );
+    const bool held = bind( probe, (sockaddr*) &probe_address, sizeof( probe_address ) ) < 0 && errno == EADDRINUSE;
+    close( probe );
+    return held;
+}
+
+static rocketnet_platform_socket_t * rocketnet_platform_socket_create_unshadowed( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode )
+{
+    if ( address->type != ROCKETNET_ADDRESS_IPV6 || address->port != 0 )
+        return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, pump_mode );
+
+    rocketnet_platform_socket_t * held[ROCKETNET_PLATFORM_DUAL_STACK_PICKS];
+    int num_held = 0;
+    rocketnet_platform_socket_t * socket = NULL;
+    rocketnet_address_t picked = *address;
+
+    while ( num_held < ROCKETNET_PLATFORM_DUAL_STACK_PICKS )
+    {
+        picked = *address;
+        socket = rocketnet_platform_socket_create_internal( context, &picked, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, pump_mode );
+        if ( !socket || !rocketnet_platform_ipv4_port_held( picked.port ) )
+            break;
+        rocketnet_debug( "dual-stack socket port %d is held by an ipv4 socket. picking another port", picked.port );
+        held[num_held++] = socket;
+        socket = NULL;
+    }
+
+    for ( int i = 0; i < num_held; i++ )
+        rocketnet_platform_socket_destroy( held[i] );
+
+    if ( !socket )
+    {
+        if ( num_held == ROCKETNET_PLATFORM_DUAL_STACK_PICKS )
+            rocketnet_error( "failed to bind socket (ipv6): %d ports in a row are held by ipv4 sockets", num_held );
+        return NULL;
+    }
+
+    *address = picked;
+    return socket;
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
-    return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PUMP_MODE_AUTO );
+    return rocketnet_platform_socket_create_unshadowed( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PUMP_MODE_AUTO );
 }
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode )
@@ -4127,7 +4190,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
         }
     }
 
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size,
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_unshadowed( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size,
                                                                                       force_portable ? ROCKETNET_PUMP_MODE_FORCE_PORTABLE : ROCKETNET_PUMP_MODE_AUTO );
     if ( !socket )
         return NULL;
