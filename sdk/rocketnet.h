@@ -172,11 +172,11 @@
 
 
 /**
- * @brief One packet's message space: ROCKETNET_MAX_PAYLOAD_BYTES less the one form byte, 1415 bytes.
+ * @brief The payload room for the message one packet carries: ROCKETNET_MAX_PAYLOAD_BYTES less the one form byte, 1415 bytes.
  *
- * It is the least value either config's max_message_bytes accepts. A
- * message's record header takes room in the same packet, so the largest
- * message that travels in one packet is smaller: 1411 bytes for
+ * It is the least value either config's max_message_bytes accepts. The
+ * message's record header takes room beside it, so the largest
+ * single-packet message is smaller: 1411 bytes for
  * ROCKETNET_RELIABILITY_UNRELIABLE and ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
  * 1405 for ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED. A larger unreliable
  * message is promoted to its reliable twin (the messages section below).
@@ -1193,7 +1193,7 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 /**
  * @brief Run the client's frame step first in every frame: pump the transport and take in what arrived.
  *
- * update takes in packets, applies acks, makes this frame's received
+ * update takes in what the transport received, applies acks, makes this frame's received
  * messages ready for rocketnet_client_receive_message, and runs the checks
  * that end a connection. The previous update's received message views end
  * here, and an in-place start message still open is aborted, logged and
@@ -1219,8 +1219,8 @@ ROCKETNET_EXPORT enum rocketnet_update_result_t rocketnet_client_update( struct 
  * Call it after update, receive and release, the simulation and every start
  * message and finish message of the frame, so this frame's messages leave
  * this frame; called earlier, they wait a whole frame. It writes the
- * connection's queued messages into packets under the send budget and hands
- * them to the transport: a reliable message waits for budget and is never
+ * connection's queued messages out to the wire under the send budget: a
+ * reliable message waits for budget and is never
  * dropped; an unreliable one over budget is dropped and counted in
  * ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS. An in-place start message still
  * open is aborted, logged and counted in rocketnet_api_misuse_count. A
@@ -1317,9 +1317,9 @@ ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_clie
  * @brief Finish the pending start message: queue it, and get its receipt serial.
  *
  * The message joins its channel's queue in order and leaves at the next
- * rocketnet_client_send_packets. A message written in place has its packet
- * buffer completed and staged here, with no copy, and that packet counts
- * against the config's max_packets_per_update.
+ * rocketnet_client_send_packets. A message written in place has its
+ * packet buffer completed and staged here, with no copy; each such finish
+ * counts against the config's max_packets_per_update.
  *
  * @param client The client.
  * @param bytes_written The bytes written at the start message's pointer, 1 to the bytes started.
@@ -1535,7 +1535,7 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 /**
  * @brief Run the server's frame step first in every frame: pump the transport and take in what arrived.
  *
- * update takes in packets, binds and frees slots, applies acks, makes this
+ * update takes in what the transport received, binds and frees slots, applies acks, makes this
  * frame's received messages ready for rocketnet_server_receive_message, and
  * runs the checks that disconnect a client. The previous update's received
  * message views end here, and an in-place start message still open is
@@ -1560,8 +1560,8 @@ ROCKETNET_EXPORT enum rocketnet_update_result_t rocketnet_server_update( struct 
  * Call it after update, receive and release, the simulation and every start
  * message and finish message of the frame, so this frame's messages leave
  * this frame; called earlier, they wait a whole frame. It writes each
- * connected client's queued messages into packets under that client's send
- * budget and sends them with the staged disconnect packets: a reliable
+ * connected client's queued messages out to the wire under that client's
+ * send budget, with the staged disconnect packets: a reliable
  * message waits for budget and is never dropped; an unreliable one over
  * budget is dropped and counted in ROCKETNET_SERVER_COUNTER_BUDGET_DROPS. An
  * in-place start message still open is aborted, logged and counted in
@@ -1674,9 +1674,9 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
  * @brief Finish the pending start message to a client: queue it, and get its receipt serial.
  *
  * The message joins its channel's queue in order and leaves at the next
- * rocketnet_server_send_packets. A message written in place has its packet
- * buffer completed and staged here, with no copy, and that packet counts
- * against the config's max_packets_per_update for the client.
+ * rocketnet_server_send_packets. A message written in place has its
+ * packet buffer completed and staged here, with no copy; each such finish
+ * counts against the config's max_packets_per_update for the client.
  *
  * @param server The server.
  * @param destination_id The client index the start message named.
