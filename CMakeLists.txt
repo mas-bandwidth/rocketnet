@@ -423,6 +423,29 @@ if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW)
     target_link_options(rocketnet_shared PRIVATE "$<$<CONFIG:Release>:-Wl,-z,relro,-z,now>")
 endif()
 
+# The public header at the strictest level each compiler has, in the default
+# build: a translation unit holding only rocketnet.h, as C and as C++
+# (tools/header_warnings). Every game that includes the header compiles it
+# with its own flags, so the header must be clean under all of them. Angle
+# bracket includes are the compiler's own headers, never ours, so MSVC reads
+# them at /external:W0.
+add_library(rocketnet_header_warnings OBJECT
+    tools/header_warnings/header_warnings.c
+    tools/header_warnings/header_warnings.cpp)
+target_include_directories(rocketnet_header_warnings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(rocketnet_header_warnings PRIVATE /Wall /external:anglebrackets /external:W0)
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    target_compile_options(rocketnet_header_warnings PRIVATE -Weverything -Wno-padded)
+    check_c_compiler_flag("-Wno-poison-system-directories" ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
+    if(ROCKETNET_C_NO_POISON_SYSTEM_DIRECTORIES)
+        target_compile_options(rocketnet_header_warnings PRIVATE -Wno-poison-system-directories)
+    endif()
+else()
+    target_compile_options(rocketnet_header_warnings PRIVATE
+        -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
+endif()
+
 if(ROCKETNET_BUILD_EXAMPLES)
     add_executable(client client.c)
     target_link_libraries(client PRIVATE rocketnet_dev)
