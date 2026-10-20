@@ -24,7 +24,7 @@
   - `6`: `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT` (channel `6`)
   - `7`: `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT` (channel `7`)
 - Server-to-client traffic drives `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` messages across connected clients so both directions of reliable delivery and acknowledgment are verified.
-- `LOAD_PROFILE=light` replaces both batches with the light profile (`load.c:752-763`, `load.c:871-895`, `load.c:1003-1013`): the traffic loop updates a slice of 100 clients every 10 ms, so each client updates at 10 Hz, and on each update the client sends one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message on channel `3` and the server queues one to that client; the server updates once per slice, on an absolute 10 ms schedule that catches a slow slice up. `LOAD_PROFILE` unset or `default` is the profile above; any other value exits `2`.
+- The traffic loop updates a slice of 100 clients every 10 ms on an absolute schedule that catches a slow slice up (`load.c:785-787`, `load.c:979-982`), so each client updates at 10 Hz. On each update the client sends one message, the next combination in the rotation above (`load.c:829-830`), and the server queues one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message to that client; the server updates once per slice (`load.c:889-892`). `LOAD_PROFILE` unset, `light` or `default` runs this profile; any other value exits `2` (`load.c:759-764`).
 - Every payload carries a 32-byte deterministic frame (`magic`, `client_idx`, `combo_idx`, `seq`, and 16 hash-derived pattern bytes) verified byte-for-byte on receipt.
 
 ## Five Pass Criteria
@@ -35,13 +35,13 @@
 4. **`unreliable_integrity`**: Every unreliable message delivered (`ROCKETNET_RELIABILITY_UNRELIABLE`, `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`) is pattern-verified (never corrupted) and never duplicated (each sequence number per client and reliability mode is observed at most once, and strictly increasing for `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`).
 5. **`counters_agree`**: The total messages sent by all clients equals the total messages received by the server plus counted drops (`sent == received + drops`).
 
-When `counters_agree` fails, `load` prints to stderr every nonzero counter of the server transport and the message server, the sums of every nonzero counter over the client transports and the message clients (`load: counters_agree ... <COUNTER>=<n>`), and each combo's client-to-server sent and received counts (`load: counters_agree combo=<n> sent=<n> received=<n>`), so the run names where the uncounted messages went (`load.c:1081`).
+When `counters_agree` fails, `load` prints to stderr every nonzero counter of the server transport and the message server, the sums of every nonzero counter over the client transports and the message clients (`load: counters_agree ... <COUNTER>=<n>`), and each combo's client-to-server sent and received counts (`load: counters_agree combo=<n> sent=<n> received=<n>`), so the run names where the uncounted messages went (`load.c:1028-1063`).
 
 ## Diagnostic Telemetry (Recorded Without Gating)
 
 At the end of every run, the single summary line records:
 - `connect_s`: wall time from the start of the connect phase until every client and the server report the full client count connected.
-- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each read from the clock when `load` first sees that client in `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED` (`load.c:660`), not from the connect loop's per-pass time, which every client of one pass shares. With three or more clients connected, a `connect_p50_s` equal to `connect_max_s` means the stamps share one value: `load` then prints `load: connect_stamps ...` to stderr and fails the run with `failed_criterion=connect_stamps` (`load.c:1152`).
+- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each read from the clock when `load` first sees that client in `ROCKETNET_CLIENT_STATE_CONNECTED` (`load.c:679`), not from the connect loop's per-pass time, which every client of one pass shares. With three or more clients connected, a `connect_p50_s` equal to `connect_max_s` means the stamps share one value: `load` then prints `load: connect_stamps ...` to stderr and fails the run with `failed_criterion=connect_stamps` (`load.c:1092-1112`).
 - `server_update_p50_us` and `server_update_p99_us`: 50th and 99th percentile durations (in microseconds) of `rocketnet_message_server_update`.
 - `rss_mb`: process resident set size (in MiB) at the end of the run.
 - `server_driver` and `client_driver`: the transport the ladder granted to the server and to client `0`.
@@ -72,11 +72,11 @@ ulimit -n 65536
 
 ### Nightly runner limit
 
-The `soak-macos` job in `.github/workflows/nightly-soak.yml` raises the step's soft limit with `ulimit -n 65536`, falling back to `ulimit -n "$(ulimit -Hn)"`. A job step cannot raise its hard limit: the runner's launchd job sets it. The fleet's macOS runner job sets `SoftResourceLimits` `NumberOfFiles` to `65536` in its launchd plist and inherits the session's hard limit, `unlimited` (`launchctl print gui/<uid>/<label>` lists `maxfiles (soft) => 65536`; `launchctl limit maxfiles` prints the session's soft and hard values). On a runner whose hard limit is below the run's need, the step fails with the named-limit message above, never a partial run; the fix is a `HardResourceLimits` `NumberOfFiles` entry in that runner's launchd plist and a reload of the job, not a change to the step.
+The `soak-macos` job's load step in `.github/workflows/nightly-soak.yml` prints the soft and hard `RLIMIT_NOFILE` it starts with, fails before any run with an `::error::` naming the hard limit and the fix when the hard limit is below `2064` (two descriptors per client plus the 64 margin), then sets `ulimit -n 65536`, falling back to the hard limit, and prints the limit the runs use. A job step cannot raise its hard limit: the runner's launchd job sets it. The fleet's macOS runner job sets `SoftResourceLimits` `NumberOfFiles` to `65536` in its launchd plist and sets no `HardResourceLimits`, so it inherits launchd's hard limit, `unlimited`, which the kernel caps at `kern.maxfilesperproc`. Read on the runner host on 2026-10-20: `launchctl print gui/<uid>/<label>` lists `resource limits = { maxfiles (soft) => 65536 }` for the running job, `launchctl limit maxfiles` prints `65536 unlimited`, and `sysctl kern.maxfilesperproc` prints `245760`. The `256` of a default session is the soft limit; launchd's hard limit is `unlimited` unless a plist or `launchctl limit` lowers it. On a runner whose hard limit is below the run's need, the fix is a `HardResourceLimits` `NumberOfFiles` entry in that runner's launchd plist and a reload of the job, not a change to the step.
 
 ### Connect-deadline diagnostics
 
-When the connect phase reaches its 10-second deadline with a client short of `CONNECTED`, `bin/load` names up to eight such clients on stderr before the summary line (`load.c:688-722`): each one's transport state, its driver, the wire datagrams it has sent and received, and its nonzero transport counters, then the server's connected count and every nonzero server transport counter:
+When the connect phase reaches its 10-second deadline with a client short of `CONNECTED`, `bin/load` names up to eight such clients on stderr before the summary line (`load.c:708-738`): each one's transport state, its driver, the wire datagrams it has sent and received, and its nonzero transport counters, then the server's connected count and every nonzero server transport counter:
 
 ```
 load: client 481 not connected at the deadline: state=1 requesting cookie
@@ -87,7 +87,7 @@ load: server counter CONNECTION_REQUEST_NO_COOKIE=1035
 
 ### Traffic-phase disconnect diagnostics
 
-For each of the first eight clients that leave `CONNECTED` during traffic, `bin/load` prints, after the line naming the client and its disconnect reason, when that client was last updated, the longest gap between two of its updates, and the longest single server update with its time into traffic (`load.c:839-843`, `load.c:905-912`, `load.c:921-925`):
+For each of the first eight clients that leave `CONNECTED` during traffic, `bin/load` prints, after the line naming the client and its disconnect reason, when that client was last updated, the longest gap between two of its updates, and the longest single server update with its time into traffic (`load.c:793-796`, `load.c:877-882`, `load.c:896-900`):
 
 ```
 load: client 432 left CONNECTED at t=6.496: state=0 disconnected reason=server disconnected
@@ -98,7 +98,7 @@ One loop thread updates every client in slices of 100 with a server update after
 
 ### Dual-stack client ports
 
-Darwin lets a dual-stack socket (`[::]:0`) take an ephemeral port an IPv4 socket on the host already holds, and delivers IPv4 datagrams for that port to the IPv4 socket, so a dual-stack client of an IPv4 server sends but never hears the server and sits in `requesting cookie` until its deadline. On macOS the client of an IPv4 server binds an IPv4 socket (`sdk/rocketnet_client_transport.cpp:855-864`), and an IPv4 socket's ephemeral port is never one another IPv4 socket holds. `load` connects its clients to `127.0.0.1` unless `LOAD_SERVER_ADDRESS` names another host (`load.c:524-545`), so every load client takes that IPv4 bind.
+Darwin lets a dual-stack socket (`[::]:0`) take an ephemeral port an IPv4 socket on the host already holds, and delivers IPv4 datagrams for that port to the IPv4 socket, so a dual-stack client of an IPv4 server sends but never hears the server and sits in `requesting cookie` until its deadline. On macOS the client of an IPv4 server binds an IPv4 socket (`sdk/rocketnet_client_transport.cpp:855-866`), and an IPv4 socket's ephemeral port is never one another IPv4 socket holds. `load` connects its clients to `127.0.0.1` unless `LOAD_SERVER_ADDRESS` names another host (`load.c:542-546`), so every load client takes that IPv4 bind.
 
 ### Server cells
 
