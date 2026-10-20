@@ -58,12 +58,12 @@ stales every case. Do not replace fingerprints to silence a stale result.
 
 Use `groups --stale` to identify affected groups. Run each group's cases as
 individual shards so each receives its own 110-second budget. For example,
-the 11 Link cases use shards 0 through 10:
+the 19 Link cases use shards 0 through 18:
 
 ```sh
-for i in $(seq 0 10); do
+for i in $(seq 0 18); do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group link --shards 11 --shard "$i" --workers 2 --timeout 110s \
+    --group link --shards 19 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/link-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \

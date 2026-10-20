@@ -30,8 +30,9 @@
 (*                                                                         *)
 (*   OV-34 (rnfix-replay-advanced-after-connect-check-r2).  The server     *)
 (*   advances the session window only for a mapping that holds a slot.    *)
-(*   The code (sdk/rocketnet_server_protocol.cpp:962-972) advances, then   *)
-(*   checks client_index == -1: GateBeforeAdvance = FALSE is that order.   *)
+(*   The code checks client_index before rocketnet_replay_advance in       *)
+(*   sdk/rocketnet_server_protocol.cpp. GateBeforeAdvance = TRUE models   *)
+(*   the current order; FALSE is the reversed witness.                    *)
 (*                                                                         *)
 (* This is replay_session only.  The handshake window (replay_handshake)  *)
 (* is the same struct, but handshake packets are exempt from replay        *)
@@ -51,8 +52,8 @@ CONSTANTS
     WordBits,          \* bits per word: 64 in the code
     ClearedWords,      \* words the long-skip branch clears; current code uses Words.
     MaxSeq,            \* the highest sequence this instance explores
-    GateBeforeAdvance  \* BOOLEAN: the server checks the slot before it
-                       \* advances (the rule) or after (today's code)
+    GateBeforeAdvance  \* BOOLEAN: check the slot before advance (current code)
+                       \* or after advance (the reversed witness)
 
 W == Words * WordBits  \* ROCKETNET_REPLAY_WINDOW_BITS (sdk/rocketnet_replay.h:26)
 
