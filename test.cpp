@@ -9,6 +9,10 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -47,9 +51,14 @@ static int rocketnet_unit_worker( const char * name )
 {
 #if defined(_WIN32)
     // MSVC treats _IOLBF as full buffering and rejects a zero buffer size.
-    // A 4096-byte buffer paired with explicit fflush keeps each worker's
-    // test-name line in a single pipe write so parallel workers never tear lines.
-    if ( setvbuf( stdout, NULL, _IOFBF, 4096 ) != 0 ||
+    // A full buffer flushes when it fills, wherever that falls in a line, so
+    // it is sized above any one worker's output (the ed25519 witness alone
+    // prints about 6 KB): the worker's lines reach the shared pipe in the one
+    // write of the fflush below, and parallel workers never tear a line. A
+    // text-mode stream may split a flush into several writes as it converts
+    // newlines, so stdout is binary: a flush is then a single write.
+    if ( _setmode( _fileno( stdout ), _O_BINARY ) == -1 ||
+         setvbuf( stdout, NULL, _IOFBF, 1 << 20 ) != 0 ||
          setvbuf( stderr, NULL, _IONBF, 0 ) != 0 )
         return 1;
 #else

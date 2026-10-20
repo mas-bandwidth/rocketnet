@@ -5,6 +5,7 @@
 
 #include "rocketnet_memory.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_driver.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
@@ -113,7 +114,7 @@ static bool rocketnet_rio_test_fault( rocketnet_server_rio_t * rio, int fault, i
 }
 #define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) rocketnet_rio_test_fault( rio, fault, status )
 #else
-#define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) false
+#define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) ( (void) (status), false )
 #endif
 
 #if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
@@ -502,7 +503,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( !rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES, ROCKETNET_FRAME_STRIDE,
                                      ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof(SOCKADDR_INET), 4096, &rio->layout ) ) goto failed;
     rio->region = (uint8_t*) VirtualAlloc( NULL, (SIZE_T) rio->layout.total_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
-    if ( !rio->region ) goto failed;
+    if ( !rio->region )
+    {
+        rocketnet_allocation_refused();
+        goto failed;
+    }
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
     if ( rio->buffer_id == RIO_INVALID_BUFFERID || fail_stage == 3 ) goto failed;
 

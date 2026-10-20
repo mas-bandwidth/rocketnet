@@ -1226,6 +1226,7 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
 #define ONLINK_SERVER_ADDRESS "10.77.1.1:40000"
 #define ONLINK_WANT_FRAMES 150
 #define ONLINK_SECONDS 20.0
+#define ONLINK_MAX_CLIENTS "4"
 
 #ifndef BPF_FS_MAGIC
 #define BPF_FS_MAGIC 0xcafe4a11
@@ -1246,11 +1247,18 @@ static double onlink_now()
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-static pid_t onlink_spawn( const char * program, const char * argument, const char * log_path, int netns_fd, bool xdp_server )
+// stdin_fd is the read end of a pipe the case holds open: server.c quits when
+// its stdin reaches end of file (check_stdin_closed, server.c:150-165), and a
+// guest started without a terminal hands the case an stdin already at end of
+// file, so the server would stop after its first frame.
+
+static pid_t onlink_spawn( const char * program, const char * argument, const char * log_path, int netns_fd, bool xdp_server, int stdin_fd )
 {
     const pid_t pid = fork();
     if ( pid != 0 )
         return pid;
+    if ( stdin_fd >= 0 && dup2( stdin_fd, 0 ) < 0 )
+        _exit( 126 );
     if ( netns_fd >= 0 && setns( netns_fd, CLONE_NEWNET ) != 0 )
         _exit( 126 );
     const int log_fd = open( log_path, O_WRONLY | O_CREAT | O_TRUNC, 0600 );
@@ -1266,7 +1274,12 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
         setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "1", 1 );
         setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 );
     }
-    execl( program, program, argument, (char*) NULL );
+    // the case connects one client: a message object sized for the default
+    // 1000 clients does not fit the guest (server.c:872, :925)
+    if ( xdp_server )
+        execl( program, program, argument, "--max-clients", ONLINK_MAX_CLIENTS, (char*) NULL );
+    else
+        execl( program, program, argument, (char*) NULL );
     _exit( 127 );
 }
 
@@ -1312,6 +1325,7 @@ struct onlink_environment_t
     int home_netns_fd = -1;
     int peer_netns_fd = -1;
     int capture_fd = -1;
+    int stdin_pipe[2] = { -1, -1 };
     pid_t server = -1;
     pid_t client = -1;
     char server_log[64] = "/tmp/rocketnet_onlink_server_XXXXXX";
@@ -1323,6 +1337,11 @@ struct onlink_environment_t
         onlink_stop( server );
         if ( capture_fd >= 0 )
             close( capture_fd );
+        for ( int i = 0; i < 2; i++ )
+        {
+            if ( stdin_pipe[i] >= 0 )
+                close( stdin_pipe[i] );
+        }
         if ( home_netns_fd >= 0 )
         {
             setns( home_netns_fd, CLONE_NEWNET );
@@ -1446,8 +1465,14 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
         }
     }
 
-    environment.server = onlink_spawn( server_path, ONLINK_SERVER_ADDRESS, environment.server_log, -1, true );
-    environment.client = onlink_spawn( client_path, ONLINK_SERVER_ADDRESS, environment.client_log, environment.peer_netns_fd, false );
+    if ( pipe( environment.stdin_pipe ) != 0 || fcntl( environment.stdin_pipe[1], F_SETFD, FD_CLOEXEC ) != 0 )
+    {
+        printf( "  FAIL could not open the stdin pipe for the example server and client\n" );
+        return false;
+    }
+
+    environment.server = onlink_spawn( server_path, ONLINK_SERVER_ADDRESS, environment.server_log, -1, true, environment.stdin_pipe[0] );
+    environment.client = onlink_spawn( client_path, ONLINK_SERVER_ADDRESS, environment.client_log, environment.peer_netns_fd, false, environment.stdin_pipe[0] );
 
     // every frame from the server's address and port, judged by its
     // destination MAC

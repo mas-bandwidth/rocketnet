@@ -401,19 +401,30 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                 // a datagram to this server drops; every other fragment is
                 // the kernel's to reassemble
 
-                struct server_xdp_ipv6_fragment_header_t * fragment = (void*) ip6 + sizeof(struct ipv6hdr);
+                // the header starts 54 bytes into the frame (the Ethernet
+                // and fixed IPv6 headers), not a multiple of the struct's
+                // 4-byte alignment, so it is copied through a byte pointer
+                // into a local after the bounds check rather than read
+                // through a struct pointer
 
-                if ( (void*)fragment + sizeof(struct server_xdp_ipv6_fragment_header_t) <= data_end &&
-                     fragment->next_header == IPPROTO_UDP &&
-                     ( fragment->offset_flags & __constant_htons( 0xfff9 ) ) == __constant_htons( 0x0001 ) )
+                __u8 * fragment = (void*) ip6 + sizeof(struct ipv6hdr);
+
+                if ( (void*)fragment + sizeof(struct server_xdp_ipv6_fragment_header_t) <= data_end )
                 {
-                    struct udphdr * udp = (void*) fragment + sizeof(struct server_xdp_ipv6_fragment_header_t);
-                    const struct rocketnet_server_xdp_config_t * config = server_xdp_config();
-                    if ( config != NULL && server_xdp_first_fragment_is_ours( udp, data_end, config, server_xdp_ipv6_address_match( config, ip6 ) ) )
+                    struct server_xdp_ipv6_fragment_header_t header;
+                    __builtin_memcpy( &header, fragment, sizeof(header) );
+
+                    if ( header.next_header == IPPROTO_UDP &&
+                         ( header.offset_flags & __constant_htons( 0xfff9 ) ) == __constant_htons( 0x0001 ) )
                     {
-                        debug_printf( "ipv6 first fragment to this server" );
-                        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
-                        return XDP_DROP;
+                        struct udphdr * udp = (void*) fragment + sizeof(struct server_xdp_ipv6_fragment_header_t);
+                        const struct rocketnet_server_xdp_config_t * config = server_xdp_config();
+                        if ( config != NULL && server_xdp_first_fragment_is_ours( udp, data_end, config, server_xdp_ipv6_address_match( config, ip6 ) ) )
+                        {
+                            debug_printf( "ipv6 first fragment to this server" );
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
+                            return XDP_DROP;
+                        }
                     }
                 }
 
