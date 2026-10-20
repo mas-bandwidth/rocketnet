@@ -5817,7 +5817,10 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
 
     rocketnet_server_uring_send_packets( uring );
 
-    // send_packets reaps every send of its own before it returns
+    // send_packets reaps within its fixed completion budget
+    // (ROCKETNET_URING_SEND_BUDGET) and returns even if sends remain, deferred
+    // to a later call and counted SEND_DEFERRED; this batch is small enough
+    // that every send completes before the call returns
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
