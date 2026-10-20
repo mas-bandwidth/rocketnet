@@ -71,7 +71,7 @@ in one process (`soak.c:115`, `soak.c:164`) and cannot be split across
 machines.
 
 Today both programs exchange transport payloads, not messages: `client.c`
-sends with `rocketnet_client_start` and `rocketnet_client_finish`
+sends with `rocketnet_client_start_message` and `rocketnet_client_finish_message`
 (`client.c:91`), and
 `server.c` echoes payloads back (`server.c:76-82`). Each gains a `--matrix`
 mode built on the client and server API (`rocketnet_client_create`,
@@ -265,8 +265,8 @@ every window. The channel-less modes 0, 2, 5 and 6 name all 32 channels; the
 modes 1, 3, 4 and 7 run on channels 0 to 30, because channel 31 carries the
 progress reports and the HELLO (below and section 6). That is
 2 x (4 x 32 + 4 x 31) = 504 streams per connection. Each update, the
-receiver polls every channel with `rocketnet_client_receive` on a client
-and `rocketnet_server_receive` on the server, and it releases every view
+receiver polls every channel with `rocketnet_client_receive_message` on a client
+and `rocketnet_server_receive_message` on the server, and it releases every view
 before the next update (`sdk/rocketnet.h:889-892`).
 The receive channel is checked against the sender's channel byte. Codes 1,
 3, 4 and 7 must arrive on the channel sent. Codes 0, 2, 5 and 6 arrive on
@@ -755,7 +755,7 @@ file run over ssh under a timeout (section 12):
 
 - **Minted at each connect, in the client process.** Each client mints its
   own development token just before each connect, with
-  `rocketnet_write_dev_connect_token(address, rocketnet_random_uint64(), time(NULL), token)`,
+  `rocketnet_write_dev_connect_token(address, rocketnet_random_uint64(), time(NULL), token, sizeof(token))`,
   as `client.c:46` does. (`rocketnet_random_uint64` is an internal SDK
   helper in `sdk/rocketnet_layers.h`, not a public call in `sdk/rocketnet.h`.)
   It is never minted ahead of time and never shipped between machines.

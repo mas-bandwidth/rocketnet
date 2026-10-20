@@ -17,10 +17,9 @@ expected="$(cat << 'EXPECTED'
 sdk/rocketnet.h	340	rocketnet_init	function	lifecycle
 sdk/rocketnet.h	1363	rocketnet_frame_sync_stats_t	record	counters
 sdk/rocketnet.h	1366	rocketnet_frame_sync_stats_t::dropped_frames	variable	counters
-sdk/rocketnet.h	1476	ROCKETNET_UNRELIABLE	macro	reliability
+sdk/rocketnet.h	1476	ROCKETNET_RELIABILITY_UNRELIABLE	macro	reliability
 sdk/rocketnet.h	1770	rocketnet_message_client_required_memory	function	configuration
 sdk/rocketnet.h	1814	rocketnet_message_client_send	function	messages
-sdk/rocketnet.hpp	34	rocketnet::ClientTransport::update	function	cpp
 sdk/rocketnet_address.h	25	rocketnet_address_t	record	connection
 sdk/rocketnet_connect_token.h	150	rocketnet_generate_connect_token	function	connection
 sdk/rocketnet_counters.h	575	ROCKETNET_COUNTER_PACKETS_SENT	enum-value	counters

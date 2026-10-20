@@ -33,11 +33,11 @@ static int send_burst( struct rocketnet_client_t * client, int channel, int reli
 {
     for ( int i = 0; i < count; i++ )
     {
-        uint8_t * out = rocketnet_client_start( client, channel, reliability, MESSAGE_BYTES );
+        uint8_t * out = rocketnet_client_start_message( client, channel, reliability, MESSAGE_BYTES );
         if ( !out )
             return 0;
         memset( out, (int)( 'A' + ( i % 26 ) ), MESSAGE_BYTES );
-        if ( !rocketnet_client_finish( client, MESSAGE_BYTES ) )
+        if ( !rocketnet_client_finish_message( client, MESSAGE_BYTES ) )
             return 0;
     }
     return 1;
@@ -53,7 +53,7 @@ int main( void )
     char server_address[64];
     int result = 1;
 
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     printf( "client send budget default: %d kbps\n", ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
     printf( "server per-client send budget default: %d kbps\n", ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
 
@@ -61,19 +61,29 @@ int main( void )
     server_config.max_clients = 2;
     server_config.transport = "loopback";
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
-    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
+    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client_config.send_kbps = CLIENT_SEND_KBPS;
     printf( "client send budget from config at create: %d kbps\n", client_config.send_kbps );
 
-    client = rocketnet_client_create( NULL, connect_token, &client_config, NULL, 0 );
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
-    CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == 1 );
+    CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
     printf( "runtime set-send-kbps returned 1\n" );
 
     int reliable_received = 0;
@@ -86,24 +96,24 @@ int main( void )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             goto cleanup;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
             goto cleanup;
 
         // (2) receive and release every message; count the reliable ones,
         // sent on channel 1, so the example checks none was lost
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
-            rocketnet_client_release( client, data );
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+            rocketnet_client_release_message( client, data );
         const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release( server, slot, data );
-        while ( rocketnet_server_receive( server, slot, 1, &data, &bytes ) )
+        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+            rocketnet_server_release_message( server, slot, data );
+        while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
         {
             reliable_received++;
-            rocketnet_server_release( server, slot, data );
+            rocketnet_server_release_message( server, slot, data );
         }
 
         // (3) run the game simulation for the frame: nothing to simulate here
@@ -114,13 +124,13 @@ int main( void )
             // unreliable messages over budget are dropped and counted at send
             if ( !unreliable_sent )
             {
-                CHECK( send_burst( client, 0, ROCKETNET_UNRELIABLE, UNRELIABLE_COUNT ) );
+                CHECK( send_burst( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, UNRELIABLE_COUNT ) );
                 unreliable_sent = 1;
             }
             // reliable messages over budget wait and are never dropped
             if ( !reliable_sent )
             {
-                CHECK( send_burst( client, 1, ROCKETNET_RELIABLE_ORDERED, RELIABLE_COUNT ) );
+                CHECK( send_burst( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, RELIABLE_COUNT ) );
                 reliable_sent = 1;
             }
         }
@@ -141,12 +151,15 @@ int main( void )
     printf( "reliable messages arrived: %d/%d\n", reliable_received, RELIABLE_COUNT );
     CHECK( drops > 0 );
     CHECK( reliable_received == RELIABLE_COUNT );
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

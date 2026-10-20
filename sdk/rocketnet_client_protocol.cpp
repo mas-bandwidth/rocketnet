@@ -10,6 +10,7 @@
 #include "rocketnet_fragment.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
+#include "rocketnet_connection_reset.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -53,15 +54,7 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
     // after the state is stored, so the reason, the state-change report and
     // any packets already written keep their order.
     if ( state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
-    {
-        // tla/RNClientIoDecrypt.tla RetireKeys: an I/O thread's open copy is
-        // retired before this end's own keys are zeroed
-        if ( client->retire_keys )
-            client->retire_keys( client->keys_context );
-        sodium_memzero( &client->keys, sizeof(client->keys) );
-        sodium_memzero( &client->token, sizeof(client->token) );
-        sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
-    }
+        rocketnet_client_connection_reset( client );
 }
 
 // The AEAD integrity limit, per the standard's _Replay Protection_: one
@@ -83,8 +76,6 @@ static void rocketnet_client_integrity_failure( struct rocketnet_client_protocol
     rocketnet_debug( "client disconnected. integrity limit reached" );
     client->counters->values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
     rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-    sodium_memzero( &client->keys, sizeof(client->keys) );
-    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
 }
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters )
@@ -136,24 +127,8 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     // a connect always begins a fresh attempt from the start: fresh salt,
     // fresh ephemeral, sequences at one. recovery is this same path.
 
-    struct rocketnet_counters_t * counters = client->counters;
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
-    memcpy( filter_value, client->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
-    double send_rate = client->send_rate;
-    struct rocketnet_reassembly_set_t * reassembly = client->reassembly;
-
-    memset( client, 0, sizeof(*client) );
-    memcpy( client->filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
-    client->send_rate = send_rate;
-    client->counters = counters;
-    client->reassembly = reassembly;
-    if ( client->reassembly )
-        rocketnet_reassembly_set_reset_connection( client->reassembly, 0 );
-    client->client_index = -1;
+    rocketnet_client_connection_reset( client );
     client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
-    client->state_first_send_time = -1.0;
-    client->next_fragment_payload_id = 1;
-    rocketnet_ack_endpoint_reset( &client->ack );
 
     rocketnet_read_connect_token( &client->token, connect_token );
     rocketnet_read_signed_connect_data( &client->signed_fields, client->token.signed_connect_data );
@@ -1634,8 +1609,6 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
 
     if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-
-    sodium_memzero( &client->keys, sizeof(client->keys) );
-    sodium_memzero( &client->token, sizeof(client->token) );
-    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
+    else
+        rocketnet_client_connection_reset( client );
 }
