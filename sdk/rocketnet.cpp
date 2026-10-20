@@ -43,8 +43,6 @@
 
 // -------------------------------------------------
 
-void rocketnet_printf( const char * format, ... );
-
 static void default_assert_function( const char * condition, const char * function, const char * file, int line )
 {
     rocketnet_error( "assert failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
@@ -562,15 +560,6 @@ uint64_t rocketnet_protocol_version_hash( int major, int minor )
     return rocketnet_hash_string( text );
 }
 
-uint64_t rocketnet_protocol_version()
-{
-#if !ROCKETNET_DEVELOPMENT
-    return rocketnet_protocol_version_hash( ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR );
-#else // #if !ROCKETNET_DEVELOPMENT
-    return 0;
-#endif // #if !ROCKETNET_DEVELOPMENT
-}
-
 float rocketnet_random_float()
 {
     uint32_t uint32_value;
@@ -713,13 +702,14 @@ bool rocketnet_init_ex( void * context, int * status )
         return false;
     }
 
-    rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
-    rocketnet_info( "platform is %s (%s)", rocketnet_platform_name( rocketnet_platform_id() ),
-                    rocketnet_connection_name( rocketnet_platform_connection_type() ) );
-
+    // the level first, so init's own lines obey it
     const char * log_level_override = rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL" );
     if ( log_level_override )
         rocketnet_log_level_override_apply( log_level_override );
+
+    rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
+    rocketnet_info( "platform is %s (%s)", rocketnet_platform_name( rocketnet_platform_id() ),
+                    rocketnet_connection_name( rocketnet_platform_connection_type() ) );
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         rocketnet_initialized = true;

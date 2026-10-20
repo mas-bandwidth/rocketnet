@@ -5,7 +5,9 @@
 // Driver-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
 // before publish; the worker retires only after copying its final packet.
-// A full queue refuses new storage without overwriting either queued buffer.
+// When every generation is queued, acquire returns -1; reopen hands back the
+// newest queued generation, never the front, so a queued generation is never
+// overwritten or duplicated.
 template<int NumBuffers> struct rocketnet_send_handoff_t
 {
     bool free[NumBuffers];
@@ -32,6 +34,20 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         queued[(head + count) % NumBuffers] = filling;
         ++count;
         filling = -1;
+    }
+    // tla/SendHandoff.tla: reopen takes the newest queued generation, never
+    // the front. The producer asks for storage while every generation is
+    // queued (two flushes inside one worker latency). The newest queued
+    // generation is not the front, so the worker has not started it: hand it
+    // back to the producer, which stages after its packets until the next
+    // publish. -1 when only the front is queued. The caller tries acquire
+    // first.
+    int reopen()
+    {
+        if (filling >= 0) return filling;
+        if (count < 2) return -1;
+        --count;
+        return filling = queued[(head + count) % NumBuffers];
     }
     int front() const { return count ? queued[head] : -1; }
     void retire()

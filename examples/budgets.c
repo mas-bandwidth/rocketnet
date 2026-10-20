@@ -83,12 +83,11 @@ int main( void )
         client = NULL;
     }
     CHECK( client != NULL );
-    CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
-    printf( "runtime set-send-kbps returned 1\n" );
 
     int reliable_received = 0;
     int unreliable_sent = 0;
     int reliable_sent = 0;
+    int runtime_budget_set = 0;
     const double start = rocketnet_time();
 
     while ( rocketnet_time() - start < 60.0 )
@@ -107,13 +106,16 @@ int main( void )
         int bytes = 0;
         while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
             rocketnet_client_release_message( client, data );
-        const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release_message( server, slot, data );
-        while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            reliable_received++;
-            rocketnet_server_release_message( server, slot, data );
+            const int slot = rocketnet_client_index( client );
+            while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+                rocketnet_server_release_message( server, slot, data );
+            while ( rocketnet_server_receive_message( server, slot, 1, &data, &bytes ) )
+            {
+                reliable_received++;
+                rocketnet_server_release_message( server, slot, data );
+            }
         }
 
         // (3) run the game simulation for the frame: nothing to simulate here
@@ -121,9 +123,21 @@ int main( void )
         // (4) queue this frame's outgoing messages, once connected
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
+            // set-send-kbps needs a CONNECTED client, so the runtime call waits
+            // for the handshake; the config's send_kbps set the starting rate
+            if ( !runtime_budget_set )
+            {
+                const enum rocketnet_status_t status = rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS );
+                CHECK( status == ROCKETNET_STATUS_OK );
+                printf( "runtime set-send-kbps returned %d\n", (int) status );
+                runtime_budget_set = 1;
+            }
             // unreliable messages over budget are dropped and counted at send
             if ( !unreliable_sent )
             {
+                // the runtime budget is set once connected: set_send_kbps refuses before then
+                CHECK( rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS ) == ROCKETNET_STATUS_OK );
+                printf( "runtime set-send-kbps returned 1\n" );
                 CHECK( send_burst( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, UNRELIABLE_COUNT ) );
                 unreliable_sent = 1;
             }

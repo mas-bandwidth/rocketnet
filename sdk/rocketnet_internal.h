@@ -535,7 +535,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // validation, as the transports' tables (docs/CHANNELS.md 12). Fields marked
 // WIRE must be identical on both ends; CONFIG verifies them (layer 7).
 // Validation applies the ranges here and the cross rules of section 14, and
-// refuses, never clamps.
+// refuses, never clamps. The public env pass reads every row but the two
+// budget rows under the endpoint's prefix (sdk/rocketnet_api.cpp:119
+// and :125); the budget's one variable is the
+// endpoint's budget field, ROCKETNET_CLIENT_SEND_KBPS or
+// ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS.
 
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
@@ -592,5 +596,8 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
+
+// Enumerate the actual ABI query table; NULL marks the end.
+const char * rocketnet_abi_layouts( size_t index );
 
 #endif // #ifndef ROCKETNET_INTERNAL_H

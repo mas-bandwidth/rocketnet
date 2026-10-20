@@ -221,7 +221,12 @@ way the GSO driver binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
 batched `SENDMSG` per staged slot, in chunks no larger than the free submission
-queue space, and returns once every send has completed. A queue count past
+queue space. Each `send_packets` and `receive_packets` call reaps at most a
+fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`,
+`ROCKETNET_URING_RECEIVE_BUDGET`) and `send_packets` waits at most once, so an
+update returns under sustained traffic; completions past a budget stay queued
+for the next call, and a send without its completion keeps its slot until a
+later call reaps it. A queue count past
 `ROCKETNET_URING_MAX_QUEUES` refuses the create; zero selects
 `ROCKETNET_URING_DEFAULT_QUEUES`.
 
@@ -235,12 +240,14 @@ in the Linux `auto` order; it has no client side.
 
 Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,
 submit syscalls, send drops, receive drops for size, bank overflow and
-unconvertible source, receives ended for want of buffers, and multishot
-re-arms. A destroy that gives up waiting for outstanding completions leaks the
+unconvertible source, receives ended for want of buffers, multishot
+re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
+send calls that returned with sends still owned by the kernel
+(`SEND_DEFERRED`). A destroy that gives up waiting for outstanding completions leaks the
 kernel-visible memory rather than freeing it and counts it in
 `rocketnet_server_uring_leaked_bytes()` and `rocketnet_server_uring_leaked_drivers()`.
-The send staging, the two receive banks and destroy are modelled in
-`tla/RNUringDriver.tla`.
+The send staging, the two receive banks, the per-call completion budget and
+destroy are modelled in `tla/RNUringDriver.tla`.
 
 ## The XDP receive filter
 
@@ -419,3 +426,14 @@ The Linux connection-type label is an IPv4 main-table heuristic. It does not
 model policy routing or multipath entries without a direct output-interface
 attribute, and may report the wired fallback for those configurations. This
 label does not choose the transport route or limit IPv6 endpoint support.
+
+## Bounded server payload sends
+
+Unstaged server transports reserve at least one payload slot per configured
+client, with a minimum of 256 slots. A lower test capacity exercises contention.
+The message send pass starts after the last served connection and offers one
+frame per connection per round. Full capacity leaves queued reliable work due
+for the next update. In-place unreliable writes use only surplus capacity above
+a complete round of connected peers; otherwise they join the queue so application call order cannot
+starve another connection or that connection's reliable work. Control packets
+use the transport's separate send path.
