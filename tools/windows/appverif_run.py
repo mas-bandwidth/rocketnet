@@ -22,6 +22,7 @@ for x64).
 import argparse
 import ctypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,8 +55,8 @@ AVRF_NS = "{Application Verifier}"
 FRAMES_SHOWN = 8
 MAX_EXPORTED_LOGS = 4096
 
-# taskkill's reason for a process that exited before it could be terminated.
-TASK_GONE_REASON = "There is no running instance of the task."
+# How long a process taskkill could not terminate has to finish exiting.
+TREE_EXIT_WAIT_SECONDS = 5.0
 
 # appverif -configure's error for a stop code no registered provider issues.
 UNISSUED_STOP_PREFIX = "AVRF: Error: Stop code ["
@@ -288,20 +289,45 @@ def terminate_process_tree(process: subprocess.Popen) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
-    # taskkill /T exits non-zero when a process of the tree exits between its
-    # listing and its termination: an ERROR line followed by the reason "There
-    # is no running instance of the task.". Only an ERROR with any other
-    # reason is a process left alive.
-    lines = [line.strip() for line in (stopped.stdout + "\n" + stopped.stderr).splitlines() if line.strip()]
-    errors = [
-        line + " " + lines[index + 1] if index + 1 < len(lines) else line
-        for index, line in enumerate(lines)
-        if line.startswith("ERROR:")
-    ]
-    errors = [error for error in errors if TASK_GONE_REASON not in error]
-    if errors or (stopped.returncode != 0 and not stopped.stdout.strip()):
-        output = " ".join(errors) or " ".join((stopped.stdout + " " + stopped.stderr).split())
-        raise RuntimeError(f"taskkill failed to stop process tree {process.pid} (exit {stopped.returncode}): {output}")
+    # taskkill /T exits non-zero when it could not terminate a process of the
+    # tree, which happens for a process already exiting ("There is no running
+    # instance of the task.", "The operation attempted is not supported.").
+    # Each process it names that way is waited on; one still running after
+    # TREE_EXIT_WAIT_SECONDS is a process left alive.
+    output = stopped.stdout + "\n" + stopped.stderr
+    named = [int(pid) for pid in re.findall(r"ERROR: The process with PID (\d+)", output)]
+    if stopped.returncode != 0 and not named and process.pid not in pids_running([process.pid]):
+        return
+    if stopped.returncode != 0 and not named:
+        raise RuntimeError(f"taskkill failed to stop process tree {process.pid} (exit {stopped.returncode}): {' '.join(output.split())}")
+    deadline = time.monotonic() + TREE_EXIT_WAIT_SECONDS
+    alive = pids_running(named)
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.25)
+        alive = pids_running(alive)
+    if alive:
+        raise RuntimeError(
+            f"taskkill left processes of tree {process.pid} running: {' '.join(str(pid) for pid in alive)}"
+        )
+
+
+def pids_running(pids: list) -> list:
+    """The pids in pids that name a running process (tasklist /FI "PID eq N")."""
+    tasklist = shutil.which("tasklist.exe") or str(
+        Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "tasklist.exe"
+    )
+    running = []
+    for pid in pids:
+        listed = subprocess.run(
+            [tasklist, "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if f'"{pid}"' in listed.stdout:
+            running.append(pid)
+    return running
 
 
 def main() -> int:
