@@ -208,7 +208,7 @@ static void unreliable_delivery_budget_drops_and_counts()
     rocketnet_unit_check( channels.unreliable_delivered == budget );
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == 3 );
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
-    rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // the budget is per update
     rn_channels_end_update( &channels );
@@ -432,7 +432,7 @@ static void ordered_dispatch_refuses_collisions_and_bad_rings()
 
         rocketnet_unit_check( rn_channels_dispatch( &channels, &collision, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
         rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
-        rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
     }
 
@@ -453,7 +453,7 @@ static void ordered_dispatch_refuses_collisions_and_bad_rings()
         struct rn_delivery_t delivery;
         rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
         rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_RING] == 1 );
-        rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
     }
 
@@ -482,7 +482,7 @@ static void ordered_dispatch_refuses_collisions_and_bad_rings()
 
         rocketnet_unit_check( rn_channels_dispatch( &channels, &twice, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
         rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
-        rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
     }
 
@@ -523,7 +523,7 @@ static void ordered_dispatch_refuses_collisions_and_bad_rings()
 
         rocketnet_unit_check( rn_channels_dispatch( &channels, &small, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
         rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
-        rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
     }
 

@@ -31,7 +31,7 @@ static const char happy_pattern[] = "rocketnet-happy-path";
 
 int main( int argc, char ** argv )
 {
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -51,7 +51,7 @@ int main( int argc, char ** argv )
     }
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( !rocketnet_write_dev_connect_token( address, 1234, (uint64_t) time( NULL ), connect_token ) )
+    if ( rocketnet_write_dev_connect_token( address, 1234, (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to write dev connect token\n" );
         rocketnet_term();
@@ -98,7 +98,7 @@ int main( int argc, char ** argv )
         }
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
         {
             printf( "error: client update failed\n" );
             exit_code = 1;
@@ -168,7 +168,7 @@ int main( int argc, char ** argv )
                 for ( int mode = 5; mode <= 7; mode++ )
                 {
                     if ( serials[mode] != 0 && receipts[i].serial == serials[mode] &&
-                         receipts[i].status == ROCKETNET_RECEIPT_ACKED && !acked[mode] )
+                         receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED && !acked[mode] )
                     {
                         acked[mode] = 1;
                         printf( "receipt mode %d acked\n", mode );

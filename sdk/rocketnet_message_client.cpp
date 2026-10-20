@@ -7,7 +7,7 @@
 // sdk/rocketnet_message_server.cpp with one connection, over a
 // rocketnet_client_transport_t. Its one connection is bound at create and never
 // bound again; when its region is exhausted the client disconnects itself with
-// ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED (R5, tla/RNConnectionMemory.tla
+// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (R5, tla/RNConnectionMemory.tla
 // Kick). The spec of the update and release rules is tla/RNSlots.tla.
 
 #include <string.h>
@@ -210,7 +210,7 @@ int rocketnet_message_client_state( struct rocketnet_message_client_t * client )
 int rocketnet_message_client_update( struct rocketnet_message_client_t * client, double time )
 {
     if ( !rocketnet_api_null_guard( client ) )
-        return ROCKETNET_MESSAGE_OK;
+        return ROCKETNET_UPDATE_OK;
     return rn_message_object_update( &client->object, time );
 }
 
@@ -288,7 +288,7 @@ int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * 
 int rocketnet_message_client_disconnect_reason( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
+        return ROCKETNET_DISCONNECT_REASON_NONE;
     return rn_message_object_disconnect_reason( &client->object, 0 );
 }
 

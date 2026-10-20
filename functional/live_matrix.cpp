@@ -293,11 +293,11 @@ static void live_matrix_take_receipts( struct live_matrix_t * m, int direction )
         }
         e->receipted = 1;
         d->receipts_seen++;
-        if ( receipts[i].status == ROCKETNET_RECEIPT_ACKED )
+        if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
         {
             d->receipts_acked++;
         }
-        else if ( receipts[i].status == ROCKETNET_RECEIPT_LOSS )
+        else if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_LOSS )
         {
             d->receipts_lost++;
             // modes 6 and 7, and 5 as a reliable block, get exactly one ACKED and no LOSS
@@ -600,15 +600,15 @@ static int live_matrix_up( struct live_matrix_t * m )
 {
     return rocketnet_message_client_state( m->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
            rocketnet_message_server_client_connected( m->server, 0 ) &&
-           rocketnet_message_client_disconnect_reason( m->client ) == ROCKETNET_MESSAGE_ERROR_NONE &&
-           rocketnet_message_server_disconnect_reason( m->server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE;
+           rocketnet_message_client_disconnect_reason( m->client ) == ROCKETNET_DISCONNECT_REASON_NONE &&
+           rocketnet_message_server_disconnect_reason( m->server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 static void live_matrix_pump( struct live_matrix_t * m )
 {
     const double now = live_matrix_now( m );
-    live_matrix_check( rocketnet_message_client_update( m->client, now ) == ROCKETNET_MESSAGE_OK );
-    live_matrix_check( rocketnet_message_server_update( m->server, now ) == ROCKETNET_MESSAGE_OK );
+    live_matrix_check( rocketnet_message_client_update( m->client, now ) == ROCKETNET_UPDATE_OK );
+    live_matrix_check( rocketnet_message_server_update( m->server, now ) == ROCKETNET_UPDATE_OK );
 }
 
 static void live_matrix_flush( struct live_matrix_t * m )
@@ -621,7 +621,7 @@ static void live_matrix_flush( struct live_matrix_t * m )
 static void live_matrix_connect( struct live_matrix_t * m )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token ) );
+    live_matrix_check( rocketnet_write_dev_connect_token( m->server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     m->client = rocketnet_message_client_create( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS );
     live_matrix_check( m->client );
 
@@ -651,7 +651,7 @@ static void live_matrix_advance( struct live_matrix_t * m, double seconds, int s
     for ( double passed = 0.0; passed < seconds; passed += step )
     {
         m->offset += step;
-        live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_MESSAGE_OK );
+        live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( m->server );
         if ( stop_when_slot_empty && !rocketnet_message_server_client_connected( m->server, 0 ) )
             return;
@@ -925,6 +925,37 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
             printf( "fail disconnect %u client_state=%d client_reason=%d server_connected=%d server_reason=%d\n", m->cycle,
                     rocketnet_message_client_state( m->client ), rocketnet_message_client_disconnect_reason( m->client ),
                     rocketnet_message_server_client_connected( m->server, 0 ), rocketnet_message_server_disconnect_reason( m->server, 0 ) );
+            for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
+            {
+                uint64_t c0_free = 0, c0_pool = 0, c1_free = 0, c1_pool = 0, span_free = 0, span_pool = 0;
+                uint32_t free_messages = 0;
+                if ( direction == 0 )
+                {
+                    rn_message_client_send_fits( m->client, 1, &c0_free, &c0_pool, &free_messages );
+                    rn_message_client_send_fits( m->client, 256, &c1_free, &c1_pool, &free_messages );
+                    rn_message_client_send_fits( m->client, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                }
+                else
+                {
+                    rn_message_server_send_fits( m->server, 0, 1, &c0_free, &c0_pool, &free_messages );
+                    rn_message_server_send_fits( m->server, 0, 256, &c1_free, &c1_pool, &free_messages );
+                    rn_message_server_send_fits( m->server, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                }
+                const struct rocketnet_counters_t * c = live_matrix_sender_counters( m, direction );
+                printf( "disconnect %s region: store_c0=%llu/%llu store_c1=%llu/%llu spans=%llu/%llu free_messages=%u "
+                        "counters: store_full=%llu queue_full=%llu memory_exhausted=%llu bad_ring=%llu bad_block=%llu protocol_violation=%llu\n",
+                        direction == 0 ? "client" : "server",
+                        (unsigned long long) c0_free, (unsigned long long) c0_pool,
+                        (unsigned long long) c1_free, (unsigned long long) c1_pool,
+                        (unsigned long long) span_free, (unsigned long long) span_pool,
+                        free_messages,
+                        (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ),
+                        (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ),
+                        (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ),
+                        (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_BAD_RING ),
+                        (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK ),
+                        (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) );
+            }
             live_matrix_check( !"unplanned disconnect" );
         }
         if ( m->failures > 0 )
@@ -1105,7 +1136,7 @@ void live_message_matrix_loopback()
         const double start = rocketnet_platform_time();
         while ( rocketnet_message_server_client_connected( m->server, 0 ) && rocketnet_platform_time() - start < 2.0 )
         {
-            live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_MESSAGE_OK );
+            live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_UPDATE_OK );
             rocketnet_platform_sleep( 0.0005 );
         }
         live_matrix_check( !rocketnet_message_server_client_connected( m->server, 0 ) );
