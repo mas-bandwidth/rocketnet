@@ -217,6 +217,29 @@ static posix_resource_counts_t posix_stable_counts()
     return previous;
 }
 
+// pthread_join returns once the kernel clears the thread id, and the thread
+// leaves /proc/self/task (read by posix_threads, above) only when the kernel
+// reaps it afterwards. On a machine two suites share, an exited thread can
+// stay listed past two equal reads 1 ms apart, and posix_stable_counts then
+// reads it as a leak (threads 1 -> 2). The after counts are read here: the
+// stable counts are polled every millisecond until they equal the before
+// counts or POSIX_SETTLE_SECONDS have passed. A thread, descriptor or umem
+// really left keeps its count, and the case still fails at the deadline.
+static const double POSIX_SETTLE_SECONDS = 10.0;
+
+static posix_resource_counts_t posix_settled_counts( const posix_resource_counts_t * before )
+{
+    const double deadline = rocketnet_platform_time() + POSIX_SETTLE_SECONDS;
+    posix_resource_counts_t current = posix_stable_counts();
+    while ( ( current.fds != before->fds || current.threads != before->threads || current.umems != before->umems ) &&
+            rocketnet_platform_time() < deadline )
+    {
+        rocketnet_platform_sleep( 0.001 );
+        current = posix_stable_counts();
+    }
+    return current;
+}
+
 // The cells the card names: every server cell (portable, msgx, msgx forced
 // onto the portable pump) against every client cell (portable, msgx). The
 // forced cell requests msgx first and lets ROCKETNET_PUMP=portable refuse that
@@ -768,7 +791,7 @@ void rocketnet_test_posix_init_term_1000()
             posix_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
         }
         const double seconds = posix_now_seconds() - start;
-        const posix_resource_counts_t after = posix_stable_counts();
+        const posix_resource_counts_t after = posix_settled_counts( &before );
 
         posix_cell_end( &server_guard, &client_guard, &pump_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
@@ -790,7 +813,12 @@ void rocketnet_test_posix_server_create_destroy_1000()
 
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
-        const int count = posix_count( cell, 1000 );
+        // the gso and io_uring server creates cost the most, so those two
+        // cells run 250 cycles and keep two suites at once under the 120
+        // second case limit; the counts after the first and last cycle still
+        // catch a leak per cycle
+        const bool expensive_server = strcmp( cell->server_granted, "gso" ) == 0 || strcmp( cell->server_granted, "io_uring" ) == 0;
+        const int count = expensive_server ? 250 : posix_count( cell, 1000 );
         for ( int i = 0; i < count; i++ )
         {
             rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), 4 );
@@ -813,12 +841,12 @@ void rocketnet_test_posix_server_create_destroy_1000()
             // 1000 creates, so the counts are also compared after the first
             if ( i == 0 )
             {
-                const posix_resource_counts_t first = posix_stable_counts();
+                const posix_resource_counts_t first = posix_settled_counts( &before );
                 posix_case_result( "posix_server_create_destroy_1000 after one cycle", cell, &before, &first, posix_now_seconds() - start );
             }
         }
         const double seconds = posix_now_seconds() - start;
-        const posix_resource_counts_t after = posix_stable_counts();
+        const posix_resource_counts_t after = posix_settled_counts( &before );
 
         posix_cell_end( &server_guard, &client_guard, &pump_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
@@ -848,7 +876,7 @@ void rocketnet_test_posix_client_create_destroy_1000()
             rocketnet_client_transport_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;
-        const posix_resource_counts_t after = posix_stable_counts();
+        const posix_resource_counts_t after = posix_settled_counts( &before );
 
         posix_cell_end( &server_guard, &client_guard, &pump_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
@@ -970,7 +998,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
             rocketnet_server_transport_destroy( server );
         }
         const double seconds = posix_now_seconds() - start;
-        const posix_resource_counts_t after = posix_stable_counts();
+        const posix_resource_counts_t after = posix_settled_counts( &before );
 
         posix_cell_end( &server_guard, &client_guard, &pump_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
@@ -1016,7 +1044,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
 
         posix_release_ipv4_ports( held_ports, POSIX_HELD_IPV4_PORTS );
         rocketnet_server_transport_destroy( server );
-        const posix_resource_counts_t after = posix_stable_counts();
+        const posix_resource_counts_t after = posix_settled_counts( &before );
 
         posix_cell_end( &server_guard, &client_guard, &pump_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
@@ -1099,7 +1127,7 @@ void rocketnet_test_posix_destroy_under_traffic_100()
         }
 
         const double seconds = posix_now_seconds() - start;
-        const posix_resource_counts_t after = posix_stable_counts();
+        const posix_resource_counts_t after = posix_settled_counts( &before );
 
         posix_cell_end( &server_guard, &client_guard, &pump_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );

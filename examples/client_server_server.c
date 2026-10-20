@@ -123,6 +123,7 @@ int main( int argc, char ** argv )
 
     printf( "server listening on 127.0.0.1:%d with protocol id 0x%llx\n", (int) rocketnet_server_port( server ), (unsigned long long) PROTOCOL_ID );
     printf( "server wrote %s for the client\n", KEY_FILE );
+    fflush( stdout );
 
     const double start = rocketnet_time();
 
