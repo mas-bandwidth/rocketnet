@@ -115,12 +115,27 @@ int main( int argc, char ** argv )
     int received = 0;
     int refused = 0;
 
-    FILE * keys = fopen( KEY_FILE, "r" );
-    CHECK( keys != NULL );
-    CHECK( read_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) );
-    CHECK( read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES ) );
-    fclose( keys );
+    int have_keys = 0;
+
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+
+    // the server writes the key file once it has started, which can take
+    // longer than a launcher's head start; wait up to 10 seconds for a
+    // complete file rather than failing on the first look
+    const double keys_start = rocketnet_time();
+    while ( !have_keys && rocketnet_time() - keys_start < 10.0 )
+    {
+        FILE * keys = fopen( KEY_FILE, "r" );
+        if ( keys )
+        {
+            have_keys = read_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) &&
+                        read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES );
+            fclose( keys );
+        }
+        if ( !have_keys )
+            rocketnet_sleep( 0.05 );
+    }
+    CHECK( have_keys );
 
     // the matchmaker stub: a real backend runs this on its own server, keeps
     // the secret key, and returns the token to the game client. The fixed
@@ -196,7 +211,9 @@ int main( int argc, char ** argv )
     result = 0;
 
 cleanup:
-    rocketnet_client_destroy( client );
+    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    if ( client )
+        rocketnet_client_destroy( client );
     rocketnet_term();
     // destroy ends a live connection and logs it, so PASS is printed after
     // the cleanup to stay the last line
