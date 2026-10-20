@@ -8927,17 +8927,7 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_test_log_ring_clear();
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
         fflush( stdout );
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        const bool rss_profile = getenv( "ROCKETNET_TEST_RSS_PROFILE" ) != NULL &&
-            strcmp( name, "server_receive_keeps_up_with_max_clients" ) != 0;
-        if ( rss_profile )
-            rocketnet_functional_rss_begin( false );
-#endif
         rocketnet_functional_tests[i].function();
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        if ( rss_profile )
-            rocketnet_functional_rss_end( name );
-#endif
         return 0;
     }
     for ( int i = 0; i < rocketnet_posix_hard_killed_peer_test_count(); i++ )

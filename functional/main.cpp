@@ -15,6 +15,7 @@
 #include <string.h>
 
 int rocketnet_functional_test_count();
+long rocketnet_server_receive_backlog_rss_bound_mb( const char * name );
 const char * rocketnet_functional_test_name( int index );
 void rocketnet_functional_prepare();
 int rocketnet_functional_run_named( const char * name );
@@ -89,26 +90,26 @@ int main( int argc, char ** argv )
         "test_posix_transport_send_seam [SKIPPED on windows: the posix socket-error injector is not built on this platform]",
         "test_posix_send_burst [SKIPPED on windows: the posix socket-error injector is not built on this platform]",
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, skip_lines, 7, false );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, skip_lines, 7, false, NULL, rocketnet_server_receive_backlog_rss_bound_mb );
 #elif defined(__APPLE__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },
         { "test_transport_control", "test_transport_control", true },
         { "test_msgx", "test_msgx", true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false, rocketnet_posix_hard_killed_peer_test_group );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false, rocketnet_posix_hard_killed_peer_test_group, rocketnet_server_receive_backlog_rss_bound_mb );
 #elif defined(__linux__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },
         { "test_transport_control", "test_transport_control", true },
         { "test_xdp", "test_xdp", true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false, NULL, rocketnet_server_receive_backlog_rss_bound_mb );
 #else
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },
         { "test_transport_control", "test_transport_control", true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 2, NULL, 0, false );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 2, NULL, 0, false, NULL, rocketnet_server_receive_backlog_rss_bound_mb );
 #endif
 }
