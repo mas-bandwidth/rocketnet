@@ -6,8 +6,14 @@ repository bin/ directory), runs an example made of a <name>_server and
 <name>_client pair as server then client, and every other example alone.
 Each pair runs in its own fresh temporary working directory on a free UDP
 port it picks and passes through ROCKETNET_EXAMPLE_PORT, so two runs at once
-never collide; a server that fails to bind is retried on a new port, at most
-three tries.
+never collide. The client starts only once the server is ready: the server's
+output carries its keys-written line ("server wrote <name>.keys"), or the key
+file it names is complete in the working directory (two newline-terminated
+lines). The second form is needed because the server's stdout is a pipe and
+the C library buffers it, so that line arrives only when the buffer is
+flushed. A server that exits before it is ready because it could not bind
+("FAIL: server != NULL") has lost its port and is retried on a new one, at
+most three tries; one not ready within READY_SECONDS fails.
 Every example that runs alone also runs in its own fresh temporary working
 directory, so files it writes (example_soak writes soak-results.tsv) never
 collide between two runs.
@@ -28,6 +34,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -35,6 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 TIMEOUT_SECONDS = 120
 PORT_TRIES = 3
+READY_SECONDS = 30
 SINGLE_ARGS = {"soak": ["--clients", "64"]}
 
 
@@ -110,6 +118,62 @@ def kill(process):
         return "", ""
 
 
+def stop(process):
+    if process.poll() is None:
+        process.kill()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+class Output:
+    """Reads a process stream line by line on its own thread, so the runner
+    can look at what has arrived so far without blocking on the pipe."""
+
+    def __init__(self, stream):
+        self.lines = []
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self.read, args=(stream,), daemon=True)
+        self.thread.start()
+
+    def read(self, stream):
+        for line in stream:
+            with self.lock:
+                self.lines.append(line)
+        stream.close()
+
+    def text(self):
+        with self.lock:
+            return "".join(self.lines)
+
+    def join(self):
+        self.thread.join(timeout=10)
+        return self.text()
+
+
+def keys_written(base, output, workdir):
+    if any(line.startswith("server wrote ") for line in output.text().splitlines()):
+        return True
+    try:
+        text = (Path(workdir) / f"{base}.keys").read_text()
+    except OSError:
+        return False
+    lines = text.split("\n")
+    return text.endswith("\n") and len(lines) == 3 and all(len(line.split()) == 2 for line in lines[:2])
+
+
+def wait_server_ready(base, server, server_out, workdir):
+    deadline = time.monotonic() + READY_SECONDS
+    while time.monotonic() < deadline:
+        if keys_written(base, server_out, workdir):
+            return "ready"
+        if server.poll() is not None:
+            return "exited"
+        time.sleep(0.01)
+    return "timeout"
+
+
 def free_udp_port():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -142,12 +206,18 @@ def run_pair_once(base, server_binary, client_binary, port, workdir):
         cwd=workdir,
         env=env,
     )
-    time.sleep(0.5)
-    if server.poll() is not None and server.returncode != 0:
-        server_out, server_err = server.communicate()
-        if "FAIL: server != NULL" in server_out:
+    server_reader = Output(server.stdout)
+    server_error_reader = Output(server.stderr)
+    ready = wait_server_ready(base, server, server_reader, workdir)
+    if ready != "ready":
+        stop(server)
+        server_out = server_reader.join()
+        server_err = server_error_reader.join()
+        if ready == "timeout":
+            return failure(base, f"server wrote no keys within {READY_SECONDS}s\n{server_out}{server_err}")
+        if server.returncode != 0 and "FAIL: server != NULL" in server_out:
             return "bind"
-        return failure(base, f"server exited {server.returncode}\n{server_out}{server_err}")
+        return failure(base, f"server exited {server.returncode} before it wrote its keys\n{server_out}{server_err}")
     client = subprocess.Popen(
         [str(client_binary)],
         stdout=subprocess.PIPE,
@@ -161,18 +231,20 @@ def run_pair_once(base, server_binary, client_binary, port, workdir):
         client_out, client_err = client.communicate(timeout=TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         kill(client)
-        kill(server)
+        stop(server)
         return failure(base, f"client timed out after {TIMEOUT_SECONDS}s")
 
     if client.returncode != 0:
-        kill(server)
+        stop(server)
         return failure(base, f"client exited {client.returncode}\n{client_out}{client_err}")
 
     try:
-        server_out, server_err = server.communicate(timeout=TIMEOUT_SECONDS)
+        server.wait(timeout=TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        kill(server)
+        stop(server)
         return failure(base, f"server timed out after {TIMEOUT_SECONDS}s")
+    server_out = server_reader.join()
+    server_err = server_error_reader.join()
 
     if server.returncode != 0:
         return failure(base, f"server exited {server.returncode}\n{server_out}{server_err}")

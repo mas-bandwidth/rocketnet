@@ -560,15 +560,6 @@ uint64_t rocketnet_protocol_version_hash( int major, int minor )
     return rocketnet_hash_string( text );
 }
 
-uint64_t rocketnet_protocol_version()
-{
-#if !ROCKETNET_DEVELOPMENT
-    return rocketnet_protocol_version_hash( ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR );
-#else // #if !ROCKETNET_DEVELOPMENT
-    return 0;
-#endif // #if !ROCKETNET_DEVELOPMENT
-}
-
 float rocketnet_random_float()
 {
     uint32_t uint32_value;
