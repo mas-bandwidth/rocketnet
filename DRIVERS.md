@@ -72,6 +72,28 @@ calls them on the main thread once per update, after packet processing, and
 nothing else writes the driver's replay map. XDP is the only built-in backend
 that reports it.
 
+## Per-update send and receive budgets
+
+Every driver receives at least twice what it sends in one update:
+`receive_capacity >= 2 * send_budget`, checked by
+`test_unit_receive_budget_twice_send.cpp` and locked by a
+`ROCKETNET_STATIC_ASSERT` beside each driver's constants. The send budget
+is what one update stages or submits; the receive capacity is the bank,
+ring, staging or completion budget the send path can fill while it waits.
+The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
+(`sdk/rocketnet_constants.h`, 16000) bounds every driver's drain.
+
+| Driver | Send budget | Receive capacity |
+| --- | --- | --- |
+| portable | `ROCKETNET_SERVER_MAX_SEND_PACKETS` 256 (`sdk/rocketnet_constants.h`) | `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` 16000 per update (`sdk/rocketnet_constants.h`) |
+| msgx | portable batch 256 (`sdk/rocketnet_constants.h`) | per-update 16000 (`sdk/rocketnet_constants.h`) |
+| loopback | portable batch 256 (`sdk/rocketnet_constants.h`) | `ROCKETNET_LOOPBACK_QUEUE_PACKETS` 1024 per endpoint (`sdk/rocketnet_driver_loopback.h`) |
+| gso | `ROCKETNET_GSO_SEND_QUEUE_SIZE` 4096 (`sdk/rocketnet_server_gso.h`) | `ROCKETNET_GSO_RECV_QUEUE_SIZE` 8192 per queue (`sdk/rocketnet_server_gso.h`) |
+| io_uring | `ROCKETNET_URING_SEND_QUEUE_SIZE` 2048, reap `ROCKETNET_URING_SEND_BUDGET` 10240 (`sdk/rocketnet_server_uring.h`) | `ROCKETNET_URING_RECV_BUFFERS` 4096 per queue and bank 16000 (`sdk/rocketnet_server_uring.h`) |
+| xdp | `ROCKETNET_XDP_SEND_QUEUE_SIZE` 4096 (`sdk/rocketnet_constants.h`) | `ROCKETNET_XDP_RECV_QUEUE_SIZE` 16384 (`sdk/rocketnet_constants.h`) |
+| iocp | `ROCKETNET_IOCP_SEND_QUEUE_SIZE` 2048 (`sdk/rocketnet_server_iocp.h`) | `ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE` 4096 (`sdk/rocketnet_server_iocp.h`) |
+| rio | `ROCKETNET_RIO_SEND_QUEUE_SIZE` 2048 per phase (`sdk/rocketnet_server_rio.h`) | `ROCKETNET_RIO_RECEIVES` 4096 (`sdk/rocketnet_server_rio.h`) |
+
 ## UDP coalescing
 
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split

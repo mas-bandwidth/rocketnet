@@ -44,12 +44,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
 
-#if ROCKETNET_XDP
-
+// XDP geometry is named on every platform so host codecs and the unit
+// suite see the same numbers; the driver itself builds only on Linux.
 #define ROCKETNET_XDP_NUM_BUFFERS                                            2
 #define ROCKETNET_XDP_NUM_FRAMES                                         65536
 #define ROCKETNET_XDP_FRAME_SIZE                                          4096  // IMPORTANT: This *must* be 4096 or you will get packet corruption on read!
-#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 4096 * 4 )
+#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 4 )
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_QUEUE_SIZE                                     2048
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
@@ -57,13 +57,24 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
                          ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
                          "an XDP frame holds ethernet, the larger IP header, UDP and a full receive-ceiling packet" );
-
-#endif // #if ROCKETNET_XDP
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "receive budget twice send: XDP receive queue holds at least twice the send queue" );
 
 #define ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS        ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+                         "receive budget twice send: server process batch holds at least twice the XDP send queue" );
+
 // One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. This equals the payload-batch capacity; batches share one bound and one storage cap.
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+
+// Portable and msgx buffered batch sizes. The per-update receive budget
+// holds at least twice the send batch; the batch sizes are unchanged.
+#define ROCKETNET_SERVER_MAX_SEND_PACKETS                                  256
+#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS                               256
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
+                         "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
 
 // the send frame layout. every slot a transport hands out is a 16-aligned
 // root; the wire packet begins at the wire offset inside it and the payload
