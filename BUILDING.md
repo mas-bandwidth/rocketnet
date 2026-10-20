@@ -61,7 +61,7 @@ scratch socket to `127.0.0.1:0`, reads the port, and closes it. Two
 `./bin/functional` runs may share a machine at the same time. The one
 exception is the root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`), which
 makes a fixed namespace and veth pair and binds port 40411 on it
-(functional/rocketnet_functional_tests.cpp:7206); it skips without root.
+(functional/rocketnet_functional_tests.cpp:7213); it skips without root.
 
 Dependencies, per platform, as CI installs them:
 
