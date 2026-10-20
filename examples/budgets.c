@@ -18,8 +18,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static uint64_t rn_public_receive_sender;
-
 // This example uses the send names the header at this base declares (start,
 // finish, receive, release, send_packets); a later lifecycle rename makes
 // them *_start_message and friends.
@@ -104,18 +102,29 @@ int main( void )
             goto cleanup;
 
         // (2) receive and release every message; count the reliable ones,
-        // sent on channel 1, so the example checks none was lost
+        // sent on channel 1, so the example checks none was lost. The server
+        // takes its one queue in batches, each entry naming its channel; the
+        // next batch call or update releases a batch
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
-        const int slot = rocketnet_client_index( client );
-        while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
-            rocketnet_server_release_message( server, data );
-        while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_client_receive_messages( client, &incoming ) )
         {
-            reliable_received++;
-            rocketnet_server_release_message( server, data );
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+            }
+        }
+        const int slot = rocketnet_client_index( client );
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( server, &batch ) )
+        {
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                if ( batch.client_index[i] == (uint64_t) slot && batch.channel[i] == 1 )
+                    reliable_received++;
+            }
         }
 
         // (3) run the game simulation for the frame: nothing to simulate here

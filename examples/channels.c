@@ -17,10 +17,8 @@
 #include <stdint.h>
 #include <string.h>
 
-static uint64_t rn_public_receive_sender;
-
 // Uses the public API names as declared in sdk/rocketnet.h: client/server
-// start_message, finish_message, receive_message, release_message,
+// start_message, finish_message, receive_messages,
 // send_packets and client_connected.
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 #define CHAT_CHANNEL     0
@@ -83,31 +81,48 @@ int main( void )
         // (2) receive and release every received message on both channels
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_client_receive_messages( client, &incoming ) )
+        {
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+            }
+        }
 
         uint32_t chat_this_frame = 0, pos_this_frame = 0;
         if ( rocketnet_server_client_connected( server, 0 ) )
         {
-            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
+            // the server's one queue, in batches: each entry names its sender
+            // and the channel it was delivered on, and order holds within a
+            // channel; the next batch call or update releases a batch
+            struct rocketnet_message_batch_t batch;
+            while ( rocketnet_server_receive_messages( server, &batch ) )
             {
-                uint32_t value = 0;
-                CHECK( bytes == (int) sizeof( value ) );
-                memcpy( &value, data, sizeof( value ) );
-                rocketnet_server_release_message( server, data );
-                if ( value & 0x80000000u )
+                for ( int i = 0; i < batch.num_messages; i++ )
                 {
-                    const uint32_t seq = value & 0x7fffffffu;
-                    CHECK( seq == chat_received + 1 );
-                    chat_received = seq;
-                    chat_this_frame++;
-                }
-                else
-                {
-                    CHECK( value > last_pos );
-                    last_pos = value;
-                    positions_received++;
-                    pos_this_frame++;
+                    CHECK( batch.client_index[i] == 0 );
+                    if ( batch.channel[i] == CHAT_CHANNEL )
+                    {
+                        uint32_t seq = 0;
+                        CHECK( batch.bytes[i] == (int) sizeof( seq ) );
+                        memcpy( &seq, batch.data[i], sizeof( seq ) );
+                        CHECK( seq == chat_received + 1 );
+                        chat_received = seq;
+                        chat_this_frame++;
+                    }
+                    else
+                    {
+                        CHECK( batch.channel[i] == POSITION_CHANNEL );
+                        uint32_t pos = 0;
+                        CHECK( batch.bytes[i] == (int) sizeof( pos ) );
+                        memcpy( &pos, batch.data[i], sizeof( pos ) );
+                        CHECK( pos > last_pos );
+                        last_pos = pos;
+                        positions_received++;
+                        pos_this_frame++;
+                    }
                 }
             }
         }
@@ -137,11 +152,10 @@ int main( void )
             if ( chat_sent < NUM_CHAT )
             {
                 chat_sent++;
-                uint32_t chat_value = chat_sent | 0x80000000u;
-                buf = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, sizeof( chat_value ) );
+                buf = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, sizeof( chat_sent ) );
                 CHECK( buf != NULL );
-                memcpy( buf, &chat_value, sizeof( chat_value ) );
-                CHECK( rocketnet_client_finish_message( client, sizeof( chat_value ) ) != 0 );
+                memcpy( buf, &chat_sent, sizeof( chat_sent ) );
+                CHECK( rocketnet_client_finish_message( client, sizeof( chat_sent ) ) != 0 );
             }
         }
 

@@ -134,9 +134,9 @@ struct rn_message_link_t
     X( state, int state ) /* RN_MESSAGE_CONNECTION_* */                                                                  \
     X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_DISCONNECT_REASON_* of the last connection that ended here */ \
     /* the receive bookkeeping (RNSlots Release): one state per delivery entry, */                                       \
-    /* one cursor per channel, and the views held now */                                                                 \
+    /* the receive queue's cursor in cursors[0] (the rest unused), and the views held now */                             \
     X( views, uint8_t * views ) /* region->delivery_entries */                                                           \
-    X( cursors, uint32_t * cursors ) /* region->num_channels */                                                          \
+    X( cursors, uint32_t * cursors ) /* region->num_channels; cursors[0] is the receive queue's next delivery */         \
     X( held, uint32_t held )
 
 struct rn_message_connection_t : rn_endpoint_t
@@ -168,13 +168,16 @@ struct rn_message_object_t
     int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1
 
-    // the one receive queue (RakNet's Receive): this update's deliveries from
-    // every connection, in delivery order. Each entry packs the connection
-    // index and that connection's delivery index. reset at begin update.
-    uint32_t * delivery_order;
-    uint32_t delivery_order_capacity;
-    uint32_t delivery_order_count;
-    uint32_t delivery_order_read;
+    // the one receive queue (RakPeer::Receive): the update's deliveries,
+    // connection by connection in index order, each connection's in its
+    // delivery order. receive_connection is the connection the queue is at;
+    // its cursors[0] is the next delivery. The batch form hands out up to
+    // ROCKETNET_RECEIVE_BATCH_MESSAGES of the same queue per call, released
+    // together at the next batch call or update.
+    int receive_connection;
+    int batch_count;                            // the entries the last receive handed out
+    int32_t batch_connection[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    uint32_t batch_entry[ROCKETNET_RECEIVE_BATCH_MESSAGES];
 
     // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame
@@ -228,21 +231,17 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );
 
-int rn_message_object_receive( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes );
-void rn_message_object_release( struct rn_message_object_t * object, int index, const uint8_t * data );
+// The one receive queue (RakPeer::Receive): 1 with the next delivery of the
+// update, its connection in *index and the channel it was delivered on in
+// *channel (either NULL: not reported), 0 when the queue is empty. Release
+// finds the held view in whichever connection holds it.
+int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes );
+void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data );
 
-// The one receive queue: the next delivery across every connection, in
-// delivery order. *index receives its connection (the sender slot). 1 when
-// there is one, 0 when the queue is empty.
-int rn_message_object_receive_next( struct rn_message_object_t * object, const uint8_t ** data, int * bytes, int * index );
-void rn_message_object_release_next( struct rn_message_object_t * object, const uint8_t * data );
-
-// The batch form over the same queue: fills batch->messages up to
-// batch->capacity, sets batch->count, and returns true when it holds at least
-// one message. A pump with a small capacity delivers everything once, in
-// order; false means nothing is pending.
-bool rn_message_object_receive_batch( struct rn_message_object_t * object, struct rocketnet_message_batch_t * batch );
-void rn_message_object_release_batch( struct rn_message_object_t * object, const struct rocketnet_message_batch_t * batch );
+// The batch form over the same queue: releases the last batch, then fills
+// out with up to ROCKETNET_RECEIVE_BATCH_MESSAGES next deliveries in queue
+// order and returns how many (out->num_messages too); 0 when none is pending.
+int rn_message_object_receive_messages( struct rn_message_object_t * object, struct rocketnet_message_batch_t * out );
 
 bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps );
 int rn_message_object_disconnect_reason( const struct rn_message_object_t * object, int index );

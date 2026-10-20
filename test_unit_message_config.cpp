@@ -453,31 +453,32 @@ struct mc_received_t
 
 static void mc_drain_server( mc_pair_t * pair, std::vector<mc_received_t> * out )
 {
-    for ( int slot = 0; slot < MC_MAX_SLOTS; slot++ )
-        for ( int channel = 0; channel < 4; channel++ )
-        {
-            const uint8_t * data = NULL;
-            int bytes = 0;
-            while ( rocketnet_message_server_receive( pair->server, slot, channel, &data, &bytes ) )
-            {
-                mc_received_t r;
-                r.slot = slot;
-                r.channel = channel;
-                r.bytes.assign( data, data + bytes );
-                if ( out )
-                    out->push_back( r );
-                rocketnet_message_server_release( pair->server, slot, data );
-            }
-        }
+    // the server's one receive queue across every slot: each message names
+    // its sender's slot and the channel it was delivered on
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    int slot = 0;
+    int channel = 0;
+    while ( rocketnet_message_server_receive( pair->server, &slot, &channel, &data, &bytes ) )
+    {
+        check( slot >= 0 && slot < MC_MAX_SLOTS );
+        mc_received_t r;
+        r.slot = slot;
+        r.channel = channel;
+        r.bytes.assign( data, data + bytes );
+        if ( out )
+            out->push_back( r );
+        rocketnet_message_server_release( pair->server, data );
+    }
 }
 
 static void mc_drain_client( rocketnet_message_client_t * client, std::vector<mc_received_t> * out )
 {
-    for ( int channel = 0; channel < 4; channel++ )
     {
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_message_client_receive( client, channel, &data, &bytes ) )
+        int channel = 0;
+        while ( rocketnet_message_client_receive( client, &channel, &data, &bytes ) )
         {
             mc_received_t r;
             r.slot = 0;

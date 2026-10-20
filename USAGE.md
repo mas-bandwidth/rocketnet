@@ -281,11 +281,15 @@ void client_frame( struct rocketnet_client_t * client, double time )
     /* 1. pump the transport and take in what arrived */
     rocketnet_client_update( client, time );
 
-    /* 2. receive and release every delivered message */
-    const uint8_t * data;
-    int bytes;
-    while ( rocketnet_client_receive_message( client, &data, &bytes ) )
-        rocketnet_client_release_message( client, data );
+    /* 2. receive every delivered message, a batch per call, until false */
+    struct rocketnet_message_batch_t batch;
+    while ( rocketnet_client_receive_messages( client, &batch ) )
+    {
+        for ( int i = 0; i < batch.num_messages; i++ )
+        {
+            /* process batch.data[i] and batch.bytes[i] */
+        }
+    }
 
     /* 3. run the game simulation for this frame */
 
@@ -300,12 +304,12 @@ void client_frame( struct rocketnet_client_t * client, double time )
 ```
 
 The server runs the same block with `rocketnet_server_update`,
-`rocketnet_server_receive_message`, `rocketnet_server_release_message`,
+`rocketnet_server_receive_messages`,
 `rocketnet_server_start_message`, `rocketnet_server_finish_message` and
-`rocketnet_server_send_packets`; the server's one receive queue already spans
-every client, so the receive step is not looped per client index. `rocketnet_client_update` and `rocketnet_server_update` return
-`ROCKETNET_UPDATE_OK`, or `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` when a
-received view from the last update was not released.
+`rocketnet_server_send_packets`; its receive step drains one queue across
+every client, each message naming its sender's client index.
+`rocketnet_client_update` and `rocketnet_server_update` return
+`ROCKETNET_UPDATE_OK`; the receive's batch is released by the update.
 
 ## Sending messages
 
@@ -341,6 +345,14 @@ or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE i
 message in one packet, up to `ROCKETNET_MESSAGE_SINGLE_BYTES`; the other types
 are bounded by the config's `max_message_bytes`. A larger payload fragments
 transparently, and a lost fragment loses the whole payload.
+
+The channel is RakNet's ordering channel. RELIABLE_ORDERED,
+RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or
+sequenced within it, independently of every other channel, and a channel at or
+past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
+other two receipt types ignore it, as RakNet's `ReliabilityLayer::Send` does:
+any channel is accepted for them, never refused, and they travel with no
+channel (`sdk/rocketnet_message_server.cpp:612-618`).
 
 A send the connection's region has no room for ends the connection with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
@@ -381,39 +393,44 @@ changes nothing; that is not misuse.
 
 ## Receiving messages
 
-`rocketnet_client_receive_message` and `rocketnet_server_receive_message` hand out the next
-message of the update from one receive queue as a const view and its length,
-in delivery order across every channel; the server's queue spans every client
-and each message names its sender in the `client_index` out-argument. This is
-RakNet's `Receive` shape. The batch forms `rocketnet_client_receive_messages`
-and `rocketnet_server_receive_messages` fill a caller array from the same queue
-with one call per update. The views are valid until the next update, and every
-received message must be released with `rocketnet_client_release_message` or
-`rocketnet_server_release_message` (or the batch release calls) before the next
-update. Copy anything kept past the update. Updating with a view still held
-asserts in a debug build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in
-a release build.
+Receiving is RakNet's `Receive`, pumped: one call fills a batch, and the
+caller calls again until it returns false. A client has one queue holding every
+channel's messages; a server has one queue across all its clients.
+`rocketnet_client_receive_messages` and `rocketnet_server_receive_messages`
+fill the caller's `struct rocketnet_message_batch_t` with up to
+`ROCKETNET_RECEIVE_BATCH_MESSAGES` next messages, one array per field:
+`client_index` (the sending client's index on a server; on a client, index = 0,
+the server), `channel`, `reliability`, `bytes` and `data`, with the count in
+`num_messages`. Each returns true when it filled at least one message and false
+when nothing is pending. There is no per-update cap: what one call does not
+return waits for the next call in the same update, in order
+(`sdk/rocketnet_message_server.cpp:982-1009`). The queue holds the update's
+messages client by client in index order, each client's in the order its
+connection delivered them: ordered messages in send order within their channel,
+and a sequenced message never older than one before it on its channel
+(`sdk/rocketnet_message_server.cpp:870-896`).
 
-Each call returns `1` with the next message, or `0` when there is none. The
-send-side channel is RakNet's ordering channel: ORDERED and SEQUENCED messages
-are ordered within it, and the other types ignore it.
+The `data` pointers point into the library's storage, delivered and
+reassembled, and are never copied. They are valid until the next receive call
+or the next update of the same client or server, whichever comes first; that
+call releases them, and there is no release call. Copy anything kept longer.
 
 ```c
 #include "rocketnet.h"
 
-void server_frame( struct rocketnet_server_t * server, double time )
+void server_frame( struct rocketnet_server_t * server, uint64_t client_index, int channel, double time )
 {
     /* 1. pump the transport and take in what arrived */
     rocketnet_server_update( server, time );
 
-    /* 2. receive and release every delivered message */
-    const uint8_t * data;
-    int bytes;
-    uint64_t client_index = 0;
-    while ( rocketnet_server_receive_message( server, &client_index, &data, &bytes ) )
+    /* 2. receive every delivered message, from every client, a batch per call */
+    struct rocketnet_message_batch_t batch;
+    while ( rocketnet_server_receive_messages( server, &batch ) )
     {
-        /* process client_index, data and bytes, then release the view */
-        rocketnet_server_release_message( server, data );
+        for ( int i = 0; i < batch.num_messages; i++ )
+        {
+            /* process batch.data[i] and batch.bytes[i] from batch.client_index[i] */
+        }
     }
 
     /* 3. run the game simulation for this frame */

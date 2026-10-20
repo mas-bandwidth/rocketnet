@@ -1297,8 +1297,8 @@ dropped at start message: `NULL`, counted once in `MESSAGE_SEND_NOT_CONNECTED`
 tla/ClientSession.tla DropSend); the server drops a send to a slot that is not
 CONNECTED the same way. Only the CONFIG control record, announced at create, is
 held, unnumbered, until CONNECTED. One client object makes one connection, like the
-transport. The client receives with `rocketnet_client_receive_message` from one queue,
-modelled on RakNet's `Receive`; see 11.5. CONNECTED is emitted
+transport. The client receives with `rocketnet_client_receive_messages`, RakNet's
+`Receive` pumped: one queue holding every channel's messages. CONNECTED is emitted
 when the transport first reports state 4. DISCONNECTED is emitted when the
 transport leaves state 4, or when the endpoint errors, in which case the
 object calls `rocketnet_client_disconnect`.
@@ -1331,21 +1331,32 @@ header; the internal transport and message layers are in
   its receipt serial, nonzero. `abort` gives the room back, and `send` is the
   copying convenience. The one
   copy on the path is THE COPIES (a), record to frame, in layer 6's writer.
-- **The receive.** `rocketnet_client_receive_message` or `rocketnet_server_receive_message` hands out the update's next message from
-  one queue as a const view and a length, in delivery order across every
-  channel; the server's queue spans every client and each message names its
-  sender (sdk/rocketnet.h:1137 and :1349). The batch forms
-  `rocketnet_client_receive_messages` and `rocketnet_server_receive_messages`
-  fill a caller array from the same queue with one call per update
-  (sdk/rocketnet.h:1153 and :1365). `rocketnet_client_release_message` or
-  `rocketnet_server_release_message` gives a view back, and the batch release
-  calls give a whole batch back. Every view
-  is released before the next update: update with one held asserts in a debug
-  build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build,
-  counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
+- **The receive.** One queue, as RakNet's `Receive`, pumped: a client's holds
+  every channel's messages, and a server's holds every client's.
+  `rocketnet_client_receive_messages` or `rocketnet_server_receive_messages`
+  fills the caller's `struct rocketnet_message_batch_t` with up to
+  `ROCKETNET_RECEIVE_BATCH_MESSAGES` next messages, each naming its sender's
+  `client_index` (index = 0, the server, on a client), its channel, its wire
+  reliability, its length and a pointer to its bytes, never copied, and
+  returns true; false when nothing is pending. The caller pumps it until
+  false, with no per-update cap (`sdk/rocketnet_message_server.cpp:982-1009`).
+  The queue is the update's deliveries connection by connection in index
+  order, each connection's in its delivery order, never filtered by channel
+  (`sdk/rocketnet_message_server.cpp:870-896`): ordered messages keep send
+  order within their channel and sender, and sequenced messages never go
+  backwards on theirs. The pointers are valid until the next receive call or
+  update, which releases them; there is no release call. The message layer's
+  own one-at-a-time receive (sdk/rocketnet_layers.h) keeps its release: an
+  update with one of its views held asserts in a debug build and returns
+  `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build, counted as
+  `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
   The views are taken back either way, so memory never grows from a held view.
+- **The send's channel** is RakNet's ordering channel: the types that are
+  neither ordered nor sequenced (UNRELIABLE, RELIABLE and their receipt types)
+  ignore it and accept any value, never refused
+  (`sdk/rocketnet_message_server.cpp:612-618`).
 - **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
-  message is received on channel 0. It is one record in one packet, up to the
+  message is delivered on channel 0. It is one record in one packet, up to the
   payload capacity less the form byte and the record's three header bytes
   (1411). It shares the region's send descriptors and store with the ordered
   path, and is written after it, under the same budget; when a reliable packet
@@ -1362,15 +1373,15 @@ header; the internal transport and message layers are in
   `send_packets`.
 - **Admission.** Observe reads each slot's connection from
   `rocketnet_server_transport_client_connection_id` (P9a;
-  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:972`), which
+  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:1076`), which
   differs for every connection a slot holds, so a reconnect of the same client
   id into the same slot inside one transport update resets the slot and
-  announces its CONFIG (`sdk/rocketnet_message_server.cpp:517`). Each entry of
+  announces its CONFIG (`sdk/rocketnet_message_server.cpp:521`). Each entry of
   the payload and acked batches carries the connection it was received for
   (P9b): the server's link reads
   `rocketnet_server_transport_payload_connection_ids` and
   `rocketnet_server_transport_acked_connection_ids`
-  (`sdk/rocketnet_message_server.cpp:979`, `:986`), and the client's link
+  (`sdk/rocketnet_message_server.cpp:1083`, `:1090`), and the client's link
   tags every entry with 1, the id its object binds its one connection to at
   create (`sdk/rocketnet_message_client.cpp:75`,
   `sdk/rocketnet_message_server.cpp:301`). `rn_message_admit`
@@ -1418,14 +1429,13 @@ ends:
 const uint8_t * data = NULL;
 int bytes = 0;
 rocketnet_client_update( client, time );                  /* 1. packets in */
-for ( ;; )                                                /* 2. receive and release */
+struct rocketnet_message_batch_t batch;                   /* 2. receive, a batch per call */
+while ( rocketnet_client_receive_messages( client, &batch ) )
 {
-    const uint8_t * view = NULL;
-    int view_bytes = 0;
-    if ( !rocketnet_client_receive_message( client, &view, &view_bytes ) )
-        break;
-    /* process view */
-    rocketnet_client_release_message( client, view );
+    for ( int i = 0; i < batch.num_messages; i++ )
+    {
+        /* process batch.data[i], batch.bytes[i] */
+    }
 }
 /* 3. run the game simulation for this frame */
 uint8_t * out = rocketnet_client_start_message( client, channel, ROCKETNET_RELIABILITY_UNRELIABLE, (int) bytes ); /* 4. queue */
@@ -1467,7 +1477,7 @@ Why a connection ended is read with `rocketnet_client_disconnect_reason` and
 the client only, `SERVER_DISCONNECTED`: the client accepted the server's
 disconnect packet (`rocketnet_server_disconnect_client`, `rocketnet_server_stop`
 or `rocketnet_server_destroy`), recorded by the client terminal check in
-`rn_message_object_update` (`sdk/rocketnet_message_server.cpp:477-478`). A
+`rn_message_object_update` (`sdk/rocketnet_message_server.cpp:505-506`). A
 deliberate `rocketnet_client_disconnect` and a connection timeout read `NONE`.
 
 **Consumer adapter boundary.** The RakNet-style adapter discussed in the
@@ -1475,11 +1485,10 @@ study's §13 is outside RocketNet's library deliverable. The native C API
 covers the following protocol needs:
 
 - RakNet's `Send` maps to `rocketnet_client_start_message`/`rocketnet_client_finish_message`, or the server forms, which return a nonzero serial.
-- `Receive` and `DeallocatePacket` become `rocketnet_client_receive_message` and
-  `rocketnet_client_release_message`, or `rocketnet_server_receive_message`
-  with a sender out-argument and `rocketnet_server_release_message`. Both
-  receive calls read one queue, as RakNet's `Receive` does; the batch calls are
-  the fast-path form of the same queue.
+- `Receive` and `DeallocatePacket` become `rocketnet_client_receive_messages`,
+  or the server form, pumped until false: one call fills a batch, whose
+  `client_index` names each message's sender as `Packet::systemAddress` does,
+  and the next receive or update releases it.
 - Receipts and connection notices are lists. A consumer adapter can merge them into
   RakNet's single stream, so the interleaving I17 describes is reproduced above
   this layer.

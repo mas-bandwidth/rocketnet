@@ -144,12 +144,12 @@ void large_unreliable_sequenced_uses_transport_fragments()
         sequenced_functional_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK, "large server progress" );
         const uint8_t * data;
         int bytes;
-        while ( rocketnet_message_server_receive( server, 0, 0, &data, &bytes ) )
+        while ( rocketnet_message_server_receive( server, NULL, NULL, &data, &bytes ) )
         {
             sequenced_functional_check( bytes == message_bytes, "large delivered length" );
             for ( int i = 0; i < bytes; i++ )
                 sequenced_functional_check( data[i] == (uint8_t) ( i * 37 + 11 ), "large delivered bytes" );
-            rocketnet_message_server_release( server, 0, data );
+            rocketnet_message_server_release( server, data );
             received++;
         }
     }

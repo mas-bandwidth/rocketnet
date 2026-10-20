@@ -1149,34 +1149,32 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         }
         rocketnet_message_server_send_packets( w->message_server );
 
-        for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
         {
-            for ( int channel = 0; channel < ROCKETNET_DST_NUM_CHANNELS; channel++ )
+            // the server's one receive queue across every slot: each message
+            // names its sender's slot
+            const uint8_t * data;
+            int bytes;
+            int slot = 0;
+            while ( rocketnet_message_server_receive( w->message_server, &slot, NULL, &data, &bytes ) )
             {
-                const uint8_t * data;
-                int bytes;
                 uint64_t client_id = rocketnet_client_slots_connected( w->server.client_slots, slot )
                     ? rocketnet_client_slots_client_id( w->server.client_slots, slot )
                     : w->check.slot_client_id[slot];
                 uint32_t expected_generation = (uint32_t) ( client_id >> 8 );
-                while ( rocketnet_message_server_receive( w->message_server, slot, channel, &data, &bytes ) )
-                {
-                    rocketnet_dst_check_deliveries( w, slot, expected_generation, w->server_incarnation,
-                                                    client_id, data, bytes );
-                    rocketnet_message_server_release( w->message_server, slot, data );
-                }
+                rocketnet_dst_check_deliveries( w, slot, expected_generation, w->server_incarnation,
+                                                client_id, data, bytes );
+                rocketnet_message_server_release( w->message_server, data );
             }
         }
 
         for ( int i = 0; i < w->num_clients; i++ )
         {
             rocketnet_dst_client_t * client = &w->client[i];
-            for ( int channel = 0; channel < ROCKETNET_DST_NUM_CHANNELS; channel++ )
             {
                 const uint8_t * data;
                 int bytes;
                 const uint32_t expected_generation = (uint32_t) client->generation;
-                while ( rocketnet_message_client_receive( client->message, channel, &data, &bytes ) )
+                while ( rocketnet_message_client_receive( client->message, NULL, &data, &bytes ) )
                 {
                     rocketnet_dst_check_deliveries( w, 16 + i, expected_generation, w->server_incarnation,
                                                     client->generation, data, bytes );

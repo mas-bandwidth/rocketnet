@@ -23,8 +23,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static uint64_t rn_public_receive_sender;
-
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
 #define PROTOCOL_ID 0x636c69656e747331ull
@@ -142,21 +140,28 @@ int main( int argc, char ** argv )
             break;
 
         // (2) receive and release every received message
-        for ( int i = 0; i < max_clients; i++ )
+        // one queue across every client, each message naming its sender
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive_message( server, &rn_public_receive_sender, &data, &bytes ) )
+            uint64_t i = 0;
+            struct rocketnet_message_batch_t batch;
+            while ( rocketnet_server_receive_messages( server, &batch ) )
             {
-                printf( "server received: %.*s\n", bytes, (const char*) data );
-                uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
-                if ( out )
+                for ( int j = 0; j < batch.num_messages; j++ )
                 {
-                    memcpy( out, data, (size_t) bytes );
-                    if ( rocketnet_server_finish_message( server, i, bytes ) )
-                        echoed = 1;
+                    data = batch.data[j];
+                    bytes = batch.bytes[j];
+                    i = batch.client_index[j];
+                    printf( "server received: %.*s\n", bytes, (const char*) data );
+                    uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+                    if ( out )
+                    {
+                        memcpy( out, data, (size_t) bytes );
+                        if ( rocketnet_server_finish_message( server, i, bytes ) )
+                            echoed = 1;
+                    }
                 }
-                rocketnet_server_release_message( server, data );
             }
         }
 

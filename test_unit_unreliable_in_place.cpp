@@ -341,31 +341,34 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
     pair->time += dt;
     check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
     check( rocketnet_message_client_update( pair->client, pair->time ) == ROCKETNET_UPDATE_OK );
-    for ( int channel = 0; channel < 4; channel++ )
+    // each end's one receive queue, in batches: each entry names the channel
+    // it was delivered on
+    for ( ;; )
     {
-        const uint8_t * data;
-        int bytes;
-        while ( rocketnet_message_server_receive( pair->server, 0, channel, &data, &bytes ) )
+        rocketnet_message_batch_t batch;
+        const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
+        if ( count == 0 )
+            break;
+        for ( int i = 0; i < batch.num_messages && server_got; i++ )
         {
-            if ( server_got )
-            {
-                ip_received_t r;
-                r.channel = channel;
-                r.bytes.assign( data, data + bytes );
-                server_got->push_back( r );
-            }
-            rocketnet_message_server_release( pair->server, 0, data );
+            ip_received_t r;
+            r.channel = batch.channel[i];
+            r.bytes.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
+            server_got->push_back( r );
         }
-        while ( rocketnet_message_client_receive( pair->client, channel, &data, &bytes ) )
+    }
+    for ( ;; )
+    {
+        rocketnet_message_batch_t batch;
+        const int count = rocketnet_message_client_receive_messages( pair->client, &batch );
+        if ( count == 0 )
+            break;
+        for ( int i = 0; i < batch.num_messages && client_got; i++ )
         {
-            if ( client_got )
-            {
-                ip_received_t r;
-                r.channel = channel;
-                r.bytes.assign( data, data + bytes );
-                client_got->push_back( r );
-            }
-            rocketnet_message_client_release( pair->client, data );
+            ip_received_t r;
+            r.channel = batch.channel[i];
+            r.bytes.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
+            client_got->push_back( r );
         }
     }
     rocketnet_message_server_send_packets( pair->server );
@@ -728,7 +731,7 @@ static void in_place_unreliable_keeps_acks_and_order()
     {
         const uint8_t * data;
         int bytes;
-        while ( rocketnet_message_client_receive( pair.client, 0, &data, &bytes ) )
+        while ( rocketnet_message_client_receive( pair.client, NULL, &data, &bytes ) )
         {
             client_got_early++;
             rocketnet_message_client_release( pair.client, data );
