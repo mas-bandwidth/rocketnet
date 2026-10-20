@@ -34,13 +34,10 @@ CONSTANTS MaxFrames,                \* the abstract frames are 1..MaxFrames
           MaxStaged,                \* the staging capacity, in frames
           MaxBurst,                 \* the most frames one disconnect seals
           RetainProducer,          \* XDP keeps its final producer generation
-          RetryFlushWhenEqual,     \* send_packets re-flushes when counters agree
           DisconnectAdvancesStaged  \* commit through disconnect advances staged
 
 ASSUME MaxFrames \in Nat \ {0} /\ MaxStaged \in 1..MaxFrames
 ASSUME MaxBurst \in 1..MaxFrames /\ DisconnectAdvancesStaged \in BOOLEAN
-
-ASSUME RetainProducer \in BOOLEAN /\ RetryFlushWhenEqual \in BOOLEAN
 
 Frames == 1..MaxFrames
 
@@ -170,20 +167,21 @@ XdpStart ==
 
 \* rocketnet_send_handoff_t::publish retains filling if no replacement is free.
 \* rocketnet_server_transport_send_packets retries even when counters agree.
-Publish ==
+PublishWith(retainProducer) ==
     /\ xdpRanFlush' = TRUE
     /\ xdpReadyBeforeFlush' = (xdpStaged /\ xdpQueue = 0)
-    /\ IF (xdpCountersDiffer \/ RetryFlushWhenEqual)
-          /\ xdpStaged /\ (xdpDirty \/ RetainProducer)
-                    /\ xdpQueue < (IF RetainProducer THEN 1 ELSE 2)
+    /\ IF xdpStaged /\ (xdpDirty \/ retainProducer)
+                    /\ xdpQueue < (IF retainProducer THEN 1 ELSE 2)
        THEN /\ xdpQueue' = xdpQueue + 1
             /\ xdpStaged' = FALSE
             /\ xdpFilling' = (xdpQueue + 1 < 2)
        ELSE UNCHANGED <<xdpQueue, xdpStaged, xdpFilling>>
-    /\ xdpCountersDiffer' = IF xdpCountersDiffer \/ RetryFlushWhenEqual
-                            THEN FALSE ELSE xdpCountersDiffer
+    /\ xdpCountersDiffer' = FALSE
     /\ xdpDirty' = FALSE
     /\ UNCHANGED xdpRefused
+
+Publish == PublishWith(TRUE)
+PublishBrokenRefuses == PublishWith(FALSE)
 
 WorkerRetire ==
     /\ xdpQueue > 0
@@ -205,7 +203,13 @@ Next ==
     \/ /\ TransportNext /\ UNCHANGED xdpVars
     \/ /\ (XdpStart \/ Publish \/ WorkerRetire) /\ UNCHANGED transportVars
 
+NextBrokenRefuses ==
+    \/ /\ TransportNext /\ UNCHANGED xdpVars
+    \/ /\ (XdpStart \/ PublishBrokenRefuses \/ WorkerRetire)
+          /\ UNCHANGED transportVars
+
 Spec == Init /\ [][Next]_vars
+SpecBrokenRefuses == Init /\ [][NextBrokenRefuses]_vars
 
 \* StagedFramesEventuallySent is checked under weak fairness of send_packets
 SpecFair == Spec /\ WF_vars(SendPackets /\ UNCHANGED xdpVars)
