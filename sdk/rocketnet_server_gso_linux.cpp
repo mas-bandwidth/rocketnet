@@ -110,6 +110,7 @@ struct rocketnet_server_gso_recv_buffer_t
     uint64_t dropped_overflow;
     uint64_t dropped_source;
     uint64_t gro_batches;
+    uint64_t gro_cmsg_faults;                   // a GRO cmsg this worker refused
     uint64_t syscalls;
     uint64_t receive_errors;
     rocketnet_address_t from[ROCKETNET_GSO_RECV_QUEUE_SIZE];
@@ -196,6 +197,7 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_dropped_source;
     uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
+    uint64_t counter_gro_cmsg_faults;           // folded from the receive buffers; not a public counter
 
     struct rocketnet_server_socket_process_packets_t process_packets;
 
@@ -477,6 +479,43 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 // on every call can never hold the receive mutex
 #define ROCKETNET_GSO_RECV_WEATHER_SKIP_LIMIT 64
 
+// The GRO stride of one recvmmsg message. A truncated control buffer, or a
+// UDP_GRO cmsg whose length does not hold an int, is one fault and the
+// message is one datagram. No socket: the caller passes the message header.
+int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_bytes, uint64_t * faults )
+{
+    int segment_bytes = message_bytes;
+    if ( !header )
+        return segment_bytes;
+    if ( header->msg_flags & MSG_CTRUNC )
+    {
+        if ( faults )
+            *faults += 1;
+        return message_bytes;
+    }
+    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg != NULL; cmsg = CMSG_NXTHDR( header, cmsg ) )
+    {
+        if ( cmsg->cmsg_len < sizeof( struct cmsghdr ) )
+        {
+            if ( faults )
+                *faults += 1;
+            return message_bytes;
+        }
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
+        {
+            if ( cmsg->cmsg_len < CMSG_LEN( sizeof( int ) ) )
+            {
+                if ( faults )
+                    *faults += 1;
+                return message_bytes;
+            }
+            memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof( segment_bytes ) );
+            break;
+        }
+    }
+    return segment_bytes;
+}
+
 static void rocketnet_server_gso_worker( void * data )
 {
     struct rocketnet_server_gso_queue_t * queue = (struct rocketnet_server_gso_queue_t*) data;
@@ -635,18 +674,13 @@ static void rocketnet_server_gso_worker( void * data )
                     continue;
                 }
 
-                // the GRO segment stride: absent, the message is one
-                // datagram and the stride is its whole length
+                // the GRO stride. a truncated control buffer, or a UDP_GRO
+                // cmsg that does not hold an int, is one fault and the
+                // message is one datagram.
 
-                int segment_bytes = message_bytes;
-                for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( &queue->messages[i].msg_hdr ); cmsg; cmsg = CMSG_NXTHDR( &queue->messages[i].msg_hdr, cmsg ) )
-                {
-                    if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
-                    {
-                        memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
-                        break;
-                    }
-                }
+                uint64_t gro_faults = 0;
+                int segment_bytes = rocketnet_server_gso_gro_segment_bytes( &queue->messages[i].msg_hdr, message_bytes, &gro_faults );
+                buffer->gro_cmsg_faults += gro_faults;
                 if ( segment_bytes <= 0 )
                     segment_bytes = message_bytes;
 
@@ -1295,6 +1329,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         gso->counter_receive_dropped_source += buffer->dropped_source;
         gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
+        gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
         buffer->syscalls = 0;
         buffer->receive_errors = 0;
         buffer->dropped_size = 0;
@@ -1302,6 +1337,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         buffer->dropped_overflow = 0;
         buffer->dropped_source = 0;
         buffer->gro_batches = 0;
+        buffer->gro_cmsg_faults = 0;
 
         for ( uint32_t i = 0; i < buffer->num_packets; i++ )
         {
