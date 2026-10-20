@@ -30,7 +30,27 @@
     which. ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
     uses as its negative control.
+
+    The link simulator is driven by the transports' own env overlay
+    (ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT, _LATENCY_MS, _JITTER_MS,
+    _DUPLICATE_PERCENT and the same four for ROCKETNET_CLIENT_). A duplicate
+    the simulator injects is refused by the receiver as PAYLOAD_ALREADY_RECEIVED
+    (client: CLIENT_PAYLOAD_ALREADY_RECEIVED); when the sending end's
+    SIMULATED_DUPLICATE_PERCENT is non-zero that one refusal at the receiving
+    end is the expected outcome of the injection and is reported, not failed;
+    every other refusal still fails the run.
+
+    ROCKETNET_SOAK_SERVER_HOST (default 127.0.0.1) is the IPv4 host the server
+    binds and the connect token names; ROCKETNET_SOAK_SERVER_PORT (default 0,
+    adopt what the kernel grants) its port. On Linux,
+    ROCKETNET_SOAK_CLIENT_NETNS names a network namespace file (for example
+    /var/run/netns/<name>) each client socket is opened in, so a server on one
+    end of a veth pair is soaked from the other end: the xdp cell's shape.
 */
+
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
@@ -40,6 +60,11 @@
 #include <time.h>
 #include <stdlib.h>
 #include <signal.h>
+#if defined(__linux__)
+#include <fcntl.h>
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 #define ROCKETNET_SOAK_MAX_COUNTERS 256
 #define ROCKETNET_SOAK_DISCONNECT_REASONS ( ROCKETNET_CLIENT_STATE_DISCONNECTED - ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED + 1 )
@@ -118,7 +143,13 @@ static void soak_accumulate_counters( uint64_t * totals, const struct rocketnet_
 // loopback with no injected fault, so every REFUSAL counter reads 0. Returns
 // the number of violations, each printed by counter name.
 
-static int soak_check_counters( const char * name, const struct rocketnet_counters_t * counters )
+static int soak_env_nonzero( const char * name )
+{
+    const char * value = getenv( name );
+    return value && value[0] != '\0' && strcmp( value, "0" ) != 0;
+}
+
+static int soak_check_counters( const char * name, const struct rocketnet_counters_t * counters, int duplicates_injected )
 {
     int violations = 0;
 
@@ -133,6 +164,16 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
     {
         if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL && rocketnet_counter_value( counters, i ) != 0 )
         {
+            const char * counter = rocketnet_counter_name( i );
+            const size_t length = strlen( counter );
+            const char * suffix = "PAYLOAD_ALREADY_RECEIVED";
+            const size_t suffix_length = strlen( suffix );
+            if ( duplicates_injected && length >= suffix_length && strcmp( counter + length - suffix_length, suffix ) == 0 )
+            {
+                printf( "soak: expected refusal of injected duplicates at %s: %s = %llu\n", name, counter,
+                        (unsigned long long) rocketnet_counter_value( counters, i ) );
+                continue;
+            }
             printf( "soak: REFUSAL on a clean run at %s: %s = %llu\n", name, rocketnet_counter_name( i ),
                     (unsigned long long) rocketnet_counter_value( counters, i ) );
             violations++;
@@ -209,6 +250,25 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
+    // a duplicate injected on the way to an end is refused at that end
+    const int duplicates_to_client = soak_env_nonzero( "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT" );
+    const int duplicates_to_server = soak_env_nonzero( "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" );
+
+    const char * server_host = getenv( "ROCKETNET_SOAK_SERVER_HOST" );
+    if ( !server_host || server_host[0] == '\0' )
+        server_host = "127.0.0.1";
+    const char * server_port_env = getenv( "ROCKETNET_SOAK_SERVER_PORT" );
+    char bind_address[64];
+    if ( server_port_env && server_port_env[0] != '\0' )
+        snprintf( bind_address, sizeof(bind_address), "%s:%s", server_host, server_port_env );
+    else
+        snprintf( bind_address, sizeof(bind_address), "%s", server_host );
+#if defined(__linux__)
+    const char * client_netns = getenv( "ROCKETNET_SOAK_CLIENT_NETNS" );
+    if ( client_netns && client_netns[0] == '\0' )
+        client_netns = NULL;
+#endif
+
     // Bind port zero and adopt what the kernel grants, the #107 shape. A soak
     // is the worst place for a fixed port: it is the one binary the estate
     // runs for DAYS, so it is the one most likely to still hold the port when
@@ -217,7 +277,7 @@ int main( int argc, char ** argv )
     // returns NULL and the run exits 1, which reads as a soak failure rather
     // than as a busy port.
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, bind_address, &server_config);
     if ( !server )
     {
         printf( "soak: failed to create the server transport\n" );
@@ -225,8 +285,10 @@ int main( int argc, char ** argv )
         return 1;
     }
 
+    printf( "soak: server transport %s\n", rocketnet_server_transport_driver( server ) );
+
     char server_address[64];
-    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    snprintf( server_address, sizeof(server_address), "%s:%d", server_host, rocketnet_server_transport_port( server ) );
 
     struct rocketnet_client_transport_t * client = NULL;
 
@@ -273,7 +335,7 @@ int main( int argc, char ** argv )
                 soak_record_disconnect( disconnect_counts, rocketnet_client_transport_state( client ) );
                 rocketnet_sleep( 0.05 );
                 rocketnet_server_transport_update( server, rocketnet_time() );
-                counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
+                counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ), duplicates_to_client );
                 soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
                 rocketnet_client_transport_destroy( client );
                 client = NULL;
@@ -285,7 +347,37 @@ int main( int argc, char ** argv )
                 failures++;
                 break;
             }
+#if defined(__linux__)
+            int self_ns = -1;
+            if ( client_netns )
+            {
+                self_ns = open( "/proc/self/ns/net", O_RDONLY );
+                const int client_ns = open( client_netns, O_RDONLY );
+                if ( self_ns < 0 || client_ns < 0 || setns( client_ns, CLONE_NEWNET ) != 0 )
+                {
+                    printf( "soak: could not enter the client network namespace %s\n", client_netns );
+                    if ( client_ns >= 0 ) close( client_ns );
+                    if ( self_ns >= 0 ) close( self_ns );
+                    failures++;
+                    break;
+                }
+                close( client_ns );
+            }
+#endif
             client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
+#if defined(__linux__)
+            if ( self_ns >= 0 )
+            {
+                const int back = setns( self_ns, CLONE_NEWNET );
+                close( self_ns );
+                if ( back != 0 )
+                {
+                    printf( "soak: could not return to the server network namespace\n" );
+                    failures++;
+                    break;
+                }
+            }
+#endif
             if ( !client )
             {
                 printf( "soak: failed to create the client transport\n" );
@@ -298,6 +390,8 @@ int main( int argc, char ** argv )
                 failures++;
                 break;
             }
+            if ( !connects && !reconnects )
+                printf( "soak: client transport %s\n", rocketnet_client_transport_driver( client ) );
             reconnect_time = rocketnet_time();
             connected = 0;
         }
@@ -415,10 +509,10 @@ int main( int argc, char ** argv )
         }
         rocketnet_sleep( 0.05 );
         rocketnet_server_transport_update( server, rocketnet_time() );
-        counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
+        counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ), duplicates_to_client );
         soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
     }
-    counter_violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ) );
+    counter_violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ), duplicates_to_server );
     if ( counter_violations )
         failures += (uint64_t) counter_violations;
     else
