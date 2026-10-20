@@ -133,9 +133,10 @@ ring can fill; `start_packet` then refuses as at BASE (`SEND_RING_FULL`).
 Only `destroy` waits. `disconnect` seals its burst into the Filling ring and
 hands it off like any packet (deferred when the other ring is busy, retried
 by the next `update`); `destroy` makes the last hand-off itself, waiting for
-the other ring to be Sent if it must (Stop and destroy order), so a
-disconnect burst is on the wire before the transport is freed whether or not
-an `update` ran in between.
+the other ring to be Sent if it must (Stop and destroy order), so a disconnect
+burst is on the wire before the transport is freed whether or not an `update`
+ran in between — unless the wait hits its bound (Stop and destroy order), in
+which case the burst is dropped and counted.
 
 **The protocol packet and disconnect.** The packet `update` builds
 (`rocketnet_client_protocol_update`) and the disconnect burst of
@@ -270,15 +271,32 @@ socket.
 holds committed slots (a deferred disconnect burst, say), it waits until the
 other ring loads Sent (acquire; `rocketnet_platform_sleep( 0.0001 )` between
 loads; destroy is off the frame path), reopens it and hands the Filling ring
-off. Then it stores quit and wakes the I/O thread. The I/O thread finishes
-every handed-off ring (so the disconnect burst is sent), sends nothing new,
-and exits. The main thread joins it, then closes the transport, then frees the
-transport. Nothing is freed while the I/O thread can touch it
-(`FreedOnlyAfterJoin`), and no committed slot is dropped by destroy
-(`CommittedEventuallyHandedOff`). In the step-driven unit mode there is no
-I/O thread: `destroy` calls `rocketnet_client_io_step( transport, false )`
-itself in place of the sleep and the join, so the order is tested with no
-real time.
+off. Both waits are bounded on the transport's own clock (the config's
+`time_callback`; null means `rocketnet_platform_time`): the last hand-off
+waits at most `ROCKETNET_CLIENT_DESTROY_HANDOFF_WAIT_SECONDS` (2 s), and the
+step-driven exit loop at most `ROCKETNET_CLIENT_DESTROY_STEP_WAIT_SECONDS`
+(2 s). A live I/O thread sends a handed-off ring in one step (microseconds;
+the I/O guard timeout is 1 ms), so a transport that has not reached Sent
+within a second has a stuck driver, and the two-second margin never delays a
+live shutdown. On expiry destroy gives up, logs a warning, counts the
+committed slots it drops under `SEND_RING_FULL`, and continues to Stop. Then
+it stores quit and wakes the I/O thread. The I/O thread finishes every
+handed-off ring (so the disconnect burst is sent), sends nothing new, and
+exits. The main thread joins it, then closes the transport, then frees the
+transport. What bounds the join is the I/O thread's stop check, which runs
+between steps: `rocketnet_client_io_step` returns EXITED once quit is set and
+no ring is in flight (`sdk/rocketnet_client_io.h`, the `quitting` load at the
+top of the step and `IoExit`). A thread stuck inside the driver's `send` never
+reaches that check, so the join itself is unbounded in that case; the deadline
+bounds the last hand-off's wait, not the join. Nothing is freed while the I/O
+thread can touch it (`FreedOnlyAfterJoin`); a committed slot is either handed
+off or, if the other ring never reaches Sent before the deadline, dropped and
+counted as above (`CommittedEventuallyHandedOff` becomes "eventually handed
+off or dropped at the deadline"). In the step-driven unit mode there is no I/O
+thread: `destroy` calls `rocketnet_client_io_step( transport, false )` itself
+in place of the sleep and the join, and the exit loop breaks at its own
+deadline with no thread left to touch the transport, so the order is tested
+with no real time.
 
 ## The interface
 
@@ -687,19 +705,33 @@ is `waitReadable`. `MCRNClientIo.cfg` checks `TypeOK`, `NoReuseBeforeSent`,
 `ExposedStable`, `FreedOnlyAfterJoin`, `HandOffNeverWaits` (the main thread
 never blocks on the I/O thread), `FullWaitsOnWake` (a blocked I/O thread with
 a full buffer waits on the wake alone) and `NoReceiveStall` (while the
-transport runs, datagrams in the I/O thread's buffer always have a next step
-toward update), `SentToCommitted` (every slot a ring sends goes to the
-destination it was committed with), and under weak fairness of the I/O thread, the join, a game
-thread's finish of its packet, the reopen, the hand-off and update's two
-receive steps `HandedOffEventuallySent`, `CommittedEventuallyHandedOff` (a
-committed slot, deferred or not, is eventually handed to the I/O thread),
-`StopEventuallyJoins`, `FilledEventuallyExposed` (a buffer of received
-datagrams is eventually exposed) and `ArrivedEventuallyDelivered` (every
-datagram that arrives reaches update). The six reversed witnesses,
+transport runs and destroy has not begun, datagrams in the I/O thread's
+buffer always have a next step toward update), `SentToCommitted` (every slot
+sent by a ring goes to the destination it was committed with). Under weak
+fairness of the I/O thread, the join, a game thread's finish of its packet,
+the reopen, the hand-off and update's two receive steps, the model checks
+`HandedOffEventuallySent`, `CommittedEventuallyHandedOff` (a committed slot,
+deferred or not, is eventually handed to the I/O thread, or dropped by
+destroy at the deadline and counted), `StopEventuallyJoins`,
+`FilledEventuallyExposed` (a buffer of received datagrams is eventually
+exposed), `ArrivedEventuallyDelivered` (every datagram that arrives reaches
+update) and `DestroyCompletes` (once destroy has begun it reaches Stop, Join
+and Free). Destroy's last hand-off waits in `DestroyWait`; the transport clock
+is `now`, capped at `Deadline`, and `Timeout` at the deadline drops the
+committed slots of the Filling ring into `dropped` and continues to Stop,
+Join and Free (`DroppedAtDeadline`). `IoStall` is the stalled ring the deadline
+exists for: the other ring's in-flight send never completes, so the ring stays
+`Sending` (the state the wait loads) while the thread itself stays live and can
+still reach `IoExit`; `HandedOffEventuallySent` becomes "Sent or stalled". The
+deadline bounds the wait, not the join: a driver call blocked inside `send`
+never reaches the thread's stop check, so the threaded join stays unbounded in
+that case. The reversed witnesses include
 `MCRNClientIoBrokenReuseBeforeSent.cfg`,
 `MCRNClientIoBrokenSwapWhileReading.cfg`,
 `MCRNClientIoBrokenReceiveStall.cfg`,
 `MCRNClientIoBrokenHandOffWaits.cfg`,
-`MCRNClientIoBrokenFullWaitReadable.cfg` and
-`MCRNClientIoBrokenDestinationOverwrite.cfg`, each violate exactly their declared
-invariant.
+`MCRNClientIoBrokenFullWaitReadable.cfg`,
+`MCRNClientIoBrokenDestroyWaitsForever.cfg` (which removes only the deadline
+action from `NextNoDeadline`/`SpecNoDeadline` while retaining the progress
+assumptions), and `MCRNClientIoBrokenDestinationOverwrite.cfg`; each violates
+its declared invariant or liveness property.
