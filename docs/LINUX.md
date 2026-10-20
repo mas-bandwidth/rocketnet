@@ -11,7 +11,7 @@ backs it; a section whose proof is still an open card says **pending**.
 
 The build needs CMake 3.20 or later (`CMakeLists.txt:1`, `BUILDING.md:13-15`)
 and, on Debian or Ubuntu, the packages CI installs: `cmake`, `build-essential`,
-`libbpf-dev`, `libxdp-dev`, `liburing-dev` and `xxd` (`BUILDING.md:52-56`).
+`libbpf-dev`, `libxdp-dev`, `liburing-dev` and `xxd` (`BUILDING.md:56-60`).
 `dpkg-query` in section 10 checks they are present.
 
 libbpf and libxdp are required: configure stops without them
@@ -19,7 +19,7 @@ libbpf and libxdp are required: configure stops without them
 the `io_uring` driver is built to refuse and configure prints
 `liburing not found: the io_uring server driver is built to refuse`
 (`cmake/RocketNetDependencies.cmake:32-50`, `CMakeLists.txt:22`). The libbpf
-floor is 1.0 (`BUILDING.md:475-478`).
+floor is 1.0 (`BUILDING.md:479-482`).
 
 `make` is the front door. It configures `build/` as **Release** and runs the
 child make with `-j` set to the processor count capped at 8; `make JOBS=<n>`
@@ -37,10 +37,10 @@ shared libraries into `bin/` (`CMakeLists.txt:34-38`), and `make` reconfigures
 `build/` to Release (`Makefile:6`), so use one or the other in a checkout.
 
 The executables this guide runs: `./bin/test` (the unit suite, no sockets,
-`BUILDING.md:19-30`), `./bin/functional` (real sockets and real transports,
-`BUILDING.md:32-44`), `./bin/test_driver` (registry order and driver contract,
+`BUILDING.md:23-34`), `./bin/functional` (real sockets and real transports,
+`BUILDING.md:36-48`), `./bin/test_driver` (registry order and driver contract,
 `DRIVERS.md:145-151`), `./bin/test_lifecycle`, `./bin/transport_memory`
-(`BUILDING.md:280-299`) and `./bin/test_xdp_filter` (`DRIVERS.md:256-270`).
+(`BUILDING.md:284-303`) and `./bin/test_xdp_filter` (`DRIVERS.md:256-270`).
 
 ## 2. The transport ladder
 
@@ -100,7 +100,7 @@ The config's `transport` field is the candidate list; `NULL`, empty or `auto`
 is the platform order (`sdk/rocketnet.h:752`, `:811`,
 `sdk/rocketnet_config.cpp:840-842`). The environment overrides it per
 endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
-(precedence default < struct < env, `BUILDING.md:326-328`;
+(precedence default < struct < env, `BUILDING.md:330-332`;
 `sdk/rocketnet_config.cpp:313-319`). The rules (`sdk/rocketnet_config.h:165-176`):
 
 - A one-element list is a pin: that transport or a loud failure, never a fall.
@@ -121,7 +121,7 @@ spelling `ROCKETNET_<FIELD>` is refused aloud and not applied, naming its
 replacement (`sdk/rocketnet_config.cpp:548-562`); so are the old
 `ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
 `ROCKETNET_CLIENT_DRIVER` (`sdk/rocketnet_config.cpp:564-565`,
-`BUILDING.md:328-330`). `ROCKETNET_SERVER_NUM_QUEUES` is the one surviving
+`BUILDING.md:332-334`). `ROCKETNET_SERVER_NUM_QUEUES` is the one surviving
 alias, of `ROCKETNET_SERVER_NUM_XDP_QUEUES`
 (`sdk/rocketnet_server_transport.cpp:950-958`).
 
@@ -155,7 +155,7 @@ refuses either is a tier, not an error: no `UDP_SEGMENT` means plain
 probe but refuses a live GSO send (`EINVAL`, `EIO`, `EOPNOTSUPP`) logs
 `gso transport: live GSO send refused (...). degrading to plain sendmmsg` and
 resends that batch as plain packets (`sdk/rocketnet_server_gso_linux.cpp:1024-1033`).
-The degradation is inside the driver, below the ladder (`BUILDING.md:346-349`).
+The degradation is inside the driver, below the ladder (`BUILDING.md:350-353`).
 
 ## 5. io_uring
 
@@ -218,7 +218,7 @@ The create line is
 
 `xdp` (AF_XDP, `sdk/rocketnet_server_socket_linux.cpp`) is verify-and-bind
 only: the library never changes machine state, and a read-only pre-flight
-refuses by name on any unmet condition (`BUILDING.md:399-407`,
+refuses by name on any unmet condition (`BUILDING.md:403-411`,
 `sdk/rocketnet_server_socket_linux.cpp:831-838`). Provisioning is
 `scripts/rocketnet-provision`, whose header is the authoritative condition list
 (`scripts/rocketnet-provision:18-23`):
@@ -240,7 +240,7 @@ refuses by name on any unmet condition (`BUILDING.md:399-407`,
 The script's modes are `provision` (the default), `verify`, `sweep` and
 `selftest` (`scripts/rocketnet-provision:93-117`, parsed at `:125-146`). The
 boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
-`BUILDING.md:409-438` walks a fresh box: boot tier, then
+`BUILDING.md:413-442` walks a fresh box: boot tier, then
 `scripts/rocketnet-provision eth0 7`, then `... verify`, then the server, and
 `scripts/rocketnet-provision sweep` after a crash.
 
@@ -256,12 +256,12 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
   IPv6 link-local address is refused by name
   (`sdk/rocketnet_server_socket_linux.cpp:929`).
 - Queues: `num_xdp_queues`, default 7; worker CPUs start at `num_os_cpus`,
-  default 1 (`sdk/rocketnet_driver_builtin.cpp:195-196`, `BUILDING.md:460-462`).
+  default 1 (`sdk/rocketnet_driver_builtin.cpp:195-196`, `BUILDING.md:464-466`).
 - Memory: each queue's UMEM is 65536 frames of 4096 bytes, 256 MiB
   (`sdk/rocketnet_constants.h:50-51`, `sdk/rocketnet_server_socket_linux.cpp:840-848`);
   seven queues are 1,879,048,192 bytes of UMEM inside a plan of roughly 4.2 GiB
-  (`BUILDING.md:228-229`, `:278`), within the 4096 MiB `ROCKETNET_XDP_MEMORY_MIB`
-  budget (`BUILDING.md:221-225`, `sdk/rocketnet_server_socket_linux.cpp:894-901`).
+  (`BUILDING.md:232-233`, `:282`), within the 4096 MiB `ROCKETNET_XDP_MEMORY_MIB`
+  budget (`BUILDING.md:225-229`, `sdk/rocketnet_server_socket_linux.cpp:894-901`).
 - One family per interface: a server serves the family of its public address,
   and one interface takes one XDP program (`DRIVERS.md:237-243`).
 
@@ -370,19 +370,19 @@ under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 10 commands create 1000-client servers of each under `ulimit -l 64`.
 `io_uring` needs some, kernel-dependent (section 5); keep `ulimit -l` at
 8192 KiB or more. `xdp` raises its own `RLIMIT_MEMLOCK` to unlimited at create and refuses with
-`server could not setrlimit` if it cannot (`BUILDING.md:403-404`,
+`server could not setrlimit` if it cannot (`BUILDING.md:407-408`,
 `sdk/rocketnet_server_socket_linux.cpp:1605-1614`); as root on a host that
 succeeds.
 
 **Memory.** `./bin/transport_memory <clients> <payload> <slots> <transport> <queues> --plan-only`
 prints the plan without opening a socket; without `--plan-only` it creates a
 loopback server and checks the allocator against the plan
-(`bench/transport_memory.cpp:65-113`, `BUILDING.md:290-299`). At 1000 clients,
+(`bench/transport_memory.cpp:65-113`, `BUILDING.md:294-303`). At 1000 clients,
 1416-byte payloads and 16 reassembly slots the plans are 483,668,499 bytes
 (`portable`), 625,876,730 (`gso`), 594,710,098 (`io_uring`) and 4,269,352,940
 (`xdp`, 7 queues, of which 1,879,048,192 UMEM). The plan excludes OS stacks,
 kernel queues, loader and application memory
-(`sdk/rocketnet_server_transport.cpp:1117`, `BUILDING.md:243-251`).
+(`sdk/rocketnet_server_transport.cpp:1117`, `BUILDING.md:247-255`).
 
 ## 9. Containers
 
@@ -399,9 +399,9 @@ What each transport needs, from the requirements above:
   socket and a BPF program load (K1), permission to raise `RLIMIT_MEMLOCK`
   to unlimited (section 8), the NIC itself in the container's network
   namespace, and bpffs at `/sys/fs/bpf` for the instance's pin root
-  (`BUILDING.md:426-431`). The boot tier belongs to the host. Where bpffs is
+  (`BUILDING.md:430-435`). The boot tier belongs to the host. Where bpffs is
   shared across pid namespaces, run `sweep` from the namespace that owns the
-  servers (`BUILDING.md:432-438`, `scripts/rocketnet-provision:60-64`).
+  servers (`BUILDING.md:436-442`, `scripts/rocketnet-provision:60-64`).
 
 No CI leg runs a transport inside a container; these needs are read from the
 code and not measured.
