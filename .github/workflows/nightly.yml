@@ -28,6 +28,11 @@
 #                           the second configuration, whose distinct value is
 #                           the asserts that Release compiles out. Every step
 #                           came across unchanged.
+#
+#   linux / clang           the second Linux compiler. ci.yml's Linux
+#                           build-and-test rows build both suites with the
+#                           default compiler (gcc); this job builds and runs
+#                           them with clang in Debug.
 
 name: nightly
 

@@ -16,9 +16,10 @@ tested with gcc 13.3.0 and 15.2.0 and with clang 18.1.3 and 21.1.8, in Debug and
 Release: with each compiler the static and shared libraries, `./bin/test` and
 `./bin/functional` build, and both suites pass. The `linux / clang` job in
 `.github/workflows/nightly.yml` builds and runs both suites with clang; the
-Linux build-and-test rows in `.github/workflows/ci.yml` configure with the
-default compiler (gcc), and ci.yml uses clang only for the fuzz harnesses. On
-Linux and macOS the Makefile is the front door:
+Linux build-and-test rows in `.github/workflows/ci.yml` build the library and
+both suites with the default compiler (gcc), and ci.yml uses clang only for the
+fuzz-smoke legs and the embedded XDP program. On Linux and macOS the Makefile is
+the front door:
 
     make
 
