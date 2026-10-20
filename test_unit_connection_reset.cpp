@@ -1078,6 +1078,8 @@ static void connection_reset_disconnect_reason_kept_until_next_connection()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.rto_initial_ms = 100;
+    config.rto_max_ms = 1000;
     config.reliable_timeout_ms = 1000;
     reset_loopback_explicit_server_disconnect_reason_scenario();
     reset_loopback_server_reliable_timeout_reason_scenario( &config );

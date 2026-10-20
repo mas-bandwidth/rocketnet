@@ -24,7 +24,7 @@
 // server has received it. Returns 1 when done, 0 on the five-second deadline,
 // and -1 when an update fails.
 static int run_frames( struct rocketnet_server_t * server, struct rocketnet_client_t * client,
-                       const char * message, int * received )
+                       const char * message, int * received, double * time_base )
 {
     const int send = message != NULL;
     const double start = rocketnet_time();
@@ -36,7 +36,7 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
 
     while ( rocketnet_time() - start < 5.0 )
     {
-        const double now = 1000.0 + ( rocketnet_time() - start );
+        const double now = *time_base + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
 
@@ -103,7 +103,10 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
 
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              ( !send || ( received && *received > 0 ) ) )
+        {
+            *time_base += rocketnet_time() - start;
             return 1;
+        }
 
         rocketnet_sleep( 0.001 );
     }
@@ -120,6 +123,7 @@ int main( void )
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     char server_address[64];
     int result = 1;
+    double time_base = 1000.0;
 
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
@@ -165,7 +169,7 @@ int main( void )
         CHECK( client != NULL );
 
         int received = 0;
-        CHECK( run_frames( server, client, round == 1 ? "hello from the client" : NULL, &received ) == 1 );
+        CHECK( run_frames( server, client, round == 1 ? "hello from the client" : NULL, &received, &time_base ) == 1 );
 
         rocketnet_client_disconnect( client );
         rocketnet_client_destroy( client );
@@ -175,8 +179,11 @@ int main( void )
     result = 0;
 
 cleanup:
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    if ( client )
+        rocketnet_client_destroy( client );
+    if ( server )
+        rocketnet_server_destroy( server );
     rocketnet_term();
     // destroy ends a live connection and logs it, so PASS is printed after
     // the cleanup to stay the last line

@@ -11,8 +11,18 @@ compatibility separately from the wire version; see the ABI rules below.
 Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
 
 rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
-CMake 4.2 or later (the Windows block below says why). On Linux and macOS the
-Makefile is the front door:
+CMake 4.2 or later (the Windows block below says why). On Linux the build is
+tested with gcc 13.3.0 and 15.2.0 and with clang 18.1.3 and 21.1.8, in Debug and
+Release: with each compiler the static and shared libraries, `./bin/test` and
+`./bin/functional` build, and the unit suite passes. Functional results are
+recorded per compiler and configuration: the matrix also exposes outstanding
+receive-weather counter failures and an intermittent io_uring lifecycle
+failure; an isolated rerun is not a full-suite pass. The `linux / clang` job in
+`.github/workflows/nightly.yml` builds and runs both suites with clang; the
+Linux build-and-test rows in `.github/workflows/ci.yml` build the library and
+both suites with the default compiler (gcc), and ci.yml uses clang only for the
+fuzz-smoke legs and the embedded XDP program. On Linux and macOS the Makefile is
+the front door:
 
     make
 
@@ -102,11 +112,40 @@ verifying loopback scale up to 1000 concurrent clients across five pass criteria
 (`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
 `unreliable_integrity`, and `counters_agree`).
 
+### Test binaries and their tiers
+
+Every test binary is in exactly one tier. A unit binary opens no socket,
+starts no thread, never sleeps and reads time only as an argument (the test
+clock starts at 1000.0). A binary that opens a real socket, starts a thread,
+sleeps or reads the wall clock is functional, and CI runs it only in a step
+named functional, never as a unit step.
+
+| Binary | Tier | Why | Where it runs |
+| --- | --- | --- | --- |
+| `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
+| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt) | by hand |
+| `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
+| `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
+| `functional` | functional | real sockets and transports | CI `Run functional suite` |
+| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
+| `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
+| `test_xdp` | functional | the AF_XDP driver | `./bin/functional` on Linux |
+| `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
+| `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp:31-44,59) | `./bin/functional` on macOS |
+| `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp:96,293,360) | `functional.exe` on Windows |
+| `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp:155,546,590,618) | CI `Functional: lifecycle binary` |
+| `test_driver` | functional | netlink route reads, and the portable driver on loopback sockets with sleep-wait loops (test_driver.cpp:193-217) | CI `Functional: native driver contract` |
+
+The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
+`rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
+simulator and the test clock, with no socket and no sleep.
+
 Dependencies, per platform, as CI installs them:
 
-    # Linux -- the build links the XDP dataplane, and liburing is the bench
-    # harness's io_uring rung
-    sudo apt install cmake build-essential libbpf-dev libxdp-dev liburing-dev xxd
+    # Linux -- the build links the XDP dataplane, liburing is the bench
+    # harness's io_uring rung; clang with the BPF target compiles the XDP
+    # program at build time (the server host needs no compiler)
+    sudo apt install cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 
     # macOS
     brew install cmake
@@ -331,7 +370,8 @@ target_link_libraries(game PRIVATE rocketnet_dev)
 `python3 tools/check_package.py build --config Release --embedded` installs and
 moves the package, then builds and runs separate C/C++ consumers against both
 libraries. It also checks an embedded build with `BUILD_SHARED_LIBS=ON` and
-verifies that the XDP archive contains the current sources. These checks are in CI.
+verifies that the generated header embeds exactly the `server_xdp.o` the build
+compiled. These checks are in CI.
 
 ## ABI compatibility
 

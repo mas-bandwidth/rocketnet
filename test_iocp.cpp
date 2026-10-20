@@ -3,6 +3,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_server_rio.h"
+#include <ws2tcpip.h>
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -10,6 +11,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
+                                                  int * repost_calls, int * pending_receives, int * guard_hit );
+#endif
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "IOCP check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
@@ -940,6 +946,24 @@ static void test_rio_request_queue_full()
 
 static void test_rio_completion_queue_full()
 {
+#if defined(_WIN32)
+    // Keep the CQ full through a guard beyond two banks. The old unbounded
+    // loop reaches the corrupt-CQ sentinel; bounded receive returns at one
+    // bank and leaves the still-full queue for the next update.
+    uint64_t seam_counters[2 * ROCKETNET_RIO_NUM_COUNTERS] = {};
+    int seam_packets[2] = {};
+    int seam_reposts = 0;
+    int seam_pending = 0;
+    int seam_guard_hit = 0;
+    CHECK( rocketnet_server_rio_test_receive_overflow( seam_counters, seam_packets, &seam_reposts, &seam_pending, &seam_guard_hit ) );
+    CHECK( seam_guard_hit == 0 );
+    CHECK( seam_packets[0] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_packets[1] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == 2 * ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_reposts == 2 * ROCKETNET_RIO_RECEIVES );
+    CHECK( seam_pending == ROCKETNET_RIO_RECEIVES );
+#endif
     if ( !rocketnet_server_rio_available() ) { printf("rio_completion_queue_full [SKIPPED no RIO on this host]\n"); return; }
     rocketnet_address_t bind;
     rocketnet_server_rio_t * rio = rio_open(&bind);
@@ -951,11 +975,13 @@ static void test_rio_completion_queue_full()
     // with ROCKETNET_RIO_RECEIVES completions; the host drops what arrives
     // with no slice posted. The poll that reads the full queue fills the bank
     // to capacity and re-posts slice by slice while a sender keeps datagrams
-    // coming, so completions past the bank capacity arrive in the same poll
-    // and the overflow is counted. No slice is lost and traffic resumes.
+    // coming. rocketnet_server_rio_receive_packets dequeues at most one bank
+    // per call, so completions past the bank stay queued for the next call:
+    // no overflow is counted, and the next poll delivers the tail.
     const uint64_t overflow = rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW);
     int attempts = 0;
-    while ( rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow && attempts < 10 )
+    int tail = 0;
+    while ( tail == 0 && attempts < 10 )
     {
         ++attempts;
         const uint64_t received = rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED);
@@ -969,17 +995,172 @@ static void test_rio_completion_queue_full()
         flood.join();
         CHECK(rocketnet_server_rio_process_packets(rio)->num_packets == ROCKETNET_RIO_RECEIVES);
         CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED) - received == ROCKETNET_RIO_RECEIVES);
+        // completions the flood queued during the bounded poll are the tail
+        rocketnet_server_rio_receive_packets(rio);
+        tail = rocketnet_server_rio_process_packets(rio)->num_packets;
+        CHECK(tail <= ROCKETNET_RIO_RECEIVES);
+        CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow);
         rio_settle(rio);
         // drain what the sender left before the next attempt
         for ( int i = 0; i < 20; ++i ) { rocketnet_server_rio_receive_packets(rio); rocketnet_platform_sleep(0.005); }
     }
-    const uint64_t dropped = rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) - overflow;
-    printf("rio_completion_queue_full: overflow %llu after %d attempts\n", (unsigned long long) dropped, attempts);
-    CHECK(dropped > 0);
+    printf("rio_completion_queue_full: tail %d after %d attempts\n", tail, attempts);
+    CHECK(tail > 0);
+    CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW) == overflow);
     rio_settle(rio);
     rio_exchange(rio, &bind, peer, &peer_address, 64);
     rio_finish(rio, peer);
     printf("rio_completion_queue_full\n");
+}
+
+// ---------------------------------------------------------------------------
+// Windows socket rows: the bound port is the socket's alone, and a refused
+// send is counted on the socket and logged with the Winsock error.
+
+// a raw socket that asks to share the port with SO_REUSEADDR, as another
+// local process would, on the address given; true when Windows lets it bind
+static bool port_thief_binds( const rocketnet_address_t * owner, SOCKET * thief )
+{
+    *thief = socket( owner->type == ROCKETNET_ADDRESS_IPV6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK(*thief != INVALID_SOCKET);
+    BOOL reuse = TRUE;
+    CHECK(setsockopt(*thief, SOL_SOCKET, SO_REUSEADDR, (const char*) &reuse, sizeof(reuse)) == 0);
+    u_long non_blocking = 1;
+    CHECK(ioctlsocket(*thief, FIONBIO, &non_blocking) == 0);
+    sockaddr_storage storage;
+    memset(&storage, 0, sizeof(storage));
+    int bytes;
+    if ( owner->type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        sockaddr_in6 * a = (sockaddr_in6*) &storage;
+        a->sin6_family = AF_INET6;
+        a->sin6_port = htons(owner->port);
+        for ( int i = 0; i < 8; ++i )
+        {
+            a->sin6_addr.s6_addr[i * 2] = (uint8_t) ( owner->data.ipv6[i] >> 8 );
+            a->sin6_addr.s6_addr[i * 2 + 1] = (uint8_t) owner->data.ipv6[i];
+        }
+        bytes = sizeof(sockaddr_in6);
+    }
+    else
+    {
+        sockaddr_in * a = (sockaddr_in*) &storage;
+        a->sin_family = AF_INET;
+        a->sin_port = htons(owner->port);
+        memcpy(&a->sin_addr, owner->data.ipv4, 4);
+        bytes = sizeof(sockaddr_in);
+    }
+    return bind(*thief, (sockaddr*) &storage, bytes) == 0;
+}
+
+// datagrams a peer sends to the owner's port that the thief receives instead
+static int port_thief_steals( const rocketnet_address_t * owner, SOCKET thief )
+{
+    rocketnet_address_t peer_address = address(owner->type == ROCKETNET_ADDRESS_IPV6 ? "[::1]:0" : "127.0.0.1:0");
+    rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create(NULL, &peer_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024);
+    CHECK(peer);
+    uint8_t data[FAULT_BYTES];
+    for ( int i = 0; i < 8; ++i )
+    {
+        fault_mark(data, 0x5A, i);
+        rocketnet_platform_socket_send_packet(peer, owner, data, FAULT_BYTES);
+    }
+    int stolen = 0;
+    const double deadline = rocketnet_platform_time() + 1.0;
+    while ( stolen < 8 && rocketnet_platform_time() < deadline )
+    {
+        char packet[ROCKETNET_RECEIVE_CEILING];
+        if ( recv(thief, packet, sizeof(packet), 0) > 0 ) ++stolen; else rocketnet_platform_sleep(0.001);
+    }
+    rocketnet_platform_socket_destroy(peer);
+    return stolen;
+}
+
+// a server bound to the wildcard address owns its port: a second socket
+// that binds the more specific loopback address on that port with
+// SO_REUSEADDR would take every datagram sent there, and is refused.
+// Portable, IOCP and RIO; IPv4 and dual-stack IPv6.
+static void test_windows_port_exclusive()
+{
+    const char * binds[] = { "0.0.0.0:0", "[::]:0" };
+    const char * targets[] = { "127.0.0.1:0", "[::1]:0" };
+    const char * drivers[] = { "portable", "iocp", "rio" };
+    for ( int b = 0; b < 2; ++b )
+    {
+        for ( int d = 0; d < 3; ++d )
+        {
+            rocketnet_address_t owner = address(binds[b]);
+            rocketnet_platform_socket_t * portable = NULL;
+            rocketnet_server_iocp_t * iocp = NULL;
+            rocketnet_server_rio_t * rio = NULL;
+            if ( d == 0 ) { portable = rocketnet_platform_socket_create(NULL, &owner, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024); CHECK(portable); }
+            if ( d == 1 ) { iocp = rocketnet_server_iocp_create(NULL, &owner, 1); CHECK(iocp); }
+            if ( d == 2 ) { rio = rocketnet_server_rio_create(NULL, &owner); CHECK(rio); }
+            CHECK(owner.port != 0);
+            rocketnet_address_t target = address(targets[b]);
+            target.port = owner.port;
+            SOCKET thief;
+            const bool bound = port_thief_binds(&target, &thief);
+            const int stolen = bound ? port_thief_steals(&target, thief) : 0;
+            printf("  %s %s port %d: second bind of %s with SO_REUSEADDR %s, %d of 8 datagrams stolen\n", drivers[d], binds[b],
+                owner.port, targets[b], bound ? "ACCEPTED" : "refused", stolen);
+            closesocket(thief);
+            if ( portable ) rocketnet_platform_socket_destroy(portable);
+            if ( iocp ) { wait_stopped(iocp); rocketnet_server_iocp_destroy(iocp); }
+            if ( rio ) { rocketnet_server_rio_destroy(rio); CHECK(rocketnet_server_rio_leaked_regions() == 0); }
+            CHECK(!bound);
+        }
+    }
+    printf("windows_port_exclusive\n");
+}
+
+static std::atomic<int> send_failed_logs{0};
+
+static void send_failed_log( void *, rocketnet_log_level_t, const char * message, size_t )
+{
+    // WSAEMSGSIZE is 10040: the Winsock error, never errno's text
+    if ( strstr(message, "sendto (") && strstr(message, "WSA error 10040") ) send_failed_logs.fetch_add(1);
+}
+
+// a sendto that answers SOCKET_ERROR (an oversize datagram: WSAEMSGSIZE) is
+// counted on the socket and logged with WSAGetLastError(); a good send is not
+// counted. An IPv4 socket and an IPv6 socket: both sendto arms.
+static void test_windows_send_failures_counted()
+{
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    const char * peers[] = { "127.0.0.1:0", "[::1]:0" };
+    std::vector<uint8_t> oversize( 70000, 0x5A );
+    for ( int c = 0; c < 2; ++c )
+    {
+        rocketnet_address_t bind = address(binds[c]);
+        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create(NULL, &bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024);
+        CHECK(socket);
+        rocketnet_address_t peer_address = address(peers[c]);
+        rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create(NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024);
+        CHECK(peer);
+        CHECK(rocketnet_platform_socket_send_failures(socket) == 0);
+        uint8_t data[FAULT_BYTES];
+        fault_mark(data, 0x5B, 0);
+        rocketnet_platform_socket_send_packet(socket, &peer_address, data, FAULT_BYTES);
+        CHECK(rocketnet_platform_socket_send_failures(socket) == 0);
+        send_failed_logs.store(0);
+        rocketnet_set_log_callback(send_failed_log, NULL);
+        rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_DEBUG);
+        for ( int i = 0; i < 3; ++i )
+            rocketnet_platform_socket_send_packet(socket, &peer_address, oversize.data(), (int) oversize.size());
+        rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+        rocketnet_set_log_callback(NULL, NULL);
+        printf("  %s to %s: SEND_FAILED %llu after 3 refused sends, %d logged with WSA error 10040\n", binds[c], peers[c],
+            (unsigned long long) rocketnet_platform_socket_send_failures(socket), send_failed_logs.load());
+        CHECK(rocketnet_platform_socket_send_failures(socket) == 3);
+        CHECK(send_failed_logs.load() == 3);
+        rocketnet_platform_socket_send_packet(socket, &peer_address, data, FAULT_BYTES);
+        CHECK(rocketnet_platform_socket_send_failures(socket) == 3);
+        rocketnet_platform_socket_destroy(peer);
+        rocketnet_platform_socket_destroy(socket);
+    }
+    printf("windows_send_failures_counted\n");
 }
 
 struct fault_case_t { const char * name; void (*run)(); };
@@ -992,6 +1173,8 @@ static const fault_case_t fault_cases[] = {
     { "rio_completion_queue_full", test_rio_completion_queue_full },
     { "rio_request_queue_full", test_rio_request_queue_full },
     { "rio_send_post_fails", test_rio_send_post_fails },
+    { "windows_port_exclusive", test_windows_port_exclusive },
+    { "windows_send_failures_counted", test_windows_send_failures_counted },
 };
 
 // With no argument every case runs; with names, only those cases run.

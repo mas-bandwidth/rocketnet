@@ -34,7 +34,6 @@ BLAKE2b key	crypto_generichash_KEYBYTES	32
 SipHash key	crypto_shorthash_KEYBYTES	16
 prefilter header	ROCKETNET_PREFILTER_BYTES	6
 filter value	ROCKETNET_FILTER_VALUE_BYTES	4
-prefilter magic	ROCKETNET_FILTER_MAGIC_BYTES	16
 sequence	ROCKETNET_SEQUENCE_BYTES	4
 per-packet overhead	ROCKETNET_PACKET_OVERHEAD_BYTES	26
 associated data	ROCKETNET_AD_BYTES	21
@@ -64,7 +63,7 @@ cookie lifetime	ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS	3
 cookie key rotation	ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS	60
 server redundant disconnect packets	ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS	10
 client redundant disconnect packets	ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS	10
-ack debt threshold	ROCKETNET_ACK_DEBT_THRESHOLD	64
+ack debt threshold	ROCKETNET_ACK_DEBT_THRESHOLD	1
 used-token history per slot	ROCKETNET_USED_TOKEN_HISTORY_RATIO	8
 # RN-1 t2.3, the connection layer's configuration fields
 server protocol_id	rn_pin_server_default_protocol_id	0

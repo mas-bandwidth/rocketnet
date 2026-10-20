@@ -89,8 +89,8 @@ int main( void )
                 bytes = batch.bytes[i];
             }
         }
-        const int slot = rocketnet_client_index( client );
-        uint64_t sender = 0;
+        const int slot = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED ? (int) rocketnet_client_index( client ) : -1;
+        int sender = -1;
         struct rocketnet_message_batch_t arrived;
         while ( rocketnet_server_receive_messages( server, &arrived ) )
         {
@@ -102,6 +102,7 @@ int main( void )
             }
         }
 
+        (void) data; (void) bytes; (void) sender;
         struct rocketnet_receipt_t receipts[32];
         const int count = rocketnet_client_receipts( client, receipts, 32 );
         for ( int r = 0; r < count; r++ )

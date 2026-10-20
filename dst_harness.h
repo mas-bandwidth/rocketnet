@@ -1261,8 +1261,10 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             }
             rocketnet_dst_check_conservation( &w->check, &w->server_counters, "server" );
             rocketnet_dst_check_conservation( &w->check, &w->client_counters, "clients" );
-            rocketnet_dst_check_unexplained_refusal( &w->check, &w->server_counters, "server" );
-            rocketnet_dst_check_unexplained_refusal( &w->check, &w->client_counters, "clients" );
+            rocketnet_dst_check_unexplained_refusal( &w->check, &w->server_counters, "server",
+                ( options->faults & ( ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_REORDER | ROCKETNET_DST_FAULT_DELAY ) ) != 0 );
+            rocketnet_dst_check_unexplained_refusal( &w->check, &w->client_counters, "clients",
+                ( options->faults & ( ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_REORDER | ROCKETNET_DST_FAULT_DELAY ) ) != 0 );
         }
         if ( w->check.failed && !w->failed )
         {

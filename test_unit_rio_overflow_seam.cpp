@@ -16,7 +16,7 @@
 
 // Implemented only by the isolated test-instrumented RIO driver copy.
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
-                                                  int * repost_calls, int * pending_receives );
+                                                  int * repost_calls, int * pending_receives, int * guard_hit );
 
 static void rio_overflow_seam()
 {
@@ -24,20 +24,28 @@ static void rio_overflow_seam()
     int packet_counts[2] = { 0, 0 };
     int repost_calls = 0;
     int pending_receives = 0;
-    check( rocketnet_server_rio_test_receive_overflow( counters, packet_counts, &repost_calls, &pending_receives ) );
+    int guard_hit = 0;
+    check( rocketnet_server_rio_test_receive_overflow( counters, packet_counts, &repost_calls, &pending_receives, &guard_hit ) );
+    check( guard_hit == 0 );
 
     check( packet_counts[0] == ROCKETNET_RIO_RECEIVES );
     check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == ROCKETNET_RIO_RECEIVES );
-    check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 1 );
+    check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED] == 0 );
-    check( repost_calls == ROCKETNET_RIO_RECEIVES + 1 );
     check( pending_receives == ROCKETNET_RIO_RECEIVES );
 
-    // The next dequeue is short and emits no completion. The fill bank is
-    // empty, and every driver's receive counter remains unchanged.
-    check( packet_counts[1] == 0 );
+    // The queued tail is delivered by the next update. The seam contains two
+    // full banks, so both calls stay within the per-call receive bound.
+    check( packet_counts[1] == ROCKETNET_RIO_RECEIVES );
+    check( counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] ==
+           2 * ROCKETNET_RIO_RECEIVES );
+    check( repost_calls == 2 * ROCKETNET_RIO_RECEIVES );
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
+    {
+        if ( i == ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED )
+            continue;
         check( counters[i] == counters[ROCKETNET_RIO_NUM_COUNTERS + i] );
+    }
 }
 
 #else

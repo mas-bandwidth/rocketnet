@@ -85,16 +85,10 @@ extern "C" {
 
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
-// The reliable resend schedule (docs/CHANNELS.md 6.4). Every resend of a
-// record waits min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no
-// back-off, and rto = clamp( srtt x ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100
-// + 2 rttvar, rto_min_ms, rto_max_ms ). Validation refuses reliable_timeout_ms
-// below ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS times
-// max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, rto_initial_ms ), the sends that
-// must fit before reliable_timeout gives up on a record.
+// The reliable resend schedule follows RakNet's adaptive RTO, with no
+// per-resend back-off. The timeout uses 2*srtt + 4*rttvar + 30 ms and is
+// capped at 2 s. Validation reserves four sends of the configured initial RTO.
 
-#define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                         100
-#define ROCKETNET_MESSAGE_RTO_SCALE_PERCENT                          125
 #define ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS                        4
 
 // What a clean run shows of a counter. Every counter has exactly one class.
@@ -1472,12 +1466,12 @@ struct rocketnet_message_config_t
     int sequenced_holds;                // 0 .. 4096; default 16
     /** @brief Receipt history entries; 16 through 1<<16, default 256; a full ring drops its oldest. */
     int receipt_ring;                   // 16 .. 1 << 16; default 256
-    /** @brief Initial retransmit timeout in milliseconds; 10 through 60000, default 100. */
-    int rto_initial_ms;                 // 10 .. 60000; default 100
-    /** @brief Minimum retransmit timeout in milliseconds; 1 through 60000, default 10. */
-    int rto_min_ms;                     // 1 .. 60000; default 10
-    /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 250. */
-    int rto_max_ms;                     // 10 .. 60000; default 250
+    /** @brief Initial retransmit timeout in milliseconds; 10 through 60000, default 2000. */
+    int rto_initial_ms;                 // 10 .. 60000; default 2000
+    /** @brief Optional sampled RTO floor in milliseconds; 0 disables it. 0 through 60000, default 0. */
+    int rto_min_ms;                     // optional RTO floor; 0 disables; 0 .. 60000; default 0
+    /** @brief Maximum retransmit timeout in milliseconds; 10 through 60000, default 2000. */
+    int rto_max_ms;                     // 10 .. 60000; default 2000
     /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
     int reliable_timeout_ms;            // 1000 .. 600000; default 10000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
@@ -1628,10 +1622,12 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
 // code (INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, a socket or thread
 // failure), CONFIG_OUT_OF_RANGE for a refused message config or budget,
 // OUT_OF_MEMORY when the object's block is refused.
+// reserve_unlimited is for the public zero-budget setting: keep its runtime
+// ceiling while omitting a finite create-time payload reserve.
 struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status );
+                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is
@@ -1740,10 +1736,12 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
 // code for a transport that does not start (rocketnet_server_transport_create_ex),
 // CONFIG_OUT_OF_RANGE for a refused message config or budget, OUT_OF_MEMORY
 // when the object's block is refused.
+// reserve_unlimited preserves the public unlimited-budget runtime ceiling
+// without sizing a finite payload reserve for that sentinel.
 struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
                                                                         const struct rocketnet_server_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status );
+                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is

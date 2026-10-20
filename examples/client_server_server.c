@@ -90,6 +90,10 @@ int main( int argc, char ** argv )
     }
     snprintf( address, sizeof( address ), "127.0.0.1:%d", port );
 
+    // a key file left by an earlier run holds keys this server does not use;
+    // remove it so the client waits for this run's file
+    remove( KEY_FILE );
+
     CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // a deployment mints the backend keypair in the backend and gives servers
@@ -186,7 +190,9 @@ int main( int argc, char ** argv )
     result = 0;
 
 cleanup:
-    rocketnet_server_destroy( server );
+    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    if ( server )
+        rocketnet_server_destroy( server );
     rocketnet_term();
     // destroy ends a live connection and logs it, so PASS is printed after
     // the cleanup to stay the last line
