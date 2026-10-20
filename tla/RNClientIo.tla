@@ -420,6 +420,20 @@ IoWake ==
     /\ UNCHANGED <<waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
+\* the guard: the wait's bounded timeout
+\* (ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS) returns with no wake and no
+\* readable socket, and consumes nothing.  It has no fairness in SpecFair:
+\* every liveness property holds with the wait ended only by the wake or a
+\* readable socket, so no wake is lost for any guard length.  SpecMissedWake
+\* drops the event wake's fairness (a wake the wait misses); there the guard
+\* is what bounds the stall (SpecMissedWakeGuarded).
+IoGuard ==
+    /\ ioAlive /\ waiting
+    /\ waiting' = FALSE
+    /\ UNCHANGED sendVars
+    /\ UNCHANGED <<wake, waitReadable, phase, ioAlive>>
+    /\ UNCHANGED recvVars
+
 \* a woken I/O thread consumes a wake it does not need to block on
 IoClearWake ==
     /\ IoReady
@@ -493,7 +507,7 @@ IoCoreNext ==
     \/ \E r \in Rings, s \in Slots : IoSend(r, s)
     \/ \E r \in Rings : IoFinishRing(r)
     \/ IoReceive \/ IoPublish \/ IoOwe \/ IoWait \/ IoWake \/ IoClearWake
-    \/ IoExit
+    \/ IoGuard \/ IoExit
 
 \* the two executors of a core action A: the I/O thread, when create
 \* started one, and the caller inside update or send_packets in step mode
@@ -522,14 +536,15 @@ Spec == Init /\ [][Next]_vars
 \* is enough.  In step mode the I/O core runs only inside a caller step:
 \* the game calls update every frame (StepBegin), and a step finishes its
 \* ring, its exit and its publish or owe before it returns (StepEnd).
-SpecFair ==
+\* SpecMissedWake is that fairness without the event wake's (IoWake);
+\* SpecFair adds it below.
+SpecMissedWake ==
     /\ Spec
     /\ WF_vars(Exec(\E r \in Rings, s \in Slots : IoSend(r, s)))
     /\ WF_vars(Exec(\E r \in Rings : IoFinishRing(r)))
     /\ WF_vars(Exec(IoReceive))
     /\ WF_vars(Exec(IoPublish))
     /\ WF_vars(Exec(IoOwe))
-    /\ WF_vars(Exec(IoWake))
     /\ WF_vars(Exec(IoExit))
     /\ WF_vars(StepBegin)
     /\ WF_vars(StepEnd)
@@ -539,6 +554,17 @@ SpecFair ==
     /\ WF_vars(OnMain(HandOff))
     /\ WF_vars(OnMain(Expose))
     /\ WF_vars(OnMain(Return))
+
+\* the committed run: the event wake ends a blocked wait (IoWake is fair)
+\* and the guard IoGuard is not relied on
+SpecFair ==
+    /\ SpecMissedWake
+    /\ WF_vars(Exec(IoWake))
+
+\* a missed event wake with the guard as the only way out of the wait
+SpecMissedWakeGuarded ==
+    /\ SpecMissedWake
+    /\ WF_vars(Exec(IoGuard))
 
 \* Step mode: the main thread's own actions are disabled while it runs a
 \* step, so they are enabled only intermittently.  update makes its two
@@ -601,6 +627,10 @@ HandedOffEventuallySent ==
 CommittedEventuallyHandedOff ==
     \A r \in Rings, s \in Slots :
         owner[r][s] = "main" ~> owner[r][s] = "io"
+
+\* no wake is lost: a blocked I/O thread with the wake set leaves its wait
+WakeEndsWait ==
+    (waiting /\ wake) ~> ~waiting
 
 StopEventuallyJoins ==
     phase = "Stopping" ~> phase \in {"Joined", "Freed"}
