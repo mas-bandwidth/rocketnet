@@ -1003,6 +1003,8 @@ int main( int argc, char ** argv )
         const double left = next_slice_time - rocketnet_time();
         if ( left > 0.0 )
             rocketnet_sleep( left );
+        else if ( light )
+            next_slice_time = rocketnet_time();
     }
 
     /* Final verification of all 5 criteria */
