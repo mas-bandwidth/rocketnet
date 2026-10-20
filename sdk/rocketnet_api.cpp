@@ -139,7 +139,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     struct rocketnet_client_config_t defaults;
     if ( !config )
     {
-        (rocketnet_client_default_config)( &defaults, sizeof( defaults ) );
+        (rocketnet_client_default_config_sized)( &defaults, sizeof( defaults ) );
         config = &defaults;
     }
 
@@ -186,7 +186,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     struct rocketnet_server_config_t defaults;
     if ( !config )
     {
-        (rocketnet_server_default_config)( &defaults, sizeof( defaults ) );
+        (rocketnet_server_default_config_sized)( &defaults, sizeof( defaults ) );
         config = &defaults;
     }
 
@@ -374,7 +374,17 @@ static bool rn_public_config_size_known( const char * endpoint, const char * typ
 #define RN_CLIENT_CONFIG_SIZE_KNOWN( bytes ) rn_public_config_size_known( "client", "rocketnet_client_config_t", (bytes), rn_client_config_known_bytes, (int) ( sizeof(rn_client_config_known_bytes) / sizeof(rn_client_config_known_bytes[0]) ), sizeof(struct rocketnet_client_config_t) )
 #define RN_SERVER_CONFIG_SIZE_KNOWN( bytes ) rn_public_config_size_known( "server", "rocketnet_server_config_t", (bytes), rn_server_config_known_bytes, (int) ( sizeof(rn_server_config_known_bytes) / sizeof(rn_server_config_known_bytes[0]) ), sizeof(struct rocketnet_server_config_t) )
 
-enum rocketnet_status_t (rocketnet_client_default_config)( struct rocketnet_client_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_client_default_config( struct rocketnet_client_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_client_config_t defaults;
+    rn_client_default_config_current( &defaults );
+    memcpy( config, &defaults, ROCKETNET_CLIENT_CONFIG_BYTES_1 );
+    return ROCKETNET_STATUS_OK;
+}
+
+enum rocketnet_status_t (rocketnet_client_default_config_sized)( struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -433,7 +443,13 @@ static int rn_client_validate_config_current( const struct rocketnet_client_conf
     return rn_client_config_valid( &transport, &message ) == ROCKETNET_STATUS_OK ? 1 : 0;
 }
 
-enum rocketnet_status_t (rocketnet_client_validate_config)( const struct rocketnet_client_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config )
+{
+    struct rocketnet_client_config_t current;
+    return rn_client_validate_config_current( rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+}
+
+enum rocketnet_status_t (rocketnet_client_validate_config_sized)( const struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -454,7 +470,13 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
 }
 
-size_t (rocketnet_client_required_memory)( const struct rocketnet_client_config_t * config, size_t config_bytes )
+size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config )
+{
+    struct rocketnet_client_config_t current;
+    return rn_client_required_memory_current( rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) );
+}
+
+size_t (rocketnet_client_required_memory_sized)( const struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
@@ -1017,7 +1039,17 @@ static void rn_server_default_config_current( struct rocketnet_server_config_t *
     rn_server_config_from_transport_current( config, &transport );
 }
 
-enum rocketnet_status_t (rocketnet_server_default_config)( struct rocketnet_server_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_server_default_config( struct rocketnet_server_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_server_config_t defaults;
+    rn_server_default_config_current( &defaults );
+    memcpy( config, &defaults, ROCKETNET_SERVER_CONFIG_BYTES_1 );
+    return ROCKETNET_STATUS_OK;
+}
+
+enum rocketnet_status_t (rocketnet_server_default_config_sized)( struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -1039,7 +1071,17 @@ static void rn_server_dev_config_current( struct rocketnet_server_config_t * con
     rn_server_config_from_transport_current( config, &transport );
 }
 
-enum rocketnet_status_t (rocketnet_server_dev_config)( struct rocketnet_server_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_server_config_t current;
+    rn_server_dev_config_current( &current );
+    memcpy( config, &current, ROCKETNET_SERVER_CONFIG_BYTES_1 );
+    return ROCKETNET_STATUS_OK;
+}
+
+enum rocketnet_status_t (rocketnet_server_dev_config_sized)( struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -1105,7 +1147,15 @@ static int rn_server_validate_config_current( const struct rocketnet_server_conf
     return valid ? 1 : 0;
 }
 
-enum rocketnet_status_t (rocketnet_server_validate_config)( const struct rocketnet_server_config_t * config, size_t config_bytes )
+enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config )
+{
+    struct rocketnet_server_config_t current;
+    const int result = rn_server_validate_config_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+    sodium_memzero( &current, sizeof( current ) );
+    return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+}
+
+enum rocketnet_status_t (rocketnet_server_validate_config_sized)( const struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -1134,7 +1184,15 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
 }
 
-size_t (rocketnet_server_required_memory)( const struct rocketnet_server_config_t * config, size_t config_bytes )
+size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config )
+{
+    struct rocketnet_server_config_t current;
+    size_t result = rn_server_required_memory_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
+    sodium_memzero( &current, sizeof( current ) );
+    return result;
+}
+
+size_t (rocketnet_server_required_memory_sized)( const struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;

@@ -219,10 +219,10 @@ static void create_reports_status_prefix_size()
 
     // the same prefix through required_memory: a known size sizes, an
     // unknown larger size returns 0
-    check( (rocketnet_client_required_memory)( &client_config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) > 0 );
-    check( (rocketnet_server_required_memory)( &server_config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) > 0 );
-    check( (rocketnet_client_required_memory)( &client_config, sizeof( client_config ) + 8 ) == 0 );
-    check( (rocketnet_server_required_memory)( &server_config, sizeof( server_config ) + 8 ) == 0 );
+    check( (rocketnet_client_required_memory_sized)( &client_config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) > 0 );
+    check( (rocketnet_server_required_memory_sized)( &server_config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) > 0 );
+    check( (rocketnet_client_required_memory_sized)( &client_config, sizeof( client_config ) + 8 ) == 0 );
+    check( (rocketnet_server_required_memory_sized)( &server_config, sizeof( server_config ) + 8 ) == 0 );
 
     // an unknown larger size is refused before any other check
     status = ROCKETNET_STATUS_OK;
@@ -304,7 +304,7 @@ static void create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
     // validate runs the same check and refuses the same config (as
     // CONFIG_OUT_OF_RANGE; create names the budget code above)
-    check( (rocketnet_server_validate_config)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    check( (rocketnet_server_validate_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     check( rocketnet_server_validate_config( &server_config ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // MEMORY_BUDGET_EXCEEDED on the client is not reachable from a valid

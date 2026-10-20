@@ -1020,8 +1020,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_write_production_connect_toke
 /// ROCKETNET_STATUS_INVALID_ARGUMENT for an unknown size, nothing written.
 /// A NULL config is a counted no-op that returns
 /// ROCKETNET_STATUS_INVALID_ARGUMENT.
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config( struct rocketnet_client_config_t * config, size_t config_bytes );
-#define rocketnet_client_default_config( config ) rocketnet_client_default_config( config, sizeof( *( ( struct rocketnet_client_config_t * ) ( config ) ) ) )
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config( struct rocketnet_client_config_t * config );
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config_sized( struct rocketnet_client_config_t * config, size_t config_bytes );
 
 /// ROCKETNET_STATUS_OK when create would accept the config's own values, else
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule; an
@@ -1033,15 +1033,15 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config( struct
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE), and the message rules. The
 /// environment is not read. Safe before init. NULL means the defaults. The
 /// same-named convenience macro below passes sizeof(*config).
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config, size_t config_bytes );
-#define rocketnet_client_validate_config( config ) rocketnet_client_validate_config( config, sizeof( *( ( struct rocketnet_client_config_t * ) ( config ) ) ) )
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_validate_config( const struct rocketnet_client_config_t * config );
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_validate_config_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 /// The bytes a caller memory block for this client needs; 0 for a refused
 /// config. NULL means the defaults. One sized form remains (the owner
 /// ruling of 2026-10-20): an unknown non-NULL size logs and returns 0. The
 /// same-named convenience macro below passes sizeof(*config).
-ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config, size_t config_bytes );
-#define rocketnet_client_required_memory( config ) rocketnet_client_required_memory( config, sizeof( *( ( struct rocketnet_client_config_t * ) ( config ) ) ) )
+ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
+ROCKETNET_EXPORT size_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 #if ROCKETNET_DEVELOPMENT
 /// Mints a development connect token for a server at this address, signed with
@@ -1213,8 +1213,8 @@ ROCKETNET_EXPORT double rocketnet_client_stat( const struct rocketnet_client_t *
 /// ROCKETNET_STATUS_INVALID_ARGUMENT for an unknown size, nothing written.
 /// A NULL config is a counted no-op that returns
 /// ROCKETNET_STATUS_INVALID_ARGUMENT.
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config( struct rocketnet_server_config_t * config, size_t config_bytes );
-#define rocketnet_server_default_config( config ) rocketnet_server_default_config( config, sizeof( *( ( struct rocketnet_server_config_t * ) ( config ) ) ) )
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config( struct rocketnet_server_config_t * config );
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /// The defaults with the published development keys and test filter, for a
 /// caller whose struct is config_bytes long. The same-named convenience
@@ -1222,8 +1222,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config( struct
 /// ROCKETNET_STATUS_INVALID_ARGUMENT for an unknown size, which logs and
 /// leaves the config untouched. A NULL config is a counted no-op that
 /// returns ROCKETNET_STATUS_INVALID_ARGUMENT.
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config( struct rocketnet_server_config_t * config, size_t config_bytes );
-#define rocketnet_server_dev_config( config ) rocketnet_server_dev_config( config, sizeof( *( ( struct rocketnet_server_config_t * ) ( config ) ) ) )
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config( struct rocketnet_server_config_t * config );
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config_sized( struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /// ROCKETNET_STATUS_OK when create would accept the config's own values, else
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE with a log line naming the rule; an
@@ -1236,16 +1236,16 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_dev_config( struct roc
 /// environment is not read and the keys are not checked (start refuses a
 /// config with none). Safe before init. NULL means the defaults. The
 /// same-named convenience macro below passes sizeof(*config).
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config, size_t config_bytes );
-#define rocketnet_server_validate_config( config ) rocketnet_server_validate_config( config, sizeof( *( ( struct rocketnet_server_config_t * ) ( config ) ) ) )
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_validate_config( const struct rocketnet_server_config_t * config );
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_validate_config_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /// The bytes a caller memory block for this server needs, at the config's
 /// max_clients; 0 for a refused config. NULL means the defaults. One sized
 /// form remains (the owner ruling of 2026-10-20): an unknown non-NULL size
 /// logs and returns 0. The same-named convenience macro below passes
 /// sizeof(*config).
-ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config, size_t config_bytes );
-#define rocketnet_server_required_memory( config ) rocketnet_server_required_memory( config, sizeof( *( ( struct rocketnet_server_config_t * ) ( config ) ) ) )
+ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
+ROCKETNET_EXPORT size_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes );
 
 /// Address is where clients reach the server, "a.b.c.d:port" or "[v6]:port"; a
 /// port of 0 takes an ephemeral port (read it back with rocketnet_server_port

@@ -63,7 +63,7 @@ static rocketnet_server_t * reached_server_create( void * context, const reached
     memcpy( config.server_public_key, identity->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, identity->server_secret, sizeof( config.server_secret_key ) );
     config.transport = "loopback";
-    rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", &config, NULL, 0 );
+    rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", &config, NULL, 0, NULL );
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     return server;
@@ -146,7 +146,7 @@ static void client_mutex_create_failed_reached()
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.step_driven = true;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, NULL );
     check( client != NULL );
 
     struct rocketnet_platform_priority_calls_t fake;
@@ -212,7 +212,7 @@ static void client_connect_thread_create_failed_reached()
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.step_driven = false;
-    rocketnet_client_t * client = rocketnet_client_create( &state, &config, NULL, 0 );
+    rocketnet_client_t * client = rocketnet_client_create( &state, &config, NULL, 0, NULL );
     check( client != NULL );
 
     int out_of_memory = 0;
@@ -269,7 +269,7 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
     config.step_driven = true;
     config.time_callback = reached_clock;
 
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, NULL );
     check( client != NULL );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
 

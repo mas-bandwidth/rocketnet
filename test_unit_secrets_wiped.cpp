@@ -298,7 +298,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair,
     server_config.transport = "loopback";
     if ( server_memory )
         check( rocketnet_server_required_memory( &server_config ) <= server_bytes );
-    pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, server_memory, server_bytes );
+    pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, server_memory, server_bytes, NULL );
     check( pair->server != NULL );
     check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
 
@@ -319,7 +319,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair,
     client_config.time_callback = secrets_wiped_clock;
     if ( client_memory )
         check( rocketnet_client_required_memory( &client_config ) <= client_bytes );
-    pair->client = rocketnet_client_create( NULL, &client_config, client_memory, client_bytes );
+    pair->client = rocketnet_client_create( NULL, &client_config, client_memory, client_bytes, NULL );
     check( pair->client != NULL );
     check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
 
