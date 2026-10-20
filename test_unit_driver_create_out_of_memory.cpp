@@ -531,8 +531,9 @@ static void platform_adapters_fetch_is_bounded()
 // platform init under an allocator that refuses every request (until it gives
 // way): init completes, and platform discovery asks no more than the bound. On
 // Windows the one allocator request in rocketnet_init_ex is the first attempt
-// of get_connection_type, made from rocketnet_platform_init, so the count is exactly one and the
-// connection type is unknown; elsewhere the case checks the bound only.
+// of get_connection_type, made from rocketnet_platform_init, so the count is
+// exactly one and the connection type is unknown; elsewhere the case checks
+// the bound only.
 static void platform_init_survives_a_refusing_allocator()
 {
     driver_oom_allocator_t state;
