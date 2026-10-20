@@ -108,7 +108,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
     int received = 0;
     for ( int update = 0; update < 60 * 5 && !received; update++ )
     {
-        rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+        sequenced_functional_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) != 0, "large progress" );
         rocketnet_channel_delivery_t d;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
