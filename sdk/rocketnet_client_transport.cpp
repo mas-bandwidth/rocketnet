@@ -331,10 +331,11 @@ static inline bool rocketnet_client_link_patterns( const rocketnet_client_transp
 }
 
 // The I/O ring core (hand-off and caller step) carries the sends and the
-// receives, unless the patterns put them through the link simulator.
+// receives, unless the transport has a link simulator (any loss, latency, jitter,
+// duplicate or pattern field set), whose send and receive carry them instead.
 static inline bool rocketnet_client_io_core( const rocketnet_client_transport_t * transport )
 {
-    return ( transport->io_thread || transport->step_in_update ) && !rocketnet_client_link_patterns( transport );
+    return ( transport->io_thread || transport->step_in_update ) && !transport->link_simulator;
 }
 
 // Link!ReverseWindow: the window held by the simulator is emitted reversed, whole,
@@ -436,6 +437,60 @@ struct rocketnet_client_memory_plan_t
     int sockets;
 };
 
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+struct rocketnet_portable_io_client_layout_t
+{
+    void * context;
+    void * socket;
+    void * wake;
+};
+#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) )
+struct rocketnet_platform_wake_layout_t
+{
+    void * context;
+    int socket_fd;
+    int event_fd;
+};
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+struct rocketnet_platform_wake_layout_t
+{
+    void * context;
+    int kq;
+    int socket_fd;
+    bool read_enabled;
+};
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+struct rocketnet_platform_wake_layout_t
+{
+    void * context;
+    void * socket_handle;
+    void * read_event;
+    void * wake_event;
+};
+#else
+struct rocketnet_platform_wake_layout_t
+{
+    void * context;
+};
+#endif
+#endif
+
+struct rocketnet_thread_shim_layout_t
+{
+    void * context;
+    void * real_thread_data;
+    void * real_thread_function;
+    void * thread;
+};
+
+// Test seam for socket-free, thread-free client memory plan unit testing.
+static bool rocketnet_client_memory_plan_seam_enabled = false;
+
+void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable )
+{
+    rocketnet_client_memory_plan_seam_enabled = enable;
+}
+
 static bool rocketnet_client_transport_memory_plan( const rocketnet_client_transport_config_t * config,
     const char * driver, rocketnet_client_memory_plan_t & plan )
 {
@@ -453,18 +508,28 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( !plan.reassembly_bytes || !rocketnet_memory_add( plan.reassembly_bytes, 4, rocketnet_allocation_overhead() ) ) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
 
-    if ( strcmp( driver, "portable" ) == 0 )
-    {
-        plan.driver_bytes = rocketnet_platform_socket_allocation_bytes();
-        plan.sockets = 1;
-    }
+    if ( strcmp( driver, "portable" ) == 0
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-    else if ( strcmp( driver, "msgx" ) == 0 )
+         || strcmp( driver, "msgx" ) == 0
+#endif
+       )
     {
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+        plan.driver_bytes = rocketnet_memory_allocations( {
+            sizeof(rocketnet_platform_socket_t),
+            sizeof(rocketnet_portable_io_client_layout_t),
+            sizeof(rocketnet_platform_wake_layout_t)
+        } );
+#else
         plan.driver_bytes = rocketnet_platform_socket_allocation_bytes();
+#endif
+        if ( !config->step_driven )
+        {
+            if ( !rocketnet_memory_add( plan.driver_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
+                return false;
+        }
         plan.sockets = 1;
     }
-#endif
     else return false;
 
     if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.driver_bytes ) return false;
@@ -863,37 +928,92 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             continue;
         }
 
-        const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
-        int driver_status = ROCKETNET_STATUS_OK;
-        const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config, &driver_status };
-        // the step-driven create (unit tests) opens the caller's operations
-        // in place of the candidate's backend
-        const rocketnet_client_driver_operations_t * operations = step_driven_operations ? step_driven_operations :
-            ( definition && definition->backend ? definition->backend->client : NULL );
-        if ( rocketnet_client_driver_open( operations, step_driven_operations ? step_driven_driver_context : client_transport->context,
-                &driver_config, &bind_address, &client_transport->io ) )
+        if ( rocketnet_client_memory_plan_seam_enabled )
+        {
+            struct rocketnet_portable_seam_client_t
+            {
+                void * context;
+                void * socket;
+                void * wake;
+            };
+            rocketnet_portable_seam_client_t * seam_client = (rocketnet_portable_seam_client_t*)
+                rocketnet_malloc( client_transport->context, sizeof(rocketnet_portable_io_client_layout_t) );
+            if ( !seam_client )
+            {
+                if ( status ) *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+                rocketnet_client_transport_destroy( client_transport );
+                return NULL;
+            }
+            seam_client->context = client_transport->context;
+            seam_client->socket = rocketnet_malloc( client_transport->context, sizeof(rocketnet_platform_socket_t) );
+            seam_client->wake = rocketnet_malloc( client_transport->context, sizeof(rocketnet_platform_wake_layout_t) );
+            if ( !seam_client->socket || !seam_client->wake )
+            {
+                if ( seam_client->socket ) rocketnet_free( client_transport->context, seam_client->socket );
+                if ( seam_client->wake ) rocketnet_free( client_transport->context, seam_client->wake );
+                rocketnet_free( client_transport->context, seam_client );
+                if ( status ) *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+                rocketnet_client_transport_destroy( client_transport );
+                return NULL;
+            }
+
+            static const rocketnet_client_driver_operations_t seam_driver_ops = {
+                NULL,
+                []( void * driver ) {
+                    rocketnet_portable_seam_client_t * client = (rocketnet_portable_seam_client_t*) driver;
+                    if ( client )
+                    {
+                        if ( client->wake ) rocketnet_free( client->context, client->wake );
+                        if ( client->socket ) rocketnet_free( client->context, client->socket );
+                        rocketnet_free( client->context, client );
+                    }
+                },
+                []( void *, const rocketnet_address_t *, const uint8_t *, int ) {},
+                []( void *, rocketnet_address_t *, uint8_t *, int ) -> int { return 0; },
+                []( void *, const rocketnet_platform_send_t *, int ) {},
+                []( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) -> int { return 0; },
+                []( void *, bool, double ) -> bool { return false; },
+                []( void * ) {},
+                []( void * ) -> uint64_t { return 0; }
+            };
+            client_transport->io.operations = &seam_driver_ops;
+            client_transport->io.instance = seam_client;
             granted_driver = candidate;
-
-        // a rung that failed for want of memory is not a refusal: the create
-        // ends with OUT_OF_MEMORY and never falls to the next candidate
-        // (rocketnet_client_driver_config_t.status, sdk/rocketnet_driver.h);
-        // any other failed open is a refusal and falls
-
-        if ( granted_driver < 0 && driver_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
-        {
-            rocketnet_error( "client transport create: the %s transport could not allocate its endpoint", rocketnet_driver_name( candidate ) );
-            rocketnet_client_transport_destroy( client_transport );
-            if ( status )
-                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-            return NULL;
         }
-
-        if ( granted_driver < 0 )
+        else
         {
-            rocketnet_warn( "client transport %s refused%s", rocketnet_driver_name( candidate ),
-                            i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
-            const size_t used = strlen( refused_names );
-            snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
+            int driver_status = ROCKETNET_STATUS_OK;
+            const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config, &driver_status };
+            // the step-driven create (unit tests) opens the caller's operations
+            // in place of the candidate's backend
+            const rocketnet_client_driver_operations_t * operations = step_driven_operations ? step_driven_operations :
+                ( definition && definition->backend ? definition->backend->client : NULL );
+            if ( rocketnet_client_driver_open( operations, step_driven_operations ? step_driven_driver_context : client_transport->context,
+                    &driver_config, &bind_address, &client_transport->io ) )
+                granted_driver = candidate;
+
+            // a rung that failed for want of memory is not a refusal: the create
+            // ends with OUT_OF_MEMORY and never falls to the next candidate
+            // (rocketnet_client_driver_config_t.status, sdk/rocketnet_driver.h);
+            // any other failed open is a refusal and falls
+
+            if ( granted_driver < 0 && driver_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
+            {
+                rocketnet_error( "client transport create: the %s transport could not allocate its endpoint", rocketnet_driver_name( candidate ) );
+                rocketnet_client_transport_destroy( client_transport );
+                if ( status )
+                    *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+                return NULL;
+            }
+
+            if ( granted_driver < 0 )
+            {
+                rocketnet_warn( "client transport %s refused%s", rocketnet_driver_name( candidate ),
+                                i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
+                const size_t used = strlen( refused_names );
+                snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            }
         }
     }
 
@@ -1028,12 +1148,30 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( client_transport->step_driven || client_transport->step_in_update )
             return client_transport;
 
-        client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io );
+        if ( rocketnet_client_memory_plan_seam_enabled )
+        {
+            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_platform_thread_t) );
+            void * shim_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_shim_layout_t) );
+            rocketnet_free( context, shim_mem );
+            client_transport->thread = (rocketnet_platform_thread_t*) thread_mem;
+        }
+        else
+            client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io );
     }
     else if ( client_transport->step_driven )
         return client_transport;
     else
-        client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_thread_function, client_transport );
+    {
+        if ( rocketnet_client_memory_plan_seam_enabled )
+        {
+            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_platform_thread_t) );
+            void * shim_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_shim_layout_t) );
+            rocketnet_free( context, shim_mem );
+            client_transport->thread = (rocketnet_platform_thread_t*) thread_mem;
+        }
+        else
+            client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_thread_function, client_transport );
+    }
     if ( !client_transport->thread )
     {
         rocketnet_error( "client could not create thread" );
@@ -1045,7 +1183,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // the client network thread (the I/O thread or the legacy thread) takes
     // the client thread priority from this thread, right after its create
-    rocketnet_platform_client_thread_priority( client_transport->thread );
+    if ( !rocketnet_client_memory_plan_seam_enabled )
+        rocketnet_platform_client_thread_priority( client_transport->thread );
 
     return client_transport;
 }
@@ -1089,7 +1228,15 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
         }
         rocketnet_client_io_retire_keys( io );
         rocketnet_client_io_stop( io );
-        if ( client_transport->step_driven || client_transport->step_in_update )
+        if ( rocketnet_client_memory_plan_seam_enabled )
+        {
+            if ( client_transport->thread )
+            {
+                rocketnet_free( client_transport->context, client_transport->thread );
+                client_transport->thread = NULL;
+            }
+        }
+        else if ( client_transport->step_driven || client_transport->step_in_update )
         {
             while ( rocketnet_client_io_step( io, false ) != ROCKETNET_CLIENT_IO_EXITED ) {}
         }
@@ -1101,14 +1248,22 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     }
     else if ( client_transport->thread )
     {
-        // store quit, then wake the receive thread's wait explicitly: the
-        // thread exits on its next check without depending on its wait's
-        // timeout firing (on Windows the wake is a no-op and the thread
-        // exits after its 1 ms sleep), then join
-        client_transport->quit.store( true, std::memory_order_release );
-        rocketnet_platform_thread_wake( client_transport->thread );
-        rocketnet_platform_thread_join( client_transport->thread );
-        rocketnet_platform_thread_destroy( client_transport->thread );
+        if ( rocketnet_client_memory_plan_seam_enabled )
+        {
+            rocketnet_free( client_transport->context, client_transport->thread );
+            client_transport->thread = NULL;
+        }
+        else
+        {
+            // store quit, then wake the receive thread's wait explicitly: the
+            // thread exits on its next check without depending on its wait's
+            // timeout firing (on Windows the wake is a no-op and the thread
+            // exits after its 1 ms sleep), then join
+            client_transport->quit.store( true, std::memory_order_release );
+            rocketnet_platform_thread_wake( client_transport->thread );
+            rocketnet_platform_thread_join( client_transport->thread );
+            rocketnet_platform_thread_destroy( client_transport->thread );
+        }
     }
 
     rocketnet_client_driver_close( &client_transport->io );
@@ -1410,7 +1565,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     }
     else
     {
-        // patterns on in the caller-stepped mode: no thread receives, so the
+        // link simulator on in the caller-stepped mode: no thread receives, so the
         // update receives from the driver, stamped with the update time
         if ( client_transport->step_in_update )
             rocketnet_client_receive_packets( client_transport );
@@ -2155,7 +2310,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 
         const int copy_bytes = packet_bytes < ROCKETNET_MAX_PACKET_BYTES ? packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
 
-        const double receive_time = ( client_transport->step_in_update && rocketnet_client_link_patterns( client_transport ) )
+        const double receive_time = client_transport->step_in_update
             ? client_transport->time
             : rocketnet_platform_time();
 
