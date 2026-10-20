@@ -221,6 +221,7 @@ normative section it argues for.
 [RN-1 t17 Timing and defaults](TRANSPORT.md#t17) **Retransmission is at a fixed rate, with no backoff and no round-trip estimation.** This is a connection protocol whose handshake completes in a handful of packets and whose deadline is a few seconds; an adaptive scheme would add state and failure modes to buy nothing measurable over that interval. A deployment may raise the send rate — 20 Hz is reasonable — and must keep it constant for the duration of an attempt.
 [RN-1 t17 Timing and defaults](TRANSPORT.md#t17) **Every value here is a default and may be tuned by a deployment**, which knows its players better than this document does. The defaults are chosen so that a game that never touches them is correct and safe.
 [RN-1 t17 Timing and defaults](TRANSPORT.md#t17) *A note on one interaction:* the cookie lifetime and the send rate together determine whether a client can lose a race — if a cookie expires before the client's next scheduled request, the server reissues one and the client uses it on the request after that. A cookie lifetime shorter than two send intervals makes that race likely and wastes a round trip; a few seconds against a 10 Hz send rate leaves ample margin.
+[RN-1 t17 Timing and defaults](TRANSPORT.md#t17) **The client's attempt deadline is the token's lifetime from the attempt start, as in netcode 1.02.** The deadline is the difference between the token's expire and create timestamps, so an attempt begun after the create timestamp runs past the expire timestamp; the server's own expiry refusal at the connection request ([RN-1 t12 Handshake: server](TRANSPORT.md#t12), item 4) still bounds when a token is admitted.
 
 <a id="t18"></a>
 ## t18. Error handling and counters
@@ -369,6 +370,7 @@ normative section it argues for.
 
 | Date | Change |
 |---|---|
+| 2026-10-20 | The client attempt deadline is the token's lifetime from the attempt start, as in netcode 1.02. |
 | 2026-10-18 | The normative transport and messages documents and this rationale are split from one draft; reason paragraphs move here under their section ids. |
 | 2026-10-18 | One token holds one live connection; the admitted-token set is removed and token reuse cases are named. |
 | 2026-10-18 | Every packet size limit is derived from a 1500-byte MTU and the default packet budget is 1452 bytes. |
