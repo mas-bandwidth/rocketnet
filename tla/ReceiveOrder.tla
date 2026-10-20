@@ -2,17 +2,20 @@
 (***************************************************************************)
 (* A receive path as ordered rungs, each cheap or crypto.  The request     *)
 (* path runs in the ruled order: version byte, signed timestamps, address  *)
-(* and key compares, cookie gate and budget, used and admitted token       *)
-(* lookups, restart rule, signature, seal open, slots, keypair.  Keyed     *)
-(* hashes (the cookie MAC, the token identifier, key derivation) are the   *)
-(* cheap tier and spend no counted cryptography.                           *)
+(* and key compares, cookie gate and budget, used and claimed token        *)
+(* lookups, the encryption-map capacity check, restart rule, signature,    *)
+(* seal open, slots, keypair.  Keyed hashes (the cookie MAC, the token     *)
+(* identifier, key derivation) are the cheap tier and spend no counted     *)
+(* cryptography.                                                           *)
 (*                                                                         *)
 (* CheapRefusalsFirst: a refusal at a rung above the signature spends no   *)
 (* cryptography at all, and the slot refusal, which must wait for a        *)
-(* verified token, spends no keypair work.  The committed instance holds   *)
-(* it; the three witnesses (slots after keypair, admitted after verify,    *)
-(* version not first) break it, each replayed against the code by hand     *)
-(* in README-ReceiveOrder.md.                                              *)
+(* verified token, spends no keypair work.  That includes the request-time *)
+(* token claim and the full-map capacity rung, both decided before the     *)
+(* signature (STANDARD.md t12 step 7).  The committed instance holds it;   *)
+(* the witnesses (slots after keypair, admitted after verify, version not  *)
+(* first) break it, each replayed against the code by hand in             *)
+(* README-ReceiveOrder.md.                                                 *)
 (***************************************************************************)
 EXTENDS Integers
 
@@ -21,17 +24,18 @@ CONSTANTS PosVersion, PosTimestamps, PosCompares, PosCookie, PosUsed,
           PosKeypair
 
 Rungs == {"version", "timestamps", "compares", "cookie", "used",
-          "admitted", "restart", "signature", "seal", "slots", "keypair"}
+          "admitted", "restart", "signature", "seal", "slots", "keypair",
+          "capacity", "claim"}
 
 CryptoRungs == {"signature", "seal", "keypair"}
 
 AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
-                "admitted", "restart"}
+                "admitted", "restart", "capacity", "claim"}
 
-Faults == {"none", "version", "expired", "full", "admitted",
-           "signature", "seal"}
+Faults == {"none", "version", "expired", "full", "mapfull", "claimed",
+           "admitted", "signature", "seal"}
 
-Pos(r) ==
+RawPos(r) ==
     CASE r = "version"   -> PosVersion
       [] r = "timestamps" -> PosTimestamps
       [] r = "compares"  -> PosCompares
@@ -44,11 +48,26 @@ Pos(r) ==
       [] r = "slots"     -> PosSlots
       [] r = "keypair"   -> PosKeypair
 
+(* The two rungs this card adds sit immediately after the used-token lookup,
+   and every old rung after it moves down two places, so the witness cfgs
+   keep reordering only the rungs they name.  No new configuration constant
+   is needed: the reference is the existing PosUsed. *)
+
+Pos(r) ==
+    IF r = "capacity" THEN PosUsed + 1
+    ELSE IF r = "claim" THEN PosUsed + 2
+    ELSE IF RawPos(r) > PosUsed THEN RawPos(r) + 2
+    ELSE RawPos(r)
+
+Top == 13
+
 RungAt(p) == CHOOSE r \in Rungs : Pos(r) = p
 
 Refuses(r, f) ==
     \/ (r = "version" /\ f = "version")
     \/ (r = "timestamps" /\ f = "expired")
+    \/ (r = "capacity" /\ f = "mapfull")
+    \/ (r = "claim" /\ f = "claimed")
     \/ (r = "slots" /\ f = "full")
     \/ (r = "admitted" /\ f = "admitted")
     \/ (r = "signature" /\ f = "signature")
@@ -61,7 +80,7 @@ vars == <<pos, fault, spent, spentKp, outcome, refusedRung,
           spentAtRefusal, spentKpAtRefusal>>
 
 TypeOK ==
-    /\ pos \in 1..12
+    /\ pos \in 1..(Top + 1)
     /\ fault \in Faults
     /\ spent \in BOOLEAN
     /\ spentKp \in BOOLEAN
@@ -82,18 +101,18 @@ Init ==
 
 RefuseStep ==
     /\ outcome = "pending"
-    /\ pos <= 11
+    /\ pos <= Top
     /\ Refuses(RungAt(pos), fault)
     /\ outcome' = "refused"
     /\ refusedRung' = RungAt(pos)
     /\ spentAtRefusal' = spent
     /\ spentKpAtRefusal' = spentKp
-    /\ pos' = 12
+    /\ pos' = Top + 1
     /\ UNCHANGED <<fault, spent, spentKp>>
 
 AdvanceStep ==
     /\ outcome = "pending"
-    /\ pos <= 11
+    /\ pos <= Top
     /\ ~Refuses(RungAt(pos), fault)
     /\ pos' = pos + 1
     /\ spent' = (spent \/ (RungAt(pos) \in CryptoRungs))
@@ -103,7 +122,7 @@ AdvanceStep ==
 
 AcceptStep ==
     /\ outcome = "pending"
-    /\ pos = 12
+    /\ pos = Top + 1
     /\ outcome' = "accepted"
     /\ UNCHANGED <<pos, fault, spent, spentKp, refusedRung,
                    spentAtRefusal, spentKpAtRefusal>>

@@ -161,6 +161,34 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
     return index;
 }
 
+int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map )
+{
+    rocketnet_assert( map );
+    return map->free_head == -1;
+}
+
+int rocketnet_encryption_map_token_claim_allows( const struct rocketnet_encryption_map_t * map,
+                                                  const uint8_t * token_identifier,
+                                                  const struct rocketnet_address_t * address,
+                                                  double current_time )
+{
+    rocketnet_assert( map );
+    rocketnet_assert( token_identifier );
+    rocketnet_assert( address );
+
+    for ( int i = 0; i < map->capacity; i++ )
+    {
+        if ( !map->live[i] )
+            continue;
+        if ( map->mapping[i].handshake_deadline <= current_time )
+            continue;
+        if ( sodium_memcmp( map->mapping[i].token_identifier, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) != 0 )
+            continue;
+        return rocketnet_address_equal( &map->address[i], address ) ? 1 : 0;
+    }
+    return 1;
+}
+
 struct rocketnet_encryption_mapping_t * rocketnet_encryption_map_entry( struct rocketnet_encryption_map_t * map, int index )
 {
     rocketnet_assert( map );

@@ -2665,12 +2665,12 @@ The server turns a connection request into an encryption mapping, and a connecti
 4. A server MUST refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
 5. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 6. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request from a source that has spent the failed-signature budget in the current window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`.
+7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address. It MUST also refuse, unanswered, a request whose token identifier a live half-open mapping from a different source address already holds, and a request that finds the encryption map full, both before the signature, the sealed-box open or any keypair work, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED` and the full-table counters respectively. The request-time token claim lasts until that mapping's handshake deadline. A request from a source that has spent the failed-signature budget in the current window MUST be refused, unanswered, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`.
 8. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 9. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 10. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
-11. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
-12. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which traffic refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A server MUST count these removals apart.
+11. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive. This binding outlives the request-time claim and lasts until the token expires.
+12. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which traffic refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A server MUST count these removals apart. The request-time token claim made by that mapping expires with the mapping's handshake deadline.
 
 An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
@@ -2701,6 +2701,8 @@ list is ignored in that state.
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
+| no mapping | request | encryption map full | ignore, count the full-table counters | no mapping |
+| no mapping | request | token claimed by a live half-open mapping from another address | ignore, count `CONNECTION_REQUEST_TOKEN_ALREADY_USED` | no mapping |
 | no mapping | request | failed-signature budget spent | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
@@ -3588,7 +3590,8 @@ an input ([t1.4 Conventions](#t1.4)).
 3. A server MUST discard the mapping of a handshake that is not established
    when the handshake deadline of [t2.3 Configuration surface](#t2.3) has
    elapsed since the mapping was created. The deadline is fixed at creation and
-   is not refreshed.
+   is not refreshed. The request-time token claim that mapping holds expires at
+   the same deadline.
 4. A server MUST discard a half-open mapping when the half-open idle deadline
    has elapsed since the last matching connection request from its address,
    unless the handshake deadline elapses first. A connection request whose

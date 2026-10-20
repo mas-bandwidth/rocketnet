@@ -98,6 +98,22 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline );
 
+// 1 when no free slot is left, so a request cannot create a mapping. The
+// request path checks this before any signature, seal or keypair work.
+
+int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map );
+
+// 1 when this token identifier has no live half-open claim, or its claim is
+// this address; 0 when a live mapping from another address holds it. A claim
+// is the mapping's token identifier and lives until its handshake deadline:
+// one token buys one half-open mapping (STANDARD.md t12 step 7; netcode.io
+// 1.02 parity). A cheap scan over the hot live array, no keyed hash.
+
+int rocketnet_encryption_map_token_claim_allows( const struct rocketnet_encryption_map_t * map,
+                                                  const uint8_t * token_identifier,
+                                                  const struct rocketnet_address_t * address,
+                                                  double current_time );
+
 // the cold payload for an index returned by find or add
 
 struct rocketnet_encryption_mapping_t * rocketnet_encryption_map_entry( struct rocketnet_encryption_map_t * map, int index );
