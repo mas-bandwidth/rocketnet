@@ -294,7 +294,7 @@ struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * co
 
 // pump-request create (#106): the driver ladder's entry into pump
 // selection. pump NULL/"auto" behaves exactly like the plain create above
-// (probe, honoring ROCKETNET_PUMP); "portable" forces the portable pump;
+// (runtime probe); "portable" forces the portable pump;
 // "msgx" requires the darwin batch pump or returns NULL loudly.
 
 /**
@@ -302,8 +302,8 @@ struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * co
  *
  * The address, socket mode, timeout, and buffer arguments follow
  * socket_create. NULL or "auto" uses runtime selection and the
- * ROCKETNET_PUMP environment override; "portable" requests the portable
- * implementation; "msgx" requires the macOS batch pump.
+ * platform choice; "portable" requests the portable implementation; "msgx"
+ * requires the macOS batch pump.
  * @param context Allocator context; NULL uses the default allocator.
  * @param address Writable bind address, modified with the assigned port when
  * zero; must be non-NULL and IPv4 or IPv6.
@@ -365,7 +365,7 @@ int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t
 // baseline doctrine holds and a call site never carries an #ifdef -- and a
 // platform with batch syscalls overrides them behind the same signatures.
 // Whether a faster path is live is decided inside the platform layer at
-// socket create (runtime probe, environment override ROCKETNET_PUMP=portable),
+// socket create (runtime probe or an explicit transport pump request),
 // and degradation at any point is invisible above this seam.
 //
 // send_packets sends every entry; per-packet failures are dropped exactly as

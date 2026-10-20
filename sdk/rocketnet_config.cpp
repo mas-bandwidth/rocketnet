@@ -501,34 +501,6 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     return true;
 }
 
-// the environment names the transport, never the driver, with no alias. the table row
-// "driver" is read only as ROCKETNET_<ENDPOINT>_TRANSPORT. the old driver
-// spellings, process-wide ROCKETNET_DRIVER and per-endpoint
-// ROCKETNET_<ENDPOINT>_DRIVER, are refused aloud, naming the variable to use
-// now, and their values are never applied. (the process-wide
-// ROCKETNET_TRANSPORT is refused by the general process-wide rule in
-// rocketnet_config_apply_env.)
-
-static void rocketnet_config_refuse_driver_names( const char * transport_name, const char * env_name )
-{
-    char endpoint_driver[128];
-    const int written = snprintf( endpoint_driver, sizeof(endpoint_driver), "ROCKETNET_%s_DRIVER", transport_name );
-    if ( written <= 0 || written >= (int) sizeof(endpoint_driver) )
-        endpoint_driver[0] = '\0';
-    for ( int i = 0; endpoint_driver[i] != '\0'; i++ )
-        endpoint_driver[i] = (char) toupper( (unsigned char) endpoint_driver[i] );
-
-    const char * old_names[2] = { "ROCKETNET_DRIVER", endpoint_driver };
-    for ( int i = 0; i < 2; i++ )
-    {
-        if ( old_names[i][0] == '\0' )
-            continue;
-        const char * value = rocketnet_platform_getenv( old_names[i] );
-        if ( value && value[0] != '\0' )
-            rocketnet_error( "%s config refuses %s: the transport is chosen by %s (transport, never driver)", transport_name, old_names[i], env_name );
-    }
-}
-
 // The decode staging seam, compiled into the unit suite's hook library only
 // (ROCKETNET_SECRET_WIPE_TEST_HOOKS): the BYTES case below hands its base64
 // staging to the hook on both of its exits, after the staging is done with,
@@ -557,25 +529,6 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
             rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field->name );
             return false;
         }
-
-        // the old process-wide spelling is refused aloud, naming its
-        // per-endpoint replacement, once per create: an operator who still
-        // exports ROCKETNET_<FIELD> is never silently ignored -- their value
-        // is NOT applied, and the error tells them the name to use now.
-
-        char process_wide_name[128];
-        if ( !rocketnet_config_env_var_name( field->name, process_wide_name, sizeof(process_wide_name) ) )
-        {
-            rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field->name );
-            return false;
-        }
-
-        const char * process_wide_value = rocketnet_platform_getenv( process_wide_name );
-        if ( process_wide_value && process_wide_value[0] != '\0' )
-            rocketnet_error( "%s config ignores the process-wide %s: use the per-endpoint %s instead", transport_name, process_wide_name, env_name );
-
-        if ( strcmp( field->name, "driver" ) == 0 )
-            rocketnet_config_refuse_driver_names( transport_name, env_name );
 
         const char * value = rocketnet_platform_getenv( env_name );
         if ( !value )

@@ -2166,8 +2166,7 @@ extern void rocketnet_free( void * context, void * p );
 // are resolved by dlsym at init (no link-time reference at all -- weaker
 // even than a weak import), each socket's first batch call is its
 // functional probe, any refusal at runtime degrades that socket to the
-// portable per-packet loop mid-flight without losing a packet, and
-// ROCKETNET_PUMP=portable forces the degraded path outright. iOS never
+// portable per-packet loop mid-flight without losing a packet. iOS never
 // resolves them: dlsym of a private symbol is an App Store review finding,
 // so the batch pump is never offered and iOS is portable by construction.
 //
@@ -2415,18 +2414,17 @@ void rocketnet_platform_sleep( double time )
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 
 // the pump request (#106): the plain create offers the batch pump (auto);
-// a forced-portable create SUPPRESSES the batch pump entirely -- the
-// pre-#106 ROCKETNET_PUMP=portable semantic. neither form reads the socket
+// a forced-portable create SUPPRESSES the batch pump entirely. Neither form reads the socket
 // at create: the first real batch call is the probe and keeps what it reads.
 
-#define ROCKETNET_PUMP_MODE_AUTO             0
-#define ROCKETNET_PUMP_MODE_FORCE_PORTABLE   1
+#define ROCKETNET_PLATFORM_PUMP_MODE_AUTO             0
+#define ROCKETNET_PLATFORM_PUMP_MODE_FORCE_PORTABLE   1
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode );
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
-    return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PUMP_MODE_AUTO );
+    return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PLATFORM_PUMP_MODE_AUTO );
 }
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode )
@@ -2603,7 +2601,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 #if TARGET_OS_OSX
 
     // the batch pump: resolved symbols, a non-blocking socket (the pump's
-    // spin discipline assumes it) and no environment override make this
+    // spin discipline assumes it) make this
     // socket an msgx candidate. nothing is read at create: recvmsg_x rejects
     // MSG_PEEK, so a peek cannot decide the pump, and the first real batch
     // call is the functional probe instead. a fixed-port bind that already
@@ -2617,13 +2615,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         rocketnet_platform_create_receive_hook( socket->handle );
 #endif
 
-    if ( pump_mode != ROCKETNET_PUMP_MODE_FORCE_PORTABLE && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
+    if ( pump_mode != ROCKETNET_PLATFORM_PUMP_MODE_FORCE_PORTABLE && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
-        const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
-        if ( !pump_override || strcmp( pump_override, "portable" ) != 0 )
-        {
-            socket->msgx = true;
-        }
+        socket->msgx = true;
     }
 
 #endif // #if TARGET_OS_OSX
@@ -4873,12 +4867,10 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // pump-request socket create (#106): the driver ladder's entry into the
 // platform pump selection. pump NULL or "auto" is the pre-existing
-// behavior -- offer the platform's batch pump, honoring the
-// ROCKETNET_PUMP override. "portable" forces the portable pump: the
+// behavior -- offer the platform's batch pump. "portable" forces the portable pump: the
 // request wins and no batch decision matters. "msgx" REQUIRES the darwin
-// batch pump: a socket that cannot carry it (missing symbols, or the
-// ROCKETNET_PUMP=portable override, the pre-#106 surface this system
-// absorbs) refuses loudly here so a pinned rung refuses rather than
+// batch pump: a socket that cannot carry it (including missing symbols)
+// refuses loudly here so a pinned rung refuses rather than
 // silently degrading. The first real batch call is the functional probe;
 // its own live-refusal pause-and-reprobe discipline (#102) remains the
 // driver's internal behavior below the ladder.
@@ -4904,29 +4896,13 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 
-    // a forced-portable request suppresses the batch pump entirely -- the
-    // pre-#106 ROCKETNET_PUMP=portable semantics hold exactly, and no
+    // a forced-portable request suppresses the batch pump entirely, and no
     // batch call can read a queued datagram before the caller does
 
     const bool force_portable = pump && strcmp( pump, "portable" ) == 0;
 
-    // a required msgx under the ROCKETNET_PUMP=portable override refuses
-    // BEFORE any socket exists: a rung that binds a fixed port, refuses, and
-    // releases it before the next rung rebinds opens a window for anything
-    // else on the machine to take that port mid-ladder
-
-    if ( require_msgx )
-    {
-        const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
-        if ( pump_override && strcmp( pump_override, "portable" ) == 0 )
-        {
-            rocketnet_warn( "msgx pump refused: ROCKETNET_PUMP=portable (the pre-#106 override; ROCKETNET_SERVER_TRANSPORT=portable and ROCKETNET_CLIENT_TRANSPORT=portable are the successors)" );
-            return NULL;
-        }
-    }
-
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size,
-                                                                                      force_portable ? ROCKETNET_PUMP_MODE_FORCE_PORTABLE : ROCKETNET_PUMP_MODE_AUTO );
+                                                                                      force_portable ? ROCKETNET_PLATFORM_PUMP_MODE_FORCE_PORTABLE : ROCKETNET_PLATFORM_PUMP_MODE_AUTO );
     if ( !socket )
         return NULL;
 
