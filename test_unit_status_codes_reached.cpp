@@ -20,7 +20,7 @@
 //     (sdk/rocketnet_client_transport.cpp:1037-1043).
 //
 // Not reachable in the unit tier: MUTEX_CREATE_FAILED (pthread_mutex_init on
-// an embedded handle, sdk/rocketnet_platform.cpp:1453-1472), PLATFORM_INIT_FAILED
+// an embedded handle, sdk/rocketnet_platform.cpp:1453-1474), PLATFORM_INIT_FAILED
 // (the POSIX rocketnet_platform_init returns true, sdk/rocketnet_platform.cpp:385-393)
 // and TIMER_CREATE_FAILED (the Windows CreateWaitableTimerExW refusal,
 // sdk/rocketnet_frame_sync.cpp:327-341). The platform call table
