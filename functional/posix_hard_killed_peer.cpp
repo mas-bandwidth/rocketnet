@@ -33,7 +33,6 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -377,8 +376,8 @@ int rocketnet_posix_hard_killed_child_main( int argc, char ** argv )
     if ( argc < 4 )
         return 2;
     setvbuf( stdout, NULL, _IOLBF, 0 );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
-    if ( !rocketnet_init( NULL ) )
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
         return 1;
     const pid_t parent = getppid();
     struct rocketnet_client_transport_t * client = posix_hk_client_create( argv[2], strtoull( argv[3], NULL, 10 ) );
@@ -707,13 +706,10 @@ static struct rocketnet_platform_socket_t * posix_seam_socket_with_queue( const 
 
 static int posix_seam_warnings = 0;
 
-static void posix_seam_log( int level, const char * format, ... )
+static void posix_seam_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
-    char message[1024];
-    va_list args;
-    va_start( args, format );
-    vsnprintf( message, sizeof(message), format, args );
-    va_end( args );
+    (void) context;
+    (void) length;
     if ( level == ROCKETNET_LOG_LEVEL_WARN && strstr( message, "msgx pump pauses" ) != NULL )
         posix_seam_warnings++;
 }
@@ -768,8 +764,8 @@ static void posix_seam_unknown_errno_pauses_msgx()
     // per-packet loop without losing a datagram, the pump reads portable
     // until the pause expires, and the pause logs once
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
-    rocketnet_log_function( posix_seam_log );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_set_log_callback( posix_seam_log, NULL );
 
     struct rocketnet_platform_socket_t * socket = posix_seam_socket_with_queue( "msgx" );
     rocketnet_address_t from[32];
