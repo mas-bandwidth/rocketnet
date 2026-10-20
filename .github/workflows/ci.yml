@@ -997,6 +997,14 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1
         timeout-minutes: 30
         run: ./bin/functional
+      # A red in this step at BASE is the asan allocator rejecting the glibc
+      # heap-keeping calls in functional/posix_lifecycle_stress.cpp:1045-1046
+      # (posix_heap_keep asserts mallopt(M_MMAP_MAX,...) == 1 and
+      # mallopt(M_TRIM_THRESHOLD,...) == 1, which return 0 under asan's
+      # allocator). Every posix_* cell fails there the same way. The fix is
+      # to tolerate asan there (skip the two mallopt asserts when built with
+      # -fsanitize=address) and is carried as a proposed diff on its own card,
+      # not in this file.
 
       - name: Allocation lifecycle under sanitizers
         env:
