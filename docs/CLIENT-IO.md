@@ -570,8 +570,8 @@ exit 2. Needs: rocketnet-client-io-transport.
 The client's network thread, the I/O thread or the legacy receive thread,
 takes the client thread priority from the thread that creates the client,
 right after the create (`rocketnet_client_transport_create`,
-`sdk/rocketnet_client_transport.cpp:1021`; `rocketnet_platform_client_thread_priority`,
-`sdk/rocketnet_platform.cpp:1262`, `:2924` and `:3356`). The settings are the flow library's (`flow_platform.cpp`),
+`sdk/rocketnet_client_transport.cpp:1048`; `rocketnet_platform_client_thread_priority`,
+`sdk/rocketnet_platform.cpp:1427`, `:3135` and `:3566`). The settings are the flow library's (`flow_platform.cpp`),
 unchanged:
 
 | Platform | Call on the client network thread |
@@ -582,8 +582,8 @@ unchanged:
 
 On Windows the library also requests a 1 ms timer period,
 `timeBeginPeriod( 1 )`, at `rocketnet_init` before the timer query, and ends it
-with `timeEndPeriod( 1 )` at `rocketnet_term` (`sdk/rocketnet_platform.cpp:3239`
-and `:3267`). A step-driven client
+with `timeEndPeriod( 1 )` at `rocketnet_term` (`sdk/rocketnet_platform.cpp:3449`
+and `:3433`, from `rocketnet_platform_term` at `:3480`). A step-driven client
 (`step_driven` or `step_in_update`) creates no thread and makes no call.
 
 The game's own threads are the game's: the library sets nothing on the main

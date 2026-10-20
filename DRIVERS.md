@@ -146,16 +146,16 @@ work. Client fast-path I/O is not required by this interface.
 
 The library sets the server thread priority on each network thread a server
 driver creates, from the creating thread right after the create
-(`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp:1269`, `:2931`
-and `:3363`):
+(`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp:1434`, `:3142`
+and `:3573`):
 `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
 `THREAD_PRIORITY_TIME_CRITICAL` on Windows. These are the flow library's
 settings (`flow_platform.cpp`), unchanged.
 
 | Driver | Threads it creates | What the library sets |
 |---|---|---|
-| GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:700`) | `SCHED_RR`, minimum priority, after each create |
-| XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2569-2578`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
+| GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
+| XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
 | IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | io_uring, RIO, portable socket | none | nothing |
 

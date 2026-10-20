@@ -219,7 +219,7 @@ The library's network-thread priority calls (`docs/CLIENT-IO.md`, Thread
 priority; `DRIVERS.md`, Server network threads) check each result. A refused
 call (`pthread_setschedparam` nonzero, `pthread_setaffinity_np` nonzero on the
 XDP thread, `SetThreadPriority` FALSE, `timeBeginPeriod` or `timeEndPeriod`
-not `TIMERR_NOERROR`) adds one to a process-wide count (`sdk/rocketnet_platform.cpp:116`), read with
+not `TIMERR_NOERROR`) adds one to a process-wide count (`sdk/rocketnet_platform.cpp:118`), read with
 `rocketnet_get_thread_priority_refusals()`, and never fails a create or
 `rocketnet_init`. The first refusal of each call kind logs one warning, and
 that kind never logs again in the process:

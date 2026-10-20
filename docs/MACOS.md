@@ -188,7 +188,7 @@ thread is a plain `pthread_create` with default attributes
 (`rocketnet_platform_thread_create`). Right after the create, the creating
 thread makes one call on it, the flow library's setting, unchanged: `pthread_setschedparam( thread, SCHED_RR,
 { sched_get_priority_min( SCHED_RR ) } )`
-(`rocketnet_platform_client_thread_priority`, `sdk/rocketnet_platform.cpp:2924`).
+(`rocketnet_platform_client_thread_priority`, `sdk/rocketnet_platform.cpp:3135`).
 That is the only thing the library sets on its macOS network threads: no QoS
 class, no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and no App Nap call (a
 search of `sdk/` for `qos_class`, `NSProcessInfo` and `LSAppNapIsDisabled`
