@@ -941,6 +941,52 @@ int main( int argc, char ** argv )
     const int crit4_unreliable_integrity = ( unreliable_errors == 0 ) ? 1 : 0;
     const int crit5_counters_agree = ( c2s_sent_total == c2s_received_total + total_counted_drops ) ? 1 : 0;
 
+    /* counters_agree failed: name where the uncounted messages went. Every
+       nonzero counter of the server transport, the message server, and the
+       sums over the clients' transports and message clients, then the sent
+       and received counts per combo. */
+    if ( !crit5_counters_agree )
+    {
+        static uint64_t client_transport_sum[ROCKETNET_NUM_COUNTERS];
+        static uint64_t client_message_sum[ROCKETNET_NUM_COUNTERS];
+        memset( client_transport_sum, 0, sizeof( client_transport_sum ) );
+        memset( client_message_sum, 0, sizeof( client_message_sum ) );
+        for ( int i = 0; i < num_clients; i++ )
+        {
+            const struct rocketnet_counters_t * ctc = rocketnet_client_transport_counters( rocketnet_message_client_transport( clients[i] ) );
+            const struct rocketnet_counters_t * cmc = rocketnet_message_client_counters( clients[i] );
+            for ( int k = 0; k < ROCKETNET_NUM_COUNTERS; k++ )
+            {
+                if ( ctc )
+                    client_transport_sum[k] += rocketnet_counter_value( ctc, k );
+                if ( cmc )
+                    client_message_sum[k] += rocketnet_counter_value( cmc, k );
+            }
+        }
+        for ( int k = 0; k < ROCKETNET_NUM_COUNTERS; k++ )
+        {
+            if ( stc && rocketnet_counter_value( stc, k ) )
+                fprintf( stderr, "load: counters_agree server transport %s=%llu\n", rocketnet_counter_name( k ), (unsigned long long) rocketnet_counter_value( stc, k ) );
+            if ( sc && rocketnet_counter_value( sc, k ) )
+                fprintf( stderr, "load: counters_agree message server %s=%llu\n", rocketnet_counter_name( k ), (unsigned long long) rocketnet_counter_value( sc, k ) );
+            if ( client_transport_sum[k] )
+                fprintf( stderr, "load: counters_agree client transports %s=%llu\n", rocketnet_counter_name( k ), (unsigned long long) client_transport_sum[k] );
+            if ( client_message_sum[k] )
+                fprintf( stderr, "load: counters_agree message clients %s=%llu\n", rocketnet_counter_name( k ), (unsigned long long) client_message_sum[k] );
+        }
+        for ( uint32_t combo = 0; combo < LOAD_NUM_COMBOS; combo++ )
+        {
+            uint64_t combo_sent = 0;
+            uint64_t combo_received = 0;
+            for ( int i = 0; i < num_clients; i++ )
+            {
+                combo_sent += c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo].sent_count;
+                combo_received += c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo].recv_count;
+            }
+            fprintf( stderr, "load: counters_agree combo=%u sent=%llu received=%llu\n", combo, (unsigned long long) combo_sent, (unsigned long long) combo_received );
+        }
+    }
+
     uint64_t p50_us = 0;
     uint64_t p99_us = 0;
     if ( update_count > 0 )
