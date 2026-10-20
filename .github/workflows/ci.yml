@@ -84,10 +84,11 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'sprint/**' ]
   pull_request:
-  # Filtering push to main means a feature branch no longer runs the matrix
-  # twice -- once for the push, once for its PR. workflow_dispatch keeps a
+  # Filtering push to main and sprint/** means a feature branch no longer runs
+  # the matrix twice -- once for the push, once for its PR; sprint/** is where
+  # sprint work lands by direct commits, with no pull request to run it. workflow_dispatch keeps a
   # deliberate way to run it on a branch, which is the capability the filter
   # would otherwise silently remove. (serialize's ci.yml, same reasoning.)
   workflow_dispatch:
@@ -98,6 +99,8 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job sets timeout-minutes: 3, the per-commit law above (one to two
+# minutes) with a minute of headroom; a job that runs longer fails.
 jobs:
 
   # THE ubuntu-24.04 / Release ROW IS SPLIT IN TWO (2026-09-13); every other
@@ -138,6 +141,7 @@ jobs:
     # these rows go back to a runner label then. matrix.os stays the display name and the image the row was written
     # against; runner, when set, is the label set runs-on uses instead.
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -514,7 +518,7 @@ jobs:
   xdp-libxdp-1-4:
     name: XDP / libxdp 1.4 / Debug
     runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
-    timeout-minutes: 10
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - name: Build the XDP functional cell (Debug)
@@ -645,6 +649,7 @@ jobs:
     # the fleet's native Windows runner (captain-rocketnet-1: Windows 11, VS 18 Community MSVC, CMake 4, Git Bash, Python 3.9;
     # label rocketnet-windows; rowan-tools fleet/runners-windows.tsv), never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -834,6 +839,7 @@ jobs:
     name: happy path / ${{ matrix.os }}
     # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos, Windows on rocketnet-windows
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -944,6 +950,7 @@ jobs:
   sanitizers:
     name: asan + ubsan
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
@@ -1033,6 +1040,7 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
@@ -1169,6 +1177,7 @@ jobs:
   fuzz-smoke-ndebug:
     name: fuzz smoke NDEBUG (four fuzzers, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
@@ -1326,6 +1335,7 @@ jobs:
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -1441,6 +1451,7 @@ jobs:
   conformance:
     name: standard conformance
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
@@ -1502,6 +1513,7 @@ jobs:
   tsan:
     name: tsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -1585,6 +1597,7 @@ jobs:
   sodium-pinned:
     name: pinned libsodium (built from source)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     env:
       SODIUM_VERSION: "1.0.20"
       SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
@@ -1709,6 +1722,7 @@ jobs:
   platform-selftests:
     name: platform selftests / ${{ matrix.os }}
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -1810,6 +1824,7 @@ jobs:
   instruction-gate:
     name: instruction count gate
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
