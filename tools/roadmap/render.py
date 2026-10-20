@@ -16,6 +16,8 @@
 # :columns platforms (Linux, macOS, Windows); a list naming one whole set, in
 # any order, is the same declaration with its columns in that order. Any other
 # column is refused. :label names the first column (default "feature").
+# :columns release is the one column "status", for a test that is neither per
+# platform nor per transport (a model check, a review): rendered test | status.
 #
 # In a platforms area a cell may instead name transports: a list of
 # (transport mark) pairs, each transport one that builds on that column's
@@ -27,8 +29,10 @@
 # under the table.
 #
 # An area may carry :milestone "next": its heading is marked (next milestone).
-# A cell is y (done and tested), n (not yet), o (owed: a run deferred until
-# every feature has landed, shown as OWED) or - (does not apply). Every y
+# A cell is y (done and tested), n (red, or not yet), o (owed: a run deferred
+# until every feature has landed, shown as OWED), p (planned: a test with no
+# green run yet that is not a known red and not deferred, shown as PLANNED) or
+# - (does not apply). Every y
 # cell needs evidence: :evidence is one string whose labels name each column
 # it covers ("Linux, macOS and Windows: ..." at the start or after "; "), or a
 # list of (column "evidence") pairs. A column named only in passing is not
@@ -39,10 +43,14 @@
 # The complete row gives, per column, round(100 * y / (y + n + o)) followed
 # by %; - cells are left out, and a column that is - throughout shows —.
 #
-# An o cell needs a :pending entry, and a page with any o cell carries :owed,
+# An o or p cell needs a :pending entry naming the card that owns it, and a
+# page with any o cell carries :owed,
 # the note printed under each table that has one ("OWED: ...").
 #
 # A page may carry :all-cells-apply t: then no cell is -, so no table shows —.
+#
+# A page may carry :rows-name-source t: then every row carries :source, one
+# string naming the file or the card that owns the test; it stays in the data.
 #
 # A page may carry :tables-only t: then the page is its headers and tables and
 # nothing else. Under each area's heading is one line of links, to the data
@@ -60,7 +68,8 @@
 import re
 import sys
 
-CELL = { "y": "✅", "n": "❌", "o": "OWED", "-": "—" }
+CELL = { "y": "✅", "n": "❌", "o": "OWED", "p": "PLANNED", "-": "—" }
+OPEN = ( "n", "o", "p" )
 
 # The server transports in the order the automatic ladder ranks them (server
 # preference in sdk/rocketnet_drivers.inc, lower first; ties in registry
@@ -75,8 +84,9 @@ PLATFORM_TRANSPORTS = {
     "macOS": [ "msgx", "portable", "loopback" ],
     "Windows": [ "portable", "iocp", "rio", "loopback" ],
 }
-COLUMN_SETS = { "transports": TRANSPORTS, "platforms": PLATFORMS }
-SET_NOUN = { "transports": "transport", "platforms": "platform" }
+RELEASE = [ "status" ]
+COLUMN_SETS = { "transports": TRANSPORTS, "platforms": PLATFORMS, "release": RELEASE }
+SET_NOUN = { "transports": "transport", "platforms": "platform", "release": "status" }
 
 def tokenize( text ):
     i, n = 0, len( text )
@@ -152,7 +162,7 @@ def columns_of( area, aid ):
         name = sym( declared )
         if name in COLUMN_SETS:
             return COLUMN_SETS[name]
-        raise ValueError( "area %s: columns %r is neither transports nor platforms" % ( aid, name ) )
+        raise ValueError( "area %s: columns %r is neither transports, platforms nor release" % ( aid, name ) )
     names = [ sym( c ) for c in ( declared or [] ) ]
     for c in names:
         if c not in TRANSPORTS and c not in PLATFORMS:
@@ -199,8 +209,8 @@ def transport_cell( cell, column, where ):
         name, mark = sym( pair[0] ), sym( pair[1] )
         if name not in PLATFORM_TRANSPORTS[column]:
             raise ValueError( "%s: transport %r does not build on %s" % ( where, name, column ) )
-        if mark not in ( "y", "n", "o" ):
-            raise ValueError( "%s: transport %s mark %r is not y, n or o" % ( where, name, mark ) )
+        if mark not in ( "y", ) + OPEN:
+            raise ValueError( "%s: transport %s mark %r is not y, n, o or p" % ( where, name, mark ) )
         if name in [ p[0] for p in pairs ]:
             raise ValueError( "%s: transport %s named twice in the %s cell" % ( where, name, column ) )
         pairs.append( ( name, mark ) )
@@ -209,6 +219,8 @@ def transport_cell( cell, column, where ):
     return pairs
 
 def set_of( columns ):
+    if columns == RELEASE:
+        return "release"
     return "transports" if columns[0] in TRANSPORTS else "platforms"
 
 def render( data, source="docs/roadmap.sexp" ):
@@ -216,6 +228,7 @@ def render( data, source="docs/roadmap.sexp" ):
     target = re.sub( r"\.sexp$", "", source.split( "/" )[-1] )
     all_apply = sym( top.get( "all-cells-apply" ) ) == "t"
     tables_only = sym( top.get( "tables-only" ) ) == "t"
+    name_source = sym( top.get( "rows-name-source" ) ) == "t"
     owed_note = top.get( "owed" )
     lines = [ "# " + top["title"], "",
               "<!-- Generated from %s by tools/roadmap/render.py. Do not edit this file: edit the data and run `make %s`. -->" % ( source, target ), "" ]
@@ -223,8 +236,8 @@ def render( data, source="docs/roadmap.sexp" ):
         lines += [ para, "" ]
     seen = set()
     # the tests of each column set: in a full area, and per column in a specific one
-    full_tests = { "transports": {}, "platforms": {} }
-    specific_tests = { "transports": {}, "platforms": {} }
+    full_tests = { name: {} for name in COLUMN_SETS }
+    specific_tests = { name: {} for name in COLUMN_SETS }
     for a in top["areas"]:
         area = plist( a, "area" )
         aid = area["id"]
@@ -244,6 +257,12 @@ def render( data, source="docs/roadmap.sexp" ):
         rows = area["rows"]
         if not rows:
             raise ValueError( "area %s: no rows" % aid )
+        if name_source:
+            for r in rows:
+                row = plist( r, "area %s row" % aid )
+                source_of = row.get( "source" )
+                if not isinstance( source_of, str ) or not source_of.strip():
+                    raise ValueError( "area %s row %r: no :source naming the file or card that owns it" % ( aid, row.get( "feature" ) ) )
         if sym( area.get( "specific" ) ) == "t":
             table, pending, owed = specific_table( area, aid, columns, specific_tests[set_of( columns )] )
         else:
@@ -297,7 +316,7 @@ def full_table( area, aid, columns, all_apply, tests ):
                     raise ValueError( "%s: a - cell in %s, and every cell of this page applies; move the test to a specific table" % ( where, column ) )
                 cells.append( [ ( None, sym( c ) ) ] )
             else:
-                raise ValueError( "area %s row %r: cell %r is not y, n, o or -" % ( aid, feature, sym( c ) ) )
+                raise ValueError( "area %s row %r: cell %r is not y, n, o, p or -" % ( aid, feature, sym( c ) ) )
         evidence = evidence_by_column( row, columns, where )
         for column, marks in zip( columns, cells ):
             if any( m == "y" for _, m in marks ) and column not in evidence:
@@ -335,8 +354,8 @@ def specific_table( area, aid, columns, tests ):
         if on in tests.setdefault( feature, [] ):
             raise ValueError( "%s: %s named twice" % ( where, on ) )
         tests[feature].append( on )
-        if mark not in ( "y", "n", "o" ):
-            raise ValueError( "%s: status %r is not y, n or o" % ( where, mark ) )
+        if mark not in ( "y", ) + OPEN:
+            raise ValueError( "%s: status %r is not y, n, o or p" % ( where, mark ) )
         if mark == "y" and on not in evidence_by_column( row, [ on ], where ):
             raise ValueError( "%s: the y status on %s has no evidence naming it" % ( where, on ) )
         note = row.get( "pending" )
@@ -346,8 +365,8 @@ def specific_table( area, aid, columns, tests ):
             if mark == "y":
                 raise ValueError( "%s: pending for %s, whose status is y" % ( where, on ) )
             pending.append( "- %s, %s: %s" % ( feature, on, note ) )
-        elif mark == "o":
-            raise ValueError( "%s: an o status on %s needs a pending note" % ( where, on ) )
+        elif mark in ( "o", "p" ):
+            raise ValueError( "%s: an %s status on %s needs a pending note" % ( where, mark, on ) )
         total += 1
         done += mark == "y"
         owed = owed or mark == "o"
@@ -368,12 +387,13 @@ def pending_of( row, columns, cells, where ):
         column = sym( pair[0] )
         if column not in columns:
             raise ValueError( "%s: pending for %r, which is not a column of this area" % ( where, column ) )
-        if not any( m in ( "n", "o" ) for _, m in cells[columns.index( column )] ):
-            raise ValueError( "%s: pending for %s, whose cell has no n or o" % ( where, column ) )
+        if not any( m in OPEN for _, m in cells[columns.index( column )] ):
+            raise ValueError( "%s: pending for %s, whose cell has no n, o or p" % ( where, column ) )
         out.append( ( column, pair[1] ) )
     for column, marks in zip( columns, cells ):
-        if any( m == "o" for _, m in marks ) and column not in [ c for c, _ in out ]:
-            raise ValueError( "%s: an o cell in %s needs a pending note" % ( where, column ) )
+        for open_mark in ( "o", "p" ):
+            if any( m == open_mark for _, m in marks ) and column not in [ c for c, _ in out ]:
+                raise ValueError( "%s: an %s cell in %s needs a pending note" % ( where, open_mark, column ) )
     return out
 
 def complete_cell( done, applies ):
