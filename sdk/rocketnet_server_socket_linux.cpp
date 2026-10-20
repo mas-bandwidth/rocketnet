@@ -1732,14 +1732,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             const bool zero_copy = attempt == 0;
 
             struct xsk_umem_config umem_config;
-            memset( &umem_config, 0, sizeof(umem_config) );
-            // every ring size explicit: libxdp before 1.5 passes a caller's
-            // config to the kernel as given, and the kernel refuses a 0-entry
-            // fill or completion ring
-            umem_config.fill_size = ROCKETNET_XDP_FILL_QUEUE_SIZE;
-            umem_config.comp_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
-            umem_config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
-            umem_config.frame_headroom = 0;
+            rocketnet_xdp_umem_config( &umem_config );
 
             result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
             if ( result )
