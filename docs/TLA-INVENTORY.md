@@ -794,16 +794,17 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
   → frames; on exhaustion stop and retain `packet_start_index` (`:2287-2298`). Retire the
   generation when every packet is copied (`:2318-2321`). TX reserve is all-or-zero; zero
   keeps the batch (`:2334-2355`).
-- Main thread: `send_packets` publishes a non-empty filling generation and acquires the
-  next (`:1883-1897`). A fill thread may acquire on the slow path when both are queued
-  (`:1766-1775`).
+- Main thread: `send_packets` publishes a non-empty filling generation when a replacement
+  is free, else retains it as the producer generation, and acquires the next
+  (`rocketnet_server_socket_send_packets`, `rocketnet_send_handoff_t::publish`).
 
 **Rules.**
 - `INV FrameConservation`: every UMEM frame has exactly one owner at every step
   (comment `:2159-2170`; `pending_frames.h:6-7`).
 - `INV ReleaseConsumedOnly`: the RX release covers exactly the consumed descriptors.
-- `INV HandoffNoOverwrite`: a full queue refuses new storage without overwriting a
-  queued generation (`send_handoff.h:8`).
+- `INV HandoffNoOverwrite`: no publish or acquire overwrites a queued generation;
+  `rocketnet_send_handoff_t::publish` keeps the producer generation when no
+  replacement is free (modelled as `RNDriverSendStaging.Publish`).
 - `INV RetireAfterCopy`: a generation is retired only after its last packet is in UMEM
   (`:2318-2319`).
 - `LIVE FramesReturn`: if the kernel drains the fill and TX rings fairly, every Pending
