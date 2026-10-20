@@ -93,6 +93,64 @@ Dependencies, per platform, as CI installs them:
     # macOS
     brew install cmake
 
+The macOS default build is the host's native slice. `CMakeLists.txt:5-6` sets
+`CMAKE_OSX_DEPLOYMENT_TARGET` to 12.0 when the caller does not: the Xcode 27
+build system refuses 11.0 (its supported range starts at 12.0) while the
+Command Line Tools accept it, so 12.0 is the lowest target both toolchains
+build for both slices of a universal library. Override it with `-D` for
+another minimum.
+To build a universal (arm64 and x86_64) library and the suites:
+
+    cmake -B build-universal -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-universal --clean-first --parallel 4
+    lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
+
+Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
+every build tree land in the checkout's `bin/` (`CMakeLists.txt:59-64`), so `--clean-first` relinks
+them against the universal objects when a native build ran first; without it
+CMake sees the newer native files and skips the link. To read the deployment
+target on
+each slice:
+
+    otool -l -arch arm64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
+    otool -l -arch x86_64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
+
+Both print `minos 12.0`; the static archive carries the same load command in
+each member, read after `lipo -thin <arch>` and `ar -x`. CMake compiles each
+architecture in its own clang pass, so the vendored sodium builds its x86 asm
+into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
+is embedded once with the host `xxd` and the generated header is
+architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
+the compiler-flag check (`CMakeLists.txt:210`, `CMakeLists.txt:213`) drops it for a fat compile while the stack protector
+and the other Release flags stay on both slices.
+
+Against a universal build, `tools/check_package.py build-universal` passes the
+build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py:125`)
+and `tools/check_dll_consumer.py --build build-universal` adds one `-arch` per
+library slice (`tools/check_dll_consumer.py:184`); each refuses a consumer
+executable whose `lipo -archs` lacks a slice (`tools/check_package.py:140`,
+`tools/check_dll_consumer.py:255`).
+
+The Xcode generator needs Xcode installed, and its license accepted once by an
+administrator (`sudo xcodebuild -license`); until then `xcodebuild` refuses and
+the configure step stops with "No CMAKE_C_COMPILER could be found". The
+Command Line Tools alone have no `xcodebuild`. `DEVELOPER_DIR` selects Xcode
+for one command without changing `xcode-select`:
+
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+    cmake -B build-xcode -G Xcode
+    cmake --build build-xcode --config Release --parallel 4
+    ./bin/Release/test
+
+`CMakeLists.txt:59-64` sets the output directories to `bin/` with no
+configuration in the path, and a multi-config generator such as Xcode appends
+the configuration to them, so its executables and libraries land in
+`bin/Release/`. The unit suite opens the development library by its absolute
+build path (`CMakeLists.txt:533-534`), and the release library by
+`bin/librocketnet.dylib`, then by the bare name
+(`sdk/rocketnet_tests.cpp:14700-14701`), which the executable's run path
+resolves in `bin/Release/` (`CMakeLists.txt:538`).
+
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
 
