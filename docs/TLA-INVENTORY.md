@@ -787,9 +787,11 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
 `head`, `count`, `filling` and the published `send_flow_index`.
 
 **Transitions.**
-- Worker receive: peek ≤ `pending.available()`; consume ≤ the staging room; release
-  exactly the consumed count; append to pending; flush all-or-zero into the fill ring
-  (`:2141-2229`; `pending_frames.h:16-34`).
+- Worker receive: peek ≤ `pending.available()`; consume ≤ the staging room; cancel the
+  peeked descriptors not consumed and release exactly the consumed count
+  (`sdk/rocketnet_server_socket_linux.cpp`, `rocketnet_xdp_receive_ring_finish`; the ring is
+  modelled in `tla/RNXdpReceiveRing.tla`); append to pending; flush all-or-zero into the
+  fill ring (`pending_frames.h:16-34`).
 - Worker send: complete-ring frames → free (`:2236-2247`). The front generation's packets
   → frames; on exhaustion stop and retain `packet_start_index` (`:2287-2298`). Retire the
   generation when every packet is copied (`:2318-2321`). TX reserve is all-or-zero; zero
