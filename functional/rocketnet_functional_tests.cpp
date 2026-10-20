@@ -4662,7 +4662,9 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-        server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", &config);
+        char real_port_address[64];
+        rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
+        server = rocketnet_server_transport_create( NULL, real_port_address, &config);
 
         rocketnet_set_log_level( saved_level );
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
@@ -4787,7 +4789,10 @@ void rocketnet_test_server_driver_pin_xdp()
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
-    const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40111", 7 );
+    char real_port_address[64];
+    rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
+
+    const bool provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
 
     if ( !provisioned )
     {
@@ -4795,7 +4800,7 @@ void rocketnet_test_server_driver_pin_xdp()
         rocketnet_server_transport_dev_config( &config );
         snprintf( config.driver, sizeof(config.driver), "xdp" );
 
-        rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40111", &config) == NULL );
+        rocketnet_check( rocketnet_server_transport_create( NULL, real_port_address, &config) == NULL );
     }
 
     rocketnet_test_env_restore( &driver_guard );
@@ -4831,7 +4836,10 @@ void rocketnet_test_server_driver_ladder_fall()
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
-    const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40112", 7 );
+    char real_port_address[64];
+    rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
+
+    const bool provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
 
     if ( !provisioned )
     {
@@ -8072,6 +8080,44 @@ struct rocketnet_functional_test_t
     void ( *function )();
 };
 
+// POSIX lifecycle stress: real sockets, counted file descriptors and threads
+// (and on Linux locked memory), in functional/posix_lifecycle_stress.cpp.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_posix_init_term_1000();
+extern void rocketnet_test_posix_server_create_destroy_1000();
+extern void rocketnet_test_posix_client_create_destroy_1000();
+extern void rocketnet_test_posix_server_restart_same_port_100();
+extern void rocketnet_test_posix_connect_disconnect_1000();
+extern void rocketnet_test_posix_destroy_under_traffic_100();
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+// one case per Linux server cell
+extern void rocketnet_test_posix_init_term_1000_portable();
+extern void rocketnet_test_posix_init_term_1000_gso();
+extern void rocketnet_test_posix_init_term_1000_io_uring();
+extern void rocketnet_test_posix_init_term_1000_xdp();
+extern void rocketnet_test_posix_server_create_destroy_1000_portable();
+extern void rocketnet_test_posix_server_create_destroy_1000_gso();
+extern void rocketnet_test_posix_server_create_destroy_1000_io_uring();
+extern void rocketnet_test_posix_server_create_destroy_1000_xdp();
+extern void rocketnet_test_posix_client_create_destroy_1000_portable();
+extern void rocketnet_test_posix_client_create_destroy_1000_gso();
+extern void rocketnet_test_posix_client_create_destroy_1000_io_uring();
+extern void rocketnet_test_posix_client_create_destroy_1000_xdp();
+extern void rocketnet_test_posix_server_restart_same_port_100_portable();
+extern void rocketnet_test_posix_server_restart_same_port_100_gso();
+extern void rocketnet_test_posix_server_restart_same_port_100_io_uring();
+extern void rocketnet_test_posix_server_restart_same_port_100_xdp();
+extern void rocketnet_test_posix_connect_disconnect_1000_portable();
+extern void rocketnet_test_posix_connect_disconnect_1000_gso();
+extern void rocketnet_test_posix_connect_disconnect_1000_io_uring();
+extern void rocketnet_test_posix_connect_disconnect_1000_xdp();
+extern void rocketnet_test_posix_destroy_under_traffic_100_portable();
+extern void rocketnet_test_posix_destroy_under_traffic_100_gso();
+extern void rocketnet_test_posix_destroy_under_traffic_100_io_uring();
+extern void rocketnet_test_posix_destroy_under_traffic_100_xdp();
+#endif
+
 // the channel harness smoke cases (functional/channel_smoke.cpp, picked up by
 // the functional/channel_*.cpp glob)
 extern void harness_one_message_each_way_lossless();
@@ -8321,6 +8367,39 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "client_receive_thread_quit_wake_before_wait_returns", rocketnet_test_client_receive_thread_quit_wake_before_wait_returns },
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "posix_init_term_1000_portable", rocketnet_test_posix_init_term_1000_portable },
+    { "posix_init_term_1000_gso", rocketnet_test_posix_init_term_1000_gso },
+    { "posix_init_term_1000_io_uring", rocketnet_test_posix_init_term_1000_io_uring },
+    { "posix_init_term_1000_xdp", rocketnet_test_posix_init_term_1000_xdp },
+    { "posix_server_create_destroy_1000_portable", rocketnet_test_posix_server_create_destroy_1000_portable },
+    { "posix_server_create_destroy_1000_gso", rocketnet_test_posix_server_create_destroy_1000_gso },
+    { "posix_server_create_destroy_1000_io_uring", rocketnet_test_posix_server_create_destroy_1000_io_uring },
+    { "posix_server_create_destroy_1000_xdp", rocketnet_test_posix_server_create_destroy_1000_xdp },
+    { "posix_client_create_destroy_1000_portable", rocketnet_test_posix_client_create_destroy_1000_portable },
+    { "posix_client_create_destroy_1000_gso", rocketnet_test_posix_client_create_destroy_1000_gso },
+    { "posix_client_create_destroy_1000_io_uring", rocketnet_test_posix_client_create_destroy_1000_io_uring },
+    { "posix_client_create_destroy_1000_xdp", rocketnet_test_posix_client_create_destroy_1000_xdp },
+    { "posix_server_restart_same_port_100_portable", rocketnet_test_posix_server_restart_same_port_100_portable },
+    { "posix_server_restart_same_port_100_gso", rocketnet_test_posix_server_restart_same_port_100_gso },
+    { "posix_server_restart_same_port_100_io_uring", rocketnet_test_posix_server_restart_same_port_100_io_uring },
+    { "posix_server_restart_same_port_100_xdp", rocketnet_test_posix_server_restart_same_port_100_xdp },
+    { "posix_connect_disconnect_1000_portable", rocketnet_test_posix_connect_disconnect_1000_portable },
+    { "posix_connect_disconnect_1000_gso", rocketnet_test_posix_connect_disconnect_1000_gso },
+    { "posix_connect_disconnect_1000_io_uring", rocketnet_test_posix_connect_disconnect_1000_io_uring },
+    { "posix_connect_disconnect_1000_xdp", rocketnet_test_posix_connect_disconnect_1000_xdp },
+    { "posix_destroy_under_traffic_100_portable", rocketnet_test_posix_destroy_under_traffic_100_portable },
+    { "posix_destroy_under_traffic_100_gso", rocketnet_test_posix_destroy_under_traffic_100_gso },
+    { "posix_destroy_under_traffic_100_io_uring", rocketnet_test_posix_destroy_under_traffic_100_io_uring },
+    { "posix_destroy_under_traffic_100_xdp", rocketnet_test_posix_destroy_under_traffic_100_xdp },
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "posix_init_term_1000", rocketnet_test_posix_init_term_1000 },
+    { "posix_server_create_destroy_1000", rocketnet_test_posix_server_create_destroy_1000 },
+    { "posix_client_create_destroy_1000", rocketnet_test_posix_client_create_destroy_1000 },
+    { "posix_server_restart_same_port_100", rocketnet_test_posix_server_restart_same_port_100 },
+    { "posix_connect_disconnect_1000", rocketnet_test_posix_connect_disconnect_1000 },
+    { "posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100 },
+#endif
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
     { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn },
     { "test_client_disconnect_reports_state_change", rocketnet_test_client_disconnect_reports_state_change },

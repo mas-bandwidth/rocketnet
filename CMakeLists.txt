@@ -73,6 +73,15 @@ include(cmake/RocketNetDependencies.cmake)
 
 if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
     set(ROCKETNET_SODIUM_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c")
+    # the vendor has no configure step, so sodium_memzero (sodium/sodium.c:176)
+    # falls to its volatile byte loop unless a HAVE_ macro names the platform
+    # wipe; glibc and musl have explicit_bzero, the wipe libsodium's own
+    # configure picks there. The byte loop spends ~125 ms on the 56 MB server
+    # transport that rocketnet_server_transport_destroy wipes through
+    # rocketnet_clear_and_free (sdk/rocketnet.cpp:488).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_EXPLICIT_BZERO=1)
+    endif()
 endif()
 function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
@@ -528,9 +537,10 @@ if(ROCKETNET_BUILD_TESTS)
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
+        functional/posix_lifecycle_stress.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     # the POSIX socket weather cells include <sys/socket.h> and <unistd.h>;
-    # functional/rocketnet_functional_tests.cpp:8295 and :8380 call them only
+    # functional/rocketnet_functional_tests.cpp:8341 and :8459 call them only
     # under !_WIN32, so Windows builds the suite without them
     if(NOT WIN32)
         target_sources(functional PRIVATE functional/posix_socket_errors.cpp)
