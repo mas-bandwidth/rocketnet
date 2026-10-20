@@ -121,14 +121,6 @@ const int * rocketnet_client_driver_availability( int * count )
     return rocketnet_driver_lists().clients;
 }
 
-// a create that returned NULL after an allocation on this thread was refused
-// failed for want of memory: report OUT_OF_MEMORY through the config's status
-static void rocketnet_driver_report_out_of_memory( int * status, uint64_t refusals_before )
-{
-    if ( status && rocketnet_allocation_refusals() != refusals_before )
-        *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-}
-
 bool rocketnet_server_driver_open( const rocketnet_server_driver_operations_t * ops,
     void * context, const rocketnet_server_driver_config_t * config,
     rocketnet_address_t * bind, rocketnet_server_driver_t * driver )
@@ -141,13 +133,8 @@ bool rocketnet_server_driver_open( const rocketnet_server_driver_operations_t * 
          !( ops->replay_forget && ops->replay_mark && ops->replay_commit ) ) return false;
     // Refused attempts must not constrain the next candidate's port.
     rocketnet_address_t attempt = *bind;
-    const uint64_t refusals = rocketnet_allocation_refusals();
     void * instance = ops->create( context, config, &attempt );
-    if ( !instance )
-    {
-        rocketnet_driver_report_out_of_memory( config->status, refusals );
-        return false;
-    }
+    if ( !instance ) return false;
     driver->operations = ops;
     driver->instance = instance;
     *bind = attempt;
@@ -175,13 +162,8 @@ bool rocketnet_client_driver_open( const rocketnet_client_driver_operations_t * 
     // never be released, a wake with no wait is never observed. docs/CLIENT-IO.md.
     if ( ( ops->wait != NULL ) != ( ops->wake != NULL ) ) return false;
     rocketnet_address_t attempt = *bind;
-    const uint64_t refusals = rocketnet_allocation_refusals();
     void * instance = ops->create( context, config, &attempt );
-    if ( !instance )
-    {
-        rocketnet_driver_report_out_of_memory( config->status, refusals );
-        return false;
-    }
+    if ( !instance ) return false;
     driver->operations = ops;
     driver->instance = instance;
     *bind = attempt;

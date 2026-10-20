@@ -39,11 +39,11 @@ enum rocketnet_server_driver_flags_t
 // Any other NULL is a refusal, and the transport ladder falls to the next
 // candidate; OUT_OF_MEMORY ends the ladder and the create
 // (sdk/rocketnet_server_transport.cpp and sdk/rocketnet_client_transport.cpp,
-// after their driver open). rocketnet_server_driver_open and
-// rocketnet_client_driver_open write it on a driver's behalf when the create
-// returned NULL after rocketnet_malloc refused an allocation on the calling
-// thread (rocketnet_allocation_refusals), so a driver that allocates through
-// rocketnet_malloc need not write it itself.
+// after their driver open). Each factory writes its own status: when create
+// must allocate (sdk/rocketnet_driver_loopback.cpp, the built-in socket
+// drivers, and the kernel-object drivers), a NULL from rocketnet_malloc is
+// OUT_OF_MEMORY and a create that refuses without a failed allocation leaves
+// the status untouched.
 struct rocketnet_server_driver_config_t
 {
     const char * name;
@@ -181,10 +181,6 @@ bool rocketnet_driver_discovers_bound_port( int driver );
 bool rocketnet_driver_pin_only( int driver );
 const int * rocketnet_server_driver_availability( int * num_available );
 const int * rocketnet_client_driver_availability( int * num_available );
-
-// The allocations rocketnet_malloc has refused on the calling thread, ever
-// (defined in sdk/rocketnet.cpp beside rocketnet_malloc).
-uint64_t rocketnet_allocation_refusals();
 
 // Validate the contract once at creation, never in the packet path. Also used
 // by native extension conformance tests before a backend enters the registry.

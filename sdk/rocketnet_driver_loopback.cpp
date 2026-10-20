@@ -129,7 +129,7 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
     return NULL;
 }
 
-static void * loopback_create( void * context, rocketnet_address_t * bind )
+static void * loopback_create( void * context, rocketnet_address_t * bind, int * status )
 {
     if ( bind->type != ROCKETNET_ADDRESS_IPV4 && bind->type != ROCKETNET_ADDRESS_IPV6 )
         return NULL;
@@ -187,7 +187,11 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
     ep->packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( context,
         sizeof( rocketnet_loopback_packet_t ) * ROCKETNET_LOOPBACK_QUEUE_PACKETS );
     if ( !ep->packets )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         return NULL;
+    }
     ep->context = context;
     ep->bind = *bind;
     ep->dropped = 0;
@@ -198,14 +202,14 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
     return ep;
 }
 
-static void * loopback_server_create( void * context, const rocketnet_server_driver_config_t *, rocketnet_address_t * bind )
+static void * loopback_server_create( void * context, const rocketnet_server_driver_config_t * config, rocketnet_address_t * bind )
 {
-    return loopback_create( context, bind );
+    return loopback_create( context, bind, config ? config->status : NULL );
 }
 
-static void * loopback_client_create( void * context, const rocketnet_client_driver_config_t *, rocketnet_address_t * bind )
+static void * loopback_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
 {
-    return loopback_create( context, bind );
+    return loopback_create( context, bind, config ? config->status : NULL );
 }
 
 static void loopback_destroy( void * driver )

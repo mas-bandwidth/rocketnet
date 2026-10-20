@@ -20,9 +20,9 @@
 //
 // The socket drivers (portable, msgx, gso, iocp) and the kernel-object
 // drivers (xdp, io_uring, rio) open a socket or a kernel object in their
-// create, which the unit tier never does; their allocations go through
-// rocketnet_malloc, whose refusals the open reads (sdk/rocketnet_driver.cpp:126), the same
-// path these cases walk.
+// create, which the unit tier never does; their allocations report the same
+// way through config->status where they allocate, the same path these cases
+// walk.
 
 #include "test_unit_registry.h"
 
@@ -140,13 +140,17 @@ struct driver_oom_instance_t
 
 static bool driver_oom_refuse = false;
 
-static void * driver_oom_create( void * context )
+static void * driver_oom_create( void * context, int * status )
 {
     if ( driver_oom_refuse )
         return NULL;
     driver_oom_instance_t * instance = (driver_oom_instance_t*) rocketnet_malloc( context, sizeof(driver_oom_instance_t) );
     if ( !instance )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         return NULL;
+    }
     memset( instance, 0, sizeof(*instance) );
     instance->context = context;
     for ( int i = 1; i < DRIVER_OOM_BLOCKS; i++ )
@@ -157,6 +161,8 @@ static void * driver_oom_create( void * context )
             for ( int j = 1; j < i; j++ )
                 rocketnet_free( context, instance->blocks[j] );
             rocketnet_free( context, instance );
+            if ( status )
+                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             return NULL;
         }
     }
@@ -171,10 +177,10 @@ static void driver_oom_destroy( void * driver )
     rocketnet_free( instance->context, instance );
 }
 
-static void * driver_oom_server_create( void * context, const rocketnet_server_driver_config_t *, rocketnet_address_t * )
-{ return driver_oom_create( context ); }
-static void * driver_oom_client_create( void * context, const rocketnet_client_driver_config_t *, rocketnet_address_t * )
-{ return driver_oom_create( context ); }
+static void * driver_oom_server_create( void * context, const rocketnet_server_driver_config_t * config, rocketnet_address_t * )
+{ return driver_oom_create( context, config ? config->status : NULL ); }
+static void * driver_oom_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * )
+{ return driver_oom_create( context, config ? config->status : NULL ); }
 static bool driver_oom_stop( void * ) { return true; }
 static void driver_oom_send_batch( void *, const rocketnet_platform_send_t *, int ) {}
 static int driver_oom_receive_batch( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) { return 0; }
