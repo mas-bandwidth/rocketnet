@@ -297,7 +297,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure clang-cl x64 with warnings as errors
-        run: cmake -B build-clang -T ClangCL -A x64 "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_C_FLAGS=/WX" "-DCMAKE_CXX_FLAGS=/WX"
+        run: cmake -B build-clang -T ClangCL -A x64 "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin" -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 
       - name: Build clang-cl x64
         run: cmake --build build-clang --config Release --parallel 4

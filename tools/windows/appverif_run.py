@@ -32,9 +32,10 @@ from pathlib import Path
 
 BASICS_LAYERS = ("Handles", "Heaps", "Locks", "Memory", "TLS", "Threadpool", "Leak")
 
-# Stop code ranges the Basics layers issue. appverif applies every code a
-# registered provider issues and names the rest as unknown, so the ranges are
-# generous on purpose.
+# Stop code ranges the Basics layers issue. The ranges are generous on purpose:
+# appverif -configure sets the codes before the first code no registered
+# provider issues, then fails naming that code, so configure_stops() starts
+# again after each code appverif names that way.
 STOP_CODE_RANGES = (
     (0x0001, 0x0020),  # Heaps
     (0x0200, 0x0220),  # Locks
@@ -52,6 +53,16 @@ STOP_ERROR_REPORT = "0x2"
 AVRF_NS = "{Application Verifier}"
 FRAMES_SHOWN = 8
 MAX_EXPORTED_LOGS = 4096
+
+# appverif -configure's error for a stop code no registered provider issues.
+UNISSUED_STOP_PREFIX = "AVRF: Error: Stop code ["
+UNISSUED_STOP_SUFFIX = "] is not issued by any of the registered providers."
+
+# Where appverif -logtofile keeps its one machine-wide setting (LogToFile).
+GLOBAL_SETTINGS_KEY = (
+    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+    r"\{ApplicationVerifierGlobalSettings}"
+)
 
 # Frames from these modules are the verifier itself or the system call path
 # that raised the stop; the frames shown start at the system API the caller
@@ -114,6 +125,65 @@ def stop_codes() -> list:
     return [f"0x{code:X}" for low, high in STOP_CODE_RANGES for code in range(low, high + 1)]
 
 
+def unissued_stop_code(output: str):
+    """The stop code appverif -configure names as issued by no provider, else None."""
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith(UNISSUED_STOP_PREFIX) and line.endswith(UNISSUED_STOP_SUFFIX):
+            return line[len(UNISSUED_STOP_PREFIX):-len(UNISSUED_STOP_SUFFIX)].upper()
+    return None
+
+
+def configure_stops(appverif: str, image_name: str, codes: list) -> int:
+    """Set every issued stop in codes to STOP_ERROR_REPORT; return how many were set.
+
+    appverif -configure sets the codes before the first unissued code, fails
+    naming that code, and sets none after it. Each call starts after the code
+    the last call named, so there are at most len(codes) + 1 calls; any other
+    failure raises.
+    """
+    remaining = [code.upper() for code in codes]
+    configured = 0
+    for _ in range(len(codes) + 1):
+        if not remaining:
+            break
+        proc = appverif_call(
+            appverif,
+            ["-configure", *remaining, "-for", image_name, "-with", f"ErrorReport={STOP_ERROR_REPORT}"],
+            check=False,
+        )
+        if proc.returncode == 0:
+            configured += len(remaining)
+            remaining = []
+            break
+        output = proc.stdout + "\n" + proc.stderr
+        code = unissued_stop_code(output)
+        if code not in remaining:
+            raise RuntimeError(
+                f"appverif -configure failed (exit {proc.returncode}): {' '.join(output.split())}"
+            )
+        index = remaining.index(code)
+        configured += index
+        remaining = remaining[index + 1:]
+    if remaining:
+        raise RuntimeError(f"appverif -configure left {len(remaining)} stop codes unset for {image_name}")
+    if configured == 0:
+        raise RuntimeError(f"appverif -configure set no stop for {image_name}")
+    return configured
+
+
+def logtofile_enabled() -> bool:
+    """Whether appverif -logtofile is enabled machine-wide now."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, GLOBAL_SETTINGS_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, "LogToFile")
+    except FileNotFoundError:
+        return False
+    return bool(value)
+
+
 def enabled_layers(appverif: str, image_name: str) -> list:
     proc = appverif_call(appverif, ["-query", "*", "-for", image_name], check=False)
     layers = []
@@ -154,7 +224,15 @@ def log_path_for(xml_path: Path, offset: int) -> Path:
 
 
 def export_logs(appverif: str, image_name: str, exe_path: Path, xml_path: Path) -> list:
-    """Export verifier logs in reverse order, up to the safety limit."""
+    """Export every verifier log of the image, the most recent first.
+
+    appverif keeps one log per process, and `-export log` exports only the most
+    recent one; Log=-N names the Nth log before it and fails once no log is
+    left. Every process the run starts with this image name (the suite runners
+    start one child per case) has its own log. The logs are deleted before the
+    run, so every log exported belongs to it. More than MAX_EXPORTED_LOGS logs
+    raise rather than loop on.
+    """
     paths = []
     for index in range(MAX_EXPORTED_LOGS + 1):
         offset = -index
@@ -251,17 +329,14 @@ def main() -> int:
     elapsed = 0.0
     timed_out = False
     cleanup_failed = False
-    logtofile_attempted = False
+    logtofile_was_enabled = None
     try:
-        logtofile_attempted = True
+        logtofile_was_enabled = logtofile_enabled()
         appverif_call(appverif, ["-logtofile", "enable"])
         appverif_call(appverif, ["-delete", "logs", "-for", image_name], check=False)
         appverif_call(appverif, ["-enable", *BASICS_LAYERS, "-for", image_name])
-        appverif_call(
-            appverif,
-            ["-configure", *stop_codes(), "-for", image_name, "-with", f"ErrorReport={STOP_ERROR_REPORT}"],
-            check=False,
-        )
+        configured = configure_stops(appverif, image_name, stop_codes())
+        print(f"appverif_run: {image_name} {configured} verifier stops set to ErrorReport={STOP_ERROR_REPORT}")
         missing = [layer for layer in BASICS_LAYERS if layer not in enabled_layers(appverif, image_name)]
         if missing:
             raise RuntimeError(f"layers not enabled for {image_name}: {', '.join(missing)}")
@@ -287,7 +362,8 @@ def main() -> int:
     finally:
         appverif_call(appverif, ["-disable", "*", "-for", image_name], check=False)
         appverif_call(appverif, ["-delete", "settings", "-for", image_name], check=False)
-        if logtofile_attempted:
+        # -logtofile is machine-wide: put back the setting the run found.
+        if logtofile_was_enabled is False:
             try:
                 appverif_call(appverif, ["-logtofile", "disable"])
             except RuntimeError as error:
