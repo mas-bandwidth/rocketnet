@@ -209,6 +209,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
     object->pending_connection = -1;
+    object->send_next_connection = 0;
     object->block = block;
     object->owns_block = owns_block ? 1 : 0;
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
@@ -782,8 +783,19 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     rn_message_object_close_in_place( object );
-    for ( int i = 0; i < object->num_connections; i++ )
+
+    // RNSlots Send, fair rotation: start at the first connection not yet
+    // offered a frame, and stop when the transport's send capacity for this
+    // update is spent. The cursor names the next unserved connection, so a
+    // cap below the client count serves every client in turn rather than
+    // forever serving the low indices. A connection that finds no capacity
+    // leaves its queued sends for the next update; reliability keeps them
+    // due, so nothing is lost.
+    const int num_connections = object->num_connections;
+    const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
+    for ( int offset = 0; offset < num_connections; offset++ )
     {
+        const int i = ( start + offset ) % num_connections;
         rn_message_connection_t * connection = &object->connections[i];
         if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
@@ -792,7 +804,11 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
         // waits unnumbered; application sends were dropped at start
         if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
             continue;
+        if ( object->link.send_capacity_available &&
+             object->link.send_capacity_available( object->link.transport ) <= 0 )
+            break;
         rn_message_connection_write( object, i );
+        object->send_next_connection = ( i + 1 ) % num_connections;
     }
     object->link.send_packets( object->link.transport );
 }
@@ -922,6 +938,11 @@ static void rn_server_link_send_packets( void * transport )
     rocketnet_server_transport_send_packets( (rocketnet_server_transport_t *) transport );
 }
 
+static int rn_server_link_send_capacity_available( void * transport )
+{
+    return rocketnet_server_transport_send_capacity_available( (const rocketnet_server_transport_t *) transport );
+}
+
 // P9a: the transport's id of the connection in the slot, 0 while it is free;
 // a reconnect into the slot has a new id even with the same client id and
 // inside one update, so Observe resets the slot for it
@@ -975,6 +996,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->finish_packet = rn_server_link_finish_packet;
     link->abort_packet = rn_server_link_abort_packet;
     link->send_packets = rn_server_link_send_packets;
+    link->send_capacity_available = rn_server_link_send_capacity_available;
     link->connection = rn_server_link_connection;
     link->disconnect = rn_server_link_disconnect;
     link->state = rn_server_link_state;

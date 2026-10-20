@@ -89,7 +89,13 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
 #endif // #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
 
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS 256
-#define ROCKETNET_SERVER_MAX_SEND_PACKETS    256
+// The send ring holds one slot per configured client: the v1.0 profile is
+// 1000 light clients at 10 Hz, each sending one packet per update, and every
+// client must be served every update. The capacity a transport enforces is
+// send_capacity; create reads it from max_clients with a floor of the
+// historical 256 slots, and a unit seam can lower it after create.
+#define ROCKETNET_SERVER_MIN_SEND_PACKETS    256
+#define ROCKETNET_SERVER_MAX_SEND_PACKETS    ROCKETNET_MAX_CLIENTS
 
 struct rocketnet_server_send_buffer_t
 {
@@ -240,6 +246,12 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_send_buffer_t send_buffer;
     struct rocketnet_server_receive_buffer_t receive_buffer;
     struct rocketnet_server_payload_ring_t payload_ring;
+
+    // the most payload-ring slots one update may fill. Create sets it from
+    // the configured client count with the historical 256-slot floor; the
+    // unit seam may set a smaller value so a cap below the client count
+    // exercises fairness.
+    int send_capacity;
 
     double time;                                        // the game's clock, last seen
     uint64_t test_timestamp;                            // unit-only Unix time; zero reads the wall clock
@@ -468,6 +480,34 @@ static void rocketnet_server_wire_totals_assign( struct rocketnet_server_transpo
 static bool rocketnet_server_transport_staged( const rocketnet_server_transport_t * transport )
 {
     return rocketnet_server_driver_has( transport->io, ROCKETNET_DRIVER_STAGED );
+}
+
+// The unit seam: the send capacity the next create reads. 0 keeps the
+// default. It is consumed by that create so one case cannot shape another.
+static int rocketnet_server_test_create_send_capacity = 0;
+
+void rocketnet_server_transport_set_create_send_capacity_for_test( int packets )
+{
+    rocketnet_server_test_create_send_capacity =
+        packets > 0 && packets <= ROCKETNET_SERVER_MAX_SEND_PACKETS ? packets : 0;
+}
+
+int rocketnet_server_transport_send_capacity( const rocketnet_server_transport_t * server_transport )
+{
+    return server_transport ? server_transport->send_capacity : 0;
+}
+
+// How many payload frames may still start this update. The staged drivers
+// keep their own staging, so the transport-side cap does not apply to them.
+int rocketnet_server_transport_send_capacity_available( const rocketnet_server_transport_t * server_transport )
+{
+    if ( !server_transport )
+        return 0;
+    if ( rocketnet_server_transport_staged( server_transport ) )
+        return 1;
+    const uint64_t used = server_transport->payload_ring.num_packets;
+    return used >= (uint64_t) server_transport->send_capacity ? 0 :
+        (int) ( (uint64_t) server_transport->send_capacity - used );
 }
 
 // a NULL start with the id ROCKETNET_DRIVER_PACKET_UNREACHABLE is the
@@ -1155,6 +1195,11 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // refused anything out of range, loudly, never clamped
 
     server_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int default_send_capacity = config->max_clients > ROCKETNET_SERVER_MIN_SEND_PACKETS ?
+        config->max_clients : ROCKETNET_SERVER_MIN_SEND_PACKETS;
+    server_transport->send_capacity = rocketnet_server_test_create_send_capacity > 0 ?
+        rocketnet_server_test_create_send_capacity : default_send_capacity;
+    rocketnet_server_test_create_send_capacity = 0;
     const int num_reassembly_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 ||
@@ -2196,7 +2241,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
         uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-        if ( slot >= ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
+        if ( slot >= (uint64_t) server_transport->send_capacity )
         {
             rocketnet_spam( "server payload ring full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -2332,7 +2377,7 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
     frame->slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-    if ( frame->slot >= ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
+    if ( frame->slot >= (uint64_t) server_transport->send_capacity )
     {
         rocketnet_spam( "server payload ring full. packet dropped" );
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -2615,8 +2660,8 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
     uint64_t num_packets = ring->num_packets;
-    if ( num_packets > ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
-        num_packets = ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
+    if ( num_packets > (uint64_t) server_transport->send_capacity )
+        num_packets = (uint64_t) server_transport->send_capacity;
 
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
     int num_sends = 0;
