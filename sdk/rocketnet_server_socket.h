@@ -43,8 +43,6 @@ void rocketnet_server_socket_forbid_commit();
 
 void rocketnet_server_socket_allow_commit();
 
-bool rocketnet_server_socket_commit_forbidden();
-
 // the R4 interrupt-line matcher, pure string logic exported for the
 // fixture test: does this /proc/interrupts line belong to this interface?
 // bounded-token semantics -- '-' allowed before (driver-prefixed names
@@ -97,8 +95,6 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
 void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_socket );
 
 int rocketnet_server_socket_state( struct rocketnet_server_socket_t * server_socket );
-
-uint64_t rocketnet_server_socket_id( struct rocketnet_server_socket_t * server_socket );
 
 int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * server_socket );
 

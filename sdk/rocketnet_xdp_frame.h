@@ -207,6 +207,12 @@ static inline int rocketnet_xdp_frame_build(
 // extension headers included; an IPv6 header with any traffic class and flow
 // label is read. Fills the source address and a pointer/length
 // into the payload bytes (inside frame).
+// Length guards: the up-front check proves the frame holds at least the IPv4
+// minimum (ethernet + IPv4 + UDP), enough to name the ethertype at bytes
+// 12-13 and the version at byte 14; each family branch then proves the frame
+// holds that family's own ethernet + IP + UDP header before it reads any byte
+// past the ethernet header, so a truncated IPv6 frame is refused before its
+// source address or UDP port is read.
 
 static inline bool rocketnet_xdp_frame_parse(
     const void * frame, size_t frame_bytes,
@@ -234,6 +240,8 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( f[23] != ROCKETNET_UDP_PROTOCOL )
             return false;
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+        if ( frame_bytes < (size_t) header_bytes )
+            return false;
         out_from->type = ROCKETNET_ADDRESS_IPV4;
         out_from->data.ipv4[0] = f[26];
         out_from->data.ipv4[1] = f[27];
@@ -250,6 +258,8 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( f[20] != ROCKETNET_UDP_PROTOCOL )
             return false;
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+        if ( frame_bytes < (size_t) header_bytes )
+            return false;
         out_from->type = ROCKETNET_ADDRESS_IPV6;
         for ( int i = 0; i < 8; ++i )
             out_from->data.ipv6[i] = ( (uint16_t) f[22 + 2 * i] << 8 ) | f[23 + 2 * i];

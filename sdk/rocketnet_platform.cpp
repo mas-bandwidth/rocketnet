@@ -119,6 +119,15 @@ void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, i
 // no IPv6 stack. the client's availability probe reads the same flag.
 static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
 
+// test seam for the network lookups (rocketnet_internal.h): NULL runs the real
+// connection-type lookup and IPv6 probe; a unit test's table replaces both.
+static std::atomic<const rocketnet_platform_network_lookups_t *> rocketnet_platform_network_lookups_override{ NULL };
+
+void rocketnet_platform_set_network_lookups_for_testing( const rocketnet_platform_network_lookups_t * lookups )
+{
+    rocketnet_platform_network_lookups_override.store( lookups, std::memory_order_release );
+}
+
 // Network-thread priority (docs/CLIENT-IO.md, DRIVERS.md). The calls and their
 // values are the flow library's (flow_platform.cpp), unchanged; each platform
 // block below fills the real call table. A unit test replaces the table
@@ -422,7 +431,8 @@ bool rocketnet_platform_init()
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
     time_start = ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
-    connection_type = get_connection_type();
+    const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
+    connection_type = lookups ? lookups->connection_type() : get_connection_type();
     return true;
 }
 
@@ -3242,8 +3252,8 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 // ---------------------------------------------------
 
 // The client I/O wake on macOS and iOS: one kqueue holding the socket's
-// EVFILT_READ and an EVFILT_USER trigger (docs/CLIENT-IO.md "The wake" and
-// its macOS and iOS card). The trigger is EV_CLEAR, so it is
+// EVFILT_READ and an EVFILT_USER trigger (docs/CLIENT-IO.md "The wake").
+// The trigger is EV_CLEAR, so it is
 // level-triggered until a wait returns it: a set made while no wait runs
 // makes the next wait return at once, and that wait consumes it.
 
@@ -4373,6 +4383,10 @@ bool rocketnet_platform_client_ipv6_available()
 {
     if ( !rocketnet_platform_ipv6_socket_available_for_testing )
         return false;
+
+    const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
+    if ( lookups )
+        return lookups->ipv6_available();
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
