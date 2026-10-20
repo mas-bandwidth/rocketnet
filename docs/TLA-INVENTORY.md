@@ -9,14 +9,14 @@ inputs and recorded result for each required group.
 | --- | --- | --- |
 | lossy link | `Link`, `RNLink` | the configured loss pattern and fairness assumptions are explicit |
 | client handshake | `ClientConnection`, `ClientSession` | monotonic states, bounded deadlines, secret cleanup and reconnect reset |
-| server handshake | `RNHandshake` | cookie gate, token/address binding, slot admission and bounded work |
-| replay and ACKs | `ReplayWindow`, `RNAck`, `RNSentHistory` | replay refusal, honest ACK ranges and bounded retained history |
+| server handshake | `ServerConnection` | cookie gate, token/address binding, slot admission and bounded work |
+| replay and ACKs | `ReplayWindow`, `ReplayWindow`, `RNSentHistory` | replay refusal, honest ACK ranges and bounded retained history |
 | channel delivery | `RNChannel`, `RNChannelTypes` | reliable exactly once, ordered in order, sequenced newest and unreliable at most once |
 | fragmentation | `RNBlocks`, `FragmentsAndAcks` | exact reconstruction, bounded slots and ACK coupling |
 | receipts | `RNReceipts` | one terminal receipt for a receipt-bearing send |
 | endpoint reset | `RNSlots`, `ClientSession` | no state or payload crosses a connection generation |
 | client I/O | `RNClientIo`, `RNClientIoDecrypt` | exclusive buffer ownership, replay before admission and one retirement |
-| handoff | `RNSendHandoff` | bounded queues, reopen after refusal and no lost owned frame |
+| handoff | `SendHandoff` | bounded queues, reopen after refusal and no lost owned frame |
 
 Model constants must stay small enough for exhaustive checking while retaining
 the production relationship being proved. A model-check result is evidence for
