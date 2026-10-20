@@ -573,7 +573,8 @@ dependencies only. W-numbers are the owner approvals a card waits for.
 
 0a. `rocketnet-keyed-filter-value` (pro, merging): the pure value.
 0b. `rocketnet-tla-filter-epochs` (frontier, ready): RNFilterEpochs.
-0c. `rocketnet-filter-epoch-window` (pro, after 0a, 0b): the receiver table.
+0c. `rocketnet-filter-epoch-window`: removed in v1.0; the receiver table is
+    design only (1.2).
 
 **L1-L3, the rolling magic:**
 
