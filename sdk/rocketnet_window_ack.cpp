@@ -342,7 +342,7 @@ static void rn_window_ack_record_first_send( rn_window_ack_t * ack, rn_send_numb
 //                        Public operations
 // ----------------------------------------------------------------
 
-// Initializes the sent-packet map, resend FIFO, and RFC 6298 estimator
+// Initializes the sent-packet map, resend FIFO, and RakNet RTT estimator
 // (docs/CHANNELS.md 6.4; tla/RNWindow.tla Init).
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config )
 {
@@ -365,8 +365,6 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->rto_min = (double) config->rto_min_ms / 1000.0;
     ack->rto_max = (double) config->rto_max_ms / 1000.0;
     ack->reliable_timeout = (double) config->reliable_timeout_ms / 1000.0;
-    ack->resend_interval = (double) ROCKETNET_MESSAGE_RESEND_INTERVAL_MS / 1000.0;
-    ack->rto_scale = (double) ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100.0;
 
     ack->srtt = 0.0;
     ack->rttvar = 0.0;
@@ -601,22 +599,24 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_ACKED ); // RNReceipts ReceiveAck, EmitAck
 
-    // 1. One unambiguous RTT sample per acked packet_id (RFC 6298, CHANNELS 6.4).
+    // 1. One unambiguous RTT sample per acked packet_id (RakNet CC.cpp:210-222).
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
     if ( !ack->has_rtt )
     {
         ack->srtt = rtt;
-        ack->rttvar = rtt * 0.5;
+        ack->rttvar = rtt;
         ack->has_rtt = 1;
     }
     else
     {
         const double diff = fabs( ack->srtt - rtt );
-        ack->rttvar = 0.75 * ack->rttvar + 0.25 * diff;
-        ack->srtt = 0.875 * ack->srtt + 0.125 * rtt;
+        ack->rttvar = 0.95 * ack->rttvar + 0.05 * diff;
+        ack->srtt = 0.95 * ack->srtt + 0.05 * rtt;
     }
-    // the RTO of 6.4: rto_scale x srtt + 2 rttvar, clamped (RNResendTiming Sample)
-    ack->rto = rn_clamp_double( ack->rto_scale * ack->srtt + 2.0 * ack->rttvar, ack->rto_min, ack->rto_max );
+    // RakNet's RTO is min(2*RTT + 4*deviation + 30 ms, configured max).
+    // The first deviation is the first sample; the optional configured floor applies
+    // (docs/RAKNET-RELIABILITY.md:667-668, 686-695).
+    ack->rto = rn_window_ack_compute_rto( ack->srtt, ack->rttvar, ack->rto_min, ack->rto_max );
 
     // 2. For each referenced message number n that is still unacked (n >= U):
     //    unlink from resend FIFO, free its chunk in S (and its descriptor in Q
@@ -760,7 +760,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
     const uint32_t W = region->window;
     // Negative sentinel: guarantees now >= last_send + rn_window_ack_resend_delay
     // for all now >= 0.0, while marking a failed-send retry apart from a resend.
-    const double due_now_sentinel = -( ack->rto_max + ack->resend_interval + 1.0 );
+    const double due_now_sentinel = -( ack->rto_max + 1.0 );
 
     for ( uint32_t i = count; i > 0; i-- )
     {
