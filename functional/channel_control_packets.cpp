@@ -55,7 +55,7 @@ void control_disconnect_burst_each_end()
     control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     rocketnet_channel_harness_destroy( &h );
 
-    printf( "control_disconnect_burst_each_end: both ends read the other's type 6\n" );
+    printf( "test_control_disconnect_burst_each_end: both ends read the other's type 6\n" );
 }
 
 void control_standalone_ack_each_end()
@@ -89,7 +89,7 @@ void control_standalone_ack_each_end()
     control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     rocketnet_channel_harness_destroy( &h );
 
-    printf( "control_standalone_ack_each_end: server sent its standalone ack, the client read it\n" );
+    printf( "test_control_standalone_ack_each_end: server sent its standalone ack, the client read it\n" );
 }
 
 void control_fragment_packets_each_end()
@@ -140,7 +140,7 @@ void control_fragment_packets_each_end()
     }
     rocketnet_channel_harness_destroy( &h );
 
-    printf( "control_fragment_packets_each_end: both ends reassembled one fragment payload\n" );
+    printf( "test_control_fragment_packets_each_end: both ends reassembled one fragment payload\n" );
 }
 
 void control_denied_when_server_full()
@@ -186,5 +186,5 @@ void control_denied_when_server_full()
     control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     rocketnet_channel_harness_destroy( &h );
 
-    printf( "control_denied_when_server_full: client denied, no-slots counter rose\n" );
+    printf( "test_control_denied_when_server_full: client denied, no-slots counter rose\n" );
 }

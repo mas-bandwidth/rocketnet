@@ -205,7 +205,7 @@ static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {
 // one-packet record edge; max_message_bytes is accepted and max+1 is refused.
 // ---------------------------------------------------------------------------
 
-static void unreliable_promotion_every_mode()
+static void test_unreliable_promotion_every_mode()
 {
     const int modes[3]={ROCKETNET_RELIABILITY_UNRELIABLE,ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT};
     for(int m=0;m<3;++m) {
@@ -391,4 +391,4 @@ static void unreliable_promotion_every_mode()
     check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==0);
     boundary_teardown(&pair);
 }
-REGISTER_UNIT_TEST(unreliable_promotion_every_mode);
+REGISTER_UNIT_TEST(test_unreliable_promotion_every_mode);

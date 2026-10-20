@@ -3,10 +3,9 @@
 # sodium compiled the same way (sodium/ is part of the build; the default
 # config uses it, so every linked object is instrumented). tools/run_msan.sh
 # is the one command. A clean run prints "MSan: clean". The script fails when a
-# finding is not listed in tools/msan_known.txt, when a test crashes or exits
-# for any reason other than the MSan exit code, or when the run stops without a
-# test fail line; a listed finding whose test leaves the MSan exit code does not
-# fail the script. Findings are present at BASE, so this job is
+# finding is not listed in tools/msan_known.txt, when a test crashes or fails,
+# or when the run stops without a test fail line; a listed finding does not
+# fail the script (MSan's exitcode is 0, so the suite runs every test). Findings are present at BASE, so this job is
 # continue-on-error.
 name: msan
 

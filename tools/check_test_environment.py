@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Run the SDK suite with hostile ambient config; require names-only success.
+"""Run the SDK suite with hostile ambient config; require the netcode output.
 
-With the unit binary (bin/test) this also asserts that the set of names the
-suite prints -- the name before any " [SKIPPED" -- equals the set of names the
-sources register in the registry tables and REGISTER_UNIT_TEST lines, so a
-test compiled out of a platform's build is named the moment it vanishes rather
-than silently shrinking the printed count. With the functional binary
-(bin/functional) it runs the suite the way its CI job does and asserts the
-same name-set equality against functional/'s registry.
-
-The witness, corpus and reassembly tests report the reversed rule or corpus
-they just exercised; those lines are their own record and are listed in
-KNOWN_DIAGNOSTIC_RE. Every other line of a passing run must be a test name or
-a named skip.
+A passing run prints one line per test, its test_ lowercase snake_case name,
+then a blank line and "*** ALL TESTS PASSED ***", and nothing else. With the
+unit binary (bin/test) the printed names must cover every name the sources
+register outside a preprocessor condition (registry tables and
+REGISTER_UNIT_TEST lines), and every printed name must be registered, so a
+test is never silently lost; a name registered under a condition (a platform
+#if, or a functional entry with a runs_here predicate) may or may not print.
+With the functional binary (bin/functional) it runs the suite the way its CI
+job does and checks the same against functional/'s registry and the names the
+sibling executables print.
 """
 import os
 from pathlib import Path
@@ -23,71 +21,45 @@ import sys
 REPO = Path(__file__).resolve().parent.parent
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# Registry rows name every functional test, including harness and client_io cases.
-TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,')
+# Registry rows name every functional test, including harness and client_io
+# cases; a third field is a runs_here predicate (functional/rocketnet_functional_tests.cpp).
+TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,\s*(?:"[^"]*"\s*,\s*\w+|\w+(\s*,\s*\w+)?)\s*\}')
 REGISTER_RE = re.compile(r"REGISTER_UNIT_TEST(?:_EXPECTED_FAIL)?\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)")
-EXEC_TEST_NAME_RE = re.compile(r'"(test_[a-z0-9_]+)(?:\\n)?"')
+EXEC_TEST_NAME_RE = re.compile(r'"(test_[a-z0-9_%]+)(?:\\n)?"')
+TEST_NAME_RE = re.compile(r"test_[a-z0-9]+(?:_[a-z0-9]+)*")
+PASSED_LINE = "*** ALL TESTS PASSED ***"
 IF_RE = re.compile(r"^\s*#\s*if(?:def|ndef)?\b")
 ELIF_RE = re.compile(r"^\s*#\s*elif\b")
 ELSE_RE = re.compile(r"^\s*#\s*else\b")
 ENDIF_RE = re.compile(r"^\s*#\s*endif\b")
-KNOWN_DIAGNOSTIC_RE = re.compile(
-    r"^(?:"
-    r"wycheproof \S+ tcId [0-9]+ .*"
-    r"|pcapng (?:coverage|corpus|witness): .*"
-    r"|reassembly_[a-z0-9_]+(?: \([0-9]+ ahead\))?: "
-    r"[0-9]+ of [0-9]+ payloads delivered, FRAGMENT_STALE [0-9]+, abandoned [0-9]+"
-    r")$"
-)
-
-
 def _table_names(path):
+    # (every name, the names outside any #if and without a runs_here predicate)
     all_names = set()
-    paired_names = set()
-    stack = []
+    always = set()
+    depth = 0
     try:
         text = path.read_text()
     except OSError:
-        return all_names, paired_names
-    for line in text.splitlines():
+        return all_names, always
+    for line in _mask_comments_and_literals(text, keep_strings=True).splitlines():
         if IF_RE.match(line):
-            stack.append(([set()], False))
+            depth += 1
             continue
-        if ELIF_RE.match(line) and stack:
-            stack[-1][0].append(set())
-            continue
-        if ELSE_RE.match(line) and stack:
-            arms, _ = stack[-1]
-            arms.append(set())
-            stack[-1] = (arms, True)
-            continue
-        if ENDIF_RE.match(line) and stack:
-            arms, has_else = stack.pop()
-            if any(arms):
-                common = set.intersection(*arms) if has_else else set()
-                if stack:
-                    stack[-1][0][-1] |= common
-                else:
-                    paired_names |= common
+        if ENDIF_RE.match(line):
+            depth = max(0, depth - 1)
             continue
         m = TABLE_ENTRY_RE.match(line)
         if m:
-            name = m.group(1)
-            all_names.add(name)
-            if stack:
-                stack[-1][0][-1].add(name)
-            else:
-                paired_names.add(name)
-    return all_names, paired_names
+            all_names.add(m.group(1))
+            if depth == 0 and not m.group(2):
+                always.add(m.group(1))
+    return all_names, always
 
 
-LINUX_GUARD_RE = re.compile(
-    r"^\s*#\s*if\s+(?:defined\s*\(\s*__linux__\s*\)|defined\s+__linux__|__linux__)\s*$"
-)
 RAW_STRING_START_RE = re.compile(r'(?:u8|u|U|L)?R"([^ ()\\\t\r\n]{0,16})\(')
 
 
-def _mask_comments_and_literals(text):
+def _mask_comments_and_literals(text, keep_strings=False):
     # Preserve line boundaries and hide comment/string contents before guard
     # matching, so directive-looking examples cannot change source inventory.
     output = list(text)
@@ -120,7 +92,7 @@ def _mask_comments_and_literals(text):
             blank(index, end)
             index = end
             continue
-        if text[index] in ("\"", "'"):
+        if text[index] in ("\"", "'") and not keep_strings:
             quote = text[index]
             end = index + 1
             while end < length:
@@ -137,69 +109,33 @@ def _mask_comments_and_literals(text):
         index += 1
     return "".join(output)
 
-def _without_linux_guarded_blocks(text):
-    # Unit registrations inside __linux__ guards exist only in the Linux
-    # registry. Select that branch on Linux and its #else branch elsewhere;
-    # nested unrelated conditions remain conservatively inventoried in both
-    # branches, as they were before this platform-aware filtering.
-    is_linux = sys.platform.startswith("linux")
-    output = []
-    active = True
-    stack = []
-    source_lines = text.splitlines(keepends=True)
-    directive_lines = _mask_comments_and_literals(text).splitlines(keepends=True)
-    for line, directive_line in zip(source_lines, directive_lines):
-        if IF_RE.match(directive_line):
-            parent_active = active
-            if LINUX_GUARD_RE.match(directive_line):
-                stack.append(("linux", parent_active))
-                active = parent_active and is_linux
-                continue
-            stack.append(("other", parent_active))
-            if active:
-                output.append(line)
-            continue
-        if ELSE_RE.match(directive_line) or ELIF_RE.match(directive_line):
-            if stack and stack[-1][0] == "linux":
-                active = stack[-1][1] and not is_linux
-                continue
-            if active:
-                output.append(line)
-            continue
-        if ENDIF_RE.match(directive_line):
-            if stack:
-                kind, parent_active = stack.pop()
-                if kind == "linux":
-                    active = parent_active
-                    continue
-                active = parent_active
-            if active:
-                output.append(line)
-            continue
-        if active:
-            output.append(line)
-    return "".join(output)
-
-
 def _register_names(path):
+    # [(name, registered outside any #if)]
     names = []
     try:
         text = path.read_text()
     except OSError:
         return names
-    text = _without_linux_guarded_blocks(text)
-    for m in REGISTER_RE.finditer(text):
-        names.append(m.group(1))
+    depth = 0
+    for line in _mask_comments_and_literals(text).splitlines():
+        if IF_RE.match(line):
+            depth += 1
+            continue
+        if ENDIF_RE.match(line):
+            depth = max(0, depth - 1)
+            continue
+        for m in REGISTER_RE.finditer(line):
+            names.append((m.group(1), depth == 0))
     return names
 
 
 def registered_unit_names():
     all_names = set()
-    paired_names = set()
+    always = set()
     for rel in (("sdk", "rocketnet_tests.cpp"), ("test_channels.cpp",)):
         a, p = _table_names(REPO.joinpath(*rel))
         all_names |= a
-        paired_names |= p
+        always |= p
     # A REGISTER_UNIT_TEST name is unique: test.cpp runs a name from the sdk
     # and channels tables before the unit-file registry, and the registry runs
     # a name's first registration only (rocketnet_unit_file_find in
@@ -209,15 +145,16 @@ def registered_unit_names():
     seen = {}
     duplicates = []
     for path in sorted(REPO.glob("test_unit_*.cpp")):
-        for name in _register_names(path):
+        for name, unconditional in _register_names(path):
             if name in seen or name in table_names:
                 duplicates.append("%s (%s, %s)" % (name, seen.get(name, "registry table"), path.name))
             seen.setdefault(name, path.name)
+            all_names.add(name)
+            if unconditional:
+                always.add(name)
     if duplicates:
         sys.exit("unit test names registered more than once: " + "; ".join(duplicates))
-    all_names |= set(seen)
-    paired_names |= set(seen)
-    return all_names, paired_names
+    return all_names, always
 
 
 def registered_functional_names():
@@ -227,12 +164,11 @@ def registered_functional_names():
 def exec_functional_names():
     # The functional binary also runs the sibling exec binaries (test_xdp,
     # test_transport_control and each platform's analogue), whose tests print
-    # their own names (e.g. test_xdp_inactive_generation). Those names appear
-    # in the output without being registered in functional/'s own registry, so
-    # they are known names, not unknown ones. Only the name-shaped string
-    # literals the exec sources print are known -- not every identifier in the
-    # file, which would turn the whole vocabulary into "known" names.
-    names = set()
+    # their own names (e.g. test_xdp_transport_inactive_generation), some
+    # through a format (test_disconnect_burst_next_send_%s). Only the
+    # name-shaped string literals the exec sources print are known, as
+    # patterns, plus each exec case's own name.
+    patterns = []
     for rel in (
         "test_serialize.cpp",
         "test_transport_control.cpp",
@@ -240,37 +176,38 @@ def exec_functional_names():
         "test_xdp.cpp",
         "test_iocp.cpp",
     ):
+        patterns.append(re.escape(rel[:-4]))
         try:
             text = (REPO / rel).read_text()
         except OSError:
             continue
-        names |= {m.group(1) for m in EXEC_TEST_NAME_RE.finditer(text)}
-    return names
+        for m in EXEC_TEST_NAME_RE.finditer(text):
+            patterns.append(re.escape(m.group(1)).replace("%d", "[0-9]+").replace("%s", "[a-z0-9_]+"))
+    # the hard-killed peer cases name themselves from their cell
+    # (rocketnet_posix_hard_killed_peer_test_name, functional/posix_hard_killed_peer.cpp)
+    patterns.append("test_posix_(?:hard_killed_client|send_to_closed_port|client_server_gone|receive_seam)_[a-z0-9_]+")
+    return re.compile("(?:" + "|".join(patterns) + ")")
 
 
-def printed_names(lines):
-    names = set()
-    for line in lines:
-        name = line.split(" [SKIPPED", 1)[0]
-        if NAME_RE.fullmatch(name) and not name.startswith("test_timing_"):
-            names.add(name)
-    return names
+def check_shape(lines, label):
+    # every line a test name, then a blank line and the passed line
+    if len(lines) < 3 or lines[-2:] != ["", PASSED_LINE]:
+        sys.exit("%s: the run does not end with a blank line and %r" % (label, PASSED_LINE))
+    bad = [line for line in lines[:-2] if not TEST_NAME_RE.fullmatch(line)]
+    if bad:
+        sys.exit("%s: lines that are not test_ snake_case names: %s" % (label, "; ".join(bad[:10])))
+    return lines[:-2]
 
 
-def assert_name_set(printed, registered, label, known=None, paired=None):
-    if known is None:
-        known = registered
-    missing = sorted(registered - printed)
-    unknown = sorted(printed - known)
-    unpaired = sorted(registered - paired) if paired is not None else []
-    if missing or unknown or unpaired:
+def assert_name_set(printed, registered, always, label, exec_names=None):
+    missing = sorted(always - printed)
+    unknown = sorted(n for n in printed - registered if not (exec_names and exec_names.fullmatch(n)))
+    if missing or unknown:
         parts = []
         if missing:
             parts.append("missing from output: " + ", ".join(missing))
         if unknown:
             parts.append("printed but not registered: " + ", ".join(unknown))
-        if unpaired:
-            parts.append("registered without #else skip: " + ", ".join(unpaired))
         sys.exit("%s: name set mismatch (%d printed, %d registered) -- %s"
                  % (label, len(printed), len(registered), "; ".join(parts)))
 
@@ -299,28 +236,11 @@ def main():
         # ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin) rather than the
         # unit suite's hostile config.
         result = run_binary(binary, env, timeout=1200)
-        lines = result.stdout.splitlines()
-        printed = printed_names(lines)
-        reg_all, reg_paired = registered_functional_names()
-        assert_name_set(printed, reg_all, "functional",
-                        known=reg_all | exec_functional_names(),
-                        paired=reg_paired)
         if result.returncode:
-            fails = [line for line in lines if line.startswith("FAIL: ")]
-            tc_bin = binary.parent / ("test_transport_control.exe" if binary.suffix == ".exe" else "test_transport_control")
-            if fails == ["FAIL: test_transport_control exit 1"] and tc_bin.exists():
-                tc_env = env.copy()
-                tc_env["ROCKETNET_SERVER_PUBLIC_KEY"] = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
-                tc_env["ROCKETNET_BACKEND_PUBLIC_KEY"] = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
-                tc_res = run_binary(tc_bin, tc_env, timeout=120)
-                if tc_res.returncode:
-                    sys.exit("functional suite failed: %s" % result.returncode)
-                printed |= printed_names(tc_res.stdout.splitlines())
-                assert_name_set(printed, reg_all, "functional",
-                                known=reg_all | exec_functional_names(),
-                                paired=reg_paired)
-            else:
-                sys.exit("functional suite failed: %s" % result.returncode)
+            sys.exit("functional suite failed: %s" % result.returncode)
+        printed = set(check_shape(result.stdout.splitlines(), "functional"))
+        reg_all, reg_always = registered_functional_names()
+        assert_name_set(printed, reg_all, reg_always, "functional", exec_functional_names())
         return
 
     # Preserve any caller's explicit ROCKETNET_SERVER_TRANSPORT and
@@ -341,19 +261,12 @@ def main():
     result = run_binary(binary, env, timeout=180)
     if result.returncode:
         sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
-    lines = result.stdout.splitlines()
-    if not lines or any(
-        not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]+(?: [^\r\n]*\[SKIPPED[^\r\n]*\])?", line)
-        and not KNOWN_DIAGNOSTIC_RE.fullmatch(line)
-        for line in lines
-    ):
-        sys.exit("Passing SDK suite emitted output other than test names or named skips")
-    if "test_suite_environment" not in lines:
+    names = check_shape(result.stdout.splitlines(), "SDK suite")
+    if "test_suite_environment" not in names:
         sys.exit("SDK suite did not execute its environment restoration test")
 
-    printed = printed_names(lines)
-    reg_all, reg_paired = registered_unit_names()
-    assert_name_set(printed, reg_all, "SDK suite", paired=reg_paired)
+    reg_all, reg_always = registered_unit_names()
+    assert_name_set(set(names), reg_all, reg_always, "SDK suite")
 
 
 if __name__ == "__main__":

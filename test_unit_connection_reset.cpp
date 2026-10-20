@@ -148,7 +148,7 @@ static void reset_field_holds( const char * structure, const char * member, cons
     check( holds );
 }
 
-static void connection_reset_inventory_covers_every_field()
+static void test_connection_reset_inventory_covers_every_field()
 {
     char failure[256];
 
@@ -297,7 +297,7 @@ static void connection_reset_inventory_covers_every_field()
         check( connection->cursors[i] == 0 );
     rn_message_object_destroy( object );
 }
-REGISTER_UNIT_TEST( connection_reset_inventory_covers_every_field );
+REGISTER_UNIT_TEST( test_connection_reset_inventory_covers_every_field );
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
@@ -727,7 +727,7 @@ static void reset_loopback_server_sweep_timeout_scenario()
     reset_loopback_destroy( &f );
 }
 
-static void connection_reset_server_slot_reuse_is_clean()
+static void test_connection_reset_server_slot_reuse_is_clean()
 {
     reset_loopback_slot_reuse_scenario();
     reset_loopback_server_sweep_timeout_scenario();
@@ -753,9 +753,9 @@ static void connection_reset_server_slot_reuse_is_clean()
     check( f.server.reassembly->newest_completed[b] == 0 );
     reset_server_teardown( &f );
 }
-REGISTER_UNIT_TEST( connection_reset_server_slot_reuse_is_clean );
+REGISTER_UNIT_TEST( test_connection_reset_server_slot_reuse_is_clean );
 
-static void connection_reset_server_reset_touches_only_its_slot()
+static void test_connection_reset_server_reset_touches_only_its_slot()
 {
     reset_loopback_other_slot_scenario();
     reset_server_fixture_t f;
@@ -775,7 +775,7 @@ static void connection_reset_server_reset_touches_only_its_slot()
     check( f.connection_ids[b] == b_id );
     reset_server_teardown( &f );
 }
-REGISTER_UNIT_TEST( connection_reset_server_reset_touches_only_its_slot );
+REGISTER_UNIT_TEST( test_connection_reset_server_reset_touches_only_its_slot );
 
 
 // The client ends the connection itself, by its own timeout: the server goes
@@ -832,7 +832,7 @@ static void reset_loopback_client_denied_scenario()
     reset_loopback_destroy( &f );
 }
 
-static void connection_reset_client_disconnect_is_clean()
+static void test_connection_reset_client_disconnect_is_clean()
 {
     reset_loopback_client_timeout_scenario();
     reset_loopback_client_denied_scenario();
@@ -863,7 +863,7 @@ static void connection_reset_client_disconnect_is_clean()
     check( memcmp( client.reassembly->slots, fresh_slots, sizeof(fresh_slots) ) == 0 );
     rocketnet_reassembly_set_destroy( client.reassembly );
 }
-REGISTER_UNIT_TEST( connection_reset_client_disconnect_is_clean );
+REGISTER_UNIT_TEST( test_connection_reset_client_disconnect_is_clean );
 
 static void reset_loopback_client_disconnect_state_scenario( int state, int mid_fragment )
 {
@@ -944,7 +944,7 @@ static void reset_loopback_server_disconnect_state_scenario( int mid_fragment )
     reset_loopback_destroy( &f );
 }
 
-static void connection_reset_each_state_leaves_a_clean_slot()
+static void test_connection_reset_each_state_leaves_a_clean_slot()
 {
     static const int handshake_and_connected[] = {
         ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE,
@@ -961,7 +961,7 @@ static void connection_reset_each_state_leaves_a_clean_slot()
     reset_loopback_server_disconnect_state_scenario( 0 );
     reset_loopback_server_disconnect_state_scenario( 1 );
 }
-REGISTER_UNIT_TEST( connection_reset_each_state_leaves_a_clean_slot );
+REGISTER_UNIT_TEST( test_connection_reset_each_state_leaves_a_clean_slot );
 
 static void reset_loopback_settle_messages( reset_loopback_t * f )
 {
@@ -1074,7 +1074,7 @@ static void reset_loopback_client_reliable_timeout_reason_scenario( const rocket
     reset_loopback_destroy( &f );
 }
 
-static void connection_reset_disconnect_reason_kept_until_next_connection()
+static void test_connection_reset_disconnect_reason_kept_until_next_connection()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -1085,4 +1085,4 @@ static void connection_reset_disconnect_reason_kept_until_next_connection()
     reset_loopback_server_reliable_timeout_reason_scenario( &config );
     reset_loopback_client_reliable_timeout_reason_scenario( &config );
 }
-REGISTER_UNIT_TEST( connection_reset_disconnect_reason_kept_until_next_connection );
+REGISTER_UNIT_TEST( test_connection_reset_disconnect_reason_kept_until_next_connection );

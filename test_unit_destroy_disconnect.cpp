@@ -290,7 +290,7 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
 // argument starting at 1000.0 asserts the server's slot is free within one
 // server update after the client's destroy, and the timed-out counter does not
 // move.
-static void destroy_connected_client_sends_disconnect()
+static void test_destroy_connected_client_sends_disconnect()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_set_quiet( 1 );
@@ -359,14 +359,14 @@ static void destroy_connected_client_sends_disconnect()
     rocketnet_server_destroy( server );
 }
 
-REGISTER_UNIT_TEST( destroy_connected_client_sends_disconnect );
+REGISTER_UNIT_TEST( test_destroy_connected_client_sends_disconnect );
 
 // DONE-WHEN (3): destroying a server with connected clients sends each
 // connected client the server's disconnect packets before the transport
 // closes, and each client reaches its disconnected state with the
 // server-disconnect reason within one client update: a loopback case asserts
 // it for at least two clients.
-static void destroy_server_sends_disconnect_to_every_connected_client()
+static void test_destroy_server_sends_disconnect_to_every_connected_client()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_set_quiet( 1 );
@@ -426,7 +426,7 @@ static void destroy_server_sends_disconnect_to_every_connected_client()
         rocketnet_client_destroy( clients[i] );
 }
 
-REGISTER_UNIT_TEST( destroy_server_sends_disconnect_to_every_connected_client );
+REGISTER_UNIT_TEST( test_destroy_server_sends_disconnect_to_every_connected_client );
 
 // Steps a public client against a loopback server until the client reaches
 // the target handshake state (or, for ROCKETNET_CLIENT_STATE_INVALID, not at
@@ -473,7 +473,7 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
 
 // DONE-WHEN (4): destroying a client or server with no live connection sends
 // nothing (a case counts datagrams handed to the fake transport: zero).
-static void destroy_without_live_connection_sends_nothing()
+static void test_destroy_without_live_connection_sends_nothing()
 {
     destroy_disconnect_env_guard_t env_guard;
     rocketnet_set_quiet( 1 );
@@ -637,4 +637,4 @@ static void destroy_without_live_connection_sends_nothing()
     }
 }
 
-REGISTER_UNIT_TEST( destroy_without_live_connection_sends_nothing );
+REGISTER_UNIT_TEST( test_destroy_without_live_connection_sends_nothing );

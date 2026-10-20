@@ -86,7 +86,7 @@ static struct rocketnet_server_transport_t * windows_connreset_server( const win
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, bind, &config );
     rocketnet_server_iocp_test_force_flags( 0 );
     windows_connreset_require( server != NULL );
-    windows_connreset_require( strcmp( rocketnet_server_transport_transport( server ), transport->transport ) == 0 );
+    windows_connreset_require( strcmp( rocketnet_server_transport_io_name( server ), transport->transport ) == 0 );
     return server;
 }
 
@@ -149,7 +149,7 @@ static void windows_connreset_child_start( windows_connreset_child_t * child, co
     const DWORD length = GetModuleFileNameW( NULL, path, MAX_PATH );
     windows_connreset_require( length > 0 && length < MAX_PATH );
     wchar_t command[MAX_PATH + 64];
-    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run windows_connreset_child_client", path );
+    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_client", path );
 
     windows_connreset_require( _putenv_s( WINDOWS_CONNRESET_CHILD_ENV, server_address ) == 0 );
     STARTUPINFOW startup;

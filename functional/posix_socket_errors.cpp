@@ -1644,8 +1644,8 @@ void rocketnet_test_linux_uring_send_cqe_errors()
 // fragment. A fragmented datagram to another port passes whole to a kernel
 // UDP socket bound on that port in this namespace, every fragment counted in
 // PASSED_FRAGMENT. Root inside a
-// virtme-ng guest only (TRANSPORTS.md has the vng line); anywhere else a
-// named skip. Everything it makes is removed on every exit path.
+// virtme-ng guest only (TRANSPORTS.md has the vng line); anywhere else not in
+// the suite (rocketnet_test_linux_xdp_weather_runs_here). Everything it makes is removed on every exit path.
 
 #if ROCKETNET_XDP
 
@@ -1831,14 +1831,7 @@ static void posix_xdp_update( struct rocketnet_server_transport_t * server, stru
 
 static void posix_xdp_weather( int ipv6 )
 {
-    const char * case_name = ipv6 ? "test_linux_xdp_receive_weather_ipv6" : "test_linux_xdp_receive_weather_ipv4";
-    if ( geteuid() != 0 || !posix_xdp_inside_virtme() )
-    {
-        printf( "%s [SKIPPED needs root inside a virtme-ng guest: it makes a namespace and a veth pair and attaches XDP]\n", case_name );
-        fflush( stdout );
-        return;
-    }
-
+    const char * case_name = ipv6 ? "test_xdp_transport_linux_receive_weather_ipv6" : "test_xdp_transport_linux_receive_weather_ipv4";
     atexit( posix_xdp_teardown );
 
     struct statfs bpffs;
@@ -2199,6 +2192,14 @@ static void posix_xdp_weather( int ipv6 )
     posix_xdp_teardown();
 }
 
+// the cases make a namespace and a veth pair and attach XDP, so they run
+// only as root inside a virtme-ng guest
+
+bool rocketnet_test_linux_xdp_weather_runs_here()
+{
+    return geteuid() == 0 && posix_xdp_inside_virtme();
+}
+
 void rocketnet_test_linux_xdp_receive_weather_ipv4()
 {
     posix_xdp_weather( 0 );
@@ -2207,18 +2208,6 @@ void rocketnet_test_linux_xdp_receive_weather_ipv4()
 void rocketnet_test_linux_xdp_receive_weather_ipv6()
 {
     posix_xdp_weather( 1 );
-}
-
-#else // #if ROCKETNET_XDP
-
-void rocketnet_test_linux_xdp_receive_weather_ipv4()
-{
-    printf( "test_linux_xdp_receive_weather_ipv4 [SKIPPED the xdp transport is not built]\n" );
-}
-
-void rocketnet_test_linux_xdp_receive_weather_ipv6()
-{
-    printf( "test_linux_xdp_receive_weather_ipv6 [SKIPPED the xdp transport is not built]\n" );
 }
 
 #endif // #if ROCKETNET_XDP

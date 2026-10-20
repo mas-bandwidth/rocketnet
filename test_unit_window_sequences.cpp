@@ -1025,7 +1025,7 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
     rn_arena_destroy( arena );
 }
 
-static void TestWindowRingOperationSequences()
+static void test_window_ring_operation_sequences()
 {
     probe_count_edges( &g_world );
     probe_partial_block_count( &g_world );
@@ -1037,4 +1037,4 @@ static void TestWindowRingOperationSequences()
     probe_walk( &g_world, 0x853c49e6748fea9bULL, 0, 200000, 1 );
 }
 
-REGISTER_UNIT_TEST( TestWindowRingOperationSequences );
+REGISTER_UNIT_TEST( test_window_ring_operation_sequences );

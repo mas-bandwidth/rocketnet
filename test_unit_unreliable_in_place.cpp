@@ -447,7 +447,7 @@ static bool ip_got( const std::vector<ip_received_t> & got, int channel, uint32_
 // the cases
 // ---------------------------------------------------------------------------
 
-static void unreliable_fit_is_written_in_the_packet()
+static void test_unreliable_fit_is_written_in_the_packet()
 {
     ip_pair_t pair;
     ip_pair_setup( &pair );
@@ -477,7 +477,7 @@ static void unreliable_fit_is_written_in_the_packet()
     ip_pair_teardown( &pair );
 }
 
-static void unreliable_fit_has_no_message_copy()
+static void test_unreliable_fit_has_no_message_copy()
 {
     ip_pair_t pair;
     ip_pair_setup( &pair );
@@ -506,7 +506,7 @@ static void unreliable_fit_has_no_message_copy()
     ip_pair_teardown( &pair );
 }
 
-static void unreliable_over_fit_takes_the_message_buffer()
+static void test_unreliable_over_fit_takes_the_message_buffer()
 {
     ip_pair_t pair;
     ip_pair_setup( &pair );
@@ -560,7 +560,7 @@ static void unreliable_over_fit_takes_the_message_buffer()
     ip_pair_teardown( &pair );
 }
 
-static void mixed_in_place_and_queued_respect_packet_cap()
+static void test_mixed_in_place_and_queued_respect_packet_cap()
 {
     const int cap = 2;
     ip_pair_t pair;
@@ -606,7 +606,7 @@ static void mixed_in_place_and_queued_respect_packet_cap()
     ip_pair_teardown( &pair );
 }
 
-static void repeated_fill_flush_respects_packet_cap()
+static void test_repeated_fill_flush_respects_packet_cap()
 {
     const int cap = 2;
     ip_pair_t pair;
@@ -658,7 +658,7 @@ static bool ip_carries( const ip_packet_t & packet, const uint8_t * needle, int 
     return false;
 }
 
-static void reliable_not_starved_by_in_place()
+static void test_reliable_not_starved_by_in_place()
 {
     // RNOutgoingBuild ReliableSentWithinOneUpdate: with reliable work due, an
     // in-place packet never takes the last of packets_per_update, so the
@@ -708,7 +708,7 @@ static void reliable_not_starved_by_in_place()
     ip_pair_teardown( &pair );
 }
 
-static void in_place_unreliable_keeps_acks_and_order()
+static void test_in_place_unreliable_keeps_acks_and_order()
 {
     ip_pair_t pair;
     ip_pair_setup( &pair );
@@ -864,7 +864,7 @@ static enum rocketnet_status_t ip_write_connect_token( const char * server_addre
     return rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, connect_token ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
 
-static void unreliable_fit_in_place_every_transport()
+static void test_unreliable_fit_in_place_every_transport()
 {
     rocketnet_channel_harness_t h;
     check( rocketnet_channel_harness_create( &h ) );
@@ -923,7 +923,7 @@ static void unreliable_fit_in_place_every_transport()
 // or refusal counter moves, and every message is delivered, in order, in a
 // later update. The client's budget is uncapped so the packet allowance and
 // the 16-record packet bound are the only pacing.
-static void message_burst_start_finish_delivers_every_message()
+static void test_message_burst_start_finish_delivers_every_message()
 {
     const int updates = 60;
     const int per_update = 100;                         // under packets_per_update (8) x 16 records
@@ -983,7 +983,7 @@ static void message_burst_start_finish_delivers_every_message()
 // counters.h MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK), finish queues it with a
 // serial, no further packet goes out in that update, and the next update's
 // write pass sends it.
-static void start_past_packet_allowance_falls_back_to_the_region()
+static void test_start_past_packet_allowance_falls_back_to_the_region()
 {
     const int cap = 2;
     const int extra = 10;
@@ -1032,13 +1032,13 @@ static void start_past_packet_allowance_falls_back_to_the_region()
     ip_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( unreliable_fit_is_written_in_the_packet );
-REGISTER_UNIT_TEST( unreliable_fit_in_place_every_transport );
-REGISTER_UNIT_TEST( unreliable_fit_has_no_message_copy );
-REGISTER_UNIT_TEST( unreliable_over_fit_takes_the_message_buffer );
-REGISTER_UNIT_TEST( in_place_unreliable_keeps_acks_and_order );
-REGISTER_UNIT_TEST( mixed_in_place_and_queued_respect_packet_cap );
-REGISTER_UNIT_TEST( repeated_fill_flush_respects_packet_cap );
-REGISTER_UNIT_TEST( reliable_not_starved_by_in_place );
-REGISTER_UNIT_TEST( message_burst_start_finish_delivers_every_message );
-REGISTER_UNIT_TEST( start_past_packet_allowance_falls_back_to_the_region );
+REGISTER_UNIT_TEST( test_unreliable_fit_is_written_in_the_packet );
+REGISTER_UNIT_TEST( test_unreliable_fit_in_place_every_transport );
+REGISTER_UNIT_TEST( test_unreliable_fit_has_no_message_copy );
+REGISTER_UNIT_TEST( test_unreliable_over_fit_takes_the_message_buffer );
+REGISTER_UNIT_TEST( test_in_place_unreliable_keeps_acks_and_order );
+REGISTER_UNIT_TEST( test_mixed_in_place_and_queued_respect_packet_cap );
+REGISTER_UNIT_TEST( test_repeated_fill_flush_respects_packet_cap );
+REGISTER_UNIT_TEST( test_reliable_not_starved_by_in_place );
+REGISTER_UNIT_TEST( test_message_burst_start_finish_delivers_every_message );
+REGISTER_UNIT_TEST( test_start_past_packet_allowance_falls_back_to_the_region );

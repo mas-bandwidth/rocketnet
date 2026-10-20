@@ -104,7 +104,7 @@ static int standard_config_record_body_equal( const struct rocketnet_message_con
         a->fragment_bytes == b->fragment_bytes;
 }
 
-static void standard_config_record_vectors()
+static void test_standard_config_record_vectors()
 {
     const int count = (int) ( sizeof( standard_config_record_table ) / sizeof( standard_config_record_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_config_record_table, count, standard_config_record_generate ) == count );
@@ -169,4 +169,4 @@ static void standard_config_record_vectors()
     rocketnet_unit_check( standard_config_record_generate( "m11.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_config_record_vectors );
+REGISTER_UNIT_TEST( test_standard_config_record_vectors );

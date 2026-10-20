@@ -12,7 +12,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_client_send_rings.h"
 
-static void client_io_handoff_sends_ring_once()
+static void test_client_io_handoff_sends_ring_once()
 {
     rocketnet_client_send_rings_t r;
     rocketnet_client_send_rings_init( &r );
@@ -31,9 +31,9 @@ static void client_io_handoff_sends_ring_once()
     rocketnet_unit_check( r.state[0].load() == ROCKETNET_CLIENT_RING_SENT );
     rocketnet_unit_check( !rocketnet_client_send_rings_in_flight( &r ) );
 }
-REGISTER_UNIT_TEST( client_io_handoff_sends_ring_once );
+REGISTER_UNIT_TEST( test_client_io_handoff_sends_ring_once );
 
-static void client_io_ring_not_reused_before_sent()
+static void test_client_io_ring_not_reused_before_sent()
 {
     rocketnet_client_send_rings_t r;
     rocketnet_client_send_rings_init( &r );
@@ -55,9 +55,9 @@ static void client_io_ring_not_reused_before_sent()
     rocketnet_unit_check( r.state[1].load() == ROCKETNET_CLIENT_RING_HANDED_OFF );
     rocketnet_unit_check( r.committed[1] == 9 );
 }
-REGISTER_UNIT_TEST( client_io_ring_not_reused_before_sent );
+REGISTER_UNIT_TEST( test_client_io_ring_not_reused_before_sent );
 
-static void client_io_handoff_skips_empty_ring()
+static void test_client_io_handoff_skips_empty_ring()
 {
     rocketnet_client_send_rings_t r;
     rocketnet_client_send_rings_init( &r );
@@ -71,4 +71,4 @@ static void client_io_handoff_skips_empty_ring()
     rocketnet_unit_check( rocketnet_client_send_rings_take( &r ) == -1 );
     rocketnet_unit_check( !rocketnet_client_send_rings_in_flight( &r ) );
 }
-REGISTER_UNIT_TEST( client_io_handoff_skips_empty_ring );
+REGISTER_UNIT_TEST( test_client_io_handoff_skips_empty_ring );

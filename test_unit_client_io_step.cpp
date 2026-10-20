@@ -34,7 +34,7 @@ static void client_io_step_test_open( rocketnet_fake_client_transport_io_t * fak
 // Three slots, the middle aborted: one step sends the two live slots byte
 // exact to the handed-off destination, per packet with the io table, and the
 // next step is idle. RNClientIo HandOff, IoSend, IoFinishRing.
-static void client_io_step_sends_handed_off_ring()
+static void test_client_io_step_sends_handed_off_ring()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
@@ -95,11 +95,11 @@ static void client_io_step_sends_handed_off_ring()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_step_sends_handed_off_ring );
+REGISTER_UNIT_TEST( test_client_io_step_sends_handed_off_ring );
 
 // The batch table takes the whole ring in one send_batch call and no send
 // calls. RNClientIo IoSend with the transport's batch callback.
-static void client_io_step_uses_send_batch_when_set()
+static void test_client_io_step_uses_send_batch_when_set()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
@@ -153,11 +153,11 @@ static void client_io_step_uses_send_batch_when_set()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_step_uses_send_batch_when_set );
+REGISTER_UNIT_TEST( test_client_io_step_uses_send_batch_when_set );
 
 // The clock callback stamps receive_time: one datagram read with now = 1000.25
 // is exposed with receive_time 1000.25. docs/CLIENT-IO.md _The clock_.
-static void client_io_receive_time_from_callback()
+static void test_client_io_receive_time_from_callback()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
@@ -213,13 +213,13 @@ static void client_io_receive_time_from_callback()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_receive_time_from_callback );
+REGISTER_UNIT_TEST( test_client_io_receive_time_from_callback );
 
 // Two datagrams, one under the size prefilter: the expose delivers both, the
 // runt as a record for the main thread's prefilter to refuse and count; after
 // its return a later datagram reaches the next expose. RNClientIo
 // IoReceive, IoPublish, Expose, Return.
-static void client_io_step_publishes_received()
+static void test_client_io_step_publishes_received()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
@@ -287,11 +287,11 @@ static void client_io_step_publishes_received()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_step_publishes_received );
+REGISTER_UNIT_TEST( test_client_io_step_publishes_received );
 
 // A blocked idle step waits once with the guard timeout and readable true; a
 // step with a handed-off ring is worked and does not wait. RNClientIo IoWait.
-static void client_io_step_waits_only_when_idle()
+static void test_client_io_step_waits_only_when_idle()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
@@ -340,14 +340,14 @@ static void client_io_step_waits_only_when_idle()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_step_waits_only_when_idle );
+REGISTER_UNIT_TEST( test_client_io_step_waits_only_when_idle );
 
 // A full I/O buffer with update holding the other: the next step leaves the
 // datagram in the fake, waits with readable false, and does not wake; the
 // return at the end of the next update wakes the I/O thread exactly once, and
 // the step after that publishes. MCRNClientIoBrokenFullWaitReadable.cfg,
 // FullWaitsOnWake.
-static void client_io_step_full_buffer_waits_on_wake_only()
+static void test_client_io_step_full_buffer_waits_on_wake_only()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
@@ -428,4 +428,4 @@ static void client_io_step_full_buffer_waits_on_wake_only()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_step_full_buffer_waits_on_wake_only );
+REGISTER_UNIT_TEST( test_client_io_step_full_buffer_waits_on_wake_only );

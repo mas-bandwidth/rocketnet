@@ -448,6 +448,10 @@ if(ROCKETNET_BUILD_TESTS)
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
+    if(TARGET RocketNet::Uring)
+        # the io_uring seam cases are built only where the driver is
+        target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
+    endif()
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
         # the test hook library only, matching the link-simulator seam above, so
@@ -556,7 +560,7 @@ if(ROCKETNET_BUILD_TESTS)
         rocketnet_warning_floor(rocketnet_xdp_filter_host)
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
-        # xdp_host_every_counter_has_a_case reads sdk/rocketnet_wire.h and its
+        # test_xdp_transport_host_every_counter_has_a_case reads sdk/rocketnet_wire.h and its
         # own source for the counters and the cases that name them.
         set_property( SOURCE test_unit_xdp_filter_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS
             "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
@@ -567,7 +571,7 @@ if(ROCKETNET_BUILD_TESTS)
     # build both: CI legs build `test` alone, and without this the library is
     # missing and the probe goes red. test_dev_token_minting_absent_in_release
     # probes the release library; the connect-token vectors load the dev
-    # library's token writer through dev_connect_token_timeout_is_the_named_constant.
+    # library's token writer through test_dev_connect_token_timeout_is_the_named_constant.
     add_dependencies(test rocketnet_shared rocketnet_shared_dev)
     # Both development-library probes dlopen this absolute build path, so the
     # unit suite passes from any working directory, not only bin/.

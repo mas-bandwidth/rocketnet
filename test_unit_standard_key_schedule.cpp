@@ -82,10 +82,10 @@ static int standard_key_schedule_generate( const char * id, uint8_t * out, int c
     return 32;
 }
 
-static void standard_key_schedule_vectors()
+static void test_standard_key_schedule_vectors()
 {
     const int count = (int) ( sizeof( standard_key_schedule_table ) / sizeof( standard_key_schedule_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_key_schedule_table, count, standard_key_schedule_generate ) == count );
 }
 
-REGISTER_UNIT_TEST( standard_key_schedule_vectors );
+REGISTER_UNIT_TEST( test_standard_key_schedule_vectors );

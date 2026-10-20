@@ -21,14 +21,14 @@ int main()
         fprintf(stderr, "native XDP inactive-generation check failed\n");
         return 1;
     }
-    printf("test_xdp_inactive_generation\n");
+    printf("test_xdp_transport_inactive_generation\n");
 
     if (!replay_passed)
     {
         fprintf(stderr, "native XDP replay-marks buffer/commit check failed\n");
         return 1;
     }
-    printf("test_xdp_replay_marks_buffered_and_committed\n");
+    printf("test_xdp_transport_replay_marks_buffered_and_committed\n");
 
     // a umem frame holds the largest datagram a receiver accepts, with the
     // ethernet header and the larger (IPv6) IP header in front of it
@@ -39,6 +39,6 @@ int main()
                 ROCKETNET_ETHERNET_HEADER_BYTES, ROCKETNET_IPV6_HEADER_BYTES, ROCKETNET_UDP_HEADER_BYTES, ROCKETNET_RECEIVE_CEILING, frame_need);
         return 1;
     }
-    printf("test_xdp_frame_holds_receive_ceiling\n");
+    printf("test_xdp_transport_frame_holds_receive_ceiling\n");
     return 0;
 }

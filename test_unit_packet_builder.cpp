@@ -64,7 +64,7 @@ static void valid_base_record( struct rocketnet_message_record_t * record, int c
 // several small records pack into one packet (9.3), each whole, in class order,
 // round robin across channels.
 
-static void small_records_packed_several_per_packet()
+static void test_small_records_packed_several_per_packet()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
@@ -131,7 +131,7 @@ static void small_records_packed_several_per_packet()
 // cannot pay is not written, an unreliable one dropped and counted, a reliable
 // one waits (R6).
 
-static void builder_obeys_budget_and_class_order()
+static void test_builder_obeys_budget_and_class_order()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
@@ -221,7 +221,7 @@ static void builder_obeys_budget_and_class_order()
 // created, the builder and the dispatch run, and the allocator is not called
 // again after create.
 
-static void packet_builder_no_allocation_after_create()
+static void test_packet_builder_no_allocation_after_create()
 {
     rocketnet_term();                                           // the allocator is replaced only before init
     rocketnet_unit_check( rocketnet_set_allocator( builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
@@ -287,7 +287,7 @@ static void packet_builder_no_allocation_after_create()
 // has at least two fragments. Only valid records reach it in the suite, so
 // this test hands it each malformed shape and checks it is refused.
 
-static void message_record_valid_refuses_each_shape()
+static void test_message_record_valid_refuses_each_shape()
 {
     // NULL is refused
     rocketnet_unit_check( !rocketnet_message_record_valid( NULL ) );
@@ -438,7 +438,7 @@ static void message_record_valid_refuses_each_shape()
     }
 }
 
-REGISTER_UNIT_TEST( small_records_packed_several_per_packet );
-REGISTER_UNIT_TEST( builder_obeys_budget_and_class_order );
-REGISTER_UNIT_TEST( packet_builder_no_allocation_after_create );
-REGISTER_UNIT_TEST( message_record_valid_refuses_each_shape );
+REGISTER_UNIT_TEST( test_small_records_packed_several_per_packet );
+REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
+REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );

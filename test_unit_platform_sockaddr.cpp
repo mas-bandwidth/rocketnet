@@ -27,7 +27,7 @@
 // writes the four IPv4 octets of "203.0.113.10:40000" into sin_addr as the
 // exact memory bytes { 203, 0, 113, 10 } and port 40000 into sin_port as the
 // exact memory bytes { 0x9c, 0x40 } on both little- and big-endian hosts.
-static void platform_sockaddr_in_bytes_match_address_bytes()
+static void test_platform_sockaddr_in_bytes_match_address_bytes()
 {
     rocketnet_address_t address;
     rocketnet_unit_check( rocketnet_address_parse( &address, "203.0.113.10:40000" ) );
@@ -49,7 +49,7 @@ static void platform_sockaddr_in_bytes_match_address_bytes()
 // round-trip raw network-order memory bytes in sockaddr_in back to an address
 // equal (rocketnet_address_equal) to the parsed string for "203.0.113.10:40000",
 // "127.0.0.1", and "0.0.0.0".
-static void platform_sockaddr_in_round_trips_address()
+static void test_platform_sockaddr_in_round_trips_address()
 {
     struct
     {
@@ -88,14 +88,14 @@ static void platform_sockaddr_in_round_trips_address()
 
 // Pins the same conversion for the loopback sender shape the Linux mmsg batch
 // round trip compares (functional/rocketnet_functional_tests.cpp
-// client_io_linux_mmsg_batch_round_trip): 127.0.0.1 plus a nonzero port whose
+// test_client_io_linux_mmsg_batch_round_trip): 127.0.0.1 plus a nonzero port whose
 // bytes are not symmetric. The mmsg fill and read helpers
 // (rocketnet_platform_mmsg_fill_sockaddr and
 // rocketnet_platform_mmsg_read_sockaddr, sdk/rocketnet_platform.cpp) call
 // rocketnet_platform_address_to_sockaddr_in and
 // rocketnet_platform_sockaddr_in_to_address, so a host-integer shift of the
 // octets reverses the source address on a big-endian host.
-static void platform_sockaddr_in_loopback_mmsg_round_trip()
+static void test_loopback_transport_platform_sockaddr_in_mmsg_round_trip()
 {
     rocketnet_address_t sender_bind;
     rocketnet_unit_check( rocketnet_address_parse( &sender_bind, "127.0.0.1:54321" ) );
@@ -120,6 +120,6 @@ static void platform_sockaddr_in_loopback_mmsg_round_trip()
     rocketnet_unit_check( memcmp( &filled.sin_port, expected_port, 2 ) == 0 );
 }
 
-REGISTER_UNIT_TEST( platform_sockaddr_in_bytes_match_address_bytes );
-REGISTER_UNIT_TEST( platform_sockaddr_in_round_trips_address );
-REGISTER_UNIT_TEST( platform_sockaddr_in_loopback_mmsg_round_trip );
+REGISTER_UNIT_TEST( test_platform_sockaddr_in_bytes_match_address_bytes );
+REGISTER_UNIT_TEST( test_platform_sockaddr_in_round_trips_address );
+REGISTER_UNIT_TEST( test_loopback_transport_platform_sockaddr_in_mmsg_round_trip );

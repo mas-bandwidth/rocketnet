@@ -39,7 +39,7 @@ static const char * const backend_seed_addresses[] =
     "203.0.113.10:40000",
 };
 
-void backend_keypair_from_seed_round_trip()
+void test_backend_keypair_from_seed_round_trip()
 {
     uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
     backend_seed_fill( seed, 0x21 );
@@ -75,7 +75,7 @@ void backend_keypair_from_seed_round_trip()
     sodium_memzero( &opened, sizeof(opened) );
 }
 
-void backend_keypair_from_seed_is_deterministic()
+void test_backend_keypair_from_seed_is_deterministic()
 {
     uint8_t seed_a[ROCKETNET_BACKEND_SEED_BYTES];
     uint8_t seed_b[ROCKETNET_BACKEND_SEED_BYTES];
@@ -103,7 +103,7 @@ void backend_keypair_from_seed_is_deterministic()
     sodium_memzero( secret_c, sizeof(secret_c) );
 }
 
-void backend_keypair_from_seed_matches_the_library()
+void test_backend_keypair_from_seed_matches_the_library()
 {
     uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
     backend_seed_fill( seed, 0x51 );
@@ -133,7 +133,7 @@ static void backend_keypair_from_seed_assert_hook( const char *, const char *, c
     backend_keypair_from_seed_asserts++;
 }
 
-void backend_keypair_from_seed_null_refused()
+void test_backend_keypair_from_seed_null_refused()
 {
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( backend_keypair_from_seed_assert_hook );
@@ -172,7 +172,7 @@ void backend_keypair_from_seed_null_refused()
     rocketnet_set_assert_callback( saved_assert );
 }
 
-REGISTER_UNIT_TEST( backend_keypair_from_seed_round_trip );
-REGISTER_UNIT_TEST( backend_keypair_from_seed_is_deterministic );
-REGISTER_UNIT_TEST( backend_keypair_from_seed_matches_the_library );
-REGISTER_UNIT_TEST( backend_keypair_from_seed_null_refused );
+REGISTER_UNIT_TEST( test_backend_keypair_from_seed_round_trip );
+REGISTER_UNIT_TEST( test_backend_keypair_from_seed_is_deterministic );
+REGISTER_UNIT_TEST( test_backend_keypair_from_seed_matches_the_library );
+REGISTER_UNIT_TEST( test_backend_keypair_from_seed_null_refused );

@@ -397,7 +397,7 @@ static void ep_check_properties( const ep_side_t * side, const ep_side_t * peer 
     check( unreliable_delivered < unreliable_sent );            // the array lost some
 }
 
-static void endpoint_back_to_back_over_lossy_array()
+static void test_endpoint_back_to_back_over_lossy_array()
 {
     rocketnet_message_config_t config;
     ep_config( &config );
@@ -503,7 +503,7 @@ static void ep_free( void * context, void * p )
     free( p );
 }
 
-static void endpoint_never_allocates_or_reads_a_clock()
+static void test_endpoint_never_allocates_or_reads_a_clock()
 {
     rocketnet_term();
     check( rocketnet_set_allocator( ep_malloc, ep_free ) == ROCKETNET_STATUS_OK );
@@ -576,7 +576,7 @@ static void endpoint_never_allocates_or_reads_a_clock()
 // an uncapped endpoint's large sequenced state, larger than one packet, is
 // written whole and never touches the bucket: no charge, no settle, no
 // refusal, no drop. Simulated time from 1000.0; no transport but this loop.
-static void endpoint_uncapped_large_sequenced_skips_the_bucket()
+static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
 {
     rocketnet_message_config_t config;
     ep_config( &config );
@@ -644,6 +644,6 @@ static void endpoint_uncapped_large_sequenced_skips_the_bucket()
     rn_arena_destroy( arena );
 }
 
-REGISTER_UNIT_TEST( endpoint_back_to_back_over_lossy_array );
-REGISTER_UNIT_TEST( endpoint_uncapped_large_sequenced_skips_the_bucket );
-REGISTER_UNIT_TEST( endpoint_never_allocates_or_reads_a_clock );
+REGISTER_UNIT_TEST( test_endpoint_back_to_back_over_lossy_array );
+REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
+REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );

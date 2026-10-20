@@ -301,7 +301,7 @@ static void live_verify_named_failures()
     rocketnet_unit_check( strcmp( rocketnet_live_result_name( ROCKETNET_LIVE_BAD_CYCLE ), "bad-cycle" ) == 0 );
 }
 
-void live_verify_round_trip()
+void test_live_verify_round_trip()
 {
     live_verify_mode_maxima();
     live_verify_boundary_list();
@@ -312,4 +312,4 @@ void live_verify_round_trip()
     live_verify_named_failures();
 }
 
-REGISTER_UNIT_TEST( live_verify_round_trip );
+REGISTER_UNIT_TEST( test_live_verify_round_trip );

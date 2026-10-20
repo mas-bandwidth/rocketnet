@@ -135,7 +135,7 @@ struct rn_message_link_t
     The declaration manifest: the struct is declared from this list, so a
     member exists only as an entry here. The RESET/KEEP inventory in
     rocketnet_connection_reset.h is compared with it by name, and a member with
-    no decision is named in connection_reset_inventory_covers_every_field.
+    no decision is named in test_connection_reset_inventory_covers_every_field.
 */
 #define RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( X ) \
     X( connection_id, uint64_t connection_id ) /* RNSlots: the connection this slot is bound to, 0 when free */          \

@@ -28,11 +28,10 @@
     the process must end the cell exactly as it started it.
 
     On Linux the server cells are portable, gso, io_uring and xdp, each with
-    the portable client. io_uring is a named skip on a kernel whose
-    kernel.io_uring_disabled is not 0. The xdp cell needs root, a network
-    namespace and a veth pair, so it runs only as root inside a virtme-ng
-    guest (or as root with ROCKETNET_TEST_XDP_VETH=1) and is a named skip
-    anywhere else. Its server binds the near end of the pair on a fixed port,
+    the portable client. The io_uring cell is not in the suite on a kernel
+    whose kernel.io_uring_disabled is not 0. The xdp cell needs root, a
+    network namespace and a veth pair, so it is in the suite only as root
+    inside a virtme-ng guest (or as root with ROCKETNET_TEST_XDP_VETH=1). Its server binds the near end of the pair on a fixed port,
     its clients open their sockets in the far end's namespace, and its
     1000-count loops run 100 times, since every create attaches to the pair.
     ROCKETNET_POSIX_LIFECYCLE_CELLS, a comma list of server transport names, runs
@@ -51,7 +50,7 @@
     cookie requests received during that connect, and every nonzero counter
     of both ends, so a stall names the side that stopped.
 
-    posix_connect_disconnect_1000 holds 1024 IPv4 sockets on loopback
+    test_posix_connect_disconnect_1000 holds 1024 IPv4 sockets on loopback
     ephemeral ports while its clients cycle, as a host's other programs hold
     them. A client whose socket shares a port with one of them never hears
     its server, since the IPv4 datagrams to that port reach the held socket.
@@ -435,28 +434,22 @@ static bool posix_cell_selected( const posix_cell_t * cell )
     return false;
 }
 
-// whether a cell runs here: selected, and its transport offered; an unoffered
-// cell prints a named skip
+// whether a cell runs here: selected, and its transport offered. The
+// single-transport cases of an unoffered transport are not in the suite
+// (rocketnet_test_posix_io_uring_offered, rocketnet_test_posix_xdp_offered)
 static bool posix_cell_runs( const char * name, const posix_cell_t * cell )
 {
+    (void) name;
     if ( !posix_cell_selected( cell ) )
         return false;
     if ( strcmp( cell->server_transport_io, "io_uring" ) == 0 && !posix_io_uring_offered() )
-    {
-        printf( "%s [%s]: SKIPPED this kernel disables io_uring\n", name, cell->name );
-        fflush( stdout );
         return false;
-    }
     if ( cell->xdp )
     {
 #if defined(__linux__) && ROCKETNET_XDP
         if ( !posix_xdp_offered() )
 #endif
-        {
-            printf( "%s [%s]: SKIPPED needs root inside a virtme-ng guest, or root and ROCKETNET_TEST_XDP_VETH=1\n", name, cell->name );
-            fflush( stdout );
             return false;
-        }
     }
     return true;
 }
@@ -759,7 +752,7 @@ static void posix_case_result( const char * name, const posix_cell_t * cell, con
 
 void rocketnet_test_posix_init_term_1000()
 {
-    const char * case_name = "posix_init_term_1000";
+    const char * case_name = "test_posix_init_term_1000";
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
@@ -786,7 +779,7 @@ void rocketnet_test_posix_init_term_1000()
 
 void rocketnet_test_posix_server_create_destroy_1000()
 {
-    const char * case_name = "posix_server_create_destroy_1000";
+    const char * case_name = "test_posix_server_create_destroy_1000";
     posix_require_loopback_bind( case_name );
 
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
@@ -814,7 +807,7 @@ void rocketnet_test_posix_server_create_destroy_1000()
             if ( i == 0 && cell->xdp )
             {
                 const posix_resource_counts_t live = posix_stable_counts();
-                printf( "posix_server_create_destroy_1000 live server [%s]: heap umems %ld -> %ld\n", cell->name, before.umems, live.umems );
+                printf( "test_posix_server_create_destroy_1000 live server [%s]: heap umems %ld -> %ld\n", cell->name, before.umems, live.umems );
                 fflush( stdout );
 #if defined(__GLIBC__) && ROCKETNET_XDP
                 posix_check( live.umems >= before.umems + 1 );
@@ -828,7 +821,7 @@ void rocketnet_test_posix_server_create_destroy_1000()
             if ( i == 0 )
             {
                 const posix_resource_counts_t first = posix_settled_counts( &before );
-                posix_case_result( "posix_server_create_destroy_1000 after one cycle", cell, &before, &first, posix_now_seconds() - start );
+                posix_case_result( "test_posix_server_create_destroy_1000 after one cycle", cell, &before, &first, posix_now_seconds() - start );
             }
         }
         const double seconds = posix_now_seconds() - start;
@@ -841,7 +834,7 @@ void rocketnet_test_posix_server_create_destroy_1000()
 
 void rocketnet_test_posix_client_create_destroy_1000()
 {
-    const char * case_name = "posix_client_create_destroy_1000";
+    const char * case_name = "test_posix_client_create_destroy_1000";
     posix_require_loopback_bind( case_name );
 
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
@@ -942,7 +935,7 @@ static unsigned posix_reserved_restart_port( int cell_index )
 
 void rocketnet_test_posix_server_restart_same_port_100()
 {
-    const char * case_name = "posix_server_restart_same_port_100";
+    const char * case_name = "test_posix_server_restart_same_port_100";
     posix_require_loopback_bind( case_name );
 
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
@@ -993,7 +986,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
 
 void rocketnet_test_posix_connect_disconnect_1000()
 {
-    const char * case_name = "posix_connect_disconnect_1000";
+    const char * case_name = "test_posix_connect_disconnect_1000";
     posix_require_loopback_bind( case_name );
 
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
@@ -1053,7 +1046,7 @@ static void posix_sender_thread( posix_sender_t * sender )
 
 void rocketnet_test_posix_destroy_under_traffic_100()
 {
-    const char * case_name = "posix_destroy_under_traffic_100";
+    const char * case_name = "test_posix_destroy_under_traffic_100";
     posix_require_loopback_bind( case_name );
 
     const int client_count = 8;
@@ -1171,6 +1164,20 @@ void rocketnet_test_##case_name##_##transport()                                 
     POSIX_LINUX_CELL_CASE( case_name, io_uring )                                                                    \
     POSIX_LINUX_CELL_CASE( case_name, xdp )
 
+bool rocketnet_test_posix_io_uring_offered()
+{
+    return posix_io_uring_offered();
+}
+
+bool rocketnet_test_posix_xdp_offered()
+{
+#if ROCKETNET_XDP
+    return posix_xdp_offered();
+#else
+    return false;
+#endif
+}
+
 POSIX_LINUX_CELL_CASES( posix_init_term_1000 )
 POSIX_LINUX_CELL_CASES( posix_server_create_destroy_1000 )
 POSIX_LINUX_CELL_CASES( posix_client_create_destroy_1000 )
@@ -1189,15 +1196,15 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
     macOS cells (posix_cells). Seconds per run:
 
         case                                 r1    r2    r3    r4    r5
-        posix_init_term_1000                 12    11    10    8     8
-        posix_server_create_destroy_1000     owed: a run takes about 150 s
-        posix_client_create_destroy_1000     29    28    27    26    27
-        posix_server_restart_same_port_100   23    22    22    20    20
-        posix_connect_disconnect_1000        52    54    52    51    50
-        posix_destroy_under_traffic_100      77    76    78    78    78
+        test_posix_init_term_1000                 12    11    10    8     8
+        test_posix_server_create_destroy_1000     owed: a run takes about 150 s
+        test_posix_client_create_destroy_1000     29    28    27    26    27
+        test_posix_server_restart_same_port_100   23    22    22    20    20
+        test_posix_connect_disconnect_1000        52    54    52    51    50
+        test_posix_destroy_under_traffic_100      77    76    78    78    78
 
     Every cell of every run printed fds 4 -> 4 and threads 1 -> 1. One
-    earlier run of posix_client_create_destroy_1000 on the same host, a tree
+    earlier run of test_posix_client_create_destroy_1000 on the same host, a tree
     whose only difference in this file was this record, printed threads
     1 -> 5 (fds 4 -> 4) in [server msgx forced portable, client msgx] and
     failed in posix_case_result, with the host's load average near 15.
@@ -1206,7 +1213,7 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
     counts. The four extra threads are not explained yet.
 
     The red proof, each a scratch build that is not kept, each run as
-    ./bin/functional --run posix_client_create_destroy_1000 and failing at
+    ./bin/functional --run test_posix_client_create_destroy_1000 and failing at
     posix_case_result:
 
     - the macOS rocketnet_platform_socket_destroy skips its close:

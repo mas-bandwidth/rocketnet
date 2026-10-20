@@ -191,7 +191,7 @@ static void budgets_check_signature_budget()
 // and the 1025th is refused before any asymmetric work, unanswered and
 // counted. The counter is the refusal's evidence, not the return code alone.
 
-static void handshake_budgets_pinned()
+static void test_handshake_budgets_pinned()
 {
     struct budgets_server_t test;
     budgets_server_setup( &test );
@@ -236,7 +236,7 @@ static void handshake_budgets_pinned()
     budgets_check_signature_budget();
 }
 
-REGISTER_UNIT_TEST( handshake_budgets_pinned );
+REGISTER_UNIT_TEST( test_handshake_budgets_pinned );
 
 // the client's half of the handshake from wire bytes alone: opens the
 // challenge, derives the connection keys and seals the response, so a test
@@ -316,7 +316,7 @@ static int budgets_send_forged( struct budgets_server_t * test, const struct roc
 // connected. A source that has failed is still refused before the verify, and
 // the verifies one update runs stay bounded by the handshake work budget.
 
-static void handshake_failure_budget_no_global_lockout()
+static void test_handshake_failure_budget_no_global_lockout()
 {
     struct budgets_server_t test;
     budgets_server_setup( &test );
@@ -406,4 +406,4 @@ static void handshake_failure_budget_no_global_lockout()
     budgets_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( handshake_failure_budget_no_global_lockout );
+REGISTER_UNIT_TEST( test_handshake_failure_budget_no_global_lockout );

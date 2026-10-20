@@ -131,7 +131,7 @@ static const uint8_t request_ladder_other_salt[ROCKETNET_CONNECTION_SALT_BYTES] 
 };
 
 // t17 rule 4: a wrong salt is answered, and does not keep the mapping alive
-static void request_ladder_wrong_salt_does_not_refresh_half_open()
+static void test_request_ladder_wrong_salt_does_not_refresh_half_open()
 {
     struct request_ladder_server_t test;
     request_ladder_server_setup( &test );
@@ -174,7 +174,7 @@ static void request_ladder_wrong_salt_does_not_refresh_half_open()
 
 // t12 rules 4 to 6: expiry is checked before the server public key, and the
 // version before expiry; each two-rung failure counts the earlier rung only
-static void request_ladder_two_rung_failure_counts_first_rung()
+static void test_request_ladder_two_rung_failure_counts_first_rung()
 {
     struct request_ladder_server_t test;
     request_ladder_server_setup( &test );
@@ -204,5 +204,5 @@ static void request_ladder_two_rung_failure_counts_first_rung()
     request_ladder_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( request_ladder_wrong_salt_does_not_refresh_half_open );
-REGISTER_UNIT_TEST( request_ladder_two_rung_failure_counts_first_rung );
+REGISTER_UNIT_TEST( test_request_ladder_wrong_salt_does_not_refresh_half_open );
+REGISTER_UNIT_TEST( test_request_ladder_two_rung_failure_counts_first_rung );

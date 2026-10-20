@@ -71,8 +71,8 @@ the allowance of one packet is exceeded (`packetsThisUpdate = 2`). That is
 the first attempt's code, in which the in-place path kept a cap of its own
 reset at each queued write pass; `rn_endpoint_in_place_header` now reads the
 endpoint's one `written` counter, which only `rn_endpoint_begin_update`
-resets (unit cases `mixed_in_place_and_queued_respect_packet_cap` and
-`repeated_fill_flush_respects_packet_cap`).
+resets (unit cases `test_mixed_in_place_and_queued_respect_packet_cap` and
+`test_repeated_fill_flush_respects_packet_cap`).
 
 The no-reserve witness's counterexample: message 1 goes in place and spends
 the allowance; message 2 is aborted; message 3 (reliable) is queued with no
@@ -84,4 +84,4 @@ message 3 still queued. In the code without the reservation,
 `packets_per_update`, so the in-place packet was admitted while
 `rn_endpoint_ordered_due` held, and the write pass's reliable phase
 (`written < max_packets`) sent nothing. The unit case
-`reliable_not_starved_by_in_place` is the same run at a cap of two.
+`test_reliable_not_starved_by_in_place` is the same run at a cap of two.

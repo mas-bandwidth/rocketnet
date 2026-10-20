@@ -44,7 +44,7 @@ struct rocketnet_replay_protection_t
     The declaration manifest: the struct is declared from this list, so a
     member exists only as an entry here. The RESET/KEEP inventory in
     rocketnet_connection_reset.h is compared with it by name, and a member with
-    no decision is named in connection_reset_inventory_covers_every_field.
+    no decision is named in test_connection_reset_inventory_covers_every_field.
 */
 #define ROCKETNET_ENCRYPTION_MAPPING_LAYOUT_FIELDS( X ) \
     X( keys, struct rocketnet_connection_keys_t keys )                                                                                                             \

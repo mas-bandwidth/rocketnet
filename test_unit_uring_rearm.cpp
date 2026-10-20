@@ -26,13 +26,14 @@
 #define ROCKETNET_URING_REARM_TEST 0
 #endif
 
+#if ROCKETNET_URING_REARM_TEST
+
 // red first: without the re-arm in receive_packets the queue stays unarmed
 // after its multishot ends on a failed arm, and every later receive finds it
 // still unarmed. With the fix each receive retries and each failure counts.
 
-static void uring_rearm_retries_a_failed_arm()
+static void test_io_uring_transport_rearm_retries_a_failed_arm()
 {
-#if ROCKETNET_URING_REARM_TEST
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create_fake( 1 );
     rocketnet_unit_check( uring != NULL );
     if ( !uring )
@@ -58,9 +59,6 @@ static void uring_rearm_retries_a_failed_arm()
     rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == 1 );
 
     rocketnet_server_uring_test_destroy_fake( uring );
-#else
-    printf( "uring_rearm_retries_a_failed_arm [SKIPPED the io_uring transport and its test seam need Linux with liburing]\n" );
-#endif
 }
 
 // red first: when every round yields a CQE no round is silent, so destroy's
@@ -69,19 +67,17 @@ static void uring_rearm_retries_a_failed_arm()
 // condition rocketnet_server_uring_destroy's wait loop uses; the case's own
 // guard stops a wait that does not end.
 
-static void uring_destroy_wait_is_bounded()
+static void test_io_uring_transport_destroy_wait_is_bounded()
 {
-#if ROCKETNET_URING_REARM_TEST
     const int completions_rounds = rocketnet_server_uring_test_destroy_wait_rounds( true, 1000 );
     rocketnet_unit_check( completions_rounds == 64 );
 
     // with no completions the older silent-round bound still ends the wait
     const int silent_rounds = rocketnet_server_uring_test_destroy_wait_rounds( false, 1000 );
     rocketnet_unit_check( silent_rounds == 5 );
-#else
-    printf( "uring_destroy_wait_is_bounded [SKIPPED the io_uring transport and its test seam need Linux with liburing]\n" );
-#endif
 }
 
-REGISTER_UNIT_TEST( uring_rearm_retries_a_failed_arm );
-REGISTER_UNIT_TEST( uring_destroy_wait_is_bounded );
+REGISTER_UNIT_TEST( test_io_uring_transport_rearm_retries_a_failed_arm );
+REGISTER_UNIT_TEST( test_io_uring_transport_destroy_wait_is_bounded );
+
+#endif // #if ROCKETNET_URING_REARM_TEST

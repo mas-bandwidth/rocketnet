@@ -279,7 +279,7 @@ static void standard_handshake_server_token_refusals()
     }
 }
 
-static void standard_handshake_server_vectors()
+static void test_standard_handshake_server_vectors()
 {
     const int count = (int) ( sizeof( standard_handshake_server_table ) / sizeof( standard_handshake_server_table[0] ) );
     check( rn_standard_vectors_walk( standard_handshake_server_table, count, handshake_server_generate ) == count );
@@ -287,4 +287,4 @@ static void standard_handshake_server_vectors()
     standard_handshake_server_token_refusals();
 }
 
-REGISTER_UNIT_TEST( standard_handshake_server_vectors );
+REGISTER_UNIT_TEST( test_standard_handshake_server_vectors );

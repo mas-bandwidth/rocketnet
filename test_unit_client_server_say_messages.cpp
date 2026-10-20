@@ -257,7 +257,7 @@ static bool scan_file( const char * relative_path, std::vector<std::string> & fa
     return true;
 }
 
-static void client_server_say_messages_not_packets()
+static void test_client_server_say_messages_not_packets()
 {
     std::vector<std::string> failures;
     std::vector<size_t> used_rows( allowlist_count, 0 );
@@ -282,7 +282,7 @@ static void client_server_say_messages_not_packets()
     {
         for ( size_t i = 0; i < failures.size(); i++ )
             printf( "%s\n", failures[i].c_str() );
-        printf( "client_server_say_messages_not_packets: %zu unallowlisted or unused line(s)\n", failures.size() );
+        printf( "test_client_server_say_messages_not_packets: %zu unallowlisted or unused line(s)\n", failures.size() );
         fflush( stdout );
         exit( 1 );
     }
@@ -311,9 +311,9 @@ static void client_server_say_messages_not_packets()
             counts.push_back( per_reason_hits[r] );
         }
     }
-    printf( "client_server_say_messages_not_packets: pass; allowlisted packet lines per reason:\n" );
+    printf( "test_client_server_say_messages_not_packets: pass; allowlisted packet lines per reason:\n" );
     for ( size_t i = 0; i < reasons.size(); i++ )
         printf( "  %s: %d\n", reasons[i].c_str(), counts[i] );
 }
 
-REGISTER_UNIT_TEST( client_server_say_messages_not_packets );
+REGISTER_UNIT_TEST( test_client_server_say_messages_not_packets );

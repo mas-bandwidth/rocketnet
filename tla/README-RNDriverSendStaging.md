@@ -41,12 +41,12 @@ The merged socket also has a defensive `reopen` recovery for an already fully
 queued state, so reproducing this code-level refusal now requires disabling
 both retention and that recovery. The bounded witness isolates the retention
 rule; the separate `SendHandoff` model checks reopen. The deterministic unit check
-`xdp_send_staging_retains_producer` fails at `!handoff.publish()` for
+`test_xdp_transport_send_staging_retains_producer` fails at `!handoff.publish()` for
 that schedule (the second publish queues instead of retaining), and
 `check_send_handoff` in `test_lifecycle.cpp` fails at its `!queue.publish()`. With retention enabled, the second publish leaves its filling
 index intact. Repeated flushes preserve the queued index; retirement followed
 by another flush publishes the retained generation. The unit test
-`xdp_send_staging_reflushes_without_commit` separately exercises the actual
+`test_xdp_transport_send_staging_reflushes_without_commit` separately exercises the actual
 transport flush path twice with equal counters and a fake staged backend.
 
 The refreshed control generates 109,743 states, with 13,178 distinct states;
@@ -62,7 +62,7 @@ removing the
 `rocketnet_server_transport_send_packets` leaves the retained generation
 unpublished once `send_flushed` catches up to `send_staged`, until an
 unrelated commit advances the staged counter. The unit check
-`xdp_send_staging_reflushes_without_commit` fails for that schedule.
+`test_xdp_transport_send_staging_reflushes_without_commit` fails for that schedule.
 
 ## Transport model and historical disconnect witness
 

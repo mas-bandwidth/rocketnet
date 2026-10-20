@@ -5,7 +5,7 @@
     The real connect through the C transport API from a C++ translation unit
     over loopback: a server transport and a client transport connect over
     127.0.0.1 with the development keys, exchange payloads each way, and
-    disconnect. The checks mirror test_transport_udp_loopback.
+    disconnect. The checks mirror test_loopback_transport_udp.
 */
 
 #include "rocketnet.h"

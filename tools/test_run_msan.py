@@ -70,25 +70,25 @@ class RunMsanGateTest(unittest.TestCase):
 
     def test_signal_fail_line_fails_even_with_known_finding(self):
         stdout = (
-            "test_timing_fail_01 [SKIPPED "
-            "wire_totals_staged_finish_counts_exactly signal 5]\n"
+            "check failed: "
+            "test_wire_totals_staged_finish_counts_exactly signal 5\n"
         )
         code, output = self.run_gate(stdout, 1, KNOWN_TOP)
         self.assertEqual(code, 1, output)
         self.assertIn(
-            "MSan: test failed: wire_totals_staged_finish_counts_exactly signal 5",
+            "MSan: test failed: test_wire_totals_staged_finish_counts_exactly signal 5",
             output,
         )
 
     def test_illegal_instruction_fail_line_fails_with_known_finding(self):
         stdout = (
-            "test_timing_fail_01 [SKIPPED "
-            "wire_totals_staged_finish_counts_exactly signal 4]\n"
+            "check failed: "
+            "test_wire_totals_staged_finish_counts_exactly signal 4\n"
         )
         code, output = self.run_gate(stdout, 1, KNOWN_TOP)
         self.assertEqual(code, 1, output)
         self.assertIn(
-            "MSan: test failed: wire_totals_staged_finish_counts_exactly signal 4",
+            "MSan: test failed: test_wire_totals_staged_finish_counts_exactly signal 4",
             output,
         )
 
@@ -98,16 +98,16 @@ class RunMsanGateTest(unittest.TestCase):
         self.assertIn("MSan: test run failed with status 133", output)
 
     def test_msan_exit_code_with_known_findings_passes(self):
-        stdout = "test_timing_fail_01 [SKIPPED random_bytes_test exit %d]\n" % MSAN_EXITCODE
+        stdout = "check failed: test_random_bytes exit %d\n" % MSAN_EXITCODE
         code, output = self.run_gate(stdout, 1, KNOWN_TOP)
         self.assertEqual(code, 0, output)
         self.assertIn("(all known)", output)
 
     def test_ordinary_exit_code_with_known_finding_fails(self):
-        stdout = "test_timing_fail_01 [SKIPPED random_bytes_test exit 1]\n"
+        stdout = "check failed: test_random_bytes exit 1\n"
         code, output = self.run_gate(stdout, 1, KNOWN_TOP)
         self.assertEqual(code, 1, output)
-        self.assertIn("MSan: test failed: random_bytes_test exit 1", output)
+        self.assertIn("MSan: test failed: test_random_bytes exit 1", output)
 
     def test_unlisted_finding_fails_naming_it(self):
         code, output = self.run_gate("", 0, UNKNOWN_TOP)
