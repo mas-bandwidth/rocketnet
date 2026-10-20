@@ -782,6 +782,20 @@ static void posix_create_probe_hook( int handle )
                                  (struct sockaddr*) &storage, bytes );
     posix_check( sent == (ssize_t) ( sizeof(posix_create_probe_message) - 1 ) );
     close( sender );
+
+    // Establish the regression's precondition before create resumes: a
+    // successful send alone does not prove the receive queue has the packet.
+    const double deadline = rocketnet_platform_time() + 5.0;
+    for ( ;; )
+    {
+        int queued = 0;
+        socklen_t queued_bytes = sizeof(queued);
+        posix_check( getsockopt( handle, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 );
+        if ( queued == 1 )
+            break;
+        posix_check( rocketnet_platform_time() < deadline );
+        rocketnet_platform_sleep( 0.0002 );
+    }
 }
 
 static void posix_create_keeps_queued_datagram( int ipv6 )
