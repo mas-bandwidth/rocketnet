@@ -18,7 +18,7 @@
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                   int * repost_calls, int * pending_receives, int * guard_hit );
 
-static void rio_overflow_seam()
+static void test_rio_transport_overflow_seam()
 {
     uint64_t counters[2 * ROCKETNET_RIO_NUM_COUNTERS] = {};
     int packet_counts[2] = { 0, 0 };
@@ -48,13 +48,6 @@ static void rio_overflow_seam()
     }
 }
 
-#else
-
-static void rio_overflow_seam()
-{
-    printf( "rio_overflow_seam [SKIPPED the RIO completion seam requires Windows]\n" );
-}
+REGISTER_UNIT_TEST( test_rio_transport_overflow_seam );
 
 #endif
-
-REGISTER_UNIT_TEST( rio_overflow_seam );

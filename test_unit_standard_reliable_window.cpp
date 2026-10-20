@@ -97,11 +97,11 @@ static int m5_reconstruct_generate( const char * id, uint8_t * out, int capacity
     return bytes;
 }
 
-static void standard_reliable_window_vectors()
+static void test_standard_reliable_window_vectors()
 {
     const int count = (int) ( sizeof( m5_vector_table ) / sizeof( m5_vector_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( m5_vector_table, count, m5_reconstruct_generate ) == count );
     rocketnet_unit_check( m5_reconstruct_generate( "m5.no-such-vector", NULL, 0 ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_reliable_window_vectors );
+REGISTER_UNIT_TEST( test_standard_reliable_window_vectors );

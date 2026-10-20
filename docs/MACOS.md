@@ -146,7 +146,7 @@ logs `transport list "gso" names no transport for this endpoint on this platform
 displaces whatever `transport` the program set (each create logs `server config override ROCKETNET_SERVER_TRANSPORT=gso (displaces <old>)`), so the
 example's own impossible pin is displaced too, its last check fails, and it
 exits 1. The functional
-case `driver_env_pin_is_honoured` fails under such a pin for the same reason.
+case `test_driver_env_pin_is_honoured` fails under such a pin for the same reason.
 
 Pinning `msgx` requires the batch symbols on the host: without them the create
 refuses instead of falling to `portable`. The first real batch call then
@@ -171,8 +171,8 @@ run, and keep only `ROCKETNET_SERVER_TRANSPORT` and
 
 CI pins every macOS pair on IPv4, IPv6 and dual stack: `portable/portable`,
 `portable/msgx`, `msgx/portable`, `msgx/msgx` and `loopback/loopback`, each
-running `test_transport_udp_loopback`, `test_transport_ipv6_loopback`,
-`test_transport_dual_stack_ipv4_client` and `driver_env_pin_is_honoured`
+running `test_loopback_transport_udp`, `test_loopback_transport_ipv6`,
+`test_transport_dual_stack_ipv4_client` and `test_driver_env_pin_is_honoured`
 (`.github/workflows/ci.yml`, "Transport family matrix",
 `TRANSPORT_MATRIX_MACOS`). The commands are in "Verify a Mac" below.
 
@@ -201,7 +201,7 @@ that waits in frame sync, put back to the standard policy afterwards
 `rocketnet_frame_sync_elevate_priority` returns before that call when
 `rocketnet_platform_thread_priority_enabled` is false.
 
-The functional case `thread_priority_timing_receive_gaps`
+The functional case `test_thread_priority_timing_receive_gaps`
 (`functional/thread_priority_timing.cpp`, `priority_timing_run`) reads the I/O
 thread's scheduling and QoS class from inside the thread and checks both: the
 class is never `QOS_CLASS_USER_INTERACTIVE`, on or off, and with the switch on
@@ -348,7 +348,7 @@ With access, the unit and functional suites each run one case in-process under
 the debugger, through `--run <case>` (`test/suite_runner.h`, `suite_main`):
 
 ```sh
-lldb -- ./bin/functional --run test_transport_udp_loopback
+lldb -- ./bin/functional --run test_loopback_transport_udp
 lldb -- ./bin/test --run test_time
 ```
 
@@ -398,8 +398,8 @@ ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/fu
 ./bin/example_transports
 
 for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loopback; do
-  for name in test_transport_udp_loopback test_transport_ipv6_loopback \
-              test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured; do
+  for name in test_loopback_transport_udp test_loopback_transport_ipv6 \
+              test_transport_dual_stack_ipv4_client test_driver_env_pin_is_honoured; do
     ROCKETNET_SERVER_TRANSPORT=${pair%%:*} ROCKETNET_CLIENT_TRANSPORT=${pair##*:} \
       ./bin/functional --run $name > /dev/null || echo "FAILED $pair $name"
   done
@@ -412,13 +412,12 @@ cmake --build build-debug --parallel 4
 
 How to read them:
 
-- `./bin/test` prints each unit case and the ten slowest as
-  `test_timing_slowest_* [SKIPPED ...]` lines; it opens no socket. A case over
-  60 seconds prints a warning; over 120 seconds it is killed and the suite
-  fails (`test/suite_runner.h`; Debug scales the limit).
-- `./bin/functional` opens real sockets on loopback. With no pin set it prints
-  `driver_env_pin_is_honoured [SKIPPED ...]`; under the portable pin it prints
-  `driver_env_pin_is_honoured` alone, which is what CI greps for
+- `./bin/test` prints each unit case's name, then `*** ALL TESTS PASSED ***`;
+  it opens no socket. A case over 120 seconds is killed and the suite fails
+  (`test/suite_runner.h`; Debug scales the limit).
+- `./bin/functional` opens real sockets on loopback. With no pin set
+  `test_driver_env_pin_is_honoured` is not in the suite; under the portable pin
+  it prints `test_driver_env_pin_is_honoured`, which is what CI greps for
   (`.github/workflows/ci.yml`, "Run functional suite (portable rung pinned by
   env)").
 - The loop is CI's macOS transport matrix, case by case; it prints nothing
@@ -426,6 +425,6 @@ How to read them:
 - `./bin/functional` under a pin other than `portable` runs cases CI does not
   run under that pin; the four matrix cases are the per-pin claim.
 - The functional suite has timing bounds. On a heavily loaded Mac a timed case
-  such as `live_message_matrix_loopback` (10 second bound) can fail on time;
+  such as `test_loopback_transport_live_message_matrix` (10 second bound) can fail on time;
   rerun that one case with `./bin/functional --run <case>` before reading it
   as a defect, and report it either way.

@@ -99,9 +99,9 @@ jobs:
   # bin/<config>. The #106 config and driver tests run here too -- setenv and
   # unsetenv are shimmed over _putenv_s in the test file -- EXCEPT the
   # empty-value distinction, which windows cannot represent: its CRT has no
-  # set-but-empty variable, so that one case is skipped, named and logged with
-  # that reason. Tests compiled out on windows are named and logged by the
-  # suite itself as named skips: the refused-destination and zero-length-chaff
+  # set-but-empty variable, so that one case is not checked there. Tests
+  # windows does not build are not registered there, so they are neither run
+  # nor printed: the refused-destination and zero-length-chaff
   # pump tests, whose raw-socket injector is posix-only, and the gso/xdp
   # and msgx rung tests windows does not build.
 
@@ -164,8 +164,7 @@ jobs:
         run: |
           set -o pipefail
           ./bin/Debug/functional.exe | tr -d '\r' | tee functional-iocp.log
-          grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
-          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
+          grep -qx 'test_driver_env_pin_is_honoured' functional-iocp.log
 
       - name: Run serialization surface (portable)
         shell: bash

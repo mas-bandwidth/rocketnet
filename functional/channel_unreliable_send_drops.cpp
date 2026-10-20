@@ -132,7 +132,7 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     drops_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
     if ( getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL )
-        printf( "unreliable_dropped_while_reliable_waits_never_arrives: over_budget=%llu reliable_arrived=%d elapsed=%.2f\n",
+        printf( "test_unreliable_dropped_while_reliable_waits_never_arrives: over_budget=%llu reliable_arrived=%d elapsed=%.2f\n",
                 (unsigned long long) ( drops_over_budget( &h ) - before ), reliable_arrived, elapsed );
     rocketnet_channel_harness_destroy( &h );
 }
@@ -186,7 +186,7 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     drops_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "allocation after create" );
     if ( getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL )
-        printf( "unreliable_dropped_when_builder_out_of_budget_never_arrives: sent=%d arrived=%d over_budget=%llu elapsed=%.2f\n",
+        printf( "test_unreliable_dropped_when_builder_out_of_budget_never_arrives: sent=%d arrived=%d over_budget=%llu elapsed=%.2f\n",
                 sent, arrived, (unsigned long long) ( drops_over_budget( &h ) - before ), elapsed );
     rocketnet_channel_harness_destroy( &h );
 }

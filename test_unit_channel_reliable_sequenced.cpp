@@ -45,7 +45,7 @@ static rocketnet_message_record_t rs_record( int code, uint32_t number, uint32_t
     return record;
 }
 
-static void stale_acked_then_discarded()
+static void test_stale_acked_then_discarded()
 {
     rs_node_t receiver;
     rs_init( &receiver );
@@ -67,9 +67,9 @@ static void stale_acked_then_discarded()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( stale_acked_then_discarded );
+REGISTER_UNIT_TEST( test_stale_acked_then_discarded );
 
-static void shares_the_watermark_with_code_1()
+static void test_shares_the_watermark_with_code_1()
 {
     rs_node_t receiver;
     rs_init( &receiver );
@@ -87,9 +87,9 @@ static void shares_the_watermark_with_code_1()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( shares_the_watermark_with_code_1 );
+REGISTER_UNIT_TEST( test_shares_the_watermark_with_code_1 );
 
-static void reliable_sequenced_c_api_start_finish()
+static void test_reliable_sequenced_c_api_start_finish()
 {
     rn_message_link_t link = {};
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
@@ -109,7 +109,7 @@ static void reliable_sequenced_c_api_start_finish()
     rn_message_object_destroy( object );
 }
 
-REGISTER_UNIT_TEST( reliable_sequenced_c_api_start_finish );
+REGISTER_UNIT_TEST( test_reliable_sequenced_c_api_start_finish );
 
 struct rs_packet_t
 {
@@ -145,7 +145,7 @@ static int rs_write( rs_node_t * node, double now, rs_packet_t * packets, int ca
     return count;
 }
 
-static void newest_delivered_under_loss_and_reorder()
+static void test_newest_delivered_under_loss_and_reorder()
 {
     rs_node_t receiver;
     rs_init( &receiver );
@@ -177,9 +177,9 @@ static void newest_delivered_under_loss_and_reorder()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( newest_delivered_under_loss_and_reorder );
+REGISTER_UNIT_TEST( test_newest_delivered_under_loss_and_reorder );
 
-static void resent_until_packet_acked()
+static void test_resent_until_packet_acked()
 {
     rs_node_t sender;
     rs_init( &sender );
@@ -200,9 +200,9 @@ static void resent_until_packet_acked()
     rn_arena_destroy( sender.arena );
 }
 
-REGISTER_UNIT_TEST( resent_until_packet_acked );
+REGISTER_UNIT_TEST( test_resent_until_packet_acked );
 
-static void stale_transport_ack_retires_resend_after_discard()
+static void test_stale_transport_ack_retires_resend_after_discard()
 {
     rs_node_t sender, receiver;
     rs_init( &sender );
@@ -239,9 +239,9 @@ static void stale_transport_ack_retires_resend_after_discard()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( stale_transport_ack_retires_resend_after_discard );
+REGISTER_UNIT_TEST( test_stale_transport_ack_retires_resend_after_discard );
 
-static void reliable_sequenced_block_delivers_whole()
+static void test_reliable_sequenced_block_delivers_whole()
 {
     rs_node_t sender, receiver;
     rs_init( &sender );
@@ -275,9 +275,9 @@ static void reliable_sequenced_block_delivers_whole()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( reliable_sequenced_block_delivers_whole );
+REGISTER_UNIT_TEST( test_reliable_sequenced_block_delivers_whole );
 
-static void reliable_sequenced_block_ahead_drains_from_ring()
+static void test_reliable_sequenced_block_ahead_drains_from_ring()
 {
     rs_node_t sender, receiver;
     rs_init( &sender );
@@ -307,9 +307,9 @@ static void reliable_sequenced_block_ahead_drains_from_ring()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( reliable_sequenced_block_ahead_drains_from_ring );
+REGISTER_UNIT_TEST( test_reliable_sequenced_block_ahead_drains_from_ring );
 
-static void newer_state_releases_incomplete_block()
+static void test_newer_state_releases_incomplete_block()
 {
     rs_node_t receiver;
     rs_init( &receiver );
@@ -346,7 +346,7 @@ static void newer_state_releases_incomplete_block()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( newer_state_releases_incomplete_block );
+REGISTER_UNIT_TEST( test_newer_state_releases_incomplete_block );
 
 // RNChannelTypes!Dispatch (I12): a code-4 record stale for its ordered epoch
 // is acked by the transport and discarded, and its receive number is released.
@@ -355,7 +355,7 @@ REGISTER_UNIT_TEST( newer_state_releases_incomplete_block );
 // stream after about W numbers. Each epoch here is one fresh code-4 state,
 // the ordered record that closes the epoch, then a late code-4 state from the
 // closed epoch; more than W + 64 numbers pass through the window.
-static void stale_numbers_released_across_ordered_epochs()
+static void test_stale_numbers_released_across_ordered_epochs()
 {
     rs_node_t receiver;
     rs_init( &receiver );
@@ -379,7 +379,7 @@ static void stale_numbers_released_across_ordered_epochs()
             uint32_t slot;
             const int accepted = rn_window_receive_accept( &receiver.ordered.receive, &record, &slot );
             if ( accepted != RN_WINDOW_RECEIVE_ACCEPT )
-                printf( "stale_numbers_released_across_ordered_epochs: number %u (epoch %u) refused by the window: accept=%d violation=%d\n",
+                printf( "test_stale_numbers_released_across_ordered_epochs: number %u (epoch %u) refused by the window: accept=%d violation=%d\n",
                         number, epoch, accepted, (int) receiver.ordered.receive.violation );
             check( accepted == RN_WINDOW_RECEIVE_ACCEPT );
             rn_delivery_t out;
@@ -396,19 +396,19 @@ static void stale_numbers_released_across_ordered_epochs()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( stale_numbers_released_across_ordered_epochs );
+REGISTER_UNIT_TEST( test_stale_numbers_released_across_ordered_epochs );
 
-static void rnchannel_reliable_sequenced_witness_replays()
+static void test_rnchannel_reliable_sequenced_witness_replays()
 {
     // BrokenSequencedBackwards and BrokenHoldAllSequenced are rejected for
     // numbered code 4 as for code 1; the ordered drain resets the watermark.
-    stale_acked_then_discarded();
-    stale_transport_ack_retires_resend_after_discard();
-    newest_delivered_under_loss_and_reorder();
-    shares_the_watermark_with_code_1();
+    test_stale_acked_then_discarded();
+    test_stale_transport_ack_retires_resend_after_discard();
+    test_newest_delivered_under_loss_and_reorder();
+    test_shares_the_watermark_with_code_1();
 }
 
-REGISTER_UNIT_TEST( rnchannel_reliable_sequenced_witness_replays );
+REGISTER_UNIT_TEST( test_rnchannel_reliable_sequenced_witness_replays );
 
 static uint64_t rs_allocations;
 
@@ -424,7 +424,7 @@ static void rs_counted_free( void *, void * memory )
     free( memory );
 }
 
-static void reliable_sequenced_no_allocation_after_create()
+static void test_reliable_sequenced_no_allocation_after_create()
 {
     rocketnet_term();
     check( rocketnet_set_allocator( rs_counted_malloc, rs_counted_free ) == ROCKETNET_STATUS_OK );
@@ -450,7 +450,7 @@ static void reliable_sequenced_no_allocation_after_create()
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( reliable_sequenced_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_reliable_sequenced_no_allocation_after_create );
 
 // A refused record dispatches nothing, raises its own refusal counter by one,
 // sets the sticky protocol violation and counts it once for the channel set.
@@ -474,7 +474,7 @@ static void rs_check_refused( rs_node_t * node, const rocketnet_message_record_t
 // rn_channels_dispatch_sequenced and rn_sequenced_block in
 // sdk/rocketnet_channel_sequenced.cpp; each case uses a fresh node because the
 // violation is counted once per channel set.
-static void hostile_sequenced_records_are_refused()
+static void test_hostile_sequenced_records_are_refused()
 {
     const uint8_t payload = 7;
     uint8_t chunk[ROCKETNET_MESSAGE_FRAGMENT_BYTES] = {};
@@ -536,13 +536,13 @@ static void hostile_sequenced_records_are_refused()
     }
 }
 
-REGISTER_UNIT_TEST( hostile_sequenced_records_are_refused );
+REGISTER_UNIT_TEST( test_hostile_sequenced_records_are_refused );
 
 // RNChannelTypes!Dispatch: an in-turn code-4 state whose sequencing equals the
 // held block's is not newer, so it is superseded: discarded, its number
 // released, and the held block kept. Implemented by the delta == 0 branch of
 // rn_channels_dispatch_sequenced in sdk/rocketnet_channel_sequenced.cpp.
-static void equal_sequencing_at_a_held_block_is_superseded()
+static void test_equal_sequencing_at_a_held_block_is_superseded()
 {
     rs_node_t receiver;
     rs_init( &receiver );
@@ -572,4 +572,4 @@ static void equal_sequencing_at_a_held_block_is_superseded()
     rn_arena_destroy( receiver.arena );
 }
 
-REGISTER_UNIT_TEST( equal_sequencing_at_a_held_block_is_superseded );
+REGISTER_UNIT_TEST( test_equal_sequencing_at_a_held_block_is_superseded );

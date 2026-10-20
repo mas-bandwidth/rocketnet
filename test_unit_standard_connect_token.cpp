@@ -157,7 +157,7 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     return -1;
 }
 
-static void standard_connect_token_vectors()
+static void test_standard_connect_token_vectors()
 {
     const int count = (int) ( sizeof( standard_connect_token_table ) / sizeof( standard_connect_token_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_connect_token_table, count, standard_connect_token_generate ) == count );
@@ -215,4 +215,4 @@ static void standard_connect_token_vectors()
     rocketnet_unit_check( !rocketnet_connect_token_private_consistent( &opened, signed_buffer ) );
 }
 
-REGISTER_UNIT_TEST( standard_connect_token_vectors );
+REGISTER_UNIT_TEST( test_standard_connect_token_vectors );

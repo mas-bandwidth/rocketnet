@@ -46,7 +46,7 @@ static double pins_ignored_time_callback( void * )
     return pins_ignored_clock;
 }
 
-static void unit_transport_pins_ignored()
+static void test_unit_transport_pins_ignored()
 {
     char saved_server[64] = "";
     char saved_client[64] = "";
@@ -137,7 +137,7 @@ static void unit_transport_pins_ignored()
     else
         pins_clear( "ROCKETNET_CLIENT_TRANSPORT" );
 
-    printf( "unit_transport_pins_ignored\n" );
+    printf( "test_unit_transport_pins_ignored\n" );
 }
 
-REGISTER_UNIT_TEST( unit_transport_pins_ignored );
+REGISTER_UNIT_TEST( test_unit_transport_pins_ignored );

@@ -59,7 +59,7 @@ static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_cli
 // Stop with a handed-off ring: the I/O thread sends the ring in flight (both
 // packets) and then exits on the same step. wake_calls 2: the hand-off wakes
 // once, stop wakes again. RNClientIo Stop, IoExit.
-static void client_io_stop_sends_in_flight_ring_first()
+static void test_client_io_stop_sends_in_flight_ring_first()
 {
     rocketnet_fake_client_driver_t fake = {};
     rocketnet_client_driver_t driver = {};
@@ -98,12 +98,12 @@ static void client_io_stop_sends_in_flight_ring_first()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_stop_sends_in_flight_ring_first );
+REGISTER_UNIT_TEST( test_client_io_stop_sends_in_flight_ring_first );
 
 // Stop with nothing handed off and a datagram waiting: the step exits at once,
 // sends nothing, does not receive, does not wait. RNClientIo IoExit (no
 // receive, no publish, no wait).
-static void client_io_stop_exits_with_nothing_new()
+static void test_client_io_stop_exits_with_nothing_new()
 {
     rocketnet_fake_client_driver_t fake = {};
     rocketnet_client_driver_t driver = {};
@@ -141,7 +141,7 @@ static void client_io_stop_exits_with_nothing_new()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_stop_exits_with_nothing_new );
+REGISTER_UNIT_TEST( test_client_io_stop_exits_with_nothing_new );
 
 // Handing off after stop asserts once through the installed non-aborting hook.
 // RNClientIo Stop (nothing new after stop); the assert compiles out in a
@@ -158,7 +158,7 @@ static void client_io_stop_hand_off_assert_hook( const char * condition, const c
     client_io_stop_hand_off_asserts++;
 }
 
-static void client_io_hand_off_after_stop_asserts()
+static void test_client_io_hand_off_after_stop_asserts()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) =
         rn_assert_function;
@@ -201,4 +201,4 @@ static void client_io_hand_off_after_stop_asserts()
     delete buffers[0];
     delete buffers[1];
 }
-REGISTER_UNIT_TEST( client_io_hand_off_after_stop_asserts );
+REGISTER_UNIT_TEST( test_client_io_hand_off_after_stop_asserts );

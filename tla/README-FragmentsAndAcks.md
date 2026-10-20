@@ -383,7 +383,7 @@ window only when slot `s % SentRing` has its unacked bit set and holds s.
 | Property | The rule |
 |---|---|
 | `BitsCoverRing` | always: every slot whose record is in the window, written and not acknowledged is in `unacked`, and `unacked` is inside `held`; the walk never misses a record |
-| `BitsMatchRing` | when `bitsChecked = highestSent`: `held` is exactly the slots whose record is written and at or above `WindowLow`, `unacked` exactly those of them not acknowledged; the check the pro card's `ack_block_walk_bits_match_ring` test runs |
+| `BitsMatchRing` | when `bitsChecked = highestSent`: `held` is exactly the slots whose record is written and at or above `WindowLow`, `unacked` exactly those of them not acknowledged; the check the pro card's `test_ack_block_walk_bits_match_ring` test runs |
 | `WalkVisitsUnacked` | `lastVisited = lastExpect`: the bitmap walk visits exactly the sequences the ring says it should |
 
 **Abstracted.** The bits are sets of slot indexes, not words; the walk's word scan (find the

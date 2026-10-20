@@ -22,13 +22,13 @@ int rocketnet_platform_nonblocking_flags( int flags );
 
 // F_SETFL replaces the status flags, so the merge keeps every flag the
 // descriptor had and adds O_NONBLOCK.
-static void platform_nonblocking_flags_keep_existing_flags()
+static void test_platform_nonblocking_flags_keep_existing_flags()
 {
     rocketnet_unit_check( rocketnet_platform_nonblocking_flags( O_APPEND ) == ( O_APPEND | O_NONBLOCK ) );
     rocketnet_unit_check( rocketnet_platform_nonblocking_flags( 0 ) == O_NONBLOCK );
     rocketnet_unit_check( rocketnet_platform_nonblocking_flags( O_NONBLOCK ) == O_NONBLOCK );
 }
 
-REGISTER_UNIT_TEST( platform_nonblocking_flags_keep_existing_flags );
+REGISTER_UNIT_TEST( test_platform_nonblocking_flags_keep_existing_flags );
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

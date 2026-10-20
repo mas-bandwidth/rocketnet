@@ -184,7 +184,7 @@ static void driver_results_close_io( rocketnet_client_driver_t * driver, rocketn
 // A receive_batch that returns one past the count it was asked for does not
 // index the stack arrays past that count. The extra return is one fault. The
 // slots it was asked to fill are kept, including a zero-length slot.
-static void driver_results_client_batch_over_count_is_a_fault()
+static void test_driver_results_client_batch_over_count_is_a_fault()
 {
     driver_results_lie_t lie = {};
     lie.mode = 1;
@@ -204,11 +204,11 @@ static void driver_results_client_batch_over_count_is_a_fault()
     rocketnet_unit_check( received->packet_data[0][0] == 0x11 );
 
     driver_results_close_io( &driver, buffers );
-    printf( "driver_results_client_batch_over_count_is_a_fault\n" );
+    printf( "test_driver_results_client_batch_over_count_is_a_fault\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_batch_over_count_is_a_fault );
+REGISTER_UNIT_TEST( test_driver_results_client_batch_over_count_is_a_fault );
 
-static void driver_results_client_negative_byte_count_is_a_fault()
+static void test_driver_results_client_negative_byte_count_is_a_fault()
 {
     driver_results_lie_t lie = {};
     lie.mode = 2;
@@ -224,11 +224,11 @@ static void driver_results_client_negative_byte_count_is_a_fault()
     rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
 
     driver_results_close_io( &driver, buffers );
-    printf( "driver_results_client_negative_byte_count_is_a_fault\n" );
+    printf( "test_driver_results_client_negative_byte_count_is_a_fault\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_negative_byte_count_is_a_fault );
+REGISTER_UNIT_TEST( test_driver_results_client_negative_byte_count_is_a_fault );
 
-static void driver_results_client_oversized_byte_count_is_a_fault()
+static void test_driver_results_client_oversized_byte_count_is_a_fault()
 {
     driver_results_lie_t lie = {};
     lie.mode = 3;
@@ -245,13 +245,13 @@ static void driver_results_client_oversized_byte_count_is_a_fault()
     rocketnet_unit_check( lie.max_seen == ROCKETNET_MAX_PACKET_BYTES );
 
     driver_results_close_io( &driver, buffers );
-    printf( "driver_results_client_oversized_byte_count_is_a_fault\n" );
+    printf( "test_driver_results_client_oversized_byte_count_is_a_fault\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_oversized_byte_count_is_a_fault );
+REGISTER_UNIT_TEST( test_driver_results_client_oversized_byte_count_is_a_fault );
 
 // A negative byte count in a batch is refused and counted. The later slot
 // whose count fits the stride is kept.
-static void driver_results_client_batch_refuses_a_bad_byte_count()
+static void test_driver_results_client_batch_refuses_a_bad_byte_count()
 {
     driver_results_lie_t lie = {};
     lie.mode = 4;
@@ -271,13 +271,13 @@ static void driver_results_client_batch_refuses_a_bad_byte_count()
     rocketnet_unit_check( received->packet_data[0][0] == 0x22 );
 
     driver_results_close_io( &driver, buffers );
-    printf( "driver_results_client_batch_refuses_a_bad_byte_count\n" );
+    printf( "test_driver_results_client_batch_refuses_a_bad_byte_count\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_batch_refuses_a_bad_byte_count );
+REGISTER_UNIT_TEST( test_driver_results_client_batch_refuses_a_bad_byte_count );
 
 // A truncated slot after a refused slot keeps its original length, but
 // compaction must not read or overwrite the following slot's payload.
-static void driver_results_client_truncated_batch_copies_only_prefix()
+static void test_driver_results_client_truncated_batch_copies_only_prefix()
 {
     driver_results_lie_t lie = {};
     lie.mode = 6;
@@ -300,9 +300,9 @@ static void driver_results_client_truncated_batch_copies_only_prefix()
         rocketnet_unit_check( received->packet_data[1][i] == 0x22 );
     driver_results_close_io( &driver, buffers );
 }
-REGISTER_UNIT_TEST( driver_results_client_truncated_batch_copies_only_prefix );
+REGISTER_UNIT_TEST( test_driver_results_client_truncated_batch_copies_only_prefix );
 
-static void driver_results_client_batch_impossible_length_is_a_fault()
+static void test_driver_results_client_batch_impossible_length_is_a_fault()
 {
     driver_results_lie_t lie = {};
     lie.mode = 7;
@@ -321,11 +321,11 @@ static void driver_results_client_batch_impossible_length_is_a_fault()
     rocketnet_unit_check( received->packet_data[0][0] == 0x22 );
     driver_results_close_io( &driver, buffers );
 }
-REGISTER_UNIT_TEST( driver_results_client_batch_impossible_length_is_a_fault );
+REGISTER_UNIT_TEST( test_driver_results_client_batch_impossible_length_is_a_fault );
 
 // A driver open allows wait and wake both absent. A blocked idle step does
 // not call wait.
-static void driver_results_client_without_wait_skips_the_call()
+static void test_driver_results_client_without_wait_skips_the_call()
 {
     rocketnet_fake_client_driver_t fake = {};
     rocketnet_client_driver_t driver = {};
@@ -360,9 +360,9 @@ static void driver_results_client_without_wait_skips_the_call()
     rocketnet_client_driver_close( &driver );
     delete buffers[0];
     delete buffers[1];
-    printf( "driver_results_client_without_wait_skips_the_call\n" );
+    printf( "test_driver_results_client_without_wait_skips_the_call\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_without_wait_skips_the_call );
+REGISTER_UNIT_TEST( test_driver_results_client_without_wait_skips_the_call );
 
 struct driver_results_server_lie_t
 {
@@ -447,7 +447,7 @@ static rocketnet_server_transport_t * driver_results_make_server( driver_results
     return server;
 }
 
-static void driver_results_server_receive_checks_counts()
+static void test_driver_results_server_receive_checks_counts()
 {
     driver_results_server_lie_t lie = {};
     rocketnet_server_driver_operations_t operations;
@@ -488,9 +488,9 @@ static void driver_results_server_receive_checks_counts()
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before + 1 );
 
     rocketnet_server_transport_destroy( server );
-    printf( "driver_results_server_receive_checks_counts\n" );
+    printf( "test_driver_results_server_receive_checks_counts\n" );
 }
-REGISTER_UNIT_TEST( driver_results_server_receive_checks_counts );
+REGISTER_UNIT_TEST( test_driver_results_server_receive_checks_counts );
 
 static int driver_results_admission_count( void * context, const rocketnet_address_t *, const uint8_t *, int )
 {
@@ -498,7 +498,7 @@ static int driver_results_admission_count( void * context, const rocketnet_addre
     return ROCKETNET_SERVER_ADMISSION_ADMIT;
 }
 
-static void driver_results_server_truncated_datagram_skips_admission()
+static void test_driver_results_server_truncated_datagram_skips_admission()
 {
     driver_results_server_lie_t lie = {};
     rocketnet_server_driver_operations_t operations;
@@ -519,7 +519,7 @@ static void driver_results_server_truncated_datagram_skips_admission()
     rocketnet_unit_check( admission_calls == 1 );
     rocketnet_server_transport_destroy( server );
 }
-REGISTER_UNIT_TEST( driver_results_server_truncated_datagram_skips_admission );
+REGISTER_UNIT_TEST( test_driver_results_server_truncated_datagram_skips_admission );
 
 
 static void driver_results_set_ipv4( rocketnet_address_t * address, int a, int b, int c, int d, uint16_t port )
@@ -535,7 +535,7 @@ static void driver_results_set_ipv4( rocketnet_address_t * address, int a, int b
 
 // A datagram reaches the endpoint bound to its destination, or a wildcard of
 // that family. 10.0.0.1:p does not reach an endpoint bound to 127.0.0.1:p.
-static void driver_results_loopback_matches_destination_or_wildcard()
+static void test_loopback_transport_driver_results_matches_destination_or_wildcard()
 {
     const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
     rocketnet_server_transport_config_t server_config;
@@ -584,9 +584,9 @@ static void driver_results_loopback_matches_destination_or_wildcard()
 
     rocketnet_server_driver_close( &server );
     rocketnet_client_driver_close( &client );
-    printf( "driver_results_loopback_matches_destination_or_wildcard\n" );
+    printf( "test_loopback_transport_driver_results_matches_destination_or_wildcard\n" );
 }
-REGISTER_UNIT_TEST( driver_results_loopback_matches_destination_or_wildcard );
+REGISTER_UNIT_TEST( test_loopback_transport_driver_results_matches_destination_or_wildcard );
 
 #if defined(__linux__)
 
@@ -608,7 +608,7 @@ static void driver_results_fill_gro( struct msghdr * header, char * control, siz
 // The GRO cmsg is read only when the message is not MSG_CTRUNC and cmsg_len
 // holds an int. Anything else is one fault and one datagram. The header is
 // built in memory; no socket.
-static void driver_results_gso_gro_cmsg_is_checked()
+static void test_gso_transport_driver_results_gro_cmsg_is_checked()
 {
     const int message_bytes = 300;
     const int stride = 100;
@@ -637,8 +637,8 @@ static void driver_results_gso_gro_cmsg_is_checked()
     rocketnet_unit_check( rocketnet_server_gso_gro_segment_bytes( &header, message_bytes, &faults ) == message_bytes );
     rocketnet_unit_check( faults == 0 );
 
-    printf( "driver_results_gso_gro_cmsg_is_checked\n" );
+    printf( "test_gso_transport_driver_results_gro_cmsg_is_checked\n" );
 }
-REGISTER_UNIT_TEST( driver_results_gso_gro_cmsg_is_checked );
+REGISTER_UNIT_TEST( test_gso_transport_driver_results_gro_cmsg_is_checked );
 
 #endif // #if defined(__linux__)

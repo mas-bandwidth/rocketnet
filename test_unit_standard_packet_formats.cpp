@@ -189,7 +189,7 @@ static int standard_packet_formats_generate( const char * id, uint8_t * out, int
     return -1;
 }
 
-static void standard_packet_formats_vectors()
+static void test_standard_packet_formats_vectors()
 {
     const int count = (int) ( sizeof( standard_packet_formats_table ) / sizeof( standard_packet_formats_table[0] ) );
     rocketnet_unit_check( count == 10 );
@@ -203,4 +203,4 @@ static void standard_packet_formats_vectors()
     rocketnet_unit_check( standard_packet_formats_generate( "t8.request", scratch, (int) sizeof( scratch ) ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_packet_formats_vectors );
+REGISTER_UNIT_TEST( test_standard_packet_formats_vectors );

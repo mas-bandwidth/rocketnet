@@ -123,7 +123,7 @@ static const uint8_t salt_mismatch_alternate_salt[ROCKETNET_CONNECTION_SALT_BYTE
     0x53, 0x41, 0x4c, 0x54, 0x30, 0x30, 0x30, 0x32
 };
 
-static void salt_mismatch_resends_stored_challenge()
+static void test_salt_mismatch_resends_stored_challenge()
 {
     struct salt_mismatch_server_t test;
     salt_mismatch_server_setup( &test );
@@ -173,4 +173,4 @@ static void salt_mismatch_resends_stored_challenge()
     salt_mismatch_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( salt_mismatch_resends_stored_challenge );
+REGISTER_UNIT_TEST( test_salt_mismatch_resends_stored_challenge );

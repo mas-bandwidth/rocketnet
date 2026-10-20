@@ -52,7 +52,7 @@ rocketnet_client_driver_operations_t base_table()
 }
 }
 
-static void client_driver_open_refuses_wait_without_wake()
+static void test_client_driver_open_refuses_wait_without_wake()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
@@ -66,9 +66,9 @@ static void client_driver_open_refuses_wait_without_wake()
     rocketnet_unit_check(driver.instance == NULL);
     rocketnet_unit_check(driver.operations == NULL);
 }
-REGISTER_UNIT_TEST(client_driver_open_refuses_wait_without_wake);
+REGISTER_UNIT_TEST(test_client_driver_open_refuses_wait_without_wake);
 
-static void client_driver_open_refuses_wake_without_wait()
+static void test_client_driver_open_refuses_wake_without_wait()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
@@ -82,9 +82,9 @@ static void client_driver_open_refuses_wake_without_wait()
     rocketnet_unit_check(driver.instance == NULL);
     rocketnet_unit_check(driver.operations == NULL);
 }
-REGISTER_UNIT_TEST(client_driver_open_refuses_wake_without_wait);
+REGISTER_UNIT_TEST(test_client_driver_open_refuses_wake_without_wait);
 
-static void client_driver_open_accepts_wait_and_wake()
+static void test_client_driver_open_accepts_wait_and_wake()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
@@ -101,9 +101,9 @@ static void client_driver_open_accepts_wait_and_wake()
     rocketnet_unit_check(g_destroy_calls == 1);
     rocketnet_unit_check(driver.instance == NULL);
 }
-REGISTER_UNIT_TEST(client_driver_open_accepts_wait_and_wake);
+REGISTER_UNIT_TEST(test_client_driver_open_accepts_wait_and_wake);
 
-static void client_driver_open_accepts_base_four()
+static void test_client_driver_open_accepts_base_four()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
@@ -118,4 +118,4 @@ static void client_driver_open_accepts_base_four()
     rocketnet_unit_check(g_destroy_calls == 1);
     rocketnet_unit_check(driver.instance == NULL);
 }
-REGISTER_UNIT_TEST(client_driver_open_accepts_base_four);
+REGISTER_UNIT_TEST(test_client_driver_open_accepts_base_four);

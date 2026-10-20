@@ -176,7 +176,7 @@ static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {
     std::vector<uint8_t> data((size_t)bytes); for(int i=0;i<bytes;++i) data[(size_t)i]=(uint8_t)(i+sequence); return data;
 }
 static void boundary_check_counter(const rocketnet_counters_t * counters,int index) { check(rocketnet_counter_value(counters,index)==0); }
-static void message_boundary_sizes_every_mode_every_channel() {
+static void test_message_boundary_sizes_every_mode_every_channel() {
     const int sizes[]={1404,16,1405,16,1406,16};
     for(int reliability=0;reliability<ROCKETNET_CHANNEL_NUM_TYPES;++reliability) {
         // Only channel-bearing wire codes route across the configured channel set.
@@ -250,9 +250,9 @@ static void message_boundary_sizes_every_mode_every_channel() {
         }
     }
 }
-REGISTER_UNIT_TEST(message_boundary_sizes_every_mode_every_channel);
+REGISTER_UNIT_TEST(test_message_boundary_sizes_every_mode_every_channel);
 
-static void message_boundary_oversize_unreliable_counts_failed_not_refused() {
+static void test_message_boundary_oversize_unreliable_counts_failed_not_refused() {
     boundary_pair_t pair; boundary_setup(&pair);
     std::vector<boundary_received_t> got; boundary_step(&pair,&got);
     const rocketnet_counters_t * cc=rocketnet_message_client_counters(pair.client);
@@ -266,4 +266,4 @@ static void message_boundary_oversize_unreliable_counts_failed_not_refused() {
     check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED)==refused_before);
     boundary_teardown(&pair);
 }
-REGISTER_UNIT_TEST(message_boundary_oversize_unreliable_counts_failed_not_refused);
+REGISTER_UNIT_TEST(test_message_boundary_oversize_unreliable_counts_failed_not_refused);

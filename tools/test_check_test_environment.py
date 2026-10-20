@@ -1,50 +1,39 @@
 #!/usr/bin/env python3
-"""Focused tests for platform-aware unit registration inventory."""
+"""Focused tests for the unit registration inventory and the output shape."""
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import check_test_environment as checker
 
 
 class RegisterNameTests(unittest.TestCase):
-    def test_linux_guarded_registration_is_platform_aware(self):
+    def test_guarded_registration_is_conditional(self):
         source = """\
 #if defined(__linux__)
 #if defined(UDP_GRO)
-REGISTER_UNIT_TEST( linux_gro_test );
+REGISTER_UNIT_TEST( test_linux_gro );
 #endif
-#else
-REGISTER_UNIT_TEST( other_host_test );
 #endif
-REGISTER_UNIT_TEST( unguarded_test );
+REGISTER_UNIT_TEST( test_unguarded );
 """
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "test_unit_platform.cpp"
             path.write_text(source)
-            with patch.object(checker.sys, "platform", "darwin"):
-                self.assertEqual(checker._register_names(path), ["other_host_test", "unguarded_test"])
-            with patch.object(checker.sys, "platform", "linux"):
-                self.assertEqual(
-                    checker._register_names(path),
-                    ["linux_gro_test", "unguarded_test"],
-                )
+            self.assertEqual(checker._register_names(path),
+                             [("test_linux_gro", False), ("test_unguarded", True)])
 
     def test_directive_looking_comment_does_not_hide_unconditional_name(self):
         source = """\
 /*
 #if defined(__linux__)
 */
-REGISTER_UNIT_TEST( unguarded_after_comment );
+REGISTER_UNIT_TEST( test_unguarded_after_comment );
 """
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "test_unit_comment.cpp"
             path.write_text(source)
-            with patch.object(checker.sys, "platform", "darwin"):
-                self.assertEqual(
-                    checker._register_names(path), ["unguarded_after_comment"]
-                )
+            self.assertEqual(checker._register_names(path), [("test_unguarded_after_comment", True)])
 
     def test_comment_markers_in_literals_do_not_hide_unconditional_name(self):
         source = r'''
@@ -53,22 +42,38 @@ const char *ordinary = "/*";
 const char *raw = R"tag(/* literal */)tag";
 #endif
 const char *after = "*/";
-REGISTER_UNIT_TEST( unguarded_after_literals );
+REGISTER_UNIT_TEST( test_unguarded_after_literals );
 '''
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "test_unit_literals.cpp"
             path.write_text(source)
-            with patch.object(checker.sys, "platform", "darwin"):
-                self.assertEqual(
-                    checker._register_names(path), ["unguarded_after_literals"]
-                )
+            self.assertEqual(checker._register_names(path), [("test_unguarded_after_literals", True)])
 
     def test_unguarded_missing_registration_still_fails(self):
         with self.assertRaises(SystemExit) as raised:
-            checker.assert_name_set({"present_test"},
-                                    {"present_test", "unguarded_test"},
+            checker.assert_name_set({"test_present"},
+                                    {"test_present", "test_unguarded"},
+                                    {"test_present", "test_unguarded"},
                                     "SDK suite")
-        self.assertIn("missing from output: unguarded_test", str(raised.exception))
+        self.assertIn("missing from output: test_unguarded", str(raised.exception))
+
+
+class ShapeTests(unittest.TestCase):
+    def test_names_then_passed_line(self):
+        self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE], "suite"),
+                         ["test_a", "test_b"])
+
+    def test_skip_line_fails(self):
+        with self.assertRaises(SystemExit):
+            checker.check_shape(["test_a", "test_xdp_matcher [SKIPPED linux only]", "", checker.PASSED_LINE], "suite")
+
+    def test_capital_letter_fails(self):
+        with self.assertRaises(SystemExit):
+            checker.check_shape(["TestWindowRing", "", checker.PASSED_LINE], "suite")
+
+    def test_missing_passed_line_fails(self):
+        with self.assertRaises(SystemExit):
+            checker.check_shape(["test_a"], "suite")
 
 
 if __name__ == "__main__":

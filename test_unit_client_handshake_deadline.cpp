@@ -70,7 +70,7 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
 // the token's own clock; the update at five seconds is connect token expired
 // (-7). These are sdk/rocketnet_client_protocol.cpp:148, :187 and :205-206,
 // and netcode.c:3254-3262 at tag v1.2.1.
-static void client_attempt_runs_the_token_lifetime_from_its_start()
+static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -101,7 +101,7 @@ static void client_attempt_runs_the_token_lifetime_from_its_start()
 // wire: connect at C + 5 for a token that expires at C + 5. These are
 // sdk/rocketnet_client_protocol.cpp:148, :187 and :205-206, and
 // netcode.c:3254-3262 at tag v1.2.1.
-static void client_connect_at_the_expire_timestamp_is_refused()
+static void test_client_connect_at_the_expire_timestamp_is_refused()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
@@ -124,5 +124,5 @@ static void client_connect_at_the_expire_timestamp_is_refused()
     rocketnet_counters_assert_conserved( &counters );
 }
 
-REGISTER_UNIT_TEST( client_attempt_runs_the_token_lifetime_from_its_start );
-REGISTER_UNIT_TEST( client_connect_at_the_expire_timestamp_is_refused );
+REGISTER_UNIT_TEST( test_client_attempt_runs_the_token_lifetime_from_its_start );
+REGISTER_UNIT_TEST( test_client_connect_at_the_expire_timestamp_is_refused );

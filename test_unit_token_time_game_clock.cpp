@@ -150,7 +150,7 @@ static int token_time_game_server_request( struct token_time_game_server_t * t, 
 // a token minted at epoch + 1000 and expiring ten seconds later connects at
 // update time 1000.0 on both ends, whatever the wall clock says
 
-static void token_time_game_clock_admits_a_fixed_token()
+static void test_token_time_game_clock_admits_a_fixed_token()
 {
     const uint64_t create = GAME_CLOCK_EPOCH + 1000;
     const uint64_t expire = create + TOKEN_LIFETIME;
@@ -178,12 +178,12 @@ static void token_time_game_clock_admits_a_fixed_token()
     check( token_time_game_server_request( &t, create, expire, GAME_CLOCK_EPOCH + 1000 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     token_time_game_server_teardown( &t );
 
-    printf( "token_time_game_clock_admits_a_fixed_token\n" );
+    printf( "test_token_time_game_clock_admits_a_fixed_token\n" );
 }
 
 // the same token is refused once epoch + time reaches expire, on both ends
 
-static void token_time_game_clock_refuses_after_expire()
+static void test_token_time_game_clock_refuses_after_expire()
 {
     const uint64_t create = GAME_CLOCK_EPOCH + 1000;
     const uint64_t expire = create + TOKEN_LIFETIME;
@@ -196,13 +196,13 @@ static void token_time_game_clock_refuses_after_expire()
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
     token_time_game_server_teardown( &t );
 
-    printf( "token_time_game_clock_refuses_after_expire\n" );
+    printf( "test_token_time_game_clock_refuses_after_expire\n" );
 }
 
 // with the field zero a token stamped from a fixed past epoch is refused as
 // expired, as before: the wall clock is the clock
 
-static void token_time_game_clock_off_reads_the_wall_clock()
+static void test_token_time_game_clock_off_reads_the_wall_clock()
 {
     check( token_time_game_client_create( 1000, 1010, 0, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
 
@@ -212,9 +212,9 @@ static void token_time_game_clock_off_reads_the_wall_clock()
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
     token_time_game_server_teardown( &t );
 
-    printf( "token_time_game_clock_off_reads_the_wall_clock\n" );
+    printf( "test_token_time_game_clock_off_reads_the_wall_clock\n" );
 }
 
-REGISTER_UNIT_TEST( token_time_game_clock_admits_a_fixed_token );
-REGISTER_UNIT_TEST( token_time_game_clock_refuses_after_expire );
-REGISTER_UNIT_TEST( token_time_game_clock_off_reads_the_wall_clock );
+REGISTER_UNIT_TEST( test_token_time_game_clock_admits_a_fixed_token );
+REGISTER_UNIT_TEST( test_token_time_game_clock_refuses_after_expire );
+REGISTER_UNIT_TEST( test_token_time_game_clock_off_reads_the_wall_clock );

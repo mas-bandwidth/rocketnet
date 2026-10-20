@@ -69,7 +69,7 @@ The traces TLC printed, checked against the code by hand:
   The slot is `Free` with the reason `LEFT` still set. In the code,
   `rn_region_carve` clears the exhausted state and its reason, every table and
   every free list; a reuse without it leaves the previous connection's
-  bookkeeping in place. `reused_slot_starts_clean` checks the code's side: a
+  bookkeeping in place. `test_reused_slot_starts_clean` checks the code's side: a
   region used to exhaustion and reset equals a fresh region byte for byte in
   its bookkeeping, and with the reset removed the test fails.
 - **BrokenCarryOn**, depth 5: `Connect(s1, c1)`, `Use(s1)`, `Exhaust(s1)`

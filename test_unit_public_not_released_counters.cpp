@@ -244,7 +244,7 @@ static bool public_not_released_receive_server( struct public_not_released_pair_
     return false;
 }
 
-static void public_not_released_counter_client()
+static void test_public_not_released_counter_client()
 {
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
@@ -277,9 +277,9 @@ static void public_not_released_counter_client()
     rocketnet_set_assert_callback( saved_assert );
     public_not_released_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( public_not_released_counter_client );
+REGISTER_UNIT_TEST( test_public_not_released_counter_client );
 
-static void public_not_released_counter_server()
+static void test_public_not_released_counter_server()
 {
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
@@ -312,9 +312,9 @@ static void public_not_released_counter_server()
     rocketnet_set_assert_callback( saved_assert );
     public_not_released_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( public_not_released_counter_server );
+REGISTER_UNIT_TEST( test_public_not_released_counter_server );
 
-static void public_not_released_counter_starts_at_zero()
+static void test_public_not_released_counter_starts_at_zero()
 {
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
@@ -322,4 +322,4 @@ static void public_not_released_counter_starts_at_zero()
     check( rocketnet_server_counter( pair.server, ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED ) == 0 );
     public_not_released_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( public_not_released_counter_starts_at_zero );
+REGISTER_UNIT_TEST( test_public_not_released_counter_starts_at_zero );

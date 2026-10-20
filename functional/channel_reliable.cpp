@@ -67,7 +67,7 @@ void reliable_mixed_sizes_over_lossy_link()
     }
 
     rocketnet_channel_harness_read_counters( &h );
-    printf( "reliable_mixed_sizes_over_lossy_link elapsed=%.3fs resends=%llu wire_to_server=%lld wire_to_client=%lld\n",
+    printf( "test_reliable_mixed_sizes_over_lossy_link elapsed=%.3fs resends=%llu wire_to_server=%lld wire_to_client=%lld\n",
             h.now - started, (unsigned long long) h.resends,
             (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client );
     reliable_check( server_seen == 15 && client_seen == 15 );
@@ -156,7 +156,7 @@ void reliable_duplicate_after_gap_delivered_once()
         b_seen++;
     }
     const uint64_t duplicates = h.message_server->object.counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE] - duplicates_before;
-    printf( "reliable_duplicate_after_gap_delivered_once: b_first_packets=%d held=%d b_resend_packets=%d duplicates=%llu b_seen=%d\n",
+    printf( "test_reliable_duplicate_after_gap_delivered_once: b_first_packets=%d held=%d b_resend_packets=%d duplicates=%llu b_seen=%d\n",
             b_end - a_end, h.held_count, b_resends, (unsigned long long) duplicates, b_seen );
     reliable_check( b_seen == 1 );
     reliable_check( duplicates >= 1 );

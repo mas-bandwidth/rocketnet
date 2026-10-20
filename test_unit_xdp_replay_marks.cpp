@@ -44,7 +44,7 @@ static struct rocketnet_address_t replay_marks_ipv6( uint16_t port )
     return a;
 }
 
-static void xdp_replay_key_matches_golden_bytes()
+static void test_xdp_transport_replay_key_matches_golden_bytes()
 {
     // 198.51.100.7:50000 -> family 4, port 0xc3 0x50, IPv4 in the first 4
     // address bytes, twelve zero bytes after
@@ -76,7 +76,7 @@ static void xdp_replay_key_matches_golden_bytes()
     rocketnet_unit_check( memcmp( &key4, &key4b, 20 ) != 0 );
 }
 
-static void xdp_replay_marks_commit_forgets_before_marks()
+static void test_xdp_transport_replay_marks_commit_forgets_before_marks()
 {
     struct rocketnet_xdp_replay_marks_t marks;
     rocketnet_xdp_replay_marks_reset( &marks );
@@ -123,7 +123,7 @@ static void xdp_replay_marks_commit_forgets_before_marks()
     rocketnet_unit_check( mark_count == 0 );
 }
 
-static void xdp_replay_marks_full_refuses_and_counts()
+static void test_xdp_transport_replay_marks_full_refuses_and_counts()
 {
     struct rocketnet_xdp_replay_marks_t marks;
     rocketnet_xdp_replay_marks_reset( &marks );
@@ -150,6 +150,6 @@ static void xdp_replay_marks_full_refuses_and_counts()
     rocketnet_unit_check( marks.refused == 1 );
 }
 
-REGISTER_UNIT_TEST( xdp_replay_key_matches_golden_bytes );
-REGISTER_UNIT_TEST( xdp_replay_marks_commit_forgets_before_marks );
-REGISTER_UNIT_TEST( xdp_replay_marks_full_refuses_and_counts );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_key_matches_golden_bytes );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_commit_forgets_before_marks );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_full_refuses_and_counts );

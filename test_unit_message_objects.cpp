@@ -569,7 +569,7 @@ static uint64_t mo_counter( const rocketnet_counters_t * counters, int which )
     return rocketnet_counter_value( counters, which );
 }
 
-static void message_send_refused_counts_bad_arguments()
+static void test_message_send_refused_counts_bad_arguments()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1 );
@@ -600,7 +600,7 @@ static void message_send_refused_counts_bad_arguments()
 // once in MESSAGE_SEND_NOT_CONNECTED (standard/MESSAGES.md m1.5,
 // tla/ClientSession.tla DropSend): NULL, never queued, never a fallback, and
 // nothing of it arrives once the transport connects.
-static void message_client_start_dropped_before_transport_connected()
+static void test_message_client_start_dropped_before_transport_connected()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
@@ -662,7 +662,7 @@ static void message_client_start_dropped_before_transport_connected()
     check( mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused_before );
     mo_pair_teardown( &pair );
 }
-REGISTER_UNIT_TEST( message_client_start_dropped_before_transport_connected );
+REGISTER_UNIT_TEST( test_message_client_start_dropped_before_transport_connected );
 
 static const uint8_t * mo_find( const uint8_t * haystack, int haystack_bytes, const uint8_t * needle, int needle_bytes )
 {
@@ -672,7 +672,7 @@ static const uint8_t * mo_find( const uint8_t * haystack, int haystack_bytes, co
     return NULL;
 }
 
-static void start_finish_pointer_reaches_the_frame()
+static void test_start_finish_pointer_reaches_the_frame()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1 );
@@ -746,7 +746,7 @@ static bool mo_in_batch( const mo_endpoint_t * e, const uint8_t * data, int byte
     return false;
 }
 
-static void receive_view_is_the_record()
+static void test_receive_view_is_the_record()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1 );
@@ -796,7 +796,7 @@ static void mo_assert_hook( const char * condition, const char * function, const
     mo_asserts++;
 }
 
-static void release_returns_room()
+static void test_release_returns_room()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1 );
@@ -1043,7 +1043,7 @@ static void mo_ordered_down_in_order()
     mo_pair_teardown( &pair );
 }
 
-static void ordered_and_unreliable_end_to_end_in_memory()
+static void test_ordered_and_unreliable_end_to_end_in_memory()
 {
     mo_end_to_end_up();
     mo_ordered_down_in_order();
@@ -1062,7 +1062,7 @@ static void mo_small_config( rocketnet_message_config_t * config )
     config->send_queue_messages = 16;
 }
 
-static void server_kicks_exhausted_client_others_unaffected()
+static void test_server_kicks_exhausted_client_others_unaffected()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
@@ -1129,7 +1129,7 @@ static void server_kicks_exhausted_client_others_unaffected()
 // reason; nothing else follows from exhaustion
 // ---------------------------------------------------------------------------
 
-static void client_disconnects_itself_on_exhaustion()
+static void test_client_disconnects_itself_on_exhaustion()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
@@ -1179,7 +1179,7 @@ static void client_disconnects_itself_on_exhaustion()
 // a fresh one
 // ---------------------------------------------------------------------------
 
-static void slot_reuse_starts_clean()
+static void test_slot_reuse_starts_clean()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
@@ -1259,7 +1259,7 @@ static void slot_reuse_starts_clean()
 // R1: only the transport's acked packet ids mark a message delivered
 // ---------------------------------------------------------------------------
 
-static void acks_only_from_transport_acked_packets()
+static void test_acks_only_from_transport_acked_packets()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1 );
@@ -1314,7 +1314,7 @@ static void acks_only_from_transport_acked_packets()
 // R6: the send budget, in kbps, set at create and at runtime
 // ---------------------------------------------------------------------------
 
-static void budget_set_at_create_and_runtime()
+static void test_budget_set_at_create_and_runtime()
 {
     // at create: the given rate, and 0 is the default
     {
@@ -1409,7 +1409,7 @@ static void budget_set_at_create_and_runtime()
 // (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla)
 // ---------------------------------------------------------------------------
 
-static void send_budget_defaults_from_config()
+static void test_send_budget_defaults_from_config()
 {
     // a NULL config and a default config both give the owner's defaults: the
     // client 1000 kbps up, every server slot 10000 kbps down. The create
@@ -1439,7 +1439,7 @@ static void send_budget_defaults_from_config()
     }
 }
 
-static void send_budget_configured_value_honoured()
+static void test_send_budget_configured_value_honoured()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
@@ -1605,13 +1605,13 @@ static void mo_uncapped_case( int client_kbps, int server_kbps )
     mo_pair_teardown( &pair );
 }
 
-static void send_budget_zero_or_negative_is_uncapped()
+static void test_send_budget_zero_or_negative_is_uncapped()
 {
     mo_uncapped_case( 0, 0 );
     mo_uncapped_case( -1, -1 );
 }
 
-static void set_send_kbps_zero_or_negative_uncaps()
+static void test_set_send_kbps_zero_or_negative_uncaps()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1 );
@@ -1644,7 +1644,7 @@ static void set_send_kbps_zero_or_negative_uncaps()
 
 // ---------------------------------------------------------------------------
 // R2: a counting allocator sees create's one allocation and then nothing.
-// Registered as message_objects_no_allocation_after_create: four other unit
+// Registered as test_message_objects_no_allocation_after_create: four other unit
 // files already register a test named no_allocation_after_create, and the
 // registry runs a name's first registration only.
 // ---------------------------------------------------------------------------
@@ -1666,7 +1666,7 @@ static void mo_free( void * context, void * p )
     free( p );
 }
 
-static void message_objects_no_allocation_after_create()
+static void test_message_objects_no_allocation_after_create()
 {
     rocketnet_term();
     check( rocketnet_set_allocator( mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
@@ -1755,7 +1755,7 @@ static void mo_send_up( mo_pair_t * pair, int c, int channel, uint32_t id, int b
     rocketnet_message_client_send_packets( pair->clients[c] );
 }
 
-static void rnslots_witness_replays()
+static void test_rnslots_witness_replays()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
@@ -1928,7 +1928,7 @@ static void rnslots_witness_replays()
 // a seed of 0.0 never reads as 1000 seconds without a packet. The server's
 // transport, and the object's own clock, read the game's time as it is.
 
-static void message_objects_client_clock_starts_at_first_update()
+static void test_message_objects_client_clock_starts_at_first_update()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
@@ -2043,7 +2043,7 @@ static void message_objects_client_clock_starts_at_first_update()
 // a send the store has no room for exhausts the connection and kicks it (R5):
 // the shipped path never drops an unreliable send for a full store, it counts
 // the refusal once and ends the connection
-static void unreliable_store_full_exhausts_and_kicks()
+static void test_unreliable_store_full_exhausts_and_kicks()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
@@ -2084,7 +2084,7 @@ static void unreliable_store_full_exhausts_and_kicks()
 // an unreliable message past the one-packet limit is promoted to its reliable
 // twin and counted (RakNet ReliabilityLayer); the one at the limit still goes
 // as unreliable, and a valid message behind the promotion still arrives
-static void unreliable_past_limit_promotes_counted_and_not_wedged()
+static void test_unreliable_past_limit_promotes_counted_and_not_wedged()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1, NULL, 100000, 100000 );
@@ -2145,7 +2145,7 @@ static void unreliable_past_limit_promotes_counted_and_not_wedged()
 // a packet the transport fails to finish drops the unreliable records it
 // carried and counts each (6.4, Failed send); nothing reaches the wire, and the
 // next send is unaffected
-static void unreliable_failed_packet_drops_and_counts_each_record()
+static void test_unreliable_failed_packet_drops_and_counts_each_record()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1 );
@@ -2192,7 +2192,7 @@ static void unreliable_failed_packet_drops_and_counts_each_record()
 // the send store holds an unreliable message only until its record is written:
 // the chunks are back once the packet is built (9.3 step 3, R5), across the
 // store's classes
-static void unreliable_chunks_freed_when_written()
+static void test_unreliable_chunks_freed_when_written()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, 1 );
@@ -2227,7 +2227,7 @@ static void unreliable_chunks_freed_when_written()
 // small unreliable messages over a link that loses packets: every message that
 // arrives is byte-identical to one sent and arrives once, none is invented, and
 // with no loss every message arrives (R8)
-static void unreliable_over_a_lossy_link_arrives_intact_at_most_once()
+static void test_unreliable_over_a_lossy_link_arrives_intact_at_most_once()
 {
     for ( int lossy = 0; lossy < 2; lossy++ )
     {
@@ -2286,7 +2286,7 @@ static void unreliable_over_a_lossy_link_arrives_intact_at_most_once()
 
 // the decision itself, on one region: 16 descriptors are the fullest pool
 // for 100-byte sends (the small class holds 31), so the 12th send crosses
-static void send_room_watch_crosses_once_and_rearms_below_half()
+static void test_send_room_watch_crosses_once_and_rearms_below_half()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
@@ -2399,7 +2399,7 @@ static uint32_t mo_room_permille( rn_message_connection_t * connection )
 // the crossing, none while the connection sits above it, one more after acks
 // took it below half and it crossed again, one at exhaustion; none at all in
 // a release build
-static void send_room_warns_in_debug_builds_only()
+static void test_send_room_warns_in_debug_builds_only()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
@@ -2480,7 +2480,7 @@ static void send_room_warns_in_debug_builds_only()
 // start on every slot is accepted.
 // ---------------------------------------------------------------------------
 
-static void pending_start_cancelled_by_slot_reset()
+static void test_pending_start_cancelled_by_slot_reset()
 {
     mo_pair_t pair;
     mo_pair_setup( &pair, MO_MAX_SLOTS );
@@ -2535,9 +2535,9 @@ static void pending_start_cancelled_by_slot_reset()
     mo_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
-REGISTER_UNIT_TEST( receive_view_is_the_record );
-REGISTER_UNIT_TEST( release_returns_room );
+REGISTER_UNIT_TEST( test_start_finish_pointer_reaches_the_frame );
+REGISTER_UNIT_TEST( test_receive_view_is_the_record );
+REGISTER_UNIT_TEST( test_release_returns_room );
 
 // the message object reads no environment (sdk/rocketnet_message_server.cpp:146):
 // the public budget variables are
@@ -2554,7 +2554,7 @@ static void mo_setenv( const char * name, const char * value ) { setenv( name, v
 static void mo_unsetenv( const char * name ) { unsetenv( name ); }
 #endif
 
-static void send_budget_message_env_is_not_read()
+static void test_send_budget_message_env_is_not_read()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
@@ -2624,7 +2624,7 @@ static bool mo_send_and_verify_delivery( mo_pair_t * pair, bool from_client, uin
     return false;
 }
 
-static void update_time_bad_counted_once_never_stored_or_wedged()
+static void test_update_time_bad_counted_once_never_stored_or_wedged()
 {
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( mo_assert_hook );
@@ -2703,7 +2703,7 @@ static void update_time_bad_counted_once_never_stored_or_wedged()
     rocketnet_set_assert_callback( saved_assert );
 }
 
-static void update_time_first_update_not_finite_refused()
+static void test_update_time_first_update_not_finite_refused()
 {
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( mo_assert_hook );
@@ -2767,7 +2767,7 @@ static void update_time_first_update_not_finite_refused()
 // A slot bound in this update keeps its own first entries (NoOwnEntryDropped):
 // the client's first packet is on the wire before the server's update that
 // observes its connection, and the record in it is delivered in that update.
-static void slot_bound_this_update_keeps_its_first_payload()
+static void test_slot_bound_this_update_keeps_its_first_payload()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
@@ -2794,7 +2794,7 @@ static void slot_bound_this_update_keeps_its_first_payload()
 // (NoCrossConnectionApply), in an update after the one that observed the new
 // connection: connection A's payload, and the transport's ack of a packet the
 // server sent to A, each reach the batch one update after B took the slot.
-static void previous_connection_payload_dropped_after_reconnect()
+static void test_previous_connection_payload_dropped_after_reconnect()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
@@ -2825,7 +2825,7 @@ static void previous_connection_payload_dropped_after_reconnect()
     }
 }
 
-static void previous_connection_ack_dropped_after_reconnect()
+static void test_previous_connection_ack_dropped_after_reconnect()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
@@ -2943,7 +2943,7 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
     return at_server == want && at_client == want;
 }
 
-static void same_client_id_reconnect_in_one_update_resets_the_slot()
+static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
 {
     reconnect_world_t world;
     memset( &world, 0, sizeof( world ) );
@@ -3022,32 +3022,32 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
 }
 
 
-REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory );
-REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
-REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
-REGISTER_UNIT_TEST( slot_reuse_starts_clean );
-REGISTER_UNIT_TEST( acks_only_from_transport_acked_packets );
-REGISTER_UNIT_TEST( budget_set_at_create_and_runtime );
-REGISTER_UNIT_TEST( send_budget_defaults_from_config );
-REGISTER_UNIT_TEST( send_budget_configured_value_honoured );
-REGISTER_UNIT_TEST( send_budget_zero_or_negative_is_uncapped );
-REGISTER_UNIT_TEST( set_send_kbps_zero_or_negative_uncaps );
-REGISTER_UNIT_TEST( send_budget_message_env_is_not_read );
-REGISTER_UNIT_TEST( message_objects_no_allocation_after_create );
-REGISTER_UNIT_TEST( rnslots_witness_replays );
-REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );
-REGISTER_UNIT_TEST( message_send_refused_counts_bad_arguments );
-REGISTER_UNIT_TEST( unreliable_store_full_exhausts_and_kicks );
-REGISTER_UNIT_TEST( unreliable_past_limit_promotes_counted_and_not_wedged );
-REGISTER_UNIT_TEST( unreliable_failed_packet_drops_and_counts_each_record );
-REGISTER_UNIT_TEST( unreliable_chunks_freed_when_written );
-REGISTER_UNIT_TEST( unreliable_over_a_lossy_link_arrives_intact_at_most_once );
-REGISTER_UNIT_TEST( send_room_watch_crosses_once_and_rearms_below_half );
-REGISTER_UNIT_TEST( send_room_warns_in_debug_builds_only );
-REGISTER_UNIT_TEST( update_time_bad_counted_once_never_stored_or_wedged );
-REGISTER_UNIT_TEST( update_time_first_update_not_finite_refused );
-REGISTER_UNIT_TEST( pending_start_cancelled_by_slot_reset );
-REGISTER_UNIT_TEST( slot_bound_this_update_keeps_its_first_payload );
-REGISTER_UNIT_TEST( previous_connection_payload_dropped_after_reconnect );
-REGISTER_UNIT_TEST( previous_connection_ack_dropped_after_reconnect );
-REGISTER_UNIT_TEST( same_client_id_reconnect_in_one_update_resets_the_slot );
+REGISTER_UNIT_TEST( test_ordered_and_unreliable_end_to_end_in_memory );
+REGISTER_UNIT_TEST( test_server_kicks_exhausted_client_others_unaffected );
+REGISTER_UNIT_TEST( test_client_disconnects_itself_on_exhaustion );
+REGISTER_UNIT_TEST( test_slot_reuse_starts_clean );
+REGISTER_UNIT_TEST( test_acks_only_from_transport_acked_packets );
+REGISTER_UNIT_TEST( test_budget_set_at_create_and_runtime );
+REGISTER_UNIT_TEST( test_send_budget_defaults_from_config );
+REGISTER_UNIT_TEST( test_send_budget_configured_value_honoured );
+REGISTER_UNIT_TEST( test_send_budget_zero_or_negative_is_uncapped );
+REGISTER_UNIT_TEST( test_set_send_kbps_zero_or_negative_uncaps );
+REGISTER_UNIT_TEST( test_send_budget_message_env_is_not_read );
+REGISTER_UNIT_TEST( test_message_objects_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_rnslots_witness_replays );
+REGISTER_UNIT_TEST( test_message_objects_client_clock_starts_at_first_update );
+REGISTER_UNIT_TEST( test_message_send_refused_counts_bad_arguments );
+REGISTER_UNIT_TEST( test_unreliable_store_full_exhausts_and_kicks );
+REGISTER_UNIT_TEST( test_unreliable_past_limit_promotes_counted_and_not_wedged );
+REGISTER_UNIT_TEST( test_unreliable_failed_packet_drops_and_counts_each_record );
+REGISTER_UNIT_TEST( test_unreliable_chunks_freed_when_written );
+REGISTER_UNIT_TEST( test_unreliable_over_a_lossy_link_arrives_intact_at_most_once );
+REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
+REGISTER_UNIT_TEST( test_send_room_warns_in_debug_builds_only );
+REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
+REGISTER_UNIT_TEST( test_update_time_first_update_not_finite_refused );
+REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
+REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
+REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );
+REGISTER_UNIT_TEST( test_previous_connection_ack_dropped_after_reconnect );
+REGISTER_UNIT_TEST( test_same_client_id_reconnect_in_one_update_resets_the_slot );

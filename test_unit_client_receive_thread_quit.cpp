@@ -33,7 +33,7 @@ static_assert( ATOMIC_BOOL_LOCK_FREE == 2, "quit is a lock-free atomic" );
 
 // four create and destroy cycles of a step-driven client: every destroy
 // returns and closes its driver once
-static void client_receive_thread_quit_step_driven_destroy_returns()
+static void test_client_receive_thread_quit_step_driven_destroy_returns()
 {
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -75,7 +75,7 @@ static void client_receive_thread_quit_step_driven_destroy_returns()
         rocketnet_client_transport_destroy( client );
         check( fake.destroy_calls == i + 1 );
     }
-    printf( "client_receive_thread_quit_step_driven_destroy_returns\n" );
+    printf( "test_client_receive_thread_quit_step_driven_destroy_returns\n" );
 }
 
-REGISTER_UNIT_TEST( client_receive_thread_quit_step_driven_destroy_returns );
+REGISTER_UNIT_TEST( test_client_receive_thread_quit_step_driven_destroy_returns );

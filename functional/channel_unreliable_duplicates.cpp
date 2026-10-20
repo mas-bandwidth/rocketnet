@@ -143,7 +143,7 @@ static void dup_leg( float loss_percent, const char * label )
             dup_check( s.delivered[direction][2] == (uint32_t) DUP_SEND_TICKS, "reliable control all delivered on the lossless leg" );
     }
 
-    printf( "unreliable_at_most_once_over_duplicating_link %s: dup_to_server=%llu dup_to_client=%llu"
+    printf( "test_unreliable_at_most_once_over_duplicating_link %s: dup_to_server=%llu dup_to_client=%llu"
             " code0=%u/%u code1=%u/%u reliable=%u/%u seed=0x5EED5EED5EED5EED\n",
             label, (unsigned long long) dup_to_server, (unsigned long long) dup_to_client,
             s.delivered[0][0], s.delivered[1][0], s.delivered[0][1], s.delivered[1][1],

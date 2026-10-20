@@ -180,7 +180,7 @@ static int standard_blocks_generate( const char * id, uint8_t * out, int capacit
     return standard_blocks_ring_wrap( id, out, capacity );
 }
 
-static void standard_blocks_vectors()
+static void test_standard_blocks_vectors()
 {
     const int count = (int) ( sizeof( standard_blocks_table ) / sizeof( standard_blocks_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_blocks_table, count, standard_blocks_generate ) == count );
@@ -236,4 +236,4 @@ static void standard_blocks_vectors()
     rocketnet_unit_check( standard_blocks_generate( "m8.no-such-vector", scratch, 4 ) == -1 );
 }
 
-REGISTER_UNIT_TEST( standard_blocks_vectors );
+REGISTER_UNIT_TEST( test_standard_blocks_vectors );

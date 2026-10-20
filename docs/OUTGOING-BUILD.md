@@ -119,7 +119,7 @@ and stages the packet; `send_packets` flushes it with everything else.
   sends after a reliable send spend the allowance and the reliable record
   waits a whole update (the model's `ReliableSentWithinOneUpdate`, which its
   reversed witness without the reservation violates; the unit case
-  `reliable_not_starved_by_in_place`). A reliable message sent after the
+  `test_reliable_not_starved_by_in_place`). A reliable message sent after the
   in-place packets that spent the allowance waits for the next update, the
   same as one sent after a full write pass. The reservation keys on work
   being due, not on its being writable: when a full window or a waiting

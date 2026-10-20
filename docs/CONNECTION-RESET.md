@@ -11,7 +11,7 @@ per struct. Each of these structs is declared from a manifest list beside it
 (`rocketnet_client_protocol_t`, `rocketnet_client_transport_t`,
 `rocketnet_encryption_mapping_t`, `rocketnet_client_slots_t`, the replay mark
 `rocketnet_server_replay_slot_mark_t`, `rn_endpoint_t` and
-`rn_message_connection_t`), and `connection_reset_inventory_covers_every_field`
+`rn_message_connection_t`), and `test_connection_reset_inventory_covers_every_field`
 walks every one: a member with no RESET or KEEP decision fails the suite
 naming `<struct>.<member>`.
 

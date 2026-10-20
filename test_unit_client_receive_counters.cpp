@@ -639,7 +639,7 @@ static void rcr_run_row( const rcr_row_t * row )
     rcr_pair_teardown( &pair );
 }
 
-static void client_and_server_session_receive_counters_move_exactly()
+static void test_client_and_server_session_receive_counters_move_exactly()
 {
     for ( size_t i = 0; i < sizeof(rcr_rows) / sizeof(rcr_rows[0]); i++ )
     {
@@ -647,7 +647,7 @@ static void client_and_server_session_receive_counters_move_exactly()
     }
 }
 
-REGISTER_UNIT_TEST( client_and_server_session_receive_counters_move_exactly );
+REGISTER_UNIT_TEST( test_client_and_server_session_receive_counters_move_exactly );
 
 // ---------------------------------------------------------------------------
 // the client's handshake ladder: cookie, challenge, denied
@@ -676,7 +676,7 @@ static int rcr_header_only( struct rcr_pair_t * pair, uint8_t type, int bytes, u
     return bytes;
 }
 
-static void client_handshake_receive_counters_move_exactly()
+static void test_client_handshake_receive_counters_move_exactly()
 {
     static struct rcr_pair_t pair;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
@@ -792,7 +792,7 @@ static void client_handshake_receive_counters_move_exactly()
     rcr_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( client_handshake_receive_counters_move_exactly );
+REGISTER_UNIT_TEST( test_client_handshake_receive_counters_move_exactly );
 
 // ---------------------------------------------------------------------------
 // the client's fragment ladder: every reassembly refusal, from a server's
@@ -816,7 +816,7 @@ static int rcr_craft_fragment( struct rcr_pair_t * pair, uint32_t payload_id, in
     return rcr_seal( pair, 0, ROCKETNET_CONNECTION_FRAGMENT_PACKET, pair->next_sequence++, plaintext, (int) ( p - plaintext ), NULL, out );
 }
 
-static void client_fragment_receive_counters_move_exactly()
+static void test_client_fragment_receive_counters_move_exactly()
 {
     static struct rcr_pair_t pair;
     static uint8_t packet[ROCKETNET_RECEIVE_CEILING];
@@ -928,13 +928,13 @@ static void client_fragment_receive_counters_move_exactly()
     rcr_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( client_fragment_receive_counters_move_exactly );
+REGISTER_UNIT_TEST( test_client_fragment_receive_counters_move_exactly );
 
 // ---------------------------------------------------------------------------
 // the server's response ladder, and the counters only a hooked server reaches
 // ---------------------------------------------------------------------------
 
-static void server_response_and_slot_counters_move_exactly()
+static void test_server_response_and_slot_counters_move_exactly()
 {
     static struct rcr_pair_t pair;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
@@ -1057,7 +1057,7 @@ static void server_response_and_slot_counters_move_exactly()
     rcr_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( server_response_and_slot_counters_move_exactly );
+REGISTER_UNIT_TEST( test_server_response_and_slot_counters_move_exactly );
 
 // ---------------------------------------------------------------------------
 // the evidence for the classes: a session that ends with packets in flight
@@ -1081,7 +1081,7 @@ static void rcr_assert_no_refusals( const struct rocketnet_counters_t * counters
     check( refusals == 0 );
 }
 
-static void session_end_races_move_only_expected_counters()
+static void test_session_end_races_move_only_expected_counters()
 {
     static struct rcr_pair_t pair;
     uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
@@ -1143,5 +1143,5 @@ static void session_end_races_move_only_expected_counters()
     rcr_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( session_end_races_move_only_expected_counters );
+REGISTER_UNIT_TEST( test_session_end_races_move_only_expected_counters );
 

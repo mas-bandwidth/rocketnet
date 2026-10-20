@@ -45,7 +45,7 @@ static struct rocketnet_address_t replay_table_ipv6( uint16_t port )
     return a;
 }
 
-static void xdp_host_replay_table_set_get_reset()
+static void test_xdp_transport_host_replay_table_set_get_reset()
 {
     static const uint8_t replay_table_v4[4] = { 1, 2, 3, 4 };
     static const uint8_t replay_table_fill[4] = { 10, 0, 0, 1 };
@@ -152,21 +152,6 @@ static void xdp_host_replay_table_set_get_reset()
     rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key_first, &high_water ) == 0 );
 }
 
-#else // #if ROCKETNET_XDP_FILTER_HOST
-
-// The host filter target is built for GCC or Clang on a little-endian,
-// non-Windows host (CMakeLists.txt); elsewhere the case names itself as
-// skipped.
-
-#define XDP_HOST_SKIPPED( name )                                                                                  \
-    static void name()                                                                                            \
-    {                                                                                                             \
-        printf( #name " [SKIPPED the XDP filter host target needs GCC or Clang on a little-endian, non-Windows host]\n" ); \
-        fflush( stdout );                                                                                         \
-    }
-
-XDP_HOST_SKIPPED( xdp_host_replay_table_set_get_reset )
+REGISTER_UNIT_TEST( test_xdp_transport_host_replay_table_set_get_reset );
 
 #endif // #if ROCKETNET_XDP_FILTER_HOST
-
-REGISTER_UNIT_TEST( xdp_host_replay_table_set_get_reset );

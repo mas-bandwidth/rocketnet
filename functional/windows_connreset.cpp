@@ -149,7 +149,7 @@ static void windows_connreset_child_start( windows_connreset_child_t * child, co
     const DWORD length = GetModuleFileNameW( NULL, path, MAX_PATH );
     windows_connreset_require( length > 0 && length < MAX_PATH );
     wchar_t command[MAX_PATH + 64];
-    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run windows_connreset_child_client", path );
+    _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_client", path );
 
     windows_connreset_require( _putenv_s( WINDOWS_CONNRESET_CHILD_ENV, server_address ) == 0 );
     STARTUPINFOW startup;

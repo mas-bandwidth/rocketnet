@@ -461,7 +461,7 @@ or above 1 per core while measuring and the runs at nice 19, so these are pessim
 | `ROCKETNET_SOAK_SIM_SEED=1 ./bin/soak_sim 20000` (8 clients, 100 simulated seconds) | 3 | 1.80, 2.11, 2.15 s |
 | `ROCKETNET_SOAK_SIM_SEED=1 ./bin/soak_sim 50000` | 3 | 5.40, 6.07, 6.12 s |
 | `ROCKETNET_SOAK_SIM_SEED=1 ./bin/soak_sim 100000` | 3 | 9.24, 13.39, 17.65 s |
-| `./bin/functional --run harness_one_message_each_way_lossy`, 200 seeds, one process each | 1 | 8.60 s (43 ms a process) |
+| `./bin/functional --run test_harness_one_message_each_way_lossy`, 200 seeds, one process each | 1 | 8.60 s (43 ms a process) |
 | One message-layer pair (the channel harness, both directions sending one message a step over the eight types, 2% loss, 2% duplication, 50 ms latency, 20 ms jitter), 4000 steps of 10 ms, 20 seeds in one process, three times | 60 | 0.118-0.126 s a seed mean, 0.104 s best; 29.5-31.5 µs a step |
 
 The pair figure comes from a throwaway program over `functional/channel_harness.h`, compiled

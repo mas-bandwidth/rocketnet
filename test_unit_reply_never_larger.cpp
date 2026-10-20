@@ -262,7 +262,7 @@ static int reply_client_to_response( struct reply_server_t * test,
 // Every row of the amplification table, provoked through the protocol objects.
 // ---------------------------------------------------------------------------
 
-static void reply_never_larger_than_request_every_unauthenticated_type()
+static void test_reply_never_larger_than_request_every_unauthenticated_type()
 {
     struct reply_server_t test;
     reply_server_setup( &test );
@@ -435,7 +435,7 @@ static void reply_write_header( uint8_t * packet, int packet_bytes, uint8_t type
     rocketnet_write_prefilter_header( &p, type, tag );
 }
 
-static void reply_never_larger_than_request_hostile_inputs()
+static void test_reply_never_larger_than_request_hostile_inputs()
 {
     static const uint8_t types[] = {
         ROCKETNET_CONNECTION_REQUEST_PACKET,
@@ -516,5 +516,5 @@ static void reply_never_larger_than_request_hostile_inputs()
     reply_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( reply_never_larger_than_request_every_unauthenticated_type );
-REGISTER_UNIT_TEST( reply_never_larger_than_request_hostile_inputs );
+REGISTER_UNIT_TEST( test_reply_never_larger_than_request_every_unauthenticated_type );
+REGISTER_UNIT_TEST( test_reply_never_larger_than_request_hostile_inputs );

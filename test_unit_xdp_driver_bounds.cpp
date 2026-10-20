@@ -39,7 +39,7 @@ static int bounds_send( uint8_t * frame, const uint8_t * staged, size_t packet_b
     return rocketnet_xdp_frame_build( frame, ROCKETNET_XDP_FRAME_SIZE, bounds_server_mac, bounds_gateway_mac, &source, &destination, copied );
 }
 
-static void xdp_send_copy_refuses_bad_lengths()
+static void test_xdp_transport_send_copy_refuses_bad_lengths()
 {
     uint8_t * frame = (uint8_t*) malloc( ROCKETNET_XDP_FRAME_SIZE );
     uint8_t * staged = (uint8_t*) malloc( ROCKETNET_XDP_FRAME_SIZE );
@@ -120,7 +120,7 @@ static void bounds_write_frame( uint8_t * umem, uint64_t addr, int payload_bytes
     f[header_bytes - 3] = (uint8_t) udp_bytes;
 }
 
-static void xdp_receive_descriptor_refuses_bad_descriptors()
+static void test_xdp_transport_receive_descriptor_refuses_bad_descriptors()
 {
     uint8_t * umem = (uint8_t*) malloc( BOUNDS_UMEM_BYTES );
     uint8_t * slot = (uint8_t*) malloc( ROCKETNET_XDP_FRAME_SIZE );
@@ -168,7 +168,7 @@ static void xdp_receive_descriptor_refuses_bad_descriptors()
     free( umem );
 }
 
-static void xdp_pin_cpu_refuses_outside_the_set()
+static void test_xdp_transport_pin_cpu_refuses_outside_the_set()
 {
     rocketnet_unit_check( !rocketnet_xdp_cpu_in_set( -1, 1024 ) );
     rocketnet_unit_check( !rocketnet_xdp_cpu_in_set( 1024, 1024 ) );
@@ -177,7 +177,7 @@ static void xdp_pin_cpu_refuses_outside_the_set()
     rocketnet_unit_check( rocketnet_xdp_cpu_in_set( 1023, 1024 ) );
 }
 
-static void xdp_stats_cpus_are_bounded()
+static void test_xdp_transport_stats_cpus_are_bounded()
 {
     rocketnet_unit_check( !rocketnet_xdp_stats_cpus_fit( -1 ) );
     rocketnet_unit_check( !rocketnet_xdp_stats_cpus_fit( 0 ) );
@@ -186,7 +186,7 @@ static void xdp_stats_cpus_are_bounded()
     rocketnet_unit_check( rocketnet_xdp_stats_cpus_fit( ROCKETNET_XDP_STATS_MAX_CPUS ) );
 }
 
-REGISTER_UNIT_TEST( xdp_send_copy_refuses_bad_lengths );
-REGISTER_UNIT_TEST( xdp_receive_descriptor_refuses_bad_descriptors );
-REGISTER_UNIT_TEST( xdp_pin_cpu_refuses_outside_the_set );
-REGISTER_UNIT_TEST( xdp_stats_cpus_are_bounded );
+REGISTER_UNIT_TEST( test_xdp_transport_send_copy_refuses_bad_lengths );
+REGISTER_UNIT_TEST( test_xdp_transport_receive_descriptor_refuses_bad_descriptors );
+REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );
+REGISTER_UNIT_TEST( test_xdp_transport_stats_cpus_are_bounded );

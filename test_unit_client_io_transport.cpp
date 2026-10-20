@@ -82,7 +82,7 @@ static uint64_t client_io_transport_counter( rocketnet_client_transport_t * tran
 // The helper: false for the base table, true for the io and batch tables. A
 // step-driven transport on the base table has no I/O core and sends the
 // protocol packet from update on the main thread, as at BASE.
-static void client_io_backend_without_wait_uses_base_path()
+static void test_client_io_backend_without_wait_uses_base_path()
 {
     check( !rocketnet_client_transport_uses_io_thread( &rocketnet_fake_client_operations_base ) );
     check( !rocketnet_client_transport_uses_io_thread( NULL ) );
@@ -105,14 +105,14 @@ static void client_io_backend_without_wait_uses_base_path()
     delete fake;
 }
 
-REGISTER_UNIT_TEST( client_io_backend_without_wait_uses_base_path );
+REGISTER_UNIT_TEST( test_client_io_backend_without_wait_uses_base_path );
 
 // The helper: true for the io table (wait and wake, per-packet send). A
 // step-driven transport on it makes no driver send on the main thread: update
 // seals its protocol packet into the Filling ring and hands it off (one wake),
 // and the I/O step sends it to the server address. Destroy stops and exits the
 // core, then closes the driver once.
-static void client_io_backend_with_wait_uses_io_thread()
+static void test_client_io_backend_with_wait_uses_io_thread()
 {
     check( rocketnet_client_transport_uses_io_thread( &rocketnet_fake_client_operations_io ) );
     check( rocketnet_client_transport_uses_io_thread( &rocketnet_fake_client_operations_batch ) );
@@ -144,9 +144,9 @@ static void client_io_backend_with_wait_uses_io_thread()
     delete fake;
 }
 
-REGISTER_UNIT_TEST( client_io_backend_with_wait_uses_io_thread );
+REGISTER_UNIT_TEST( test_client_io_backend_with_wait_uses_io_thread );
 
-// docs/CLIENT-IO.md client_io_handoff_never_waits, on the protocol packet
+// docs/CLIENT-IO.md test_client_io_handoff_never_waits, on the protocol packet
 // update builds (send_packet needs a connected session, which needs a server):
 // two updates with no I/O step between both return; the second hand-off finds
 // ring 0 still HandedOff and is deferred (CLIENT_SEND_DEFERRED 1, nothing
@@ -154,7 +154,7 @@ REGISTER_UNIT_TEST( client_io_backend_with_wait_uses_io_thread );
 // the deferred packet with its own, and the step after that sends both. The
 // stall of MCRNClientIoBrokenHandOffWaits.cfg (HandOffNeverWaits). The stats
 // count each packet once, the deferred one included: three sent, not four.
-static void client_io_handoff_never_waits()
+static void test_client_io_handoff_never_waits()
 {
     rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
@@ -199,14 +199,14 @@ static void client_io_handoff_never_waits()
     delete fake;
 }
 
-REGISTER_UNIT_TEST( client_io_handoff_never_waits );
+REGISTER_UNIT_TEST( test_client_io_handoff_never_waits );
 
 // Destroy with a deferred hand-off: the second update's packet waits in the
 // Filling ring behind ring 0, still HandedOff. Destroy runs the step until
 // ring 0 is Sent, hands the Filling ring off, stops, and the core sends it
 // before it exits; nothing committed is dropped (CommittedEventuallyHandedOff,
 // FreedOnlyAfterJoin).
-static void client_io_destroy_hands_off_deferred_slots()
+static void test_client_io_destroy_hands_off_deferred_slots()
 {
     rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
@@ -223,14 +223,14 @@ static void client_io_destroy_hands_off_deferred_slots()
     delete fake;
 }
 
-REGISTER_UNIT_TEST( client_io_destroy_hands_off_deferred_slots );
+REGISTER_UNIT_TEST( test_client_io_destroy_hands_off_deferred_slots );
 
 // The receive path through update: a datagram from the server, drained and
 // published by the step (stamped by the config's time_callback), is exposed by
 // the next update and reaches the protocol (PACKETS_RECEIVED moves by one);
 // update returns the buffer at its end (Expose, Return). An update with
 // nothing Ready processes nothing.
-static void client_io_update_exposes_published_batch()
+static void test_client_io_update_exposes_published_batch()
 {
     rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
@@ -264,4 +264,4 @@ static void client_io_update_exposes_published_batch()
     delete fake;
 }
 
-REGISTER_UNIT_TEST( client_io_update_exposes_published_batch );
+REGISTER_UNIT_TEST( test_client_io_update_exposes_published_batch );

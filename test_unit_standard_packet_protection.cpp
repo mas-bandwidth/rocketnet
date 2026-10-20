@@ -214,7 +214,7 @@ static void standard_packet_protection_opens()
     }
 }
 
-static void standard_packet_protection_vectors()
+static void test_standard_packet_protection_vectors()
 {
     const int count = (int) ( sizeof( standard_packet_protection_table ) /
                               sizeof( standard_packet_protection_table[0] ) );
@@ -224,4 +224,4 @@ static void standard_packet_protection_vectors()
     standard_packet_protection_opens();
 }
 
-REGISTER_UNIT_TEST( standard_packet_protection_vectors );
+REGISTER_UNIT_TEST( test_standard_packet_protection_vectors );

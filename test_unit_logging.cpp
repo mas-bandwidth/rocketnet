@@ -46,7 +46,7 @@ static void fill_string( char * out, size_t len )
 
 // --- contract: clamp, terminator, context, level --------------------------
 
-static void log_callback_preformatted_contract()
+static void test_log_callback_preformatted_contract()
 {
     const char * ctx = "the-context";
     enum rocketnet_log_level_t saved = rocketnet_get_log_level();
@@ -104,7 +104,7 @@ static void counting_callback( void * context, enum rocketnet_log_level_t level,
     g_msg[g_msglen] = '\0';
 }
 
-static void log_callback_filters_before_formatting()
+static void test_log_callback_filters_before_formatting()
 {
     enum rocketnet_log_level_t saved = rocketnet_get_log_level();
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
@@ -161,7 +161,7 @@ static void second_callback( void * context, enum rocketnet_log_level_t level, c
     g_second_count++;
 }
 
-static void log_callback_last_registration_wins()
+static void test_log_callback_last_registration_wins()
 {
     enum rocketnet_log_level_t saved = rocketnet_get_log_level();
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
@@ -202,6 +202,6 @@ static void log_callback_last_registration_wins()
     rocketnet_set_log_level( saved );
 }
 
-REGISTER_UNIT_TEST( log_callback_preformatted_contract );
-REGISTER_UNIT_TEST( log_callback_filters_before_formatting );
-REGISTER_UNIT_TEST( log_callback_last_registration_wins );
+REGISTER_UNIT_TEST( test_log_callback_preformatted_contract );
+REGISTER_UNIT_TEST( test_log_callback_filters_before_formatting );
+REGISTER_UNIT_TEST( test_log_callback_last_registration_wins );

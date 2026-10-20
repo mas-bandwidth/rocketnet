@@ -10,7 +10,7 @@ transport, and a client-capable driver needs a cell with it as the client
 transport. No driver is exempt.
 
 Each matrix block must also sit in a step that runs the three family cases
-and driver_env_pin_is_honoured, and every expected-fail mark must name a
+and test_driver_env_pin_is_honoured, and every expected-fail mark must name a
 case it runs and a card. An xdp cell needs root, a namespace and a veth
 pair, so its step must run the xdp family cases inside a virtme-ng guest
 (vng). Exits 0 with one OK line, or 1 naming each gap.
@@ -35,15 +35,15 @@ PLATFORMS = {
 
 
 CASES = (
-    "test_transport_udp_loopback",
-    "test_transport_ipv6_loopback",
+    "test_loopback_transport_udp",
+    "test_loopback_transport_ipv6",
     "test_transport_dual_stack_ipv4_client",
-    "driver_env_pin_is_honoured",
+    "test_driver_env_pin_is_honoured",
 )
 
 XDP_CASES = (
-    "xdp_max_size_both_ways_ipv4",
-    "xdp_max_size_both_ways_ipv6",
+    "test_xdp_transport_max_size_both_ways_ipv4",
+    "test_xdp_transport_max_size_both_ways_ipv6",
 )
 
 ROW = re.compile(r'^ROCKETNET_DRIVER\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)

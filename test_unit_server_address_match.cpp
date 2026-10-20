@@ -118,7 +118,7 @@ static void rocketnet_server_address_match_mint_request( uint8_t * request, uint
 // IPv4 loopback and v4-mapped IPv6 both name the loopback the dual-stack
 // server serves; a foreign IPv4 names an address it does not.
 
-void rocketnet_test_server_address_match_v4_mapped()
+void test_rocketnet_test_server_address_match_v4_mapped()
 {
     struct rocketnet_server_address_match_server_t test;
     rocketnet_server_address_match_server_setup( &test );
@@ -165,7 +165,7 @@ void rocketnet_test_server_address_match_v4_mapped()
 // both foreign is still refused (rocketnet_server_token_address_is_advertised
 // in sdk/rocketnet_server_protocol.cpp).
 
-void rocketnet_test_server_address_match_two_address_token()
+void test_rocketnet_test_server_address_match_two_address_token()
 {
     struct rocketnet_server_address_match_server_t test;
     rocketnet_server_address_match_server_setup( &test );
@@ -215,5 +215,5 @@ void rocketnet_test_server_address_match_two_address_token()
     rocketnet_server_address_match_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( rocketnet_test_server_address_match_v4_mapped );
-REGISTER_UNIT_TEST( rocketnet_test_server_address_match_two_address_token );
+REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped );
+REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_two_address_token );

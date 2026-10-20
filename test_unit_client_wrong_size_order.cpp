@@ -66,7 +66,7 @@ static void wso_write_junk_packet( uint8_t * packet, int packet_bytes, uint8_t p
     rocketnet_write_prefilter_header( &p, packet_type, tag );
 }
 
-static void client_wrong_size_counts_wrong_size_not_integrity()
+static void test_client_wrong_size_counts_wrong_size_not_integrity()
 {
     static const int states[] =
     {
@@ -177,4 +177,4 @@ static void client_wrong_size_counts_wrong_size_not_integrity()
     }
 }
 
-REGISTER_UNIT_TEST( client_wrong_size_counts_wrong_size_not_integrity );
+REGISTER_UNIT_TEST( test_client_wrong_size_counts_wrong_size_not_integrity );

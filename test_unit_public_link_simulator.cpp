@@ -44,7 +44,7 @@ static void public_link_simulator_check_fields( const struct rocketnet_config_fi
     check( found_duplicate );
 }
 
-static void public_link_simulator_production_refusal()
+static void test_public_link_simulator_production_refusal()
 {
     // the client transport, from its real table
     struct rocketnet_client_transport_config_t client_config;
@@ -88,10 +88,10 @@ static void public_link_simulator_production_refusal()
     check( !rocketnet_config_validate( "client", &client_config, client_table, client_fields ) );
     client_config.simulated_latency_ms = 0;
 
-    printf( "public_link_simulator_production_refusal\n" );
+    printf( "test_public_link_simulator_production_refusal\n" );
 }
 
-REGISTER_UNIT_TEST( public_link_simulator_production_refusal );
+REGISTER_UNIT_TEST( test_public_link_simulator_production_refusal );
 
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_address.h"
@@ -169,7 +169,7 @@ static rocketnet_client_transport_t * public_link_simulator_client(
                                                            &rocketnet_fake_client_operations_base, driver );
 }
 
-static void public_link_simulator_drops_at_loss()
+static void test_public_link_simulator_drops_at_loss()
 {
     rocketnet_public_link_simulator_test_development( 1 );
     struct rocketnet_client_transport_config_t config;
@@ -194,7 +194,7 @@ static void public_link_simulator_drops_at_loss()
     delete direct;
 }
 
-static void public_link_simulator_latency()
+static void test_public_link_simulator_latency()
 {
     rocketnet_public_link_simulator_test_development( 1 );
     struct rocketnet_client_transport_config_t config;
@@ -213,7 +213,7 @@ static void public_link_simulator_latency()
     delete driver;
 }
 
-static void public_link_simulator_jitter()
+static void test_public_link_simulator_jitter()
 {
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
@@ -243,7 +243,7 @@ static void public_link_simulator_jitter()
     public_link_wire_end( &wire );
 }
 
-static void public_link_simulator_duplicate()
+static void test_public_link_simulator_duplicate()
 {
     rocketnet_public_link_simulator_test_development( 1 );
     struct rocketnet_client_transport_config_t config;
@@ -260,7 +260,7 @@ static void public_link_simulator_duplicate()
     delete driver;
 }
 
-static void public_link_simulator_same_seed_same_schedule()
+static void test_public_link_simulator_same_seed_same_schedule()
 {
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
@@ -297,13 +297,13 @@ static void public_link_simulator_same_seed_same_schedule()
     public_link_wire_end( &b );
 }
 
-REGISTER_UNIT_TEST( public_link_simulator_drops_at_loss );
-REGISTER_UNIT_TEST( public_link_simulator_latency );
-REGISTER_UNIT_TEST( public_link_simulator_jitter );
-REGISTER_UNIT_TEST( public_link_simulator_duplicate );
-REGISTER_UNIT_TEST( public_link_simulator_same_seed_same_schedule );
+REGISTER_UNIT_TEST( test_public_link_simulator_drops_at_loss );
+REGISTER_UNIT_TEST( test_public_link_simulator_latency );
+REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
+REGISTER_UNIT_TEST( test_public_link_simulator_duplicate );
+REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 
-static void public_link_simulator_revision_1_prefixes()
+static void test_public_link_simulator_revision_1_prefixes()
 {
     struct alignas(16) client_revision_1_t
     {
@@ -357,4 +357,4 @@ static void public_link_simulator_revision_1_prefixes()
         check( server.guard[i] == 0x5a );
 }
 
-REGISTER_UNIT_TEST( public_link_simulator_revision_1_prefixes );
+REGISTER_UNIT_TEST( test_public_link_simulator_revision_1_prefixes );

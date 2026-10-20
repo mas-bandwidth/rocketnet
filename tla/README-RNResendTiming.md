@@ -122,14 +122,14 @@ distinct states and every invariant holds.
 
 The witness passes `ConfigAccepted` (`10 s >= 4 × 2 s`), so validation
 alone does not keep the property; the delay without back-off does. The unit
-test `resend_timing_witness_replays` (`test_unit_resend_timing.cpp`)
+test `test_resend_timing_witness_replays` (`test_unit_resend_timing.cpp`)
 replays this schedule against the code (the same config, one RTT sample of
 500 ms, which drives the first version's `resend_delay` to exactly 1.5 s, and no ack
 of the record after) and asserts at least four sends
 before `reliable_timeout`; at the rule's 100 ms cap the code sends the
 record every 100 ms until the timeout.
 
-The unit test `small_record_behind_a_chunk_not_held`
+The unit test `test_small_record_behind_a_chunk_not_held`
 (`test_unit_resend_timing.cpp`) replays the one-FIFO witness against the
 code: a block's chunks sent first, a small record 10 ms after, an RTT sample
 of 200 ms (resend_delay 250 ms); at 111 ms the small record is resent and the chunks

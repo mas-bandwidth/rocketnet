@@ -219,7 +219,7 @@ static int standard_receiver_check_run( const char * id, const uint8_t * payload
     return violation;
 }
 
-static void standard_receiver_checks_vectors()
+static void test_standard_receiver_checks_vectors()
 {
     const int count = (int) ( sizeof( standard_receiver_checks_table ) / sizeof( standard_receiver_checks_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_receiver_checks_table, count, standard_receiver_checks_generate ) == 12 );
@@ -257,4 +257,4 @@ static void standard_receiver_checks_vectors()
     }
 }
 
-REGISTER_UNIT_TEST( standard_receiver_checks_vectors );
+REGISTER_UNIT_TEST( test_standard_receiver_checks_vectors );

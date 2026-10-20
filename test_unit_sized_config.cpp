@@ -46,7 +46,7 @@ static void sized_config_check_table( const size_t * known, int count, size_t cu
     check( known[count-1] == current );
 }
 
-static void sized_config_accepts_every_known_size()
+static void test_sized_config_accepts_every_known_size()
 {
     sized_config_check_table( client_known_bytes, COUNT( client_known_bytes ), sizeof( struct rocketnet_client_transport_config_t ) );
     sized_config_check_table( server_known_bytes, COUNT( server_known_bytes ), sizeof( struct rocketnet_server_transport_config_t ) );
@@ -193,7 +193,7 @@ static void sized_config_accepts_every_known_size()
 // a revision-1 caller's struct ends at reliable_timeout_ms, so reading it
 // yields the two send budget fields at their defaults, never the bytes past
 // the caller's prefix.
-static void sized_config_message_revision_1_reads_budget_defaults()
+static void test_sized_config_message_revision_1_reads_budget_defaults()
 {
     check( ROCKETNET_MESSAGE_CONFIG_BYTES_1 + 2 * sizeof( int ) == sizeof( struct rocketnet_message_config_t ) );
 
@@ -215,7 +215,7 @@ static void sized_config_message_revision_1_reads_budget_defaults()
     check( read.server_send_kbps == 10000 );
 }
 
-static void sized_config_refuses_unknown_size()
+static void test_sized_config_refuses_unknown_size()
 {
     // a caller compiled against a newer, larger struct, an older size this
     // library never had, and nonsense: refused, and nothing written
@@ -316,7 +316,7 @@ static void sized_config_refuses_unknown_size()
     rocketnet_set_assert_callback( saved_assert );
 }
 
-static void server_default_config_max_clients_is_1000()
+static void test_server_default_config_max_clients_is_1000()
 {
     struct rocketnet_server_transport_config_t unsized, sized;
     rocketnet_server_transport_default_config( &unsized );
@@ -361,7 +361,7 @@ do                                                                              
         rocketnet_server_destroy( made );                                                                       \
 } while ( 0 )
 
-static void sized_config_create_refuses_before_init()
+static void test_sized_config_create_refuses_before_init()
 {
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( sized_config_quiet_assert );
@@ -408,7 +408,7 @@ static void sized_config_create_refuses_before_init()
     rocketnet_set_assert_callback( saved_assert );
 }
 
-static void sized_config_client_create_agrees_with_validate_config()
+static void test_sized_config_client_create_agrees_with_validate_config()
 {
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( sized_config_quiet_assert );
@@ -446,7 +446,7 @@ static void sized_config_client_create_agrees_with_validate_config()
     rocketnet_set_assert_callback( saved_assert );
 }
 
-static void sized_config_server_create_agrees_with_validate_config()
+static void test_sized_config_server_create_agrees_with_validate_config()
 {
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( sized_config_quiet_assert );
@@ -594,7 +594,7 @@ static bool public_config_pair_connects( int server_loss_percent )
     return connected;
 }
 
-static void public_config_plain_create_applies_simulation()
+static void test_public_config_plain_create_applies_simulation()
 {
     rocketnet_set_quiet( 1 );
     const bool development = rocketnet_public_link_simulator_development();
@@ -638,7 +638,7 @@ static void public_config_plain_create_applies_simulation()
     rocketnet_set_quiet( 0 );
 }
 
-static void public_config_default_fills_every_field()
+static void test_public_config_default_fills_every_field()
 {
     // the plain default and the sized default at sizeof write the same whole
     // struct, whatever the caller's memory held before
@@ -681,12 +681,12 @@ static void public_config_default_fills_every_field()
 }
 
 
-REGISTER_UNIT_TEST( public_config_plain_create_applies_simulation );
-REGISTER_UNIT_TEST( public_config_default_fills_every_field );
-REGISTER_UNIT_TEST( sized_config_accepts_every_known_size );
-REGISTER_UNIT_TEST( sized_config_message_revision_1_reads_budget_defaults );
-REGISTER_UNIT_TEST( sized_config_refuses_unknown_size );
-REGISTER_UNIT_TEST( server_default_config_max_clients_is_1000 );
-REGISTER_UNIT_TEST( sized_config_create_refuses_before_init );
-REGISTER_UNIT_TEST( sized_config_client_create_agrees_with_validate_config );
-REGISTER_UNIT_TEST( sized_config_server_create_agrees_with_validate_config );
+REGISTER_UNIT_TEST( test_public_config_plain_create_applies_simulation );
+REGISTER_UNIT_TEST( test_public_config_default_fills_every_field );
+REGISTER_UNIT_TEST( test_sized_config_accepts_every_known_size );
+REGISTER_UNIT_TEST( test_sized_config_message_revision_1_reads_budget_defaults );
+REGISTER_UNIT_TEST( test_sized_config_refuses_unknown_size );
+REGISTER_UNIT_TEST( test_server_default_config_max_clients_is_1000 );
+REGISTER_UNIT_TEST( test_sized_config_create_refuses_before_init );
+REGISTER_UNIT_TEST( test_sized_config_client_create_agrees_with_validate_config );
+REGISTER_UNIT_TEST( test_sized_config_server_create_agrees_with_validate_config );

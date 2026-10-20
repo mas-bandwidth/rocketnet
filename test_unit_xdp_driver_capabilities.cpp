@@ -41,7 +41,7 @@
 int rocketnet_server_socket_send_slot( ptrdiff_t offset );
 int rocketnet_server_socket_send_queue( const struct rocketnet_address_t * to, int num_queues );
 
-static void prefilter_counters_xdp_driver_reports_them()
+static void test_xdp_transport_prefilter_counters_driver_reports_them()
 {
     const rocketnet_driver_definition_t * xdp = rocketnet_driver_definition( ROCKETNET_DRIVER_XDP );
     check( xdp->backend->server->prefilter_counters != NULL );
@@ -53,7 +53,7 @@ static void prefilter_counters_xdp_driver_reports_them()
     check( gso->backend->server->prefilter_counters == NULL );
 }
 
-static void xdp_socket_config_requests_zero_copy_at_bind()
+static void test_xdp_transport_socket_config_requests_zero_copy_at_bind()
 {
     struct xsk_socket_config config;
 
@@ -83,7 +83,7 @@ static bool power_of_two( uint32_t value )
     return value != 0 && ( value & ( value - 1 ) ) == 0;
 }
 
-static void xdp_umem_config_sizes_fill_and_completion_rings()
+static void test_xdp_transport_umem_config_sizes_fill_and_completion_rings()
 {
     struct xsk_umem_config config;
     memset( &config, 0xFF, sizeof(config) );
@@ -98,7 +98,7 @@ static void xdp_umem_config_sizes_fill_and_completion_rings()
     check( config.flags == 0 );
 }
 
-static void xdp_send_slot_refuses_bad_offsets_before_dividing()
+static void test_xdp_transport_send_slot_refuses_bad_offsets_before_dividing()
 {
     // every slot root maps to its slot
 
@@ -123,7 +123,7 @@ static void xdp_send_slot_refuses_bad_offsets_before_dividing()
     check( rocketnet_server_socket_send_slot( (ptrdiff_t) ROCKETNET_XDP_SEND_QUEUE_SIZE * ROCKETNET_XDP_FRAME_SIZE ) == -1 );
 }
 
-static void xdp_send_queue_is_one_per_destination()
+static void test_xdp_transport_send_queue_is_one_per_destination()
 {
     struct rocketnet_address_t client;
     memset( &client, 0, sizeof(client) );
@@ -170,42 +170,10 @@ static void xdp_send_queue_is_one_per_destination()
     check( rocketnet_server_socket_send_queue( &client_ipv6, 3 ) == queue_ipv6 );
 }
 
-#else
-
-static void xdp_send_slot_refuses_bad_offsets_before_dividing()
-{
-    printf( "xdp_send_slot_refuses_bad_offsets_before_dividing [SKIPPED AF_XDP is Linux only]\n" );
-    fflush( stdout );
-}
-
-static void xdp_send_queue_is_one_per_destination()
-{
-    printf( "xdp_send_queue_is_one_per_destination [SKIPPED AF_XDP is Linux only]\n" );
-    fflush( stdout );
-}
-
-static void xdp_umem_config_sizes_fill_and_completion_rings()
-{
-    printf( "xdp_umem_config_sizes_fill_and_completion_rings [SKIPPED AF_XDP is Linux only]\n" );
-    fflush( stdout );
-}
-
-static void xdp_socket_config_requests_zero_copy_at_bind()
-{
-    printf( "xdp_socket_config_requests_zero_copy_at_bind [SKIPPED AF_XDP is Linux only]\n" );
-    fflush( stdout );
-}
-
-static void prefilter_counters_xdp_driver_reports_them()
-{
-    printf( "prefilter_counters_xdp_driver_reports_them [SKIPPED the XDP driver backend registers only on Linux]\n" );
-    fflush( stdout );
-}
+REGISTER_UNIT_TEST( test_xdp_transport_prefilter_counters_driver_reports_them );
+REGISTER_UNIT_TEST( test_xdp_transport_socket_config_requests_zero_copy_at_bind );
+REGISTER_UNIT_TEST( test_xdp_transport_umem_config_sizes_fill_and_completion_rings );
+REGISTER_UNIT_TEST( test_xdp_transport_send_slot_refuses_bad_offsets_before_dividing );
+REGISTER_UNIT_TEST( test_xdp_transport_send_queue_is_one_per_destination );
 
 #endif
-
-REGISTER_UNIT_TEST( prefilter_counters_xdp_driver_reports_them );
-REGISTER_UNIT_TEST( xdp_socket_config_requests_zero_copy_at_bind );
-REGISTER_UNIT_TEST( xdp_umem_config_sizes_fill_and_completion_rings );
-REGISTER_UNIT_TEST( xdp_send_slot_refuses_bad_offsets_before_dividing );
-REGISTER_UNIT_TEST( xdp_send_queue_is_one_per_destination );

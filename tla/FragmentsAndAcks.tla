@@ -816,7 +816,7 @@ BitsCoverRing ==
 \* Once the reconcile has caught up with the highest sent sequence, the
 \* bits are exactly the ring: held is the slots whose record is in the
 \* window, unacked those of them not acknowledged (the pro card's
-\* ack_block_walk_bits_match_ring test checks the same).
+\* test_ack_block_walk_bits_match_ring test checks the same).
 BitsMatchRing ==
     bitsChecked = highestSent =>
         /\ held = {k \in 0..SentRing-1 : sent[k].seq # 0 /\ sent[k].seq >= WindowLow}

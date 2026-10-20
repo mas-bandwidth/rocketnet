@@ -171,7 +171,7 @@ that held a mapping for it before the first response bound it (pinned by
 dropped its entry. Its holder can reconnect with it
 inside its lifetime; it can never hold two live connections with it. The
 owner accepts this as the cost of not denying ordinary churn. The unit test
-`server_admits_a_token_again_after_its_connection_closes` pins it.
+`test_server_admits_a_token_again_after_its_connection_closes` pins it.
 
 **What it replaced.** The admitted-token set held every token that admitted a
 connection until that token expired, never evicting, at 2 x max_clients
@@ -185,7 +185,7 @@ full server sends. The set is removed. Its counters
 keep their indices and read zero; nothing increments them, and
 sdk/rocketnet_tests.cpp:6482 and :6488 check both at zero. The reversed witness
 `MCRNSecurityTablesHoldUntilExpire.cfg` reproduces the denial in the model.
-`server_admits_sequential_fresh_tokens_past_twice_max_clients` reproduced it
+`test_server_admits_sequential_fresh_tokens_past_twice_max_clients` reproduced it
 in the code before the fix, failing at the third cycle with
 `CONNECTION_RESPONSE_ADMITTED_SET_FULL` at 1.
 

@@ -819,7 +819,7 @@ static void posix_seam_unknown_errno_pauses_msgx()
 
 static const char * posix_hk_servers[] = { "portable", "msgx" };
 static const char * posix_hk_clients[] = { "portable", "msgx" };
-static const char * posix_hk_kinds[] = { "posix_hard_killed_client", "posix_send_to_closed_port", "posix_client_server_gone" };
+static const char * posix_hk_kinds[] = { "test_posix_hard_killed_client", "test_posix_send_to_closed_port", "test_posix_client_server_gone" };
 
 struct posix_seam_case_t
 {
@@ -829,15 +829,15 @@ struct posix_seam_case_t
 
 static const posix_seam_case_t posix_seam_cases[] =
 {
-    { "posix_receive_seam_econnrefused", ECONNREFUSED },
-    { "posix_receive_seam_ehostunreach", EHOSTUNREACH },
-    { "posix_receive_seam_enetunreach", ENETUNREACH },
-    { "posix_receive_seam_ehostdown", EHOSTDOWN },
-    { "posix_receive_seam_enetdown", ENETDOWN },
-    { "posix_receive_seam_enobufs", ENOBUFS },
-    { "posix_receive_seam_eagain", EAGAIN },
-    { "posix_receive_seam_eintr", EINTR },
-    { "posix_receive_seam_unknown_errno_pauses_msgx", 0 },
+    { "test_posix_receive_seam_econnrefused", ECONNREFUSED },
+    { "test_posix_receive_seam_ehostunreach", EHOSTUNREACH },
+    { "test_posix_receive_seam_enetunreach", ENETUNREACH },
+    { "test_posix_receive_seam_ehostdown", EHOSTDOWN },
+    { "test_posix_receive_seam_enetdown", ENETDOWN },
+    { "test_posix_receive_seam_enobufs", ENOBUFS },
+    { "test_posix_receive_seam_eagain", EAGAIN },
+    { "test_posix_receive_seam_eintr", EINTR },
+    { "test_posix_receive_seam_unknown_errno_pauses_msgx", 0 },
 };
 
 #define POSIX_HK_NUM_CELL_CASES ( 3 * 2 * 2 * 3 )

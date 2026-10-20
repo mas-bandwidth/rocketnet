@@ -236,8 +236,8 @@ static void test_buffered_control_pressure(int clients = 300)
     const double elapsed_ms = (rocketnet_time() - begin) * 1000.0;
     for (int i = 0; i < clients; ++i) CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
     rocketnet_server_transport_destroy(server); delete f;
-    printf("test_buffered_control_pressure clients=%d updates=6 controls=%d elapsed_ms=%.3f\n",
-        clients, clients * 6, elapsed_ms);
+    (void) elapsed_ms;
+    printf("test_buffered_control_pressure_%d_clients\n", clients);
 }
 
 static void test_disconnect_burst_next_send(bool staged)
@@ -259,7 +259,7 @@ static void test_disconnect_burst_next_send(bool staged)
     CHECK(server->stats_frames[stats_index].packets_sent == before + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
 
     rocketnet_server_transport_destroy(server); delete f;
-    printf("test_disconnect_burst_next_send staged=%d disconnects=%d\n", staged, ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+    printf("test_disconnect_burst_next_send_%s\n", staged ? "staged" : "portable");
 }
 
 static void test_staged_control_fairness()
@@ -479,7 +479,7 @@ static void test_entries_carry_connection_id(bool staged)
     }
 
     rocketnet_server_transport_destroy(server); delete f;
-    printf("test_entries_carry_connection_id staged=%d payloads=%d acked=%d fragmented=1\n", staged, num_payloads, num_acked);
+    printf("test_entries_carry_connection_id_%s\n", staged ? "staged" : "portable");
 }
 
 static void test_staged_link_address_hooks()

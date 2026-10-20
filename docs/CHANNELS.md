@@ -431,15 +431,15 @@ that carried only unreliable records is never entered in the sent-packet map
 (5, 6.1, 6.4). The standalone `rn_unreliable_*` module that once stood here
 was never called by the product and has been removed. Its behaviours that the
 product has are tested on the shipped path in `./bin/test`:
-`unreliable_store_full_exhausts_and_kicks`,
-`unreliable_past_limit_promotes_counted_and_not_wedged`,
-`unreliable_promotion_every_mode` (its own `test_unit_unreliable_promotion.cpp`
+`test_unreliable_store_full_exhausts_and_kicks`,
+`test_unreliable_past_limit_promotes_counted_and_not_wedged`,
+`test_unreliable_promotion_every_mode` (its own `test_unit_unreliable_promotion.cpp`
 case; `./bin/test_wide` runs it on channel 300, a WIDE channel),
-`unreliable_failed_packet_drops_and_counts_each_record`,
-`unreliable_chunks_freed_when_written` and
-`unreliable_over_a_lossy_link_arrives_intact_at_most_once`
-(`test_unit_message_objects.cpp`), `unreliable_delivery_budget_drops_and_counts`
-(`test_unit_channel_dispatch.cpp`), `receive_without_room_exhausts_the_region`
+`test_unreliable_failed_packet_drops_and_counts_each_record`,
+`test_unreliable_chunks_freed_when_written` and
+`test_unreliable_over_a_lossy_link_arrives_intact_at_most_once`
+(`test_unit_message_objects.cpp`), `test_unreliable_delivery_budget_drops_and_counts`
+(`test_unit_channel_dispatch.cpp`), `test_receive_without_room_exhausts_the_region`
 (`test_unit_connection_memory.cpp`) and
 `ChannelsSingleFormParsesAsOneCode0Record` (the codec's SINGLE form,
 `test_channels.cpp`); the send-budget drops and the duplicating link are
@@ -624,14 +624,14 @@ corruption.
   the resend delay fires after the ack in nearly every case, and the copies per
   message are the loss's own (`1 / (1 - loss)`); above it the cap fires before
   the ack can return, about once per `resend_interval` of RTT. Measured on
-  the channel harness at 60 Hz (`resend_timing_table_over_lossy_links`, 400
+  the channel harness at 60 Hz (`test_resend_timing_table_over_lossy_links`, 400
   messages a row), copies per message at 10% and 20% loss are 1.11 and 1.25
   at RTT 20 ms, 1.10 and 1.23 at 50 ms, 2.10 and 2.22 at 100 ms, and 2.21
   and 2.43 at 200 ms. For small messages that is cheap and it is the point:
   the latency of a lost message is one delay, not a doubling series, and no
   message in those runs reached `reliable_timeout`. For a block it is not:
   one 256 KiB block over RTT 200 ms at 10% loss
-  (`block_resend_cost_over_long_path`, seed 0x5eed5eed5eed5eed), written
+  (`test_block_resend_cost_over_long_path`, seed 0x5eed5eed5eed5eed), written
   inside one RTT (32 packets per update, 8000 kbps), costs 1.97 wire bytes
   per payload byte (1.89 copies per chunk) with chunks on the 100 ms cap and
   1.15 (1.11 copies) on the resend delay; the block completes in 0.68 s on the cap
@@ -732,18 +732,18 @@ details explicit:
   at 0, 10 and 50 percent loss with reordering, duplication, single and
   multi-fragment blocks, and failed-send recovery under the no-live-allocation
   trap). `test_unit_resend_timing.cpp` pins the delay rule
-  (`resend_delay_is_min_of_interval_and_rtt`, `no_backoff_between_resends`,
-  `first_resend_before_any_sample_at_resend_delay_initial`,
-  `config_refuses_fewer_than_four_attempts`, and
-  `resend_timing_witness_replays`, which replays the schedule of
+  (`resend_delay_is_min_of_interval_and_rtt`, `test_no_backoff_between_resends`,
+  `test_first_resend_before_any_sample_at_resend_delay_initial`,
+  `test_config_refuses_fewer_than_four_attempts`, and
+  `test_resend_timing_witness_replays`, which replays the schedule of
   `tla/MCRNResendTimingBrokenBackoff.cfg` against the code) and the chunk
-  class (`chunk_resend_paced_by_rtt_not_interval`,
-  `small_record_behind_a_chunk_not_held`, which replays
+  class (`test_chunk_resend_paced_by_rtt_not_interval`,
+  `test_small_record_behind_a_chunk_not_held`, which replays
   `tla/MCRNResendTimingBrokenOneFifo.cfg`, and
-  `both_fifos_walk_only_what_is_due`), and
+  `test_both_fifos_walk_only_what_is_due`), and
   `functional/channel_resend_timing.cpp` measures delivery latency and copies
-  over the channel harness (`resend_timing_table_over_lossy_links`) and the
-  wire cost of a block on a long path (`block_resend_cost_over_long_path`).
+  over the channel harness (`test_resend_timing_table_over_lossy_links`) and the
+  wire cost of a block on a long path (`test_block_resend_cost_over_long_path`).
   The table case prints its percentiles and asserts the rule itself on every
   seed, never a percentile: zero timeouts; every resend gap, from the
   development build's resend gap record (`rn_resend_gaps_t`, measured where

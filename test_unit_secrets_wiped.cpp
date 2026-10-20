@@ -125,7 +125,7 @@ static void secrets_wiped_reach_connection_request( struct rocketnet_client_prot
 // The token's lifetime elapses while the client sends connection requests:
 // connect token expired (-7) ends the attempt, and the ephemeral secret that
 // sealed the requests is zero.
-static void secrets_wiped_ephemeral_on_token_expired_from_connection_request()
+static void test_secrets_wiped_ephemeral_on_token_expired_from_connection_request()
 {
     struct rocketnet_counters_t counters;
     struct rocketnet_client_protocol_t client;
@@ -143,7 +143,7 @@ static void secrets_wiped_ephemeral_on_token_expired_from_connection_request()
 // One more forged denied than the integrity limit allows ends the attempt in
 // disconnected (sdk/rocketnet_client_protocol.cpp, rocketnet_client_integrity_failure):
 // the ephemeral secret is zero.
-static void secrets_wiped_ephemeral_on_integrity_limit_from_connection_request()
+static void test_secrets_wiped_ephemeral_on_integrity_limit_from_connection_request()
 {
     struct rocketnet_counters_t counters;
     struct rocketnet_client_protocol_t client;
@@ -171,8 +171,8 @@ static void secrets_wiped_ephemeral_on_integrity_limit_from_connection_request()
     check( secrets_wiped_all_zero( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 }
 
-REGISTER_UNIT_TEST( secrets_wiped_ephemeral_on_token_expired_from_connection_request );
-REGISTER_UNIT_TEST( secrets_wiped_ephemeral_on_integrity_limit_from_connection_request );
+REGISTER_UNIT_TEST( test_secrets_wiped_ephemeral_on_token_expired_from_connection_request );
+REGISTER_UNIT_TEST( test_secrets_wiped_ephemeral_on_integrity_limit_from_connection_request );
 
 // ---------------------------------------------------------------------------
 // the client's and the server's memory at destroy
@@ -369,7 +369,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair,
 // Owned memory: the counting allocator sees the free of the block that holds
 // the client and of the block that holds the server, and neither still holds
 // the planted message.
-static void secrets_wiped_destroy_owned_blocks()
+static void test_secrets_wiped_destroy_owned_blocks()
 {
     rocketnet_term();
     check( rocketnet_set_allocator( secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -407,7 +407,7 @@ static uint8_t * secrets_wiped_aligned( uint8_t * raw )
 
 // The caller's memory: when destroy gives each block back, it no longer holds
 // the planted message.
-static void secrets_wiped_destroy_caller_blocks()
+static void test_secrets_wiped_destroy_caller_blocks()
 {
     rocketnet_server_config_t server_config;
     rocketnet_server_default_config( &server_config );
@@ -452,7 +452,7 @@ static void secrets_wiped_plant_in_arena( rn_arena_t * arena )
 
 // An owned arena: the counting allocator sees its block freed, and the block
 // no longer holds the planted message.
-static void secrets_wiped_arena_destroy_owned()
+static void test_secrets_wiped_arena_destroy_owned()
 {
     rocketnet_term();
     check( rocketnet_set_allocator( secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -484,7 +484,7 @@ static void secrets_wiped_arena_destroy_owned()
 
 // An arena in a caller's block: destroy gives the block back without the
 // planted message.
-static void secrets_wiped_arena_destroy_in_block()
+static void test_secrets_wiped_arena_destroy_in_block()
 {
     const uint64_t bytes = rn_arena_required_bytes( NULL, 2 );
     check( bytes > 0 );
@@ -505,10 +505,10 @@ static void secrets_wiped_arena_destroy_in_block()
     check( pattern == 0 );
 }
 
-REGISTER_UNIT_TEST( secrets_wiped_destroy_owned_blocks );
-REGISTER_UNIT_TEST( secrets_wiped_destroy_caller_blocks );
-REGISTER_UNIT_TEST( secrets_wiped_arena_destroy_owned );
-REGISTER_UNIT_TEST( secrets_wiped_arena_destroy_in_block );
+REGISTER_UNIT_TEST( test_secrets_wiped_destroy_owned_blocks );
+REGISTER_UNIT_TEST( test_secrets_wiped_destroy_caller_blocks );
+REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_owned );
+REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block );
 
 #if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
 
@@ -574,7 +574,7 @@ static bool secrets_wiped_parse( const char * value, struct secrets_wiped_config
     return parsed;
 }
 
-static void secrets_wiped_config_staging_on_parse()
+static void test_secrets_wiped_config_staging_on_parse()
 {
     uint8_t key[32];
     memset( key, 0x5C, sizeof( key ) );
@@ -591,7 +591,7 @@ static void secrets_wiped_config_staging_on_parse()
 
 // a value whose last group is broken: the decode writes the bytes before it
 // into the staging, then refuses
-static void secrets_wiped_config_staging_on_refused_parse()
+static void test_secrets_wiped_config_staging_on_refused_parse()
 {
     uint8_t key[32];
     memset( key, 0x5C, sizeof( key ) );
@@ -606,8 +606,8 @@ static void secrets_wiped_config_staging_on_refused_parse()
     check( secrets_wiped_all_zero( secrets_wiped_staging, secrets_wiped_staging_bytes ) );
 }
 
-REGISTER_UNIT_TEST( secrets_wiped_config_staging_on_parse );
-REGISTER_UNIT_TEST( secrets_wiped_config_staging_on_refused_parse );
+REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_parse );
+REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_refused_parse );
 
 // ---------------------------------------------------------------------------
 // the private block staging of a token open (sdk/rocketnet_connect_token.cpp)
@@ -650,7 +650,7 @@ static int secrets_wiped_open( const uint8_t * server_public, const uint8_t * se
     return result;
 }
 
-static void secrets_wiped_token_block_on_open()
+static void test_secrets_wiped_token_block_on_open()
 {
     check( secrets_wiped_open( rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) == 1 );
     check( secrets_wiped_block_exits == 1 );
@@ -658,7 +658,7 @@ static void secrets_wiped_token_block_on_open()
 }
 
 // a server key pair the token was not sealed to: the open is refused
-static void secrets_wiped_token_block_on_refused_open()
+static void test_secrets_wiped_token_block_on_refused_open()
 {
     uint8_t other_public[ROCKETNET_KEY_BYTES];
     uint8_t other_secret[ROCKETNET_KEY_BYTES];
@@ -669,7 +669,7 @@ static void secrets_wiped_token_block_on_refused_open()
     check( secrets_wiped_all_zero( secrets_wiped_block, ROCKETNET_PRIVATE_BLOCK_BYTES ) );
 }
 
-REGISTER_UNIT_TEST( secrets_wiped_token_block_on_open );
-REGISTER_UNIT_TEST( secrets_wiped_token_block_on_refused_open );
+REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_open );
+REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_refused_open );
 
 #endif // #if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)

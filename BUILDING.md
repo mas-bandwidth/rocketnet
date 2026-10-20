@@ -37,11 +37,10 @@ Run the unit suite with:
 `./bin/test` does not open a socket and does not start a transport. It drives the
 state machines and the in-memory network simulator. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). A test over
-60 seconds prints a warning line. A test over 120 seconds is killed and the
-suite fails. The ten slowest are printed at the end. Those timing lines use
-the `test_timing_* [SKIPPED ...]` spelling because `tools/check_test_environment.py`
-accepts only test-name lines on a passing `./bin/test` run, and that checker
-is shared with the unit suite.
+120 seconds is killed and the suite fails. A passing run prints each test's
+name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the
+ten slowest cases and the ten largest peak resident sets after the results
+(test/README.md).
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
 IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,
@@ -51,8 +50,7 @@ sibling binary that does), belongs in the functional suite:
     ./bin/functional
 
 The functional suite is its own target. It runs in parallel under the same
-60 second warning and 120 second failure limits, and it prints the ten
-slowest as a table. Put a new test in `./bin/test` when the assertion can be
+120 second failure limit and prints the same way. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
@@ -81,11 +79,11 @@ an xdp create the commit barrier refuses before any bind. Two
   which polls until the counts equal the before counts or 10 seconds pass, so
   a joined thread the kernel has not yet reaped is not counted as a leak, and
   a thread, descriptor or umem really left still fails the case.
-- `posix_server_create_destroy_1000` runs 250 cycles on the gso and io_uring
+- `test_posix_server_create_destroy_1000` runs 250 cycles on the gso and io_uring
   cells and 1000 on the others, so two suites at once stay under the 120
   second case limit; the counts are compared after the first cycle and the
   last, so a leak per cycle still fails.
-- `posix_server_restart_same_port_100` reserves a port below the kernel's
+- `test_posix_server_restart_same_port_100` reserves a port below the kernel's
   ephemeral range in a slice its cell alone scans and binds it again 100
   times, so a sibling suite's port-0 binds cannot take it between rebinds.
 - A server create on a free loopback port is retried up to three times on
@@ -615,8 +613,9 @@ what it asserts.
 The SDK test suite temporarily clears config overrides derived from both
 config tables, then restores them on return. `ROCKETNET_SERVER_TRANSPORT` and
 `ROCKETNET_CLIENT_TRANSPORT` remain intentional test pins;
-`ROCKETNET_TEST_VERBOSE` keeps its diagnostic meaning. Passing ordinary runs print test names and
-explicitly named platform skips. Failures retain the captured diagnostic log.
+`ROCKETNET_TEST_VERBOSE` keeps its diagnostic meaning. Passing runs print test names only; a
+test a platform does not build is not registered there. Failures retain the
+captured diagnostic log.
 
 ### Windows IOCP server
 

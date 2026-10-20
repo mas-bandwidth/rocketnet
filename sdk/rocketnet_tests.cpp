@@ -12991,10 +12991,6 @@ void rocketnet_test_config_validation()
     rocketnet_check( config.max_clients == 1000 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
 
-#else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_config_validation empty-value case [SKIPPED on windows: the CRT cannot represent a set-but-empty variable; empty deletes]" );
-
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     rocketnet_test_env_restore( &guard );
@@ -14356,35 +14352,6 @@ struct rocketnet_unit_test_t
     void ( *function )();
 };
 
-// a test a platform's build compiles out still registers its name, printing a
-// named skip instead of vanishing from the count (a skipped test is named and
-// logged, never silent)
-
-static void rocketnet_test_skip_linux_only_xdp_free_list()
-{
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_xdp_free_list_refuses_overflow [SKIPPED linux only: the xdp free list is not built on this platform]" );
-}
-
-static void rocketnet_test_skip_linux_only_xdp_interrupt_matcher()
-{
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_xdp_interrupt_matcher [SKIPPED linux only: the xdp interrupt matcher is not built on this platform]" );
-}
-
-static void rocketnet_test_skip_linux_only_xdp_empty_map_drops()
-{
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_xdp_empty_map_drops [SKIPPED linux only: the xdp empty-map drop path is not built on this platform]" );
-}
-
-static void rocketnet_test_skip_linux_only_umem_config_frame_size_explicit()
-{
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_umem_config_frame_size_explicit [SKIPPED linux only: the xdp umem config is not built on this platform]" );
-}
-
-static void rocketnet_test_skip_linux_only_connection_type_probe_ends_on_receive_error()
-{
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_connection_type_probe_ends_on_receive_error [SKIPPED linux only: the netlink route-table probe is not built on this platform]" );
-}
-
 void rocketnet_test_dev_token_minting_absent_in_release();
 
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
@@ -14395,9 +14362,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_update_time_clamp", rocketnet_test_update_time_clamp },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_xdp_free_list_refuses_overflow", rocketnet_test_skip_linux_only_xdp_free_list },
+    { "test_xdp_transport_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
 #endif
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
@@ -14572,11 +14537,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
-    { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_xdp_interrupt_matcher", rocketnet_test_skip_linux_only_xdp_interrupt_matcher },
-    { "test_xdp_empty_map_drops", rocketnet_test_skip_linux_only_xdp_empty_map_drops },
+    { "test_xdp_transport_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
+    { "test_xdp_transport_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_server_host_memory_estimate_bounds_the_plan", rocketnet_test_server_host_memory_estimate_bounds_the_plan },
@@ -14584,9 +14546,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
     { "test_connection_type_probe_ends_on_receive_error", rocketnet_test_connection_type_probe_ends_on_receive_error },
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_umem_config_frame_size_explicit", rocketnet_test_skip_linux_only_umem_config_frame_size_explicit },
-    { "test_connection_type_probe_ends_on_receive_error", rocketnet_test_skip_linux_only_connection_type_probe_ends_on_receive_error },
 #endif
 };
 

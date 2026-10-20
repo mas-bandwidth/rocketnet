@@ -21,7 +21,7 @@ static void rec_send( struct rocketnet_dst_check_state_t * st, int stream, uint3
     rocketnet_dst_check_sent( st, 1000.0, session, channel, type, seq, 1, 1, 0, 64 );
 }
 
-static void dst_check_ordered_out_of_order_fails()
+static void test_dst_check_ordered_out_of_order_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 42 );
@@ -33,7 +33,7 @@ static void dst_check_ordered_out_of_order_fails()
     rocketnet_unit_check( strcmp( st.check, "ordered_in_order" ) == 0 );
 }
 
-static void dst_check_reliable_duplicate_fails()
+static void test_dst_check_reliable_duplicate_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 43 );
@@ -46,7 +46,7 @@ static void dst_check_reliable_duplicate_fails()
     rocketnet_unit_check( strcmp( st.check, "reliable_once" ) == 0 );
 }
 
-static void dst_check_reliable_missing_fails()
+static void test_dst_check_reliable_missing_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 44 );
@@ -61,7 +61,7 @@ static void dst_check_reliable_missing_fails()
     rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
 }
 
-static void dst_check_sequenced_backwards_fails()
+static void test_dst_check_sequenced_backwards_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 45 );
@@ -73,7 +73,7 @@ static void dst_check_sequenced_backwards_fails()
     rocketnet_unit_check( strcmp( st.check, "sequenced_forward" ) == 0 );
 }
 
-static void dst_check_unreliable_duplicate_fails()
+static void test_dst_check_unreliable_duplicate_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 46 );
@@ -85,7 +85,7 @@ static void dst_check_unreliable_duplicate_fails()
     rocketnet_unit_check( strcmp( st.check, "unreliable_once" ) == 0 );
 }
 
-static void dst_check_ack_undelivered_fails()
+static void test_dst_check_ack_undelivered_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 47 );
@@ -100,7 +100,7 @@ static void dst_check_ack_undelivered_fails()
     rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
 }
 
-static void dst_check_stale_session_payload_fails()
+static void test_dst_check_stale_session_payload_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 48 );
@@ -113,7 +113,7 @@ static void dst_check_stale_session_payload_fails()
     rocketnet_unit_check( strcmp( st.check, "stale_session_payload" ) == 0 );
 }
 
-static void dst_check_clean_sequence_passes()
+static void test_dst_check_clean_sequence_passes()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 49 );
@@ -145,11 +145,11 @@ static void dst_check_clean_sequence_passes()
     rocketnet_unit_check( st.failed == 0 );
 }
 
-REGISTER_UNIT_TEST( dst_check_ordered_out_of_order_fails );
-REGISTER_UNIT_TEST( dst_check_reliable_duplicate_fails );
-REGISTER_UNIT_TEST( dst_check_reliable_missing_fails );
-REGISTER_UNIT_TEST( dst_check_sequenced_backwards_fails );
-REGISTER_UNIT_TEST( dst_check_unreliable_duplicate_fails );
-REGISTER_UNIT_TEST( dst_check_ack_undelivered_fails );
-REGISTER_UNIT_TEST( dst_check_stale_session_payload_fails );
-REGISTER_UNIT_TEST( dst_check_clean_sequence_passes );
+REGISTER_UNIT_TEST( test_dst_check_ordered_out_of_order_fails );
+REGISTER_UNIT_TEST( test_dst_check_reliable_duplicate_fails );
+REGISTER_UNIT_TEST( test_dst_check_reliable_missing_fails );
+REGISTER_UNIT_TEST( test_dst_check_sequenced_backwards_fails );
+REGISTER_UNIT_TEST( test_dst_check_unreliable_duplicate_fails );
+REGISTER_UNIT_TEST( test_dst_check_ack_undelivered_fails );
+REGISTER_UNIT_TEST( test_dst_check_stale_session_payload_fails );
+REGISTER_UNIT_TEST( test_dst_check_clean_sequence_passes );

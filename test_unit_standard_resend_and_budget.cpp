@@ -201,10 +201,10 @@ static const rn_standard_vector_t standard_resend_and_budget_table[] =
     RN_STANDARD_VECTOR( "m9.budget-trace", "0000000000000000020102000100010100010101" ),
 };
 
-static void standard_resend_and_budget_vectors()
+static void test_standard_resend_and_budget_vectors()
 {
     const int count = (int) ( sizeof( standard_resend_and_budget_table ) / sizeof( standard_resend_and_budget_table[0] ) );
     check( rn_standard_vectors_walk( standard_resend_and_budget_table, count, standard_resend_and_budget_generate ) == count );
 }
 
-REGISTER_UNIT_TEST( standard_resend_and_budget_vectors );
+REGISTER_UNIT_TEST( test_standard_resend_and_budget_vectors );

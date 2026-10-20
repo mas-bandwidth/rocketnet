@@ -15,7 +15,7 @@
 // keeps the bound exactly as written (scale 1). No check is removed: a Debug
 // run over the scaled bound still fails. The runner's kill (test/suite_runner.h)
 // serves the unit binary too, so a Debug or sanitizer unit run is killed at 600 s,
-// not 120 s: a stated loosening for those builds only. The 60 s warning is unscaled.
+// not 120 s: a stated loosening for those builds only.
 
 #ifndef ROCKETNET_TEST_TIME_SCALE_H
 #define ROCKETNET_TEST_TIME_SCALE_H

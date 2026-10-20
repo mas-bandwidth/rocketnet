@@ -146,7 +146,7 @@ static void server_replay_marks_check_forget( const struct server_replay_marks_c
 // highest_opened, a second walk with nothing changed marks none, an advance
 // marks exactly that slot, and a slot at zero is never marked.
 
-static void server_replay_marks_mark_connected_slots_once()
+static void test_server_replay_marks_mark_connected_slots_once()
 {
     struct server_replay_marks_fixture_t fixture;
     server_replay_marks_fixture_init( &fixture, 4 );
@@ -185,7 +185,7 @@ static void server_replay_marks_mark_connected_slots_once()
 // for its old address before a connected slot in the same walk is marked,
 // and a further walk with nothing changed calls nothing.
 
-static void server_replay_marks_forget_released_slots_first()
+static void test_server_replay_marks_forget_released_slots_first()
 {
     struct server_replay_marks_fixture_t fixture;
     server_replay_marks_fixture_init( &fixture, 4 );
@@ -224,7 +224,7 @@ static void server_replay_marks_forget_released_slots_first()
 // another address forgets the old address and then marks the new one, in
 // that order.
 
-static void server_replay_marks_follow_an_address_change()
+static void test_server_replay_marks_follow_an_address_change()
 {
     struct server_replay_marks_fixture_t fixture;
     server_replay_marks_fixture_init( &fixture, 2 );
@@ -261,7 +261,7 @@ static void server_replay_marks_follow_an_address_change()
 // mark is forgotten before the mapping array is ever indexed, and the mark
 // pass skips the slot. A Release build must not read in front of the array.
 
-static void server_replay_marks_forget_a_connected_slot_without_a_mapping()
+static void test_server_replay_marks_forget_a_connected_slot_without_a_mapping()
 {
     struct server_replay_marks_fixture_t fixture;
     server_replay_marks_fixture_init( &fixture, 2 );
@@ -297,7 +297,7 @@ static void server_replay_marks_forget_a_connected_slot_without_a_mapping()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
-REGISTER_UNIT_TEST( server_replay_marks_mark_connected_slots_once );
-REGISTER_UNIT_TEST( server_replay_marks_forget_released_slots_first );
-REGISTER_UNIT_TEST( server_replay_marks_follow_an_address_change );
-REGISTER_UNIT_TEST( server_replay_marks_forget_a_connected_slot_without_a_mapping );
+REGISTER_UNIT_TEST( test_server_replay_marks_mark_connected_slots_once );
+REGISTER_UNIT_TEST( test_server_replay_marks_forget_released_slots_first );
+REGISTER_UNIT_TEST( test_server_replay_marks_follow_an_address_change );
+REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_connected_slot_without_a_mapping );

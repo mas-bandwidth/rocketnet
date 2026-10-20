@@ -53,7 +53,7 @@ static const int XDP_HOST_REDIRECT = 4;
 
 // A row names the counter it must move with XDP_HOST_COUNTS(counter), and a
 // row that must move none with XDP_HOST_NO_COUNTER.
-// xdp_host_every_counter_has_a_case reads this file for the XDP_HOST_COUNTS
+// test_xdp_transport_host_every_counter_has_a_case reads this file for the XDP_HOST_COUNTS
 // spelling of every counter sdk/rocketnet_wire.h defines.
 
 #define XDP_HOST_COUNTS( counter ) ( counter )
@@ -389,21 +389,21 @@ static void xdp_host_redirect_rows( int family, std::vector<xdp_host_row_t> & ro
     }
 }
 
-static void xdp_host_ipv4_rocketnet_packet_redirects()
+static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_redirect_rows( 4, rows );
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_rocketnet_packet_redirects()
+static void test_xdp_transport_host_ipv6_rocketnet_packet_redirects()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_redirect_rows( 6, rows );
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_redirect_needs_a_populated_slot()
+static void test_xdp_transport_host_redirect_needs_a_populated_slot()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -450,7 +450,7 @@ static void xdp_host_redirect_needs_a_populated_slot()
 // ---------------------------------------------------------------------------
 // passes
 
-static void xdp_host_unconfigured_passes()
+static void test_xdp_transport_host_unconfigured_passes()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -470,7 +470,7 @@ static void xdp_host_unconfigured_passes()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_other_port_passes()
+static void test_xdp_transport_host_other_port_passes()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -508,7 +508,7 @@ static void xdp_host_other_port_passes()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv4_wrong_address_passes()
+static void test_xdp_transport_host_ipv4_wrong_address_passes()
 {
     std::vector<xdp_host_row_t> rows;
     static const uint8_t next_address[4] = { 192, 0, 2, 11 };
@@ -537,7 +537,7 @@ static void xdp_host_ipv4_wrong_address_passes()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_wrong_address_passes()
+static void test_xdp_transport_host_ipv6_wrong_address_passes()
 {
     std::vector<xdp_host_row_t> rows;
 
@@ -575,7 +575,7 @@ static void xdp_host_ipv6_wrong_address_passes()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv4_options_pass()
+static void test_xdp_transport_host_ipv4_options_pass()
 {
     std::vector<xdp_host_row_t> rows;
     for ( int ihl = 6; ihl <= 15; ihl++ )
@@ -592,7 +592,7 @@ static void xdp_host_ipv4_options_pass()
 // short headers: a frame that names an IP family but cannot hold its fixed
 // header drops, uncounted
 
-static void xdp_host_ipv4_short_header_drops()
+static void test_xdp_transport_host_ipv4_short_header_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int cuts[3] = { 14, 15, 14 + 19 };
@@ -619,7 +619,7 @@ static void xdp_host_ipv4_short_header_drops()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_short_header_drops()
+static void test_xdp_transport_host_ipv6_short_header_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int cuts[3] = { 14, 15, 14 + 39 };
@@ -649,7 +649,7 @@ static void xdp_host_ipv6_short_header_drops()
 // ---------------------------------------------------------------------------
 // IPv6 next headers other than UDP
 
-static void xdp_host_ipv6_extension_headers_pass_counted()
+static void test_xdp_transport_host_ipv6_extension_headers_pass_counted()
 {
     std::vector<xdp_host_row_t> rows;
 
@@ -811,7 +811,7 @@ static void xdp_host_fragment_pass_rows( int family, std::vector<xdp_host_row_t>
     }
 }
 
-static void xdp_host_ipv4_first_fragment_drops_counted()
+static void test_xdp_transport_host_ipv4_first_fragment_drops_counted()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_first_fragment_drop_rows( 4, rows );
@@ -826,14 +826,14 @@ static void xdp_host_ipv4_first_fragment_drops_counted()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_first_fragment_drops_counted()
+static void test_xdp_transport_host_ipv6_first_fragment_drops_counted()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_first_fragment_drop_rows( 6, rows );
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv6_fragment_passes_counted()
+static void test_xdp_transport_host_ipv6_fragment_passes_counted()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_fragment_pass_rows( 6, rows );
@@ -865,7 +865,7 @@ static void xdp_host_ipv6_fragment_passes_counted()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_ipv4_fragment_passes_counted()
+static void test_xdp_transport_host_ipv4_fragment_passes_counted()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_fragment_pass_rows( 4, rows );
@@ -886,7 +886,7 @@ static void xdp_host_ipv4_fragment_passes_counted()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_icmpv6_passes_uncounted()
+static void test_xdp_transport_host_icmpv6_passes_uncounted()
 {
     std::vector<xdp_host_row_t> rows;
 
@@ -907,7 +907,7 @@ static void xdp_host_icmpv6_passes_uncounted()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_vlan_tagged_passes()
+static void test_xdp_transport_host_vlan_tagged_passes()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -927,7 +927,7 @@ static void xdp_host_vlan_tagged_passes()
 // ---------------------------------------------------------------------------
 // drops on the server's port: each counted by its reason
 
-static void xdp_host_too_small_drops()
+static void test_xdp_transport_host_too_small_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -954,7 +954,7 @@ static void xdp_host_too_small_drops()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_too_large_drops()
+static void test_xdp_transport_host_too_large_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -987,7 +987,7 @@ static void xdp_host_too_large_drops()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_wrong_epoch_drops()
+static void test_xdp_transport_host_wrong_epoch_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -1021,7 +1021,7 @@ static void xdp_host_wrong_epoch_drops()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_wrong_filter_drops()
+static void test_xdp_transport_host_wrong_filter_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -1045,7 +1045,7 @@ static void xdp_host_wrong_filter_drops()
     xdp_host_run_rows( rows );
 }
 
-static void xdp_host_invalid_type_drops()
+static void test_xdp_transport_host_invalid_type_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -1080,7 +1080,7 @@ static void xdp_host_invalid_type_drops()
 // challenge and cookie, and types 10 to 255 are reserved). The table is
 // written here, never taken from ROCKETNET_WIRE_SERVER_PACKET_VALID.
 
-static void xdp_host_type_and_size_sweep_matches_the_standard()
+static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
 {
     const int ceiling = 1472;   // 1500 - 20 - 8
 
@@ -1237,7 +1237,7 @@ static void xdp_host_replay_rows( int family, std::vector<xdp_host_row_t> & rows
                                          ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5, 0xfffffff0u ) );
 }
 
-static void xdp_host_replay_drops_behind_the_window()
+static void test_xdp_transport_host_replay_drops_behind_the_window()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_replay_rows( 4, rows );
@@ -1250,7 +1250,7 @@ static void xdp_host_replay_drops_behind_the_window()
 // same state, each asserting its verdict and that exactly its counter moved
 // by one, and the entry still reads 100 with no other entry made.
 
-static void xdp_host_replay_never_writes_the_map()
+static void test_xdp_transport_host_replay_never_writes_the_map()
 {
     const int families[2] = { 4, 6 };
     const uint8_t session[5] = { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
@@ -1325,7 +1325,7 @@ static std::string xdp_host_read_file( const char * relative )
     FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( file == NULL )
     {
-        printf( "xdp_host_every_counter_has_a_case: cannot read %s\n", path.c_str() );
+        printf( "test_xdp_transport_host_every_counter_has_a_case: cannot read %s\n", path.c_str() );
         fflush( stdout );
         return text;
     }
@@ -1337,7 +1337,7 @@ static std::string xdp_host_read_file( const char * relative )
     return text;
 }
 
-static void xdp_host_every_counter_has_a_case()
+static void test_xdp_transport_host_every_counter_has_a_case()
 {
     const std::string wire = xdp_host_read_file( "sdk/rocketnet_wire.h" );
     const std::string self = xdp_host_read_file( "test_unit_xdp_filter_host.cpp" );
@@ -1365,7 +1365,7 @@ static void xdp_host_every_counter_has_a_case()
         const std::string needle = std::string( "XDP_HOST_" ) + "COUNTS( " + names[i] + " )";
         if ( self.find( needle ) == std::string::npos )
         {
-            printf( "xdp_host_every_counter_has_a_case: %s has no case\n", names[i].c_str() );
+            printf( "test_xdp_transport_host_every_counter_has_a_case: %s has no case\n", names[i].c_str() );
             fflush( stdout );
             missing++;
         }
@@ -1374,7 +1374,7 @@ static void xdp_host_every_counter_has_a_case()
 }
 
 
-static void xdp_host_udp_length_drops()
+static void test_xdp_transport_host_udp_length_drops()
 {
     std::vector<xdp_host_row_t> rows;
     const int families[2] = { 4, 6 };
@@ -1478,48 +1478,6 @@ static void xdp_host_udp_length_drops()
 
 }
 
-#else // #if ROCKETNET_XDP_FILTER_HOST
-
-// The host filter target is built for GCC or Clang on a little-endian,
-// non-Windows host (CMakeLists.txt); elsewhere each case names itself as
-// skipped.
-
-#define XDP_HOST_SKIPPED( name )                                                                                  \
-    static void name()                                                                                            \
-    {                                                                                                             \
-        printf( #name " [SKIPPED the XDP filter host target needs GCC or Clang on a little-endian, non-Windows host]\n" ); \
-        fflush( stdout );                                                                                         \
-    }
-
-XDP_HOST_SKIPPED( xdp_host_ipv4_rocketnet_packet_redirects )
-XDP_HOST_SKIPPED( xdp_host_ipv6_rocketnet_packet_redirects )
-XDP_HOST_SKIPPED( xdp_host_redirect_needs_a_populated_slot )
-XDP_HOST_SKIPPED( xdp_host_unconfigured_passes )
-XDP_HOST_SKIPPED( xdp_host_other_port_passes )
-XDP_HOST_SKIPPED( xdp_host_ipv4_wrong_address_passes )
-XDP_HOST_SKIPPED( xdp_host_ipv6_wrong_address_passes )
-XDP_HOST_SKIPPED( xdp_host_ipv4_options_pass )
-XDP_HOST_SKIPPED( xdp_host_ipv4_short_header_drops )
-XDP_HOST_SKIPPED( xdp_host_ipv6_short_header_drops )
-XDP_HOST_SKIPPED( xdp_host_ipv6_extension_headers_pass_counted )
-XDP_HOST_SKIPPED( xdp_host_ipv6_fragment_passes_counted )
-XDP_HOST_SKIPPED( xdp_host_ipv4_fragment_passes_counted )
-XDP_HOST_SKIPPED( xdp_host_ipv4_first_fragment_drops_counted )
-XDP_HOST_SKIPPED( xdp_host_ipv6_first_fragment_drops_counted )
-XDP_HOST_SKIPPED( xdp_host_icmpv6_passes_uncounted )
-XDP_HOST_SKIPPED( xdp_host_vlan_tagged_passes )
-XDP_HOST_SKIPPED( xdp_host_too_small_drops )
-XDP_HOST_SKIPPED( xdp_host_too_large_drops )
-XDP_HOST_SKIPPED( xdp_host_wrong_epoch_drops )
-XDP_HOST_SKIPPED( xdp_host_wrong_filter_drops )
-XDP_HOST_SKIPPED( xdp_host_invalid_type_drops )
-XDP_HOST_SKIPPED( xdp_host_type_and_size_sweep_matches_the_standard )
-XDP_HOST_SKIPPED( xdp_host_every_counter_has_a_case )
-XDP_HOST_SKIPPED( xdp_host_replay_drops_behind_the_window )
-XDP_HOST_SKIPPED( xdp_host_replay_never_writes_the_map )
-
-XDP_HOST_SKIPPED( xdp_host_udp_length_drops )
-
 #endif // #if ROCKETNET_XDP_FILTER_HOST
 
 // The xdp driver's default queue rule: create and the memory plan take the
@@ -1531,7 +1489,7 @@ XDP_HOST_SKIPPED( xdp_host_udp_length_drops )
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_memory.h"
 
-static void xdp_queue_default_matches_memory_plan()
+static void test_xdp_transport_queue_default_matches_memory_plan()
 {
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
@@ -1549,42 +1507,39 @@ static void xdp_queue_default_matches_memory_plan()
     rocketnet_unit_check( plan.sockets == 3 );
 }
 
-#else // #if defined(__linux__)
-
-static void xdp_queue_default_matches_memory_plan()
-{
-    printf( "xdp_queue_default_matches_memory_plan [SKIPPED the xdp memory plan is Linux only]\n" );
-    fflush( stdout );
-}
-
 #endif // #if defined(__linux__)
 
-REGISTER_UNIT_TEST( xdp_host_ipv4_rocketnet_packet_redirects );
-REGISTER_UNIT_TEST( xdp_host_ipv6_rocketnet_packet_redirects );
-REGISTER_UNIT_TEST( xdp_host_redirect_needs_a_populated_slot );
-REGISTER_UNIT_TEST( xdp_host_unconfigured_passes );
-REGISTER_UNIT_TEST( xdp_host_other_port_passes );
-REGISTER_UNIT_TEST( xdp_host_ipv4_wrong_address_passes );
-REGISTER_UNIT_TEST( xdp_host_ipv6_wrong_address_passes );
-REGISTER_UNIT_TEST( xdp_host_ipv4_options_pass );
-REGISTER_UNIT_TEST( xdp_host_ipv4_short_header_drops );
-REGISTER_UNIT_TEST( xdp_host_ipv6_short_header_drops );
-REGISTER_UNIT_TEST( xdp_host_ipv6_extension_headers_pass_counted );
-REGISTER_UNIT_TEST( xdp_host_ipv6_fragment_passes_counted );
-REGISTER_UNIT_TEST( xdp_host_ipv4_fragment_passes_counted );
-REGISTER_UNIT_TEST( xdp_host_ipv4_first_fragment_drops_counted );
-REGISTER_UNIT_TEST( xdp_host_ipv6_first_fragment_drops_counted );
-REGISTER_UNIT_TEST( xdp_host_icmpv6_passes_uncounted );
-REGISTER_UNIT_TEST( xdp_host_vlan_tagged_passes );
-REGISTER_UNIT_TEST( xdp_host_too_small_drops );
-REGISTER_UNIT_TEST( xdp_host_too_large_drops );
-REGISTER_UNIT_TEST( xdp_host_wrong_epoch_drops );
-REGISTER_UNIT_TEST( xdp_host_wrong_filter_drops );
-REGISTER_UNIT_TEST( xdp_host_invalid_type_drops );
-REGISTER_UNIT_TEST( xdp_host_type_and_size_sweep_matches_the_standard );
-REGISTER_UNIT_TEST( xdp_host_every_counter_has_a_case );
-REGISTER_UNIT_TEST( xdp_host_replay_drops_behind_the_window );
-REGISTER_UNIT_TEST( xdp_host_replay_never_writes_the_map );
+#if ROCKETNET_XDP_FILTER_HOST
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_rocketnet_packet_redirects );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_rocketnet_packet_redirects );
+REGISTER_UNIT_TEST( test_xdp_transport_host_redirect_needs_a_populated_slot );
+REGISTER_UNIT_TEST( test_xdp_transport_host_unconfigured_passes );
+REGISTER_UNIT_TEST( test_xdp_transport_host_other_port_passes );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_wrong_address_passes );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_wrong_address_passes );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_options_pass );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_short_header_drops );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_short_header_drops );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_extension_headers_pass_counted );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_fragment_passes_counted );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_fragment_passes_counted );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_first_fragment_drops_counted );
+REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_first_fragment_drops_counted );
+REGISTER_UNIT_TEST( test_xdp_transport_host_icmpv6_passes_uncounted );
+REGISTER_UNIT_TEST( test_xdp_transport_host_vlan_tagged_passes );
+REGISTER_UNIT_TEST( test_xdp_transport_host_too_small_drops );
+REGISTER_UNIT_TEST( test_xdp_transport_host_too_large_drops );
+REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_epoch_drops );
+REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_filter_drops );
+REGISTER_UNIT_TEST( test_xdp_transport_host_invalid_type_drops );
+REGISTER_UNIT_TEST( test_xdp_transport_host_type_and_size_sweep_matches_the_standard );
+REGISTER_UNIT_TEST( test_xdp_transport_host_every_counter_has_a_case );
+REGISTER_UNIT_TEST( test_xdp_transport_host_replay_drops_behind_the_window );
+REGISTER_UNIT_TEST( test_xdp_transport_host_replay_never_writes_the_map );
 
-REGISTER_UNIT_TEST( xdp_host_udp_length_drops );
-REGISTER_UNIT_TEST( xdp_queue_default_matches_memory_plan );
+REGISTER_UNIT_TEST( test_xdp_transport_host_udp_length_drops );
+#endif // #if ROCKETNET_XDP_FILTER_HOST
+
+#if defined(__linux__)
+REGISTER_UNIT_TEST( test_xdp_transport_queue_default_matches_memory_plan );
+#endif // #if defined(__linux__)

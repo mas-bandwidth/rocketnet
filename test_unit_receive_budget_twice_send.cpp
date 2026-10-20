@@ -26,33 +26,36 @@
 
 #define check rocketnet_unit_check
 
-static void receive_budget_twice_send_portable()
+static void test_portable_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_SERVER_MAX_SEND_PACKETS > 0 );
     check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
 }
 
-static void receive_budget_twice_send_msgx()
+#if defined(__APPLE__)
+static void test_msgx_transport_receive_budget_twice_send()
 {
     // msgx shares the portable transport budgets.
     check( ROCKETNET_SERVER_MAX_SEND_PACKETS > 0 );
     check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
 }
+#endif
 
-static void receive_budget_twice_send_loopback()
+static void test_loopback_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
     check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
 }
 
-static void receive_budget_twice_send_gso()
+#if defined(__linux__)
+static void test_gso_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_GSO_SEND_QUEUE_SIZE > 0 );
     check( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE );
     check( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE );
 }
 
-static void receive_budget_twice_send_io_uring()
+static void test_io_uring_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_URING_SEND_QUEUE_SIZE > 0 );
     check( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE );
@@ -60,42 +63,51 @@ static void receive_budget_twice_send_io_uring()
     check( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE );
     check( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET );
 }
+#endif
 
-static void receive_budget_twice_send_xdp()
-{
 #if defined(ROCKETNET_XDP_SEND_QUEUE_SIZE) && defined(ROCKETNET_XDP_RECV_QUEUE_SIZE)
+static void test_xdp_transport_receive_budget_twice_send()
+{
     check( ROCKETNET_XDP_SEND_QUEUE_SIZE > 0 );
     check( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE );
     check( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE );
-#else
-    printf( "receive_budget_twice_send_xdp [SKIPPED XDP is not built on this platform]\n" );
-#endif
 }
+#endif
 
-static void receive_budget_twice_send_iocp()
+#if defined(_WIN32)
+static void test_iocp_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_IOCP_SEND_QUEUE_SIZE > 0 );
     check( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     check( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE );
 }
 
-static void receive_budget_twice_send_rio()
+static void test_rio_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_RIO_SEND_QUEUE_SIZE > 0 );
     check( ROCKETNET_RIO_RECEIVES >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE );
     check( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE );
 }
+#endif
 
-REGISTER_UNIT_TEST( receive_budget_twice_send_portable );
-REGISTER_UNIT_TEST( receive_budget_twice_send_msgx );
-REGISTER_UNIT_TEST( receive_budget_twice_send_loopback );
-REGISTER_UNIT_TEST( receive_budget_twice_send_gso );
-REGISTER_UNIT_TEST( receive_budget_twice_send_io_uring );
-REGISTER_UNIT_TEST( receive_budget_twice_send_xdp );
-REGISTER_UNIT_TEST( receive_budget_twice_send_iocp );
-REGISTER_UNIT_TEST( receive_budget_twice_send_rio );
+REGISTER_UNIT_TEST( test_portable_transport_receive_budget_twice_send );
+#if defined(__APPLE__)
+REGISTER_UNIT_TEST( test_msgx_transport_receive_budget_twice_send );
+#endif
+REGISTER_UNIT_TEST( test_loopback_transport_receive_budget_twice_send );
+#if defined(__linux__)
+REGISTER_UNIT_TEST( test_gso_transport_receive_budget_twice_send );
+REGISTER_UNIT_TEST( test_io_uring_transport_receive_budget_twice_send );
+#endif
+#if defined(ROCKETNET_XDP_SEND_QUEUE_SIZE) && defined(ROCKETNET_XDP_RECV_QUEUE_SIZE)
+REGISTER_UNIT_TEST( test_xdp_transport_receive_budget_twice_send );
+#endif
+#if defined(_WIN32)
+REGISTER_UNIT_TEST( test_iocp_transport_receive_budget_twice_send );
+REGISTER_UNIT_TEST( test_rio_transport_receive_budget_twice_send );
+#endif
 
-#if defined(__linux__) && defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined(__linux__) && defined(ROCKETNET_URING_REAP_TEST_HOOKS) && defined(ROCKETNET_IO_URING)
 
 #include "rocketnet_uring_codec.h"
 #include <errno.h>
@@ -178,7 +190,7 @@ static void receive_budget_fake_submitted( void * context, uint64_t user_data )
 // One send_packets reap under full ingress never overflows the fill
 // bank: the send completion budget stays inside the receive budget, so
 // reaped receives fit the bank and RECEIVE_DROPPED_OVERFLOW stays zero.
-static void receive_budget_twice_send_uring_reap_no_overflow()
+static void test_io_uring_transport_receive_budget_twice_send_reap_no_overflow()
 {
     struct rocketnet_server_uring_test_source_t source;
     struct receive_budget_fake_t * fake = (struct receive_budget_fake_t*) calloc( 1, sizeof(struct receive_budget_fake_t) );
@@ -190,12 +202,7 @@ static void receive_budget_twice_send_uring_reap_no_overflow()
     source.submitted = receive_budget_fake_submitted;
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
-    if ( !uring )
-    {
-        printf( "[SKIPPED the io_uring driver is not built]\n" );
-        free( fake );
-        return;
-    }
+    check( uring );
 
     // Full ingress ahead of the sends: more receive completions than
     // one send budget, so the reap must stay inside the bank.
@@ -227,15 +234,6 @@ static void receive_budget_twice_send_uring_reap_no_overflow()
     free( fake );
 }
 
-REGISTER_UNIT_TEST( receive_budget_twice_send_uring_reap_no_overflow );
-
-#else
-
-static void receive_budget_twice_send_uring_reap_no_overflow()
-{
-    printf( "receive_budget_twice_send_uring_reap_no_overflow [SKIPPED the io_uring completion seam requires Linux]\n" );
-}
-
-REGISTER_UNIT_TEST( receive_budget_twice_send_uring_reap_no_overflow );
+REGISTER_UNIT_TEST( test_io_uring_transport_receive_budget_twice_send_reap_no_overflow );
 
 #endif

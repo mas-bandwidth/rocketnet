@@ -518,9 +518,9 @@ clock callback, `rocketnet_client_io_step`
 and the stop order, and the open-time check; no built-in transport gains `wait`
 yet, so every platform stays on the BASE path in production. Tests, all unit
 tier with a fake client transport and the step called directly, clock from 1000.0:
-`client_io_handoff_sends_ring_once`, `client_io_ring_not_reused_before_sent`
+`test_client_io_handoff_sends_ring_once`, `test_client_io_ring_not_reused_before_sent`
 (the ring is not rewritten while the I/O thread holds it),
-`client_io_handoff_never_waits` (`send_packet` then `update` with the I/O
+`test_client_io_handoff_never_waits` (`send_packet` then `update` with the I/O
 step not run in between: both return, `CLIENT_SEND_DEFERRED` is 1, and after
 one I/O step the next `update` hands the deferred packet off and the step
 after that sends it; the stall of `MCRNClientIoBrokenHandOffWaits.cfg`),
@@ -535,12 +535,12 @@ while update holds the other is exposed by the next update, the stall of
 `client_io_owed_publish_wakes_io_thread` (the I/O step stores owed and
 blocks; the return at the end of update calls the fake transport's `wake`
 exactly once),
-`client_io_receive_time_from_callback`,
+`test_client_io_receive_time_from_callback`,
 `client_io_destroy_sends_in_flight_disconnect` (also with the burst
 deferred behind a ring still HandedOff),
-`client_io_backend_without_wait_uses_base_path`. Red at BASE:
-`./bin/test client_io_handoff_sends_ring_once` prints
-`unknown unit test client_io_handoff_sends_ring_once`, exit 2. Needs: this
+`test_client_io_backend_without_wait_uses_base_path`. Red at BASE:
+`./bin/test test_client_io_handoff_sends_ring_once` prints
+`unknown unit test test_client_io_handoff_sends_ring_once`, exit 2. Needs: this
 card.
 
 **rocketnet-client-io-linux.** PATHS: `sdk/rocketnet_driver_builtin.cpp`,
@@ -550,13 +550,13 @@ The portable client on Linux gains `wait` (poll on an eventfd, plus the
 socket with `POLLIN` when `readable` is true),
 `wake` (eventfd write), `send_batch` (`sendmmsg`) and `receive_batch`
 (`recvmmsg`). Tests: a functional loopback case
-`client_io_linux_handoff_round_trip` (real socket, real thread) and the
+`test_client_io_linux_handoff_round_trip` (real socket, real thread) and the
 transport-contract check in `./bin/test_driver`; the gate rows above from the
 meter. io_uring is not used: at the measured cost the I/O thread is idle most
 of the frame, `sendmmsg` already makes one syscall per frame, and io_uring is
 often disabled in containers and sandboxes; a card may revisit it with a
-measurement. Red at BASE: `./bin/functional --run client_io_linux_handoff_round_trip`
-prints `unknown functional test client_io_linux_handoff_round_trip`, exit 2.
+measurement. Red at BASE: `./bin/functional --run test_client_io_linux_handoff_round_trip`
+prints `unknown functional test test_client_io_linux_handoff_round_trip`, exit 2.
 Needs: rocketnet-client-io-transport.
 
 **rocketnet-client-io-apple (macOS and iOS).** PATHS:
@@ -569,10 +569,10 @@ section), `functional/rocketnet_functional_tests.cpp`. The msgx client gains
 kqueue holding the socket's `EVFILT_READ` and an `EVFILT_USER` trigger; when
 `readable` changes, the same `kevent` call carries `EV_DISABLE` or
 `EV_ENABLE` for the read filter, so a full buffer waits on the trigger alone.
-Tests: functional `client_io_apple_handoff_round_trip` (SKIPPED twin
-elsewhere), `./bin/test_driver`, the meter gate on a macOS member. Red at
-BASE: `./bin/functional --run client_io_apple_handoff_round_trip` prints
-`unknown functional test client_io_apple_handoff_round_trip`, exit 2. Needs:
+Tests: functional `test_client_io_apple_handoff_round_trip` (built on macOS
+and iOS only), `./bin/test_driver`, the meter gate on a macOS member. Red at
+BASE: `./bin/functional --run test_client_io_apple_handoff_round_trip` prints
+`unknown functional test test_client_io_apple_handoff_round_trip`, exit 2. Needs:
 rocketnet-client-io-transport.
 
 **rocketnet-client-io-windows.** PATHS: `sdk/rocketnet_driver_builtin.cpp`,
@@ -582,9 +582,9 @@ gains `wait` (`WSAEventSelect` with `FD_READ` on the socket and
 `WaitForMultipleObjects` over that event and a manual-reset wake event, or
 `WaitForSingleObject` on the wake event alone when `readable` is false) and
 `wake` (`SetEvent`); `send_batch` loops `WSASendMsg` on the I/O thread.
-Tests: functional `client_io_windows_handoff_round_trip`, the native transport
+Tests: functional `test_client_io_windows_handoff_round_trip`, the native transport
 contract run, the meter gate on the Windows member. Red at BASE: the same
-`--run` line prints `unknown functional test client_io_windows_handoff_round_trip`,
+`--run` line prints `unknown functional test test_client_io_windows_handoff_round_trip`,
 exit 2. Needs: rocketnet-client-io-transport.
 
 ## Thread priority

@@ -15,7 +15,7 @@
 
 #include "sdk/rocketnet_rio_layout.h"
 
-static void rio_layout_slices_tile_the_region()
+static void test_rio_transport_layout_slices_tile_the_region()
 {
     // 2 * 16384 frames of 1536 bytes, 4096 slices of 2048 bytes, 28-byte
     // addresses, page 4096.
@@ -86,7 +86,7 @@ static void rio_layout_slices_tile_the_region()
     rocketnet_unit_check( rocketnet_rio_receive_address_offset( &q, 0 ) == 192 );
 }
 
-static void rio_layout_refuses_bad_geometry()
+static void test_rio_transport_layout_refuses_bad_geometry()
 {
     struct rocketnet_rio_layout_t p;
     struct rocketnet_rio_layout_t before;
@@ -122,7 +122,7 @@ static void rio_layout_refuses_bad_geometry()
     rocketnet_unit_check( memcmp( &p, &before, sizeof( p ) ) == 0 );
 }
 
-static void rio_layout_index_bounds()
+static void test_rio_transport_layout_index_bounds()
 {
     struct rocketnet_rio_layout_t p;
     rocketnet_unit_check( rocketnet_rio_layout_plan( 2, 2, 64, 128, 32, 64, &p ) );
@@ -145,7 +145,7 @@ static void rio_layout_index_bounds()
     rocketnet_unit_check( rocketnet_rio_receive_address_offset( &p, 1 ) == 576 );
 }
 
-static void rio_context_round_trips()
+static void test_rio_transport_context_round_trips()
 {
     uint64_t c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 );
     rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_SEND );
@@ -175,7 +175,7 @@ static void rio_context_round_trips()
         != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0xffffffff ) );
 }
 
-REGISTER_UNIT_TEST( rio_layout_slices_tile_the_region );
-REGISTER_UNIT_TEST( rio_layout_refuses_bad_geometry );
-REGISTER_UNIT_TEST( rio_layout_index_bounds );
-REGISTER_UNIT_TEST( rio_context_round_trips );
+REGISTER_UNIT_TEST( test_rio_transport_layout_slices_tile_the_region );
+REGISTER_UNIT_TEST( test_rio_transport_layout_refuses_bad_geometry );
+REGISTER_UNIT_TEST( test_rio_transport_layout_index_bounds );
+REGISTER_UNIT_TEST( test_rio_transport_context_round_trips );

@@ -450,7 +450,7 @@ static void test_cookie_rotation_receive_after_stall_rejects_outgoing_key()
 // rocketnet_server_protocol_update) and is spent only after the cookie
 // validates (the check under "the handshake budget check" in
 // rocketnet_server_protocol_process_connection_request).
-static void handshake_budget_reopens_after_update()
+static void test_handshake_budget_reopens_after_update()
 {
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
@@ -486,7 +486,7 @@ static void handshake_budget_reopens_after_update()
 // the cookie gate (no return cookie) is answered with a cookie and spends no
 // handshake budget (sdk/rocketnet_server_protocol.cpp,
 // rocketnet_server_protocol_process_connection_request).
-static void cookie_requests_spend_no_handshake_budget()
+static void test_cookie_requests_spend_no_handshake_budget()
 {
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
@@ -525,5 +525,5 @@ REGISTER_UNIT_TEST( test_cookie_rotation_previous_key_rejected_after_window );
 REGISTER_UNIT_TEST( test_cookie_rotation_never_used_key_rejected );
 REGISTER_UNIT_TEST( test_cookie_rotation_draws_a_fresh_key );
 
-REGISTER_UNIT_TEST( handshake_budget_reopens_after_update );
-REGISTER_UNIT_TEST( cookie_requests_spend_no_handshake_budget );
+REGISTER_UNIT_TEST( test_handshake_budget_reopens_after_update );
+REGISTER_UNIT_TEST( test_cookie_requests_spend_no_handshake_budget );

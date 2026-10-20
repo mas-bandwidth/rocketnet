@@ -12,22 +12,24 @@ directory remains the complete drop-in set.
 
 ## Running the suite
 
-`./bin/test` prints test names and nothing else, because the suite captures
-the library's log into a ring and dumps it only when a check fails — set
-`ROCKETNET_TEST_VERBOSE=1` to skip the capture and watch the log live.
+`./bin/test` and `./bin/functional` print one line per test, its name, in
+suite order, then `*** ALL TESTS PASSED ***`, as netcode's tests do. Every
+name is `test_` then lowercase snake_case, and the suite fails before it runs
+anything when a registered name is not (`suite_name_is_test_snake_case` in
+`test/suite_runner.h`). A failing test prints everything it wrote, including
+its `check failed:` line, and the suite exits 1 at once. Each case's output is
+captured and dropped when it passes; set `ROCKETNET_TEST_VERBOSE=1` to skip
+the capture and watch the log live. A test that a platform does not build is
+not registered there, so it is neither run nor printed.
 
 ## Peak memory per case
 
 Both runners record each case process's peak resident set (`wait4`
 `ru_maxrss` on POSIX, normalised from kilobytes on Linux and bytes on macOS;
-`PeakWorkingSetSize` on Windows) and print it after the timing summary, largest
-first. `./bin/functional` prints one line a case:
-
-    <case> peak_rss_mb=<n> bound_mb=<b>
-
-`./bin/test` prints its ten largest as `test_timing_rss_NN [SKIPPED <case> peak_rss_mb=<n> bound_mb=<b>]`, the names-only spelling its checker accepts.
-A case whose peak is over the bound fails the suite with the same
-`<case> peak_rss_mb=<n> bound_mb=<b>` text on its `FAIL:` line. The bound is
+`PeakWorkingSetSize` on Windows). With `ROCKETNET_TEST_REPORT=1` both
+runners print, after the results, a `slowest cases:` block and a `peak rss:`
+block of the ten largest (`suite_print_report`). A case whose peak is over the
+bound fails the suite with `check failed: <case> peak_rss_mb=<n> bound_mb=<b>`. The bound is
 `ROCKETNET_TEST_MAX_CASE_RSS_MB`, 698 MiB in `test/suite_runner.h` (the larger
 of 256 MiB and 1.5 times the largest measured case, never over 1 GiB); the
 environment variable of the same name overrides it with a positive value. A sanitizer build
