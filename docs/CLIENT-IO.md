@@ -379,10 +379,10 @@ numbers below, which were taken with the 1 ms guard; the case now gates the
 receive lag, not the wake interval).
 
 **What the library sets.** `rocketnet_platform_thread_create`
-(`sdk/rocketnet_platform.cpp:2730`) starts each thread through
+(`sdk/rocketnet_platform.cpp:3051`) starts each thread through
 `thread_function_shim`, which calls `pthread_set_qos_class_self_np` with
 `QOS_CLASS_USER_INTERACTIVE` on macOS and iOS before the thread's loop runs
-(`sdk/rocketnet_platform.cpp:2715`), whatever class the creating thread has.
+(`sdk/rocketnet_platform.cpp:3036`), whatever class the creating thread has.
 That class request is the only scheduling change the library makes on its
 I/O threads: it sets no Mach thread policy on them. The frame-sync path's
 `THREAD_TIME_CONSTRAINT_POLICY` request (`sdk/rocketnet_frame_sync.cpp:180`)
@@ -479,7 +479,7 @@ restored, lag p99 is 0.22 to 0.27 ms at the default class and 0.23 ms with a
 background game thread, on a lightly loaded Mac Studio.
 
 There is no planted-class red proof. The I/O thread's bounded wait is a
-kevent timeout (`sdk/rocketnet_platform.cpp:2967`), and its wakes are not
+kevent timeout (`sdk/rocketnet_platform.cpp:3286`), and its wakes are not
 coalesced by the thread's own class: with the I/O thread planted at
 `QOS_CLASS_BACKGROUND` the wake p99 stays at 1.33 to 1.74 ms and the gate stays
 green (the planted rows above and below; measured with the 1 ms guard and the
