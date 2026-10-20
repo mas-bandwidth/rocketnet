@@ -257,5 +257,113 @@ class RenderTest( unittest.TestCase ):
         with open( os.path.join( ROOT, "TESTING.md" ), encoding="utf-8" ) as f:
             self.assertEqual( f.read(), text, "TESTING.md is not what docs/testing.sexp renders; run make testing" )
 
+    # The testing page's layout: owed cells, specific tables, every cell applying, tables only.
+
+    def test_owed_cell_shows_owed_and_counts_as_not_done( self ):
+        text = '(:title "T" :owed "deferred" :areas (%s))' % area( "platforms", [
+            '(:feature "f" :cells (y o n) :evidence "Linux: t" :pending ((macOS "card-a (waiting)")))' ] )
+        lines = render.render( render.parse( text ) ).split( "\n" )
+        self.assertIn( "| f | ✅ | OWED | ❌ |", lines )
+        self.assertIn( "| complete | 100% | 0% | 0% |", lines )
+        self.assertIn( "OWED: deferred", lines )
+
+    def test_owed_cell_needs_a_note_and_the_page_note( self ):
+        bare = '(:title "T" :owed "deferred" :areas (%s))' % area( "platforms", [ '(:feature "f" :cells (n o n))' ], aid="ow" )
+        message = self.refusal( bare )
+        self.assertIn( "area ow", message )
+        self.assertIn( "macOS", message )
+        no_note = page( [ area( "platforms", [ '(:feature "f" :cells (n o n) :pending ((macOS "card-a (waiting)")))' ], aid="ow" ) ] )
+        self.assertIn( ":owed", self.refusal( no_note ) )
+
+    def test_every_cell_applies_refuses_a_dash( self ):
+        text = '(:title "T" :all-cells-apply t :areas (%s))' % area( "platforms", [ '(:feature "only one" :cells (n - -))' ], aid="pl" )
+        message = self.refusal( text )
+        self.assertIn( "area pl", message )
+        self.assertIn( "only one", message )
+        self.assertIn( "specific", message )
+
+    def specific( self, columns, rows, aid="s" ):
+        return '(:id "%s" :title "S" :label "test" :specific t :columns %s :rows (%s))' % ( aid, columns, " ".join( rows ) )
+
+    def test_specific_table_rows_and_complete( self ):
+        text = page( [ self.specific( "platforms", [
+            '(:feature "connreset" :on Windows :cell n :pending "card-a (working)")',
+            '(:feature "app nap" :on macOS :cell y :evidence "macOS: t")' ] ) ] )
+        lines = render.render( render.parse( text ) ).split( "\n" )
+        self.assertIn( "| test | platform | status |", lines )
+        self.assertIn( "| connreset | Windows | ❌ |", lines )
+        self.assertIn( "| app nap | macOS | ✅ |", lines )
+        self.assertIn( "| complete | 1 of 2 | 50% |", lines )
+        text = page( [ self.specific( "transports", [ '(:feature "verifier" :on iocp :cell y :evidence "iocp: t")' ] ) ] )
+        self.assertIn( "| test | transport | status |", render.render( render.parse( text ) ).split( "\n" ) )
+
+    def test_specific_table_refusals( self ):
+        self.assertIn( "Linux", self.refusal( page( [ self.specific( "platforms", [ '(:feature "f" :on Linux :cell y)' ] ) ] ) ) )
+        self.assertIn( "'gso'", self.refusal( page( [ self.specific( "platforms", [ '(:feature "f" :on gso :cell n)' ] ) ] ) ) )
+        self.assertIn( "'-'", self.refusal( page( [ self.specific( "platforms", [ '(:feature "f" :on Linux :cell -)' ] ) ] ) ) )
+        self.assertIn( "twice", self.refusal( page( [ self.specific( "platforms", [ '(:feature "f" :on Linux :cell n)', '(:feature "f" :on Linux :cell n)' ] ) ] ) ) )
+        self.assertIn( "pending", self.refusal( page( [ self.specific( "platforms", [ '(:feature "f" :on Linux :cell o)' ] ) ] ) ) )
+        every = [ '(:feature "f" :on %s :cell n)' % p for p in render.PLATFORMS ]
+        self.assertIn( "full table", self.refusal( page( [ self.specific( "platforms", every ) ] ) ) )
+        both = page( [ area( "platforms", [ '(:feature "f" :cells (n n n))' ], aid="full" ), self.specific( "platforms", [ '(:feature "f" :on Linux :cell n)' ] ) ] )
+        message = self.refusal( both )
+        self.assertIn( "area full", message )
+        self.assertIn( "specific platform table", message )
+
+    def test_tables_only_prints_headers_links_and_tables( self ):
+        row = '(:feature "f" :cells (y n o) :evidence "Linux: t" :pending ((macOS "card-a (working)") (Windows "card-b (waiting)")))'
+        text = '(:title "T" :tables-only t :owed "deferred" :text "intro" :areas ((:id "a" :title "A" :text "about" :columns platforms :rows (%s))))' % row
+        out = render.render( render.parse( text ), "docs/testing.sexp" ).split( "\n" )
+        self.assertIn( "Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/roadmap/render.py)", out )
+        for gone in ( "intro", "about", "card-a", "card-b", "deferred", "[Source data]" ):
+            self.assertFalse( [ l for l in out if gone in l ], gone )
+        self.assertLess( out.index( "## A" ), out.index( "| feature | Linux | macOS | Windows |" ) )
+
+    def committed_testing_page( self ):
+        with open( os.path.join( ROOT, "TESTING.md" ), encoding="utf-8" ) as f:
+            return f.read()
+
+    def test_the_testing_page_has_no_dash_cell( self ):
+        page_text = self.committed_testing_page()
+        self.assertTrue( [ l for l in page_text.split( "\n" ) if l.startswith( "| " ) ] )
+        self.assertNotIn( "—", page_text )
+
+    def test_the_testing_page_has_no_bullet_list( self ):
+        bullets = [ l for l in self.committed_testing_page().split( "\n" ) if re.match( r"\s*([-*+]|\d+[.)])\s", l ) ]
+        self.assertEqual( bullets, [] )
+
+    def test_the_testing_page_is_headers_and_tables( self ):
+        sections = {}
+        current = None
+        for l in self.committed_testing_page().split( "\n" ):
+            if l.startswith( "## " ):
+                current = l[3:]
+                sections[current] = []
+            elif current and l:
+                sections[current].append( l )
+        self.assertEqual( list( sections ), [ "Tests per platform", "Platform-specific tests", "Tests per transport", "Transport-specific tests" ] )
+        for name, body in sections.items():
+            self.assertTrue( body[0].startswith( "Source: [docs/testing.sexp](docs/testing.sexp)" ), name )
+            self.assertEqual( [ l for l in body[1:] if not l.startswith( "|" ) ], [], name )
+
+    def test_the_transport_tables_name_no_platform( self ):
+        sections = {}
+        current = None
+        for l in self.committed_testing_page().split( "\n" ):
+            if l.startswith( "#" ):
+                current = l
+                sections[current] = []
+            elif current and l.startswith( "| " ):
+                sections[current].append( [ c.strip() for c in l.strip( "|" ).split( "|" ) ] )
+        transport_headings = [ h for h in sections if "transport" in h.lower() ]
+        self.assertEqual( transport_headings, [ "## Tests per transport", "## Transport-specific tests" ] )
+        for heading in transport_headings:
+            for platform in render.PLATFORMS:
+                self.assertNotIn( platform, heading )
+                self.assertNotIn( platform, sections[heading][0] )
+            column_values = { row[1] for row in sections[heading][1:] if row[0] != "complete" }
+            self.assertFalse( column_values & set( render.PLATFORMS ), heading )
+        self.assertEqual( sections["## Tests per transport"][0][1:], render.TRANSPORTS )
+
 if __name__ == "__main__":
     unittest.main()
