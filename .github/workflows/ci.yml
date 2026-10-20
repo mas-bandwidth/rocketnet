@@ -146,6 +146,9 @@ jobs:
           - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","fleet"]' }
+          # sdk/rocketnet_server_socket_linux.cpp:1807 initializes UMEM ring sizes.
+          # libxdp 1.4 rejects zeroed ring sizes; 1.6 accepts them, so pin an XDP cell.
+          - { os: ubuntu-24.04, build_type: Debug,   leg: b, runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
           # macOS Apple silicon on the fleet's darwin runner (mini-m5-1-rocketnet-1, label rocketnet-macos; rowan-tools fleet/runners.tsv)
           - { os: macos-15, build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
           - { os: macos-15, build_type: Release, leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
