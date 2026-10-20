@@ -145,6 +145,25 @@ hand-off attempt every frame (it retries any deferred slots, and hands off
 its own packet when it committed one), and `disconnect` ends with one. Both
 run on the main thread with fills joined.
 
+**A ring's destination.** Each ring carries its destination (`io->to`,
+`sdk/rocketnet_client_io.h:100`). The first hand-off attempt that finds
+committed slots in the Filling ring binds that ring's destination to the
+address it is passed and marks it bound (`io->to_held`,
+`sdk/rocketnet_client_io.h:309-313`); a deferred attempt leaves it bound, and
+a later attempt for the same ring does not overwrite it. A ring that is handed
+off is unbound for its next fill (`sdk/rocketnet_client_io.h:315-316`). So
+deferred slots leave for the address they were committed with. `disconnect`
+saves the server address (`sdk/rocketnet_client_transport.cpp:2002`), resets
+the protocol, which zeroes it (`sdk/rocketnet_client_transport.cpp:2008`),
+and hands its burst off with the saved address
+(`sdk/rocketnet_client_transport.cpp:2024`); when that attempt is deferred,
+the next one, from `update` or from `destroy`
+(`sdk/rocketnet_client_transport.cpp:1086`), passes the zeroed
+`protocol.server_address`, and the burst still goes to the server
+(`SentToCommitted`; the reversed witness
+`MCRNClientIoBrokenDestinationOverwrite.cfg` restores the overwrite on every
+attempt).
+
 **The wake.** The I/O thread waits on "socket readable or woken", with no
 timeout while running (a bounded timeout only as a guard, never a cadence).
 While its receive buffer is full (`ROCKETNET_NUM_CLIENT_PACKETS`
@@ -664,16 +683,18 @@ is `waitReadable`. `MCRNClientIo.cfg` checks `TypeOK`, `NoReuseBeforeSent`,
 never blocks on the I/O thread), `FullWaitsOnWake` (a blocked I/O thread with
 a full buffer waits on the wake alone) and `NoReceiveStall` (while the
 transport runs, datagrams in the I/O thread's buffer always have a next step
-toward update), and under weak fairness of the I/O thread, the join, a game
+toward update), `SentToCommitted` (every slot a ring sends goes to the
+destination it was committed with), and under weak fairness of the I/O thread, the join, a game
 thread's finish of its packet, the reopen, the hand-off and update's two
 receive steps `HandedOffEventuallySent`, `CommittedEventuallyHandedOff` (a
 committed slot, deferred or not, is eventually handed to the I/O thread),
 `StopEventuallyJoins`, `FilledEventuallyExposed` (a buffer of received
 datagrams is eventually exposed) and `ArrivedEventuallyDelivered` (every
-datagram that arrives reaches update). The five reversed witnesses,
+datagram that arrives reaches update). The six reversed witnesses,
 `MCRNClientIoBrokenReuseBeforeSent.cfg`,
 `MCRNClientIoBrokenSwapWhileReading.cfg`,
 `MCRNClientIoBrokenReceiveStall.cfg`,
-`MCRNClientIoBrokenHandOffWaits.cfg` and
-`MCRNClientIoBrokenFullWaitReadable.cfg`, each violate exactly their declared
+`MCRNClientIoBrokenHandOffWaits.cfg`,
+`MCRNClientIoBrokenFullWaitReadable.cfg` and
+`MCRNClientIoBrokenDestinationOverwrite.cfg`, each violate exactly their declared
 invariant.
