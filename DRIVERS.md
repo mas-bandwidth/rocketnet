@@ -46,17 +46,19 @@ Two I/O shapes preserve the existing implementations:
   The transport does not allocate, recycle or schedule those backend frames.
 
 On a buffered driver one update stages at most `payload_ring_capacity` payload
-packets: `ROCKETNET_SERVER_PAYLOAD_RING_SIZE`, 1024, at least
-`ROCKETNET_MAX_CLIENTS` (`sdk/rocketnet_server_transport.cpp:109`), read at
-create (`sdk/rocketnet_server_transport.cpp:1189`). A start past it returns NULL
-and counts `SEND_RING_FULL` (`sdk/rocketnet_server_transport.cpp:2233`, `:2369`).
+packets, read at create: the larger of `ROCKETNET_SERVER_MAX_SEND_PACKETS` (256)
+and the configured `max_clients` (`sdk/rocketnet_server_transport.cpp:1144`),
+within a ring of `ROCKETNET_SERVER_PAYLOAD_RING_SIZE`, 1024, at least
+`ROCKETNET_MAX_CLIENTS` (`sdk/rocketnet_server_transport.cpp:110`). A start past
+it returns NULL and counts `SEND_RING_FULL`
+(`sdk/rocketnet_server_transport.cpp:2189`, `:2325`).
 `rocketnet_server_transport_send_capacity` reports the value. The message
 layer shares a shortage fairly (`tla/RNServerSendFair.tla`):
-`rn_message_object_send_packets` (`sdk/rocketnet_message_server.cpp:837`) offers
+`rn_message_object_send_packets` (`sdk/rocketnet_message_server.cpp:864`) offers
 every connection one packet, in rotation from the first connection refused in
 the previous update, before any connection takes a second, and a refusal holds
 back in-place unreliable starts for the next update
-(`sdk/rocketnet_message_server.cpp:623`, `:868`). A refused packet writes
+(`sdk/rocketnet_message_server.cpp:648`, `:895`). A refused packet writes
 nothing and its reliable messages stay due, so a capacity below the client
 count slows each client down and disconnects none.
 

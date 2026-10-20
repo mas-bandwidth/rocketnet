@@ -104,7 +104,8 @@ struct rocketnet_server_receive_buffer_t
 // 16-aligned. the response ring above stays single-threaded under update
 // and is deliberately not this. The ring holds at least one packet per
 // client per update at ROCKETNET_MAX_CLIENTS; payload_ring_capacity, read
-// at create, is the slots one update may use (the whole ring by default).
+// at create, is the slots one update may use: by default the larger of
+// ROCKETNET_SERVER_MAX_SEND_PACKETS and the configured max_clients.
 
 #define ROCKETNET_SERVER_PAYLOAD_RING_SIZE      1024
 
@@ -271,8 +272,8 @@ struct rocketnet_server_transport_t
     uint8_t payload_storage[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
-// the payload send capacity the next create reads: 0 is the default,
-// ROCKETNET_SERVER_PAYLOAD_RING_SIZE; 1 .. ROCKETNET_SERVER_PAYLOAD_RING_SIZE
+// the payload send capacity the next create reads: 0 is the default, the
+// larger of ROCKETNET_SERVER_MAX_SEND_PACKETS and max_clients; 1 .. ROCKETNET_SERVER_PAYLOAD_RING_SIZE
 // is that many payload packets per update (unit tests only)
 static int rocketnet_server_send_capacity_override = 0;
 
@@ -1140,7 +1141,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     server_transport->context = context;
     server_transport->time = time;
-    server_transport->payload_ring_capacity = rocketnet_server_send_capacity_override > 0 ? rocketnet_server_send_capacity_override : ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
+    server_transport->payload_ring_capacity = rocketnet_server_send_capacity_override > 0 ? rocketnet_server_send_capacity_override :
+        ( config->max_clients > ROCKETNET_SERVER_MAX_SEND_PACKETS ? config->max_clients : ROCKETNET_SERVER_MAX_SEND_PACKETS );
     server_transport->game_clock_epoch = config->game_clock_epoch;
     rocketnet_server_link_drain( server_transport );
 
