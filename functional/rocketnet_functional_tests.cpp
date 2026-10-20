@@ -251,6 +251,11 @@ void rocketnet_test_transport_reconnect_churn()
         start = rocketnet_platform_time();
         while ( rocketnet_platform_time() - start < 3.0 && rocketnet_server_transport_num_connected_clients( server ) != 0 )
         {
+            // the client keeps updating while the server waits: a disconnect burst whose
+            // hand-off found the other send ring busy is deferred and goes out on
+            // the client's next update (sdk/rocketnet_client_transport.cpp
+            // rocketnet_client_transport_disconnect and _fill_destination), not before
+            rocketnet_client_transport_update( client, rocketnet_platform_time() );
             rocketnet_server_transport_update( server, rocketnet_platform_time() );
             rocketnet_server_transport_send_packets( server );
             rocketnet_platform_sleep( 0.001 );
@@ -1390,6 +1395,11 @@ void rocketnet_test_transport_udp_loopback()
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 2.0 )
     {
+        // the client keeps updating while the server waits: a disconnect burst whose
+        // hand-off found the other send ring busy is deferred and goes out on
+        // the client's next update (sdk/rocketnet_client_transport.cpp
+        // rocketnet_client_transport_disconnect and _fill_destination), not before
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
             break;
@@ -6615,6 +6625,11 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     {
         rocketnet_platform_sleep( 0.001 );
         now = game_start + ( rocketnet_platform_time() - wall_start );
+        // the client keeps updating while the server waits: a disconnect burst whose
+        // hand-off found the other send ring busy is deferred and goes out on
+        // the client's next update (sdk/rocketnet_client_transport.cpp
+        // rocketnet_client_transport_disconnect and _fill_destination), not before
+        rocketnet_client_transport_update( rocketnet_message_client_transport( client ), now );
         rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK );
         if ( !rocketnet_message_server_client_connected( server, 0 ) )
             break;
