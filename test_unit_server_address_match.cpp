@@ -158,4 +158,62 @@ void rocketnet_test_server_address_match_v4_mapped()
     rocketnet_server_address_match_server_teardown( &test );
 }
 
+// A token naming both families (rocketnet_write_production_connect_token
+// with two addresses) is accepted by a server that serves either one: an
+// IPv4 server matches the IPv4 address although the IPv6 flag is set, an
+// IPv6 server matches the IPv6 address, and a token whose two addresses are
+// both foreign is still refused (rocketnet_server_token_address_is_advertised
+// in sdk/rocketnet_server_protocol.cpp).
+
+void rocketnet_test_server_address_match_two_address_token()
+{
+    struct rocketnet_server_address_match_server_t test;
+    rocketnet_server_address_match_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
+    const uint8_t both = ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6;
+
+    // 127.0.0.1:40000 and [::1]:40000
+    const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
+    const uint8_t loopback_ipv6[18] = { 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0x01,0x00, 0x40,0x9c };
+
+    // an IPv4 server at 127.0.0.1:40000, no IPv6
+    memset( &test.server.advertised_ipv6, 0, sizeof(test.server.advertised_ipv6) );
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "127.0.0.1:40000" ) );
+
+    rocketnet_server_address_match_mint_request( request, both, loopback_ipv4, loopback_ipv6 );
+    const uint64_t before_ipv4 = test.counters.values[addr_counter];
+    rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                               response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( test.counters.values[addr_counter] == before_ipv4 );
+
+    // an IPv6 server at [::1]:40000, no IPv4
+    memset( &test.server.advertised_ipv4, 0, sizeof(test.server.advertised_ipv4) );
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[::1]:40000" ) );
+
+    rocketnet_server_address_match_mint_request( request, both, loopback_ipv4, loopback_ipv6 );
+    const uint64_t before_ipv6 = test.counters.values[addr_counter];
+    rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                               response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( test.counters.values[addr_counter] == before_ipv6 );
+
+    // both addresses foreign to the IPv6 server: still refused
+    const uint8_t foreign_ipv4[6] = { 198, 51, 100, 1, 0x40, 0x9c };
+    const uint8_t foreign_ipv6[18] = { 0x01,0x20, 0xb8,0x0d, 0,0, 0,0, 0,0, 0,0, 0,0, 0x01,0x00, 0x40,0x9c };
+    rocketnet_server_address_match_mint_request( request, both, foreign_ipv4, foreign_ipv6 );
+    const uint64_t before_foreign = test.counters.values[addr_counter];
+    rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                               response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( test.counters.values[addr_counter] == before_foreign + 1 );
+
+    rocketnet_server_address_match_server_teardown( &test );
+}
+
 REGISTER_UNIT_TEST( rocketnet_test_server_address_match_v4_mapped );
+REGISTER_UNIT_TEST( rocketnet_test_server_address_match_two_address_token );

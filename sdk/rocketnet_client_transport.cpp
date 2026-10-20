@@ -29,6 +29,12 @@
 #include <atomic>
 #include <sodium.h>
 
+// sdk/rocketnet_client_protocol.cpp: the server address a token selects on a
+// host with or without IPv6
+void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signed_connect_data_t * signed_fields,
+                                                    bool ipv6_available,
+                                                    struct rocketnet_address_t * address );
+
 // counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
 // functional test
 unsigned long long g_client_ack_stats_count = 0;
@@ -778,14 +784,18 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     if ( memcmp( client_transport->protocol.signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
         rocketnet_warn( "development keys are public and not for production" );
 
-    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
-
     // the socket binds after the token parse so the bind family can follow
-    // the server and the host's IPv6 capability
+    // the server and the host's IPv6 capability. A token naming both
+    // families selects its IPv4 address on a host with no IPv6.
 
     const bool dual_stack = rocketnet_platform_client_dual_stack();
     const bool ipv6_available = rocketnet_platform_client_ipv6_available();
+
+    rocketnet_client_protocol_pick_server_address( &client_transport->protocol.signed_fields, ipv6_available,
+                                                   &client_transport->protocol.server_address );
+
+    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
 
     // on macOS an IPv4 server's client binds IPv4. Darwin picks the ephemeral
     // port of a dual stack IPv6 socket without regard to the IPv4 sockets
