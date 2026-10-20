@@ -157,7 +157,7 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     }
 
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_TEST_LOG_RING_LINES];
-    snprintf( slot, ROCKETNET_TEST_LOG_RING_LINE_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    snprintf( slot, ROCKETNET_TEST_LOG_RING_LINE_BYTES, "%.6f: %s: %.1000s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
     rocketnet_test_log_ring_lines++;
 }
 
