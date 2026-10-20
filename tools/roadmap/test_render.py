@@ -241,12 +241,12 @@ class RenderTest( unittest.TestCase ):
 
     def test_platform_transports_match_the_registry( self ):
         # The platforms column of each registry row names where the transport builds.
-        bits = { "ROCKETNET_DRIVER_ALL_PLATFORMS": render.PLATFORMS, "ROCKETNET_DRIVER_LINUX": [ "Linux" ],
-                 "ROCKETNET_DRIVER_IO_URING_PLATFORMS": [ "Linux" ], "ROCKETNET_DRIVER_MAC": [ "macOS" ],
-                 "ROCKETNET_DRIVER_WINDOWS": [ "Windows" ] }
+        bits = { "ROCKETNET_TRANSPORT_ALL_PLATFORMS": render.PLATFORMS, "ROCKETNET_TRANSPORT_LINUX": [ "Linux" ],
+                 "ROCKETNET_TRANSPORT_IO_URING_PLATFORMS": [ "Linux" ], "ROCKETNET_TRANSPORT_MAC": [ "macOS" ],
+                 "ROCKETNET_TRANSPORT_WINDOWS": [ "Windows" ] }
         built = { p: set() for p in render.PLATFORMS }
         with open( os.path.join( ROOT, "sdk", "rocketnet_drivers.inc" ), encoding="utf-8" ) as f:
-            for m in re.finditer( r'^ROCKETNET_DRIVER\(\s*\w+,\s*"([a-z_]+)",[^,]*,[^,]*,\s*(\w+),', f.read(), re.M ):
+            for m in re.finditer( r'^ROCKETNET_TRANSPORT\(\s*\w+,\s*"([a-z_]+)",[^,]*,[^,]*,\s*(\w+),', f.read(), re.M ):
                 for p in bits[m.group( 2 )]:
                     built[p].add( m.group( 1 ) )
         self.assertEqual( { p: set( t ) for p, t in render.PLATFORM_TRANSPORTS.items() }, built )

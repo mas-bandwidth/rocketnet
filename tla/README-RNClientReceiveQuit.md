@@ -4,7 +4,7 @@ The client receive thread's quit-and-wake handshake with destroy, as
 rocketnet-client-destroy-joins-receive-thread built it (the fix for a macOS
 hang in destroy: the receive thread's 1 ms wait sometimes never timed out,
 so the join never returned). This is the thread `create` starts when the
-granted driver has no wait and wake
+granted transport has no wait and wake
 (`sdk/rocketnet_client_transport.cpp:973`); the I/O thread of the other
 branch is `RNClientIo`'s.
 

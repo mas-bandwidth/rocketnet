@@ -35,7 +35,7 @@ INCLUDES="-I sdk -I build/generated -I sodium"
 
 # Platform libraries. Linux links the XDP dataplane; darwin links the
 # CoreFoundation/SystemConfiguration frameworks the dev library needs. The
-# portable driver needs only pthreads everywhere.
+# portable transport needs only pthreads everywhere.
 case "$(uname -s)" in
     Linux)  PLATFORM_LIBS="-lbpf -lxdp -luring -lpthread" ;;
     Darwin) PLATFORM_LIBS="-lpthread -framework CoreFoundation -framework SystemConfiguration" ;;

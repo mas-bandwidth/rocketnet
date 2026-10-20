@@ -9,7 +9,7 @@
 // datagrams is delivered in reverse, the window flushed whole at the end of
 // each send_packets). Both count from the endpoint's first send and use no
 // random draw (tla/Link.tla "everynth" and ReverseWindow). The cases run on
-// the loopback driver, with time passed as an argument from 1000.0, no socket.
+// the loopback transport, with time passed as an argument from 1000.0, no socket.
 //
 // loopback_patterns_off_same_trace compares a fixed run, with both fields zero
 // and with the link simulator on and off, against counters recorded at the base
@@ -83,7 +83,7 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
     server_config.simulated_latency_ms = server_pattern.latency_ms;
     server_config.simulated_drop_every_nth = server_pattern.drop_every_nth;
     server_config.simulated_reverse_window = server_pattern.reverse_window;
@@ -104,7 +104,7 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.step_driven = 1;
     client_config.time_callback = loopback_loss_reorder_time_callback;
     client_config.simulated_latency_ms = client_pattern.latency_ms;
@@ -637,7 +637,7 @@ static void loopback_loss_reorder_production_refusal()
     // the env both
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     loopback_signed_token( token );
-    snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "loopback" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     rocketnet_public_link_simulator_test_development( 0 );
 
     client_config.simulated_reverse_window = 4;
@@ -657,7 +657,7 @@ static void loopback_loss_reorder_production_refusal()
     check( loopback_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) == 0 );
 
     server_config.protocol_id = 1;
-    snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "loopback" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
     check( loopback_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     loopback_error_begin( "simulated_reverse_window" );

@@ -33,7 +33,7 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 
 // The client I/O step of docs/CLIENT-IO.md _The I/O step_ and _The wake_, and
 // the RNClientIo actions it names. The thread loop is one call per iteration;
-// unit tests call it directly, with a fake driver and a test clock, on the
+// unit tests call it directly, with a fake transport and a test clock, on the
 // test's thread.
 
 #define ROCKETNET_CLIENT_IO_BATCH 64
@@ -95,7 +95,7 @@ struct rocketnet_client_io_open_t
 
 struct rocketnet_client_io_t
 {
-    const rocketnet_client_driver_t * driver;
+    const rocketnet_client_transport_io_t * transport;
     rocketnet_client_io_ring_view_t ring_view[2];
     rocketnet_address_t to[2];                  // each ring's destination, written before its hand-off
     rocketnet_client_send_rings_t rings;
@@ -106,17 +106,17 @@ struct rocketnet_client_io_t
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
     struct rocketnet_client_io_open_t open;
-    uint64_t driver_faults;                     // a receive count or byte count this step refused
+    uint64_t transport_faults;                     // a receive count or byte count this step refused
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
 // receive buffers the transport owns.
-inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketnet_client_driver_t * driver,
+inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketnet_client_transport_io_t * transport,
     const rocketnet_client_io_ring_view_t * view0, const rocketnet_client_io_ring_view_t * view1,
     rocketnet_client_receive_buffer_t * const * buffers,
     double (*time)( void * context ), void * time_context )
 {
-    io->driver = driver;
+    io->transport = transport;
     io->ring_view[0] = *view0;
     io->ring_view[1] = *view1;
     memset( io->to, 0, sizeof( io->to ) );
@@ -139,7 +139,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_NONE, std::memory_order_relaxed );
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
-    io->driver_faults = 0;
+    io->transport_faults = 0;
 }
 
 // tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -172,8 +172,8 @@ inline void rocketnet_client_io_retire_keys( rocketnet_client_io_t * io )
     if ( io->open.epoch.load( std::memory_order_relaxed ) == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
         return;
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_RETIRED, std::memory_order_seq_cst );
-    if ( io->driver->operations->wake )
-        io->driver->operations->wake( io->driver->instance );
+    if ( io->transport->operations->wake )
+        io->transport->operations->wake( io->transport->instance );
 }
 
 // tla/RNClientIoDecrypt.tla IoDropKeys; I/O thread. Zeroes the copy and the
@@ -282,13 +282,13 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
 
 // RNClientIo Stop; main thread. Stores quit, then wakes the I/O thread
 // (docs/CLIENT-IO.md _Stop and destroy order_). The I/O thread finishes the
-// ring in flight and exits; the main thread joins, closes the driver, then
+// ring in flight and exits; the main thread joins, closes the transport, then
 // frees.
 inline void rocketnet_client_io_stop( rocketnet_client_io_t * io )
 {
     io->quit.store( true, std::memory_order_release );
-    if ( io->driver->operations->wake )
-        io->driver->operations->wake( io->driver->instance );
+    if ( io->transport->operations->wake )
+        io->transport->operations->wake( io->transport->instance );
 }
 
 // RNClientIo HandOff and Defer; main thread. A LATE result is the deferred
@@ -300,8 +300,8 @@ inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t co
     rocketnet_assert( !io->quit.load( std::memory_order_relaxed ) );
     io->to[io->rings.fill] = *to;
     const int result = rocketnet_client_send_rings_hand_off( &io->rings, committed );
-    if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF && io->driver->operations->wake )
-        io->driver->operations->wake( io->driver->instance );
+    if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF && io->transport->operations->wake )
+        io->transport->operations->wake( io->transport->instance );
     return result;
 }
 
@@ -317,8 +317,8 @@ inline rocketnet_client_receive_buffer_t * rocketnet_client_io_expose( rocketnet
 // Free and wakes the I/O thread when it has an owed batch.
 inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 {
-    if ( rocketnet_client_receive_handshake_update_return( &io->receive ) && io->driver->operations->wake )
-        io->driver->operations->wake( io->driver->instance );
+    if ( rocketnet_client_receive_handshake_update_return( &io->receive ) && io->transport->operations->wake )
+        io->transport->operations->wake( io->transport->instance );
 }
 
 // The I/O thread's loop body (RNClientIo IoSend, IoFinishRing, IoReceive,
@@ -341,7 +341,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     {
         const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
         const uint64_t committed = io->rings.committed[ring];
-        if ( io->driver->operations->send_batch )
+        if ( io->transport->operations->send_batch )
         {
             rocketnet_platform_send_t sends[ROCKETNET_CLIENT_IO_BATCH];
             int num_sends = 0;
@@ -357,12 +357,12 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 num_sends++;
                 if ( num_sends == ROCKETNET_CLIENT_IO_BATCH )
                 {
-                    io->driver->operations->send_batch( io->driver->instance, sends, num_sends );
+                    io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
                     num_sends = 0;
                 }
             }
             if ( num_sends > 0 )
-                io->driver->operations->send_batch( io->driver->instance, sends, num_sends );
+                io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
         }
         else
         {
@@ -373,7 +373,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 if ( bytes == 0 )
                     continue;
                 const uint8_t * packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
-                io->driver->operations->send( io->driver->instance, &io->to[ring], packet_data, bytes );
+                io->transport->operations->send( io->transport->instance, &io->to[ring], packet_data, bytes );
             }
         }
         rocketnet_client_send_rings_finish( &io->rings, ring );
@@ -394,7 +394,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // oversize one too: the main thread's prefilter
     // (sdk/rocketnet_client_protocol.cpp:1248, sizes checked at
     // sdk/rocketnet_protocol.cpp:176-180) refuses it and counts
-    // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE. One clock read per driver
+    // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE. One clock read per transport
     // call.
     rocketnet_client_receive_handshake_t * handshake = &io->receive;
     rocketnet_client_receive_buffer_t * buffer = io->buffer[handshake->fill];
@@ -408,7 +408,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
     while ( io->fill_slots < ROCKETNET_NUM_CLIENT_PACKETS )
     {
-        if ( io->driver->operations->receive_batch )
+        if ( io->transport->operations->receive_batch )
         {
             const int room = ROCKETNET_NUM_CLIENT_PACKETS - io->fill_slots;
             const int max_packets = room < ROCKETNET_CLIENT_IO_BATCH ? room : ROCKETNET_CLIENT_IO_BATCH;
@@ -416,13 +416,13 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             int packet_bytes[ROCKETNET_CLIENT_IO_BATCH];
             const double now = io->time( io->time_context );
             uint8_t * packet_data = buffer->data + (size_t) io->fill_slots * ROCKETNET_FRAME_SIZE;
-            const int got = io->driver->operations->receive_batch( io->driver->instance, from, packet_data,
+            const int got = io->transport->operations->receive_batch( io->transport->instance, from, packet_data,
                 ROCKETNET_FRAME_SIZE, packet_bytes, max_packets );
             // a count past the slots asked for, or a byte count that is
-            // negative or past the stride, is a driver fault and is not stored
+            // negative or past the stride, is a transport fault and is not stored
             if ( got < 0 )
             {
-                io->driver_faults++;
+                io->transport_faults++;
                 break;
             }
             if ( got == 0 )
@@ -430,7 +430,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             int count = got;
             if ( got > max_packets )
             {
-                io->driver_faults++;
+                io->transport_faults++;
                 count = max_packets;
             }
             int accepted = 0;
@@ -438,7 +438,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             {
                 if ( packet_bytes[i] < 0 || packet_bytes[i] > ROCKETNET_FRAME_SIZE )
                 {
-                    io->driver_faults++;
+                    io->transport_faults++;
                     continue;
                 }
                 if ( accepted != i )
@@ -465,13 +465,13 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             rocketnet_address_t from;
             const double now = io->time( io->time_context );
             uint8_t * packet_data = buffer->data + (size_t) io->fill_slots * ROCKETNET_FRAME_SIZE;
-            const int bytes = io->driver->operations->receive( io->driver->instance, &from, packet_data,
+            const int bytes = io->transport->operations->receive( io->transport->instance, &from, packet_data,
                 ROCKETNET_MAX_PACKET_BYTES );
             if ( bytes == 0 )
                 break;
             if ( bytes < 0 || bytes > ROCKETNET_MAX_PACKET_BYTES )
             {
-                io->driver_faults++;
+                io->transport_faults++;
                 break;
             }
             (void) rocketnet_client_receive_handshake_io_receive( handshake );
@@ -514,10 +514,10 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // (MCRNClientIoBrokenFullWaitReadable.cfg, FullWaitsOnWake). The owed flag
     // was stored above before this wait, so the return at the end of the next
     // update wakes it.
-    if ( block && !worked && !quitting && io->driver->operations->wait )
+    if ( block && !worked && !quitting && io->transport->operations->wait )
     {
         const bool readable = rocketnet_client_receive_handshake_io_wait( handshake );
-        io->driver->operations->wait( io->driver->instance, readable, io->guard_timeout_seconds );
+        io->transport->operations->wait( io->transport->instance, readable, io->guard_timeout_seconds );
     }
 
     return worked ? ROCKETNET_CLIENT_IO_WORKED : ROCKETNET_CLIENT_IO_IDLE;
@@ -525,7 +525,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
 // RNClientIo IoExit; the I/O thread's body. Calls the step in a loop until it
 // returns EXITED (docs/CLIENT-IO.md _Stop and destroy order_). The transport
-// creates the thread with this function and joins it before closing the driver.
+// creates the thread with this function and joins it before closing the transport.
 inline void rocketnet_client_io_thread_function( void * data )
 {
     rocketnet_client_io_t * io = (rocketnet_client_io_t *) data;
@@ -536,30 +536,30 @@ inline void rocketnet_client_io_thread_function( void * data )
 // internal, not exported. True when the operations have both wait and wake:
 // the transport then runs the I/O thread design through rocketnet_client_io_t,
 // and otherwise the BASE path.
-bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_operations_t * operations );
+bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport_io_operations_t * operations );
 
-// Unit tests only: a client transport on the caller's driver operations (the
-// driver's create receives driver_context) with no I/O thread. When the
+// Unit tests only: a client transport on the caller's transport operations (the
+// transport's create receives transport_context) with no I/O thread. When the
 // operations have wait and wake the caller runs rocketnet_client_io_step on
 // rocketnet_client_transport_client_io in place of the thread, and destroy
 // runs the step in place of the sleep and the join (docs/CLIENT-IO.md _Stop
 // and destroy order_). Returns NULL on any create refusal.
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context );
+    const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 
 // Unit tests only: as create_step_driven, with the Unix timestamp supplied by
 // the test so token expiry is deterministic and no wall clock is read.
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context );
+    const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 
 // As the step-driven create above, and when status is not NULL it is written
 // with ROCKETNET_STATUS_OK or the refusal's section-2.1 code (a config whose
-// step_driven field asks for a driver with no non-blocking step is refused).
+// step_driven field asks for a transport with no non-blocking step is refused).
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_driver_operations_t * operations, void * driver_context, int * status );
+    const rocketnet_client_transport_io_operations_t * operations, void * transport_context, int * status );
 
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );

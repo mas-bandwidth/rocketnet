@@ -4,7 +4,7 @@
 */
 
 // The stop of the client I/O core (sdk/rocketnet_client_io.h) against the
-// fake client driver (test/fake_client_driver.h): RNClientIo Stop, IoExit,
+// fake client transport (test/fake_client_driver.h): RNClientIo Stop, IoExit,
 // Join and the invariant FreedOnlyAfterJoin. Single-threaded: no sockets, no
 // real time.
 
@@ -24,15 +24,15 @@ static double client_io_stop_test_time( void * context )
     return ( (client_io_stop_test_clock_t *) context )->now;
 }
 
-static void client_io_stop_test_open( rocketnet_fake_client_driver_t * fake,
-    const rocketnet_client_driver_operations_t * operations, rocketnet_client_driver_t * driver )
+static void client_io_stop_test_open( rocketnet_fake_client_transport_io_t * fake,
+    const rocketnet_client_transport_io_operations_t * operations, rocketnet_client_transport_io_t * transport )
 {
-    rocketnet_client_driver_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_unit_check( rocketnet_client_driver_open( operations, fake, &config, &bind, driver ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( operations, fake, &config, &bind, transport ) );
 }
 
-static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_client_driver_t * driver,
+static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_client_transport_io_t * transport,
     rocketnet_client_io_ring_view_t * view0, rocketnet_client_io_ring_view_t * view1, uint8_t * ring0,
     uint8_t * ring1, int * counts0, int * counts1, int slots,
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] )
@@ -53,7 +53,7 @@ static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_cli
     view1->wire_bytes_stride = sizeof( int );
 
     client_io_stop_test_clock_t clock = { 1000.0 };
-    rocketnet_client_io_init( io, driver, view0, view1, buffers, client_io_stop_test_time, &clock );
+    rocketnet_client_io_init( io, transport, view0, view1, buffers, client_io_stop_test_time, &clock );
 }
 
 // Stop with a handed-off ring: the I/O thread sends the ring in flight (both
@@ -61,9 +61,9 @@ static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_cli
 // once, stop wakes again. RNClientIo Stop, IoExit.
 static void client_io_stop_sends_in_flight_ring_first()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
-    client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
     uint8_t ring0[2 * ROCKETNET_FRAME_STRIDE] = {};
     uint8_t ring1[2 * ROCKETNET_FRAME_STRIDE] = {};
@@ -77,7 +77,7 @@ static void client_io_stop_sends_in_flight_ring_first()
     rocketnet_client_io_t io = {};
     rocketnet_client_io_ring_view_t view0 = {};
     rocketnet_client_io_ring_view_t view1 = {};
-    client_io_stop_test_setup( &io, &driver, &view0, &view1, ring0, ring1, counts0, counts1, 2, buffers );
+    client_io_stop_test_setup( &io, &transport, &view0, &view1, ring0, ring1, counts0, counts1, 2, buffers );
 
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9000 );
@@ -94,7 +94,7 @@ static void client_io_stop_sends_in_flight_ring_first()
     rocketnet_unit_check( fake.sent[0].bytes == 5 );
     rocketnet_unit_check( fake.sent[1].bytes == 7 );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &transport );
     delete buffers[0];
     delete buffers[1];
 }
@@ -105,9 +105,9 @@ REGISTER_UNIT_TEST( client_io_stop_sends_in_flight_ring_first );
 // receive, no publish, no wait).
 static void client_io_stop_exits_with_nothing_new()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
-    client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
     uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
@@ -121,7 +121,7 @@ static void client_io_stop_exits_with_nothing_new()
     rocketnet_client_io_t io = {};
     rocketnet_client_io_ring_view_t view0 = {};
     rocketnet_client_io_ring_view_t view1 = {};
-    client_io_stop_test_setup( &io, &driver, &view0, &view1, ring0, ring1, counts0, counts1, 0, buffers );
+    client_io_stop_test_setup( &io, &transport, &view0, &view1, ring0, ring1, counts0, counts1, 0, buffers );
 
     uint8_t datagram[16];
     for ( int i = 0; i < 16; i++ )
@@ -137,7 +137,7 @@ static void client_io_stop_exits_with_nothing_new()
     rocketnet_unit_check( fake.receive_calls == 0 );
     rocketnet_unit_check( fake.wait_calls == 0 );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &transport );
     delete buffers[0];
     delete buffers[1];
 }
@@ -165,9 +165,9 @@ static void client_io_hand_off_after_stop_asserts()
     rocketnet_set_assert_callback( client_io_stop_hand_off_assert_hook );
     client_io_stop_hand_off_asserts = 0;
 
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
-    client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &driver );
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
     uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
@@ -181,7 +181,7 @@ static void client_io_hand_off_after_stop_asserts()
     rocketnet_client_io_t io = {};
     rocketnet_client_io_ring_view_t view0 = {};
     rocketnet_client_io_ring_view_t view1 = {};
-    client_io_stop_test_setup( &io, &driver, &view0, &view1, ring0, ring1, counts0, counts1, 1, buffers );
+    client_io_stop_test_setup( &io, &transport, &view0, &view1, ring0, ring1, counts0, counts1, 1, buffers );
 
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9200 );
@@ -197,7 +197,7 @@ static void client_io_hand_off_after_stop_asserts()
 
     rocketnet_set_assert_callback( saved_assert );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &transport );
     delete buffers[0];
     delete buffers[1];
 }

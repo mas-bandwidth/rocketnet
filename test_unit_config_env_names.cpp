@@ -443,7 +443,7 @@ static std::vector<std::string> env_names_set_candidates()
 // every name an environment pass reads: the message and transport config
 // tables under each endpoint prefix, the two budget names, the memory budget
 // that apply_env_uint64 reads, and the process-wide names read at init and in
-// the platform. The transport table's driver row is read as TRANSPORT.
+// the platform. The transport table's transport row is read as TRANSPORT.
 static std::vector<std::string> env_names_pass_reads()
 {
     std::vector<std::string> reads;
@@ -465,7 +465,7 @@ static std::vector<std::string> env_names_pass_reads()
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
     for ( int i = 0; i < num_client_fields; i++ )
     {
-        if ( strcmp( client_fields[i].name, "driver" ) == 0 )
+        if ( strcmp( client_fields[i].name, "transport" ) == 0 )
             continue;
         char name[128];
         check( rocketnet_config_env_var_name_for( "client", client_fields[i].name, name, sizeof( name ) ) );
@@ -476,7 +476,7 @@ static std::vector<std::string> env_names_pass_reads()
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
     for ( int i = 0; i < num_server_fields; i++ )
     {
-        if ( strcmp( server_fields[i].name, "driver" ) == 0 )
+        if ( strcmp( server_fields[i].name, "transport" ) == 0 )
             continue;
         char name[128];
         check( rocketnet_config_env_var_name_for( "server", server_fields[i].name, name, sizeof( name ) ) );
@@ -611,7 +611,7 @@ REGISTER_UNIT_TEST( config_env_every_name_read_is_documented );
 // rocketnet_config_apply_env_uint64), and refuse legacy names
 // ---------------------------------------------------------------------------
 
-static void config_env_transport_passes_exercise_all_rows()
+static void config_env_refuses_old_driver_names_and_exercises_all_rows()
 {
     // 1. Internal & simulator rows:
     env_names_setenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH", "2000" );
@@ -730,17 +730,17 @@ static void config_env_transport_passes_exercise_all_rows()
     env_names_unsetenv( "ROCKETNET_CLIENT_DRIVER" );
     env_names_unsetenv( "ROCKETNET_FILTER_VALUE" );
 
-    bool refused_driver = false;
+    bool refused_old_driver_name = false;
     bool ignored_process_wide = false;
     for ( size_t i = 0; i < capture.log.lines.size(); i++ )
     {
         if ( capture.log.lines[i].find( "refuses ROCKETNET_DRIVER" ) != std::string::npos ||
              capture.log.lines[i].find( "refuses ROCKETNET_CLIENT_DRIVER" ) != std::string::npos )
-            refused_driver = true;
+            refused_old_driver_name = true;
         if ( capture.log.lines[i].find( "ignores the process-wide ROCKETNET_FILTER_VALUE" ) != std::string::npos )
             ignored_process_wide = true;
     }
-    check( refused_driver );
+    check( refused_old_driver_name );
     check( ignored_process_wide );
 }
-REGISTER_UNIT_TEST( config_env_transport_passes_exercise_all_rows );
+REGISTER_UNIT_TEST( config_env_refuses_old_driver_names_and_exercises_all_rows );

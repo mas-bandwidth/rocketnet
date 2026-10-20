@@ -33,7 +33,7 @@ already earn their keep.
     rocketnet_platform        threads, mutexes, time, sockets — the only system headers
     wire format          constants, packets, tokens, packet filter
     the two transports   client_transport, and server_transport over
-                         runtime-selected drivers (portable, xdp, gso, msgx, iocp)
+                         runtime-selected transports (portable, xdp, gso, msgx, iocp)
 
 `rocketnet.{h,cpp}` sits beside rather than above: process init, assert/log/allocator
 hooks, RNG.
@@ -174,7 +174,7 @@ cannot be made non-rare by design (real wire I/O, per-packet crypto at scale)
 is made non-rare by posture: the swarm supplies load in every dev loop, so the
 library is never observed unloaded.
 
-## The non-root server implementation: the GSO driver
+## The non-root server implementation: the GSO transport
 
 For hosts where XDP is not available — AWS GameLift and similar, no
 `CAP_NET_ADMIN` — the third server implementation exists (#97):
@@ -188,7 +188,7 @@ start log line. The config system is one X-macro table per transport in
 `rocketnet.h` deriving struct, defaults, env names (`ROCKETNET_` +
 uppercased field), parse and validation; precedence default < struct < env,
 overrides logged with the displaced value, validation refuses and never
-clamps. standard/TRANSPORT.md "Driver selection and transport configuration" is the
+clamps. standard/TRANSPORT.md "Transport selection and transport configuration" is the
 ruling form.
 
 The shape is the one this section always planned, confirmed by the #81
@@ -200,7 +200,7 @@ zero shared state between queues, `recvmmsg`/`sendmmsg` batching, and
 Transmit is main-thread (the phase contract), rotated across the group's
 sockets for buffer headroom — the XDP path's per-queue sender threads are
 not reproduced, deliberately. The
-driver probes every feature at create and degrades to plain mmsg batching
+transport probes every feature at create and degrades to plain mmsg batching
 where a kernel says no; a live GSO refusal mid-flush flips the tier and
 resends plain, lossless. It recovers the syscall win and the single-traversal
 win. It does not recover skb-allocation avoidance — worth knowing when sizing

@@ -3,11 +3,11 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The AF_XDP driver's bounds (sdk/rocketnet_xdp_frame.h, DRIVER BOUNDS), over
+// The AF_XDP transport's bounds (sdk/rocketnet_xdp_frame.h, TRANSPORT BOUNDS), over
 // plain heap buffers sized exactly to a model UMEM, with no AF_XDP socket. A
 // send length is checked before the copy into its frame, a receive
 // descriptor before its frame is read, a cpu before CPU_SET and the possible
-// cpu count before the stats read. Each case follows the driver's own order
+// cpu count before the stats read. Each case follows the transport's own order
 // (sdk/rocketnet_server_socket_linux.cpp, the xdp thread's send and receive
 // loops): with a check removed, the copy that follows runs past the buffer,
 // which ASan reports.
@@ -49,7 +49,7 @@ static void xdp_send_copy_refuses_bad_lengths()
 
     uint64_t refused = 0;
 
-    // a negative int length as the driver stores it (packet_info.packet_bytes is a size_t)
+    // a negative int length as the transport stores it (packet_info.packet_bytes is a size_t)
     rocketnet_unit_check( bounds_send( frame, staged, (size_t) (int) -1, &refused ) == -1 );
     rocketnet_unit_check( refused == 1 );
 

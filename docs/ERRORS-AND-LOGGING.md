@@ -57,7 +57,7 @@ only the public result, the log line and the misuse count.
 
 The helper names used later in this document (`rocketnet_error`,
 `rocketnet_assert`, `rocketnet_log_v`, `rocketnet_config_apply_env`,
-`rocketnet_config_validate`, `rocketnet_driver_ladder_parse`,
+`rocketnet_config_validate`, `rocketnet_transport_ladder_parse`,
 `rocketnet_reassembly_memory_allowed`, `rocketnet_address_parse`,
 `rocketnet_server_config_has_keys`, `rocketnet_client_protocol_connect`,
 `rocketnet_platform_socket_create`, `rocketnet_platform_socket_create_with_pump`,
@@ -182,7 +182,7 @@ ROCKETNET_EXPORT void rocketnet_set_log_callback(
 ### 3.4 Refused Thread Priority Calls
 
 The library's network-thread priority calls (`docs/CLIENT-IO.md`, Thread
-priority; `DRIVERS.md`, Server network threads) check each result. A refused
+priority; `TRANSPORTS.md`, Server network threads) check each result. A refused
 call (`pthread_setschedparam` nonzero, `pthread_setaffinity_np` nonzero on the
 XDP thread, `SetThreadPriority` FALSE, `timeBeginPeriod` or `timeEndPeriod`
 not `TIMERR_NOERROR`) adds one to a process-wide count, read with

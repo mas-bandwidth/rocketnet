@@ -3,14 +3,14 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The io_uring server driver's completion codec, pure: no syscall, no
+// The io_uring server transport's completion codec, pure: no syscall, no
 // allocation, no global state. It is compiled only on Linux with kernel uapi
 // headers recent enough for multishot recvmsg (IORING_RECV_MULTISHOT); older
 // uapi headers and non-Linux platforms compile the body out. This is the
 // byte-level counterpart of sdk/rocketnet_xdp_frame.h: the byte-level parts
-// of the driver (completion tags, the multishot recvmsg buffer layout, the
+// of the transport (completion tags, the multishot recvmsg buffer layout, the
 // source address conversion) are written and unit tested here, and the
-// driver links liburing for the ring itself.
+// transport links liburing for the ring itself.
 
 #ifndef ROCKETNET_URING_CODEC_H
 #define ROCKETNET_URING_CODEC_H
@@ -103,7 +103,7 @@ static inline int rocketnet_uring_recvmsg_parse(
 }
 
 // converts a source sockaddr to a rocketnet address, the same rule as the
-// GSO driver. Ports and address words are network order in the sockaddr and
+// GSO transport. Ports and address words are network order in the sockaddr and
 // host order in rocketnet_address_t; a v4-mapped source on a dual stack
 // socket becomes native IPv4 exactly once; a name shorter than its family's
 // sockaddr, or another family, returns false.

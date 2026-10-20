@@ -27,7 +27,7 @@
 
     Linux. ROCKETNET_SERVER_TRANSPORT pins the server transport and
     ROCKETNET_CLIENT_TRANSPORT=portable the clients; the summary line's
-    server_driver= names the transport granted, and fds_end and threads_end
+    server_transport_io= names the transport granted, and fds_end and threads_end
     equal fds_start and threads_start on a clean run. The server cells:
       portable   ROCKETNET_SERVER_TRANSPORT=portable
       gso        ROCKETNET_SERVER_TRANSPORT=gso
@@ -716,7 +716,7 @@ int main( int argc, char ** argv )
                 {
                     fprintf( stderr, "load: client %d not connected at the deadline: state=%d %s\n",
                              i, (int) st, rocketnet_client_state_name( st ) );
-                    fprintf( stderr, "load: client %d driver=%s packets_sent=%llu packets_received=%llu\n", i,
+                    fprintf( stderr, "load: client %d transport=%s packets_sent=%llu packets_received=%llu\n", i,
                              rocketnet_client_transport_name( clients[i] ),
                              (unsigned long long) rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_SENT ),
                              (unsigned long long) rocketnet_client_counter( clients[i], ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED ) );
@@ -1109,13 +1109,13 @@ int main( int argc, char ** argv )
                      crit5_counters_agree &&
                      !quit;
 
-    char server_driver[32];
-    char client_driver[32];
+    char server_transport_io[32];
+    char client_transport_io[32];
     {
         const char * sd = rocketnet_server_transport_name( server );
         const char * cd = clients[0] ? rocketnet_client_transport_name( clients[0] ) : NULL;
-        snprintf( server_driver, sizeof( server_driver ), "%s", sd ? sd : "none" );
-        snprintf( client_driver, sizeof( client_driver ), "%s", cd ? cd : "none" );
+        snprintf( server_transport_io, sizeof( server_transport_io ), "%s", sd ? sd : "none" );
+        snprintf( client_transport_io, sizeof( client_transport_io ), "%s", cd ? cd : "none" );
     }
 
     for ( int i = 0; i < num_clients; i++ )
@@ -1146,13 +1146,13 @@ int main( int argc, char ** argv )
                 "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
-                "server_driver=%s client_driver=%s "
+                "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld verdict=PASS\n",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
-                server_driver, client_driver,
+                server_transport_io, client_transport_io,
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end );
@@ -1164,7 +1164,7 @@ int main( int argc, char ** argv )
                 "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
-                "server_driver=%s client_driver=%s "
+                "server_transport_io=%s client_transport_io=%s "
                 "fd_limit_soft=%s fd_limit_hard=%s fds_start=%ld fds_peak=%ld fds_end=%ld "
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
                 "failed_criterion=%s verdict=FAIL\n",
@@ -1176,7 +1176,7 @@ int main( int argc, char ** argv )
                 crit5_counters_agree ? "PASS" : "FAIL",
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
-                server_driver, client_driver,
+                server_transport_io, client_transport_io,
                 fd_limit_soft_text, fd_limit_hard_text,
                 fds_start, fds_peak, fds_end,
                 threads_start, threads_peak, threads_end,

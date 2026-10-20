@@ -1,4 +1,4 @@
-# rocketnet driver bench (#81)
+# rocketnet transport bench (#81)
 #
 # probe          -- static feature report, runnable on any Linux host
 # bench_portable -- sendto/recvfrom negative control
@@ -10,7 +10,7 @@
 #
 # Linux only. The mac is the edit loop; numbers come from real Linux hardware.
 #
-# darwin targets (#100) -- the macOS driver's own instruments, native on
+# darwin targets (#100) -- the macOS transport's own instruments, native on
 # the mac (make darwin):
 #
 # probe_darwin   -- runtime feature report: sendmsg_x/recvmsg_x shapes,

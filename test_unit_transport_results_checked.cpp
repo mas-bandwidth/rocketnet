@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-// Driver results the transports trust: a batch count, a byte count, a missing
+// Transport results the transports trust: a batch count, a byte count, a missing
 // wait, the loopback destination, and the GRO cmsg. No socket, no thread, no
 // wall clock. The clock argument is 1000.0. This file is compiled into the
 // loopback translation unit, which includes the server transport.
@@ -30,36 +30,36 @@
 extern int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_bytes, uint64_t * faults );
 #endif // #if defined(__linux__)
 
-extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
+extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
-struct driver_results_clock_t
+struct transport_results_clock_t
 {
     double now;
 };
 
-static double driver_results_time( void * context )
+static double transport_results_time( void * context )
 {
-    return ( (driver_results_clock_t *) context )->now;
+    return ( (transport_results_clock_t *) context )->now;
 }
 
-struct driver_results_lie_t
+struct transport_results_lie_t
 {
     int mode;
     int calls;
     int max_seen;
 };
 
-static void * driver_results_lie_create( void * context, const rocketnet_client_driver_config_t *, rocketnet_address_t * )
+static void * transport_results_lie_create( void * context, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * )
 {
     return context;
 }
 
-static void driver_results_lie_destroy( void * ) {}
-static void driver_results_lie_send( void *, const rocketnet_address_t *, const uint8_t *, int ) {}
+static void transport_results_lie_destroy( void * ) {}
+static void transport_results_lie_send( void *, const rocketnet_address_t *, const uint8_t *, int ) {}
 
-static int driver_results_lie_receive( void * driver, rocketnet_address_t * from, uint8_t * data, int capacity )
+static int transport_results_lie_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
-    driver_results_lie_t * lie = (driver_results_lie_t *) driver;
+    transport_results_lie_t * lie = (transport_results_lie_t *) transport;
     lie->calls++;
     lie->max_seen = capacity;
     if ( lie->calls > 1 )
@@ -76,9 +76,9 @@ static int driver_results_lie_receive( void * driver, rocketnet_address_t * from
     return 1;
 }
 
-static int driver_results_lie_receive_batch( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+static int transport_results_lie_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
-    driver_results_lie_t * lie = (driver_results_lie_t *) driver;
+    transport_results_lie_t * lie = (transport_results_lie_t *) transport;
     lie->calls++;
     lie->max_seen = max_packets;
     if ( lie->calls > 1 )
@@ -110,21 +110,21 @@ static int driver_results_lie_receive_batch( void * driver, rocketnet_address_t 
     return 0;
 }
 
-static void driver_results_open_io( driver_results_lie_t * lie, rocketnet_client_driver_operations_t * ops,
-    rocketnet_client_driver_t * driver, rocketnet_client_io_t * io,
-    rocketnet_client_receive_buffer_t ** buffers, driver_results_clock_t * clock, bool batch )
+static void transport_results_open_io( transport_results_lie_t * lie, rocketnet_client_transport_io_operations_t * ops,
+    rocketnet_client_transport_io_t * transport, rocketnet_client_io_t * io,
+    rocketnet_client_receive_buffer_t ** buffers, transport_results_clock_t * clock, bool batch )
 {
     *ops = rocketnet_fake_client_operations_base;
-    ops->create = driver_results_lie_create;
-    ops->destroy = driver_results_lie_destroy;
-    ops->send = driver_results_lie_send;
-    ops->receive = driver_results_lie_receive;
-    ops->receive_batch = batch ? driver_results_lie_receive_batch : NULL;
+    ops->create = transport_results_lie_create;
+    ops->destroy = transport_results_lie_destroy;
+    ops->send = transport_results_lie_send;
+    ops->receive = transport_results_lie_receive;
+    ops->receive_batch = batch ? transport_results_lie_receive_batch : NULL;
     ops->wait = NULL;
     ops->wake = NULL;
-    rocketnet_client_driver_config_t config = { "fake", NULL };
+    rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_unit_check( rocketnet_client_driver_open( ops, lie, &config, &bind, driver ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( ops, lie, &config, &bind, transport ) );
 
     static uint8_t ring0[ROCKETNET_FRAME_STRIDE];
     static uint8_t ring1[ROCKETNET_FRAME_STRIDE];
@@ -149,12 +149,12 @@ static void driver_results_open_io( driver_results_lie_t * lie, rocketnet_client
     buffers[1] = new rocketnet_client_receive_buffer_t;
     clock->now = 1000.0;
     memset( io, 0, sizeof( *io ) );
-    rocketnet_client_io_init( io, driver, &view0, &view1, buffers, driver_results_time, clock );
+    rocketnet_client_io_init( io, transport, &view0, &view1, buffers, transport_results_time, clock );
 }
 
-static void driver_results_close_io( rocketnet_client_driver_t * driver, rocketnet_client_receive_buffer_t ** buffers )
+static void transport_results_close_io( rocketnet_client_transport_io_t * transport, rocketnet_client_receive_buffer_t ** buffers )
 {
-    rocketnet_client_driver_close( driver );
+    rocketnet_client_transport_io_close( transport );
     delete buffers[0];
     delete buffers[1];
 }
@@ -162,107 +162,107 @@ static void driver_results_close_io( rocketnet_client_driver_t * driver, rocketn
 // A receive_batch that returns one past the count it was asked for does not
 // index the stack arrays past that count. The extra return is one fault. The
 // slots it was asked to fill are kept, including a zero-length slot.
-static void driver_results_client_batch_over_count_is_a_fault()
+static void transport_results_client_batch_over_count_is_a_fault()
 {
-    driver_results_lie_t lie = {};
+    transport_results_lie_t lie = {};
     lie.mode = 1;
-    rocketnet_client_driver_operations_t ops;
-    rocketnet_client_driver_t driver = {};
+    rocketnet_client_transport_io_operations_t ops;
+    rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
-    driver_results_clock_t clock;
+    transport_results_clock_t clock;
     rocketnet_client_io_t io;
-    driver_results_open_io( &lie, &ops, &driver, &io, buffers, &clock, true );
+    transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
-    rocketnet_unit_check( io.driver_faults == 1 );
+    rocketnet_unit_check( io.transport_faults == 1 );
     rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == lie.max_seen );
     rocketnet_unit_check( received->packet_bytes[0] == 4 );
     rocketnet_unit_check( received->packet_data[0][0] == 0x11 );
 
-    driver_results_close_io( &driver, buffers );
-    printf( "driver_results_client_batch_over_count_is_a_fault\n" );
+    transport_results_close_io( &transport, buffers );
+    printf( "transport_results_client_batch_over_count_is_a_fault\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_batch_over_count_is_a_fault );
+REGISTER_UNIT_TEST( transport_results_client_batch_over_count_is_a_fault );
 
-static void driver_results_client_negative_byte_count_is_a_fault()
+static void transport_results_client_negative_byte_count_is_a_fault()
 {
-    driver_results_lie_t lie = {};
+    transport_results_lie_t lie = {};
     lie.mode = 2;
-    rocketnet_client_driver_operations_t ops;
-    rocketnet_client_driver_t driver = {};
+    rocketnet_client_transport_io_operations_t ops;
+    rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
-    driver_results_clock_t clock;
+    transport_results_clock_t clock;
     rocketnet_client_io_t io;
-    driver_results_open_io( &lie, &ops, &driver, &io, buffers, &clock, false );
+    transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, false );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
-    rocketnet_unit_check( io.driver_faults == 1 );
+    rocketnet_unit_check( io.transport_faults == 1 );
     rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
 
-    driver_results_close_io( &driver, buffers );
-    printf( "driver_results_client_negative_byte_count_is_a_fault\n" );
+    transport_results_close_io( &transport, buffers );
+    printf( "transport_results_client_negative_byte_count_is_a_fault\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_negative_byte_count_is_a_fault );
+REGISTER_UNIT_TEST( transport_results_client_negative_byte_count_is_a_fault );
 
-static void driver_results_client_oversized_byte_count_is_a_fault()
+static void transport_results_client_oversized_byte_count_is_a_fault()
 {
-    driver_results_lie_t lie = {};
+    transport_results_lie_t lie = {};
     lie.mode = 3;
-    rocketnet_client_driver_operations_t ops;
-    rocketnet_client_driver_t driver = {};
+    rocketnet_client_transport_io_operations_t ops;
+    rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
-    driver_results_clock_t clock;
+    transport_results_clock_t clock;
     rocketnet_client_io_t io;
-    driver_results_open_io( &lie, &ops, &driver, &io, buffers, &clock, false );
+    transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, false );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
-    rocketnet_unit_check( io.driver_faults == 1 );
+    rocketnet_unit_check( io.transport_faults == 1 );
     rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
     rocketnet_unit_check( lie.max_seen == ROCKETNET_MAX_PACKET_BYTES );
 
-    driver_results_close_io( &driver, buffers );
-    printf( "driver_results_client_oversized_byte_count_is_a_fault\n" );
+    transport_results_close_io( &transport, buffers );
+    printf( "transport_results_client_oversized_byte_count_is_a_fault\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_oversized_byte_count_is_a_fault );
+REGISTER_UNIT_TEST( transport_results_client_oversized_byte_count_is_a_fault );
 
 // A negative byte count in a batch is refused and counted. The later slot
 // whose count fits the stride is kept.
-static void driver_results_client_batch_refuses_a_bad_byte_count()
+static void transport_results_client_batch_refuses_a_bad_byte_count()
 {
-    driver_results_lie_t lie = {};
+    transport_results_lie_t lie = {};
     lie.mode = 4;
-    rocketnet_client_driver_operations_t ops;
-    rocketnet_client_driver_t driver = {};
+    rocketnet_client_transport_io_operations_t ops;
+    rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[2] = {};
-    driver_results_clock_t clock;
+    transport_results_clock_t clock;
     rocketnet_client_io_t io;
-    driver_results_open_io( &lie, &ops, &driver, &io, buffers, &clock, true );
+    transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
-    rocketnet_unit_check( io.driver_faults == 1 );
+    rocketnet_unit_check( io.transport_faults == 1 );
     rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 1 );
     rocketnet_unit_check( received->packet_bytes[0] == 4 );
     rocketnet_unit_check( received->packet_data[0][0] == 0x22 );
 
-    driver_results_close_io( &driver, buffers );
-    printf( "driver_results_client_batch_refuses_a_bad_byte_count\n" );
+    transport_results_close_io( &transport, buffers );
+    printf( "transport_results_client_batch_refuses_a_bad_byte_count\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_batch_refuses_a_bad_byte_count );
+REGISTER_UNIT_TEST( transport_results_client_batch_refuses_a_bad_byte_count );
 
-// A driver open allows wait and wake both absent. A blocked idle step does
+// A transport open allows wait and wake both absent. A blocked idle step does
 // not call wait.
-static void driver_results_client_without_wait_skips_the_call()
+static void transport_results_client_without_wait_skips_the_call()
 {
-    rocketnet_fake_client_driver_t fake = {};
-    rocketnet_client_driver_t driver = {};
-    rocketnet_client_driver_config_t config = { "fake", NULL };
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    rocketnet_client_transport_io_config_t config = { "fake", NULL };
     rocketnet_address_t bind = {};
-    rocketnet_unit_check( rocketnet_client_driver_open( &rocketnet_fake_client_operations_base, &fake, &config, &bind, &driver ) );
-    rocketnet_unit_check( driver.operations->wait == NULL );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( &rocketnet_fake_client_operations_base, &fake, &config, &bind, &transport ) );
+    rocketnet_unit_check( transport.operations->wait == NULL );
 
     uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
     uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
@@ -279,35 +279,35 @@ static void driver_results_client_without_wait_skips_the_call()
     view1.wire_bytes = (const uint8_t *) counts1;
 
     rocketnet_client_receive_buffer_t * buffers[2] = { new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t };
-    driver_results_clock_t clock = { 1000.0 };
+    transport_results_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_init( &io, &driver, &view0, &view1, buffers, driver_results_time, &clock );
+    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, transport_results_time, &clock );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_IDLE );
     rocketnet_unit_check( fake.wait_calls == 0 );
-    rocketnet_unit_check( io.driver_faults == 0 );
+    rocketnet_unit_check( io.transport_faults == 0 );
 
-    rocketnet_client_driver_close( &driver );
+    rocketnet_client_transport_io_close( &transport );
     delete buffers[0];
     delete buffers[1];
-    printf( "driver_results_client_without_wait_skips_the_call\n" );
+    printf( "transport_results_client_without_wait_skips_the_call\n" );
 }
-REGISTER_UNIT_TEST( driver_results_client_without_wait_skips_the_call );
+REGISTER_UNIT_TEST( transport_results_client_without_wait_skips_the_call );
 
-struct driver_results_server_lie_t
+struct transport_results_server_lie_t
 {
     int mode;
     int calls;
     int asked;
 };
 
-static void driver_results_server_destroy( void * ) {}
-static bool driver_results_server_stop( void * ) { return true; }
-static void driver_results_server_send_batch( void *, const rocketnet_platform_send_t *, int ) {}
+static void transport_results_server_destroy( void * ) {}
+static bool transport_results_server_stop( void * ) { return true; }
+static void transport_results_server_send_batch( void *, const rocketnet_platform_send_t *, int ) {}
 
-static int driver_results_server_receive_batch( void * driver, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity )
+static int transport_results_server_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity )
 {
-    driver_results_server_lie_t * lie = (driver_results_server_lie_t *) driver;
+    transport_results_server_lie_t * lie = (transport_results_server_lie_t *) transport;
     lie->calls++;
     lie->asked = capacity;
     if ( lie->calls > 1 )
@@ -344,13 +344,13 @@ static int driver_results_server_receive_batch( void * driver, rocketnet_address
     return 1;
 }
 
-static rocketnet_server_transport_t * driver_results_make_server( driver_results_server_lie_t * lie, rocketnet_server_driver_operations_t * operations )
+static rocketnet_server_transport_t * transport_results_make_server( transport_results_server_lie_t * lie, rocketnet_server_transport_io_operations_t * operations )
 {
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
     config.max_clients = 1;
     config.protocol_id = 1;
-    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     memset( config.backend_public_key, 0xAB, 32 );
     memset( config.server_public_key, 0xCD, 32 );
     memset( config.server_secret_key, 0xEF, 32 );
@@ -360,64 +360,64 @@ static rocketnet_server_transport_t * driver_results_make_server( driver_results
     if ( !server )
         printf( "create_ex status=%d\n", create_status );
     rocketnet_unit_check( server );
-    rocketnet_server_driver_close( &server->io );
+    rocketnet_server_transport_io_close( &server->io );
     memset( operations, 0, sizeof( *operations ) );
-    operations->destroy = driver_results_server_destroy;
-    operations->stop = driver_results_server_stop;
-    operations->send_batch = driver_results_server_send_batch;
-    operations->receive_batch = driver_results_server_receive_batch;
+    operations->destroy = transport_results_server_destroy;
+    operations->stop = transport_results_server_stop;
+    operations->send_batch = transport_results_server_send_batch;
+    operations->receive_batch = transport_results_server_receive_batch;
     server->io.instance = lie;
     server->io.operations = operations;
     rocketnet_server_transport_set_test_timestamp( server, 1000 );
     return server;
 }
 
-static void driver_results_server_receive_checks_counts()
+static void transport_results_server_receive_checks_counts()
 {
-    driver_results_server_lie_t lie = {};
-    rocketnet_server_driver_operations_t operations;
-    rocketnet_server_transport_t * server = driver_results_make_server( &lie, &operations );
+    transport_results_server_lie_t lie = {};
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = transport_results_make_server( &lie, &operations );
 
     lie.mode = 1;
     lie.calls = 0;
     const uint64_t received_before = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
     rocketnet_server_transport_update( server, 1000.0 );
-    rocketnet_unit_check( server->driver_faults == 1 );
+    rocketnet_unit_check( server->transport_faults == 1 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before );
 
-    const uint64_t faults_after_negative = server->driver_faults;
+    const uint64_t faults_after_negative = server->transport_faults;
     lie.mode = 2;
     lie.calls = 0;
     rocketnet_server_transport_update( server, 1000.0 );
     rocketnet_unit_check( lie.asked > 0 );
-    rocketnet_unit_check( server->driver_faults == faults_after_negative + (uint64_t) lie.asked + 1 );
+    rocketnet_unit_check( server->transport_faults == faults_after_negative + (uint64_t) lie.asked + 1 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before );
 
-    const uint64_t faults_after_over = server->driver_faults;
+    const uint64_t faults_after_over = server->transport_faults;
     lie.mode = 3;
     lie.calls = 0;
     rocketnet_server_transport_update( server, 1000.0 );
-    rocketnet_unit_check( server->driver_faults == faults_after_over + 1 );
+    rocketnet_unit_check( server->transport_faults == faults_after_over + 1 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before );
 
     lie.mode = 4;
     lie.calls = 0;
     rocketnet_server_transport_update( server, 1000.0 );
-    rocketnet_unit_check( server->driver_faults == faults_after_over + 2 );
+    rocketnet_unit_check( server->transport_faults == faults_after_over + 2 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before );
 
     lie.mode = 5;
     lie.calls = 0;
     rocketnet_server_transport_update( server, 1000.0 );
-    rocketnet_unit_check( server->driver_faults == faults_after_over + 2 );
+    rocketnet_unit_check( server->transport_faults == faults_after_over + 2 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before + 1 );
 
     rocketnet_server_transport_destroy( server );
-    printf( "driver_results_server_receive_checks_counts\n" );
+    printf( "transport_results_server_receive_checks_counts\n" );
 }
-REGISTER_UNIT_TEST( driver_results_server_receive_checks_counts );
+REGISTER_UNIT_TEST( transport_results_server_receive_checks_counts );
 
-static void driver_results_set_ipv4( rocketnet_address_t * address, int a, int b, int c, int d, uint16_t port )
+static void transport_results_set_ipv4( rocketnet_address_t * address, int a, int b, int c, int d, uint16_t port )
 {
     memset( address, 0, sizeof( *address ) );
     address->type = ROCKETNET_ADDRESS_IPV4;
@@ -430,27 +430,27 @@ static void driver_results_set_ipv4( rocketnet_address_t * address, int a, int b
 
 // A datagram reaches the endpoint bound to its destination, or a wildcard of
 // that family. 10.0.0.1:p does not reach an endpoint bound to 127.0.0.1:p.
-static void driver_results_loopback_matches_destination_or_wildcard()
+static void transport_results_loopback_matches_destination_or_wildcard()
 {
-    const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    const rocketnet_server_driver_config_t server_setup = { "loopback", &server_config, NULL };
-    const rocketnet_client_driver_config_t client_setup = { "loopback", &client_config };
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config };
 
     rocketnet_address_t server_address, client_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     rocketnet_unit_check( rocketnet_address_parse( &client_address, "0.0.0.0:0" ) );
-    rocketnet_server_driver_t server = {};
-    rocketnet_client_driver_t client = {};
-    rocketnet_unit_check( rocketnet_server_driver_open( backend->server, NULL, &server_setup, &server_address, &server ) );
-    rocketnet_unit_check( rocketnet_client_driver_open( backend->client, NULL, &client_setup, &client_address, &client ) );
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_client_transport_io_t client = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
 
     const uint8_t data[] = { 9, 8, 7, 6 };
     rocketnet_address_t other;
-    driver_results_set_ipv4( &other, 10, 0, 0, 1, server_address.port );
+    transport_results_set_ipv4( &other, 10, 0, 0, 1, server_address.port );
     client.operations->send( client.instance, &other, data, (int) sizeof( data ) );
 
     rocketnet_address_t from;
@@ -464,28 +464,28 @@ static void driver_results_loopback_matches_destination_or_wildcard()
     rocketnet_unit_check( bytes == (int) sizeof( data ) );
     rocketnet_unit_check( memcmp( buf, data, sizeof( data ) ) == 0 );
 
-    rocketnet_server_driver_close( &server );
-    rocketnet_client_driver_close( &client );
+    rocketnet_server_transport_io_close( &server );
+    rocketnet_client_transport_io_close( &client );
 
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "0.0.0.0:0" ) );
     rocketnet_unit_check( rocketnet_address_parse( &client_address, "0.0.0.0:0" ) );
-    rocketnet_unit_check( rocketnet_server_driver_open( backend->server, NULL, &server_setup, &server_address, &server ) );
-    rocketnet_unit_check( rocketnet_client_driver_open( backend->client, NULL, &client_setup, &client_address, &client ) );
-    driver_results_set_ipv4( &other, 10, 0, 0, 1, server_address.port );
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
+    transport_results_set_ipv4( &other, 10, 0, 0, 1, server_address.port );
     client.operations->send( client.instance, &other, data, (int) sizeof( data ) );
     rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, buf, 16, &bytes, 1 ) == 1 );
     rocketnet_unit_check( bytes == (int) sizeof( data ) );
     rocketnet_unit_check( memcmp( buf, data, sizeof( data ) ) == 0 );
 
-    rocketnet_server_driver_close( &server );
-    rocketnet_client_driver_close( &client );
-    printf( "driver_results_loopback_matches_destination_or_wildcard\n" );
+    rocketnet_server_transport_io_close( &server );
+    rocketnet_client_transport_io_close( &client );
+    printf( "transport_results_loopback_matches_destination_or_wildcard\n" );
 }
-REGISTER_UNIT_TEST( driver_results_loopback_matches_destination_or_wildcard );
+REGISTER_UNIT_TEST( transport_results_loopback_matches_destination_or_wildcard );
 
 #if defined(__linux__)
 
-static void driver_results_fill_gro( struct msghdr * header, char * control, size_t control_bytes, int stride, bool valid_len )
+static void transport_results_fill_gro( struct msghdr * header, char * control, size_t control_bytes, int stride, bool valid_len )
 {
     memset( header, 0, sizeof( *header ) );
     memset( control, 0, control_bytes );
@@ -503,7 +503,7 @@ static void driver_results_fill_gro( struct msghdr * header, char * control, siz
 // The GRO cmsg is read only when the message is not MSG_CTRUNC and cmsg_len
 // holds an int. Anything else is one fault and one datagram. The header is
 // built in memory; no socket.
-static void driver_results_gso_gro_cmsg_is_checked()
+static void transport_results_gso_gro_cmsg_is_checked()
 {
     const int message_bytes = 300;
     const int stride = 100;
@@ -511,18 +511,18 @@ static void driver_results_gso_gro_cmsg_is_checked()
     struct msghdr header;
     uint64_t faults = 0;
 
-    driver_results_fill_gro( &header, control, sizeof( control ), stride, true );
+    transport_results_fill_gro( &header, control, sizeof( control ), stride, true );
     faults = 0;
     rocketnet_unit_check( rocketnet_server_gso_gro_segment_bytes( &header, message_bytes, &faults ) == stride );
     rocketnet_unit_check( faults == 0 );
 
-    driver_results_fill_gro( &header, control, sizeof( control ), stride, true );
+    transport_results_fill_gro( &header, control, sizeof( control ), stride, true );
     header.msg_flags = MSG_CTRUNC;
     faults = 0;
     rocketnet_unit_check( rocketnet_server_gso_gro_segment_bytes( &header, message_bytes, &faults ) == message_bytes );
     rocketnet_unit_check( faults == 1 );
 
-    driver_results_fill_gro( &header, control, sizeof( control ), stride, false );
+    transport_results_fill_gro( &header, control, sizeof( control ), stride, false );
     faults = 0;
     rocketnet_unit_check( rocketnet_server_gso_gro_segment_bytes( &header, message_bytes, &faults ) == message_bytes );
     rocketnet_unit_check( faults == 1 );
@@ -532,8 +532,8 @@ static void driver_results_gso_gro_cmsg_is_checked()
     rocketnet_unit_check( rocketnet_server_gso_gro_segment_bytes( &header, message_bytes, &faults ) == message_bytes );
     rocketnet_unit_check( faults == 0 );
 
-    printf( "driver_results_gso_gro_cmsg_is_checked\n" );
+    printf( "transport_results_gso_gro_cmsg_is_checked\n" );
 }
-REGISTER_UNIT_TEST( driver_results_gso_gro_cmsg_is_checked );
+REGISTER_UNIT_TEST( transport_results_gso_gro_cmsg_is_checked );
 
 #endif // #if defined(__linux__)

@@ -26,7 +26,7 @@
 //   - the private block staging of rocketnet_open_connect_token_private, on
 //     the open and the refused exit (sdk/rocketnet_connect_token.cpp).
 //
-// Time is an argument starting at 1000.0; the loopback driver carries the
+// Time is an argument starting at 1000.0; the loopback transport carries the
 // packets in memory, so no case opens a socket or reads a clock. No case
 // prints a key: the checks compare bytes and report only true or false.
 
@@ -271,7 +271,7 @@ static void secrets_wiped_pump( secrets_wiped_pair_t * pair )
     pair->time += 0.01;
 }
 
-// a connected pair over the loopback driver, in the caller's blocks when
+// a connected pair over the loopback transport, in the caller's blocks when
 // they are given, then one planted message each way, received and released
 static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair,
                                          void * server_memory, size_t server_bytes,

@@ -3,7 +3,7 @@
 
 // The loopback transport carries datagrams between endpoints of the same
 // process through memory; it uses no socket and no system network call. The
-// transport variable is defined in rocketnet_driver_loopback.cpp. The two
+// transport variable is defined in rocketnet_transport_loopback.cpp. The two
 // declarations below are for the unit suite only; none of this file is a
 // public C export.
 //

@@ -14,7 +14,7 @@
 
 #if defined(_WIN32)
 
-// Implemented only by the isolated test-instrumented RIO driver copy.
+// Implemented only by the isolated test-instrumented RIO transport copy.
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                   int * repost_calls, int * pending_receives );
 
@@ -34,7 +34,7 @@ static void rio_overflow_seam()
     check( pending_receives == ROCKETNET_RIO_RECEIVES );
 
     // The next dequeue is short and emits no completion. The fill bank is
-    // empty, and every driver's receive counter remains unchanged.
+    // empty, and every transport's receive counter remains unchanged.
     check( packet_counts[1] == 0 );
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
         check( counters[i] == counters[ROCKETNET_RIO_NUM_COUNTERS + i] );

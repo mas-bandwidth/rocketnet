@@ -277,7 +277,7 @@ extern "C" {
  */
 struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size );
 
-// pump-request create (#106): the driver ladder's entry into pump
+// pump-request create (#106): the transport ladder's entry into pump
 // selection. pump NULL/"auto" behaves exactly like the plain create above
 // (probe, honoring ROCKETNET_PUMP); "portable" forces the portable pump;
 // "msgx" requires the darwin batch pump or returns NULL loudly.
@@ -460,12 +460,12 @@ int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t *
 const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
 #if ROCKETNET_DEVELOPMENT
-// Test seams, compiled only into the development library (DRIVERS.md, ICMP
+// Test seams, compiled only into the development library (TRANSPORTS.md, ICMP
 // errors). inject_receive_errno makes the next recvmsg or recvmsg_x on any
 // socket return -1 with that errno instead of reading, leaving the queue
 // untouched; it is defined where the darwin pumps are. The server transport's
-// platform socket is its portable or msgx driver's socket, NULL for any
-// other driver.
+// platform socket is its portable or msgx transport's socket, NULL for any
+// other transport.
 void rocketnet_platform_inject_receive_errno_for_testing( int error );
 struct rocketnet_server_transport_t;
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport );

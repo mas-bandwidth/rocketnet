@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# rocketnet-provision -- machine provisioning for the XDP driver.
+# rocketnet-provision -- machine provisioning for the XDP transport.
 #
 # RocketNet. Copyright 2026 Más Bandwidth LLC.
 # Licensed under the GNU Affero General Public License v3.0
 #
 # The library never mutates machine state (#106, ruled on the #110 review):
-# rocketnet_server_transport_create() with the xdp driver is VERIFY AND BIND
+# rocketnet_server_transport_create() with the xdp transport is VERIFY AND BIND
 # only -- a non-mutating pre-flight checks the machine is provisioned and
 # refuses by name when it is not, and the library's own acts stay per-socket
 # (build+load of its BPF program, attach, AF_XDP bind, memlock rlimit).
@@ -37,7 +37,7 @@
 #                             ("higher bandwidth nics may need more cores").
 #   B2. isolated cpu set      /sys/devices/system/cpu/isolated is non-empty
 #                             (the observable effect of B1's isolcpus).
-#   B3. NIC driver            a recent vendor driver built manually where the
+#   B3. NIC transport            a recent vendor transport built manually where the
 #                             distro's is too old for stable AF_XDP zero copy
 #                             -- for Intel 700 series, i40e from
 #                             github.com/mas-bandwidth/ethernet-linux-i40e.
@@ -67,7 +67,7 @@
 #                             one CPU (/proc/interrupts ->
 #                             /proc/irq/N/smp_affinity_list). IRQ lines are
 #                             matched by the bounded-token rule stated at
-#                             the matcher below; drivers whose irq names do
+#                             the matcher below; transports whose irq names do
 #                             not embed the interface name (mlx5-class)
 #                             cannot be checked BY NAME -- both checkers
 #                             state that limit rather than passing it off
@@ -442,7 +442,7 @@ r7_enforce()
         ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null || true)"
         case "$ETHTOOL_ERROR" in
             *"not supported"*)
-                say "no channel surface on $INTERFACE (R7 passes: the driver does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
+                say "no channel surface on $INTERFACE (R7 passes: the transport does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
                 ;;
             *)
                 fail "ethtool -l failed on $INTERFACE (R7): ${ETHTOOL_ERROR:-unknown error} -- cannot verify the queue count"
@@ -1117,11 +1117,11 @@ if [ -n "$ISOLATED" ]; then
     done
 fi
 
-# B3. NIC driver, reported informationally
+# B3. NIC transport, reported informationally
 
 if command -v ethtool >/dev/null 2>&1; then
-    DRIVER_INFO="$(ethtool -i "$INTERFACE" 2>/dev/null | awk '/^driver:|^version:/{printf "%s ", $2}')"
-    [ -n "$DRIVER_INFO" ] && say "NIC driver: $DRIVER_INFO(B3: build a recent vendor driver where the distro's is too old -- see the header)"
+    TRANSPORT_INFO="$(ethtool -i "$INTERFACE" 2>/dev/null | awk '/^transport:|^version:/{printf "%s ", $2}')"
+    [ -n "$TRANSPORT_INFO" ] && say "NIC transport: $TRANSPORT_INFO(B3: build a recent vendor transport where the distro's is too old -- see the header)"
 fi
 
 # R2. interface exists and is up
@@ -1154,7 +1154,7 @@ r3_enforce
 # C fixture test rocketnet_test_xdp_interrupt_matcher AND this script's own
 # selftest mode): the interface name matches an interrupt line as a LITERAL
 # bounded token -- preceded by line start, space, tab, or '-'
-# (driver-prefixed names like i40e-ens1f0-TxRx-0) and followed by '-', ':',
+# (transport-prefixed names like i40e-ens1f0-TxRx-0) and followed by '-', ':',
 # '@', space, tab, or end. NEVER a regex and never an escape: the name
 # rides ENVIRON (awk -v mangles backslashes) and is matched with index(),
 # so eth0.100 is four literal characters and can never match eth0x100.
@@ -1177,7 +1177,7 @@ fi
 IRQ_COUNT=$(echo "$IRQS" | grep -c . || true)
 
 if [ -z "$IRQS" ]; then
-    [ $INTERRUPTS_READABLE -eq 1 ] && say "no /proc/interrupts line names $INTERFACE (R4): either this NIC has no per-queue vectors, or its driver's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be performed or verified BY NAME here; pin and verify via the NIC driver's own tooling"
+    [ $INTERRUPTS_READABLE -eq 1 ] && say "no /proc/interrupts line names $INTERFACE (R4): either this NIC has no per-queue vectors, or its transport's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be performed or verified BY NAME here; pin and verify via the NIC transport's own tooling"
 elif [ ${#ISOLATED_CPUS[@]} -eq 0 ]; then
     fail "cannot pin $INTERFACE IRQs (R4): no isolated cpus (B1/B2 first)"
 elif [ "$IRQ_COUNT" -gt ${#ISOLATED_CPUS[@]} ]; then
@@ -1287,7 +1287,7 @@ if [ $VERIFY -eq 1 ]; then
         say "verify FAILED: $UNMET_COUNT unmet condition(s) above -- boot-tier conditions need grub + reboot (see header); runtime conditions: run rocketnet-provision $INTERFACE $NUM_QUEUES as root"
         exit 1
     fi
-    say "verify passed: machine is provisioned for the xdp driver"
+    say "verify passed: machine is provisioned for the xdp transport"
     exit 0
 fi
 

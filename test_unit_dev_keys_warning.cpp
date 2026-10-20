@@ -98,7 +98,7 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     token_with_server_key( token, server_key );
 
-    rocketnet_fake_client_driver_t * fake = new rocketnet_fake_client_driver_t();
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
 
@@ -141,15 +141,15 @@ static void dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a release
     // build (the unit suite's build) the published keys are refused.
-    // The create pins the loopback driver on port 0: the development-keys
-    // warn is raised before the driver ladder
+    // The create pins the loopback transport on port 0: the development-keys
+    // warn is raised before the transport ladder
     // (sdk/rocketnet_server_transport.cpp), so the WARN line, level and
-    // DEV_KEY_WARN_PHRASE checks are unaffected by the driver choice, and
+    // DEV_KEY_WARN_PHRASE checks are unaffected by the transport choice, and
     // the unit suite stays free of any real socket bind.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
-        strcpy( config.driver, "loopback" );
+        strcpy( config.transport, "loopback" );
         int status = -1;
         start_capture();
         void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );

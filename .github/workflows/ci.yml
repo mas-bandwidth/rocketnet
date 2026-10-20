@@ -31,9 +31,9 @@
 #       until morning is the second configuration -- the asserts Release
 #       compiles out.
 #
-#   check_driver_extension.py, ON WINDOWS ONLY   42-48s on top of a 92s MSVC
+#   check_transport_extension.py, ON WINDOWS ONLY   42-48s on top of a 92s MSVC
 #       floor, and the last thing holding this file above two minutes. It
-#       builds an out-of-tree driver backend against the installed SDK: a
+#       builds an out-of-tree transport backend against the installed SDK: a
 #       contract check on a fixed input, not a tripwire a commit is likely to
 #       trip. THE SAME SCRIPT STILL GATES EVERY COMMIT ON LINUX AND MACOS,
 #       where it costs 15s. What waits until morning is only "does the
@@ -115,10 +115,10 @@ jobs:
   # That row was the last non-windows leg over the two-minute law: 122s on run
   # 34780374187, being a 49s floor (13s apt, 35s `make`) and 70s of checks
   # behind it. Its cost is NOT one indivisible check -- the two largest are
-  # `check_package.py` at 17s and the driver contract at 15s, and neither
+  # `check_package.py` at 17s and the transport contract at 15s, and neither
   # depends on the other -- so it halves cleanly by measured duration:
   #
-  #   (a)  33s  install and relocate the SDK (17s), native driver contract and
+  #   (a)  33s  install and relocate the SDK (17s), native transport contract and
   #             external backend (15s), the library boundary, memory plans,
   #             the serialization surface, XDP staging and the archive check
   #   (b)  37s  the suite on the auto ladder (7s) and on the pinned portable
@@ -222,14 +222,14 @@ jobs:
         if: runner.os == 'Linux'
         run: bash tools/check_make_jobs.sh
 
-      # Driver selection is runtime now (#106), so one build serves the whole
-      # matrix. ./bin/test is the unit suite: no socket, no real driver, the
+      # Transport selection is runtime now (#106), so one build serves the whole
+      # matrix. ./bin/test is the unit suite: no socket, no real transport, the
       # state machines and the in-memory simulator, parallel, 60s warning,
-      # 120s kill. ./bin/functional is the driver matrix. On this unprivileged
+      # 120s kill. ./bin/functional is the transport matrix. On this unprivileged
       # runner the linux functional leg is the FALL made real -- xdp refused
       # for missing privilege, gso granted -- so the functional suite runs
-      # over the gso driver here (and over the darwin msgx pump on macOS);
-      # the pin tests (test_server_driver_pin_*) go red if a rung stops
+      # over the gso transport here (and over the darwin msgx pump on macOS);
+      # the pin tests (test_server_transport_io_pin_*) go red if a rung stops
       # granting, so a silent fall cannot hollow this leg out. The second
       # functional run pins the portable floor by env.
 
@@ -269,7 +269,7 @@ jobs:
         if: runner.os == 'Linux' && contains(matrix.leg, 'b')
         run: bash tools/check_unit_no_sockets.sh ./bin/test
 
-      - name: Run unit tests with the driver pin preserved
+      - name: Run unit tests with the transport pin preserved
         if: contains(matrix.leg, 'b')
         run: ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test
 
@@ -289,15 +289,15 @@ jobs:
         run: |
           set -o pipefail
           ./bin/functional | tee functional-pinned.log
-          grep -qx 'driver_env_pin_is_honoured' functional-pinned.log
-          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-pinned.log
+          grep -qx 'transport_env_pin_is_honoured' functional-pinned.log
+          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-pinned.log
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
-      # driver_env_pin_is_honoured runs under the same pin and proves the
+      # transport_env_pin_is_honoured runs under the same pin and proves the
       # pinned transport is the one granted. tools/check_transport_matrix.py
-      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # refuses a transport row in sdk/rocketnet_drivers.inc with no cell on an
       # OS it builds for. A cell line is: server transport, client
       # transport, then case=card for each case expected to fail until that
       # card lands: the case fails, or prints a skip naming that card. An
@@ -333,7 +333,7 @@ jobs:
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
-          socket_cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          socket_cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured"
           xdp_cases="xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6"
           cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
           uring_offered=0
@@ -421,7 +421,7 @@ jobs:
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
 
-      - name: Check every driver row has transport matrix cells
+      - name: Check every transport row has transport matrix cells
         if: runner.os == 'Linux'
         run: python3 tools/check_transport_matrix.py
 
@@ -486,11 +486,11 @@ jobs:
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_memory.py ./bin/transport_memory
 
-      - name: Native driver contract and external backend
+      - name: Native transport contract and external backend
         if: contains(matrix.leg, 'a')
         run: |
-          ./bin/test_driver
-          python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
+          ./bin/test_transport
+          python3 tools/check_transport_extension.py build --config ${{ matrix.build_type }}
 
       - name: XDP source archive excludes incremental build output
         if: contains(matrix.leg, 'a')
@@ -561,13 +561,13 @@ jobs:
           timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
             sh build/xdp-libxdp-1-4.sh
 
-  # The windows leg (#81's baseline doctrine): the portable driver built with
+  # The windows leg (#81's baseline doctrine): the portable transport built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from
   # CMakeLists.txt's MSVC branch, the family's floor per the -ffp-contract=off
   # policy. Sodium is compiled from the pinned vendor with the same CRT; the
   # multi-config generator puts binaries under bin/<config>. The #106
-  # config and driver tests run here too -- setenv/unsetenv are shimmed
+  # config and transport tests run here too -- setenv/unsetenv are shimmed
   # over _putenv_s in the test file, so the windows leg proves the env
   # engine and the portable rung on the one platform whose only rung is
   # portable -- EXCEPT the empty-value distinction, which windows cannot
@@ -581,7 +581,7 @@ jobs:
   # RELEASE ONLY, IN TWO PARALLEL LEGS (2026-09-13).
   #
   # The Debug row moved to nightly.yml under the same name, and so did the
-  # out-of-tree driver backend check on THIS platform -- see below. Windows
+  # out-of-tree transport backend check on THIS platform -- see below. Windows
   # keeps Release on every commit because Release is what ships and what the
   # optimizer rewrites.
   #
@@ -597,17 +597,17 @@ jobs:
   #                        fourth leg with zero checks would still have landed
   #                        at 92s. Splitting had done all it could.
   #
-  # So the last cut is not a split. `tools/check_driver_extension.py` -- which
+  # So the last cut is not a split. `tools/check_transport_extension.py` -- which
   # configures and builds an out-of-tree backend against the installed SDK, a
   # second MSVC build inside a check, 42-48s of it -- moved to nightly.yml.
-  # It is a CONTRACT CHECK ON A FIXED INPUT: it asks whether the driver
+  # It is a CONTRACT CHECK ON A FIXED INPUT: it asks whether the transport
   # extension surface still compiles and links for a consumer outside the
   # tree, which is a question about the shape of the API, not a tripwire that
   # a given commit is likely to trip.
   #
   # AND IT STILL GATES EVERY COMMIT, on Linux and macOS. Only the WINDOWS
   # spelling went nightly, where it cost 42s on top of a 92s floor; the same
-  # script runs per commit in build-and-test's `Native driver contract and
+  # script runs per commit in build-and-test's `Native transport contract and
   # external backend` step, 15s there. What waits until morning is
   # specifically "does the out-of-tree backend still build under MSVC", and
   # nothing else. That is a much smaller hole than moving the check itself.
@@ -619,11 +619,11 @@ jobs:
   #              IOCP allocation and shutdown, the committed XDP fallback
   #              source, the serialization surface, memory plans
   #   (b)  ~35s  the library boundary (10s), install and relocate the SDK
-  #              (12s), ambient config isolation (12s), the native driver
-  #              contract itself (test_driver; transport control is inside functional)
+  #              (12s), ambient config isolation (12s), the native transport
+  #              contract itself (test_transport; transport control is inside functional)
   #
-  # `Native driver contract and external backend` was ONE step running three
-  # commands. The two exes stay here as `Native driver contract`; the python
+  # `Native transport contract and external backend` was ONE step running three
+  # commands. The two exes stay here as `Native transport contract`; the python
   # check is the thing that left. Same commands, same order, one of them on a
   # different clock.
   #
@@ -635,12 +635,12 @@ jobs:
   # same reason it is refused everywhere else in this workflow: a stale object
   # is a green for the wrong reason.
   #
-  # The doctrine the row itself carries (#81's baseline): the portable driver
+  # The doctrine the row itself carries (#81's baseline): the portable transport
   # built with MSVC, the full test suite run on the runner. /fp:precise comes
   # from CMakeLists.txt's MSVC branch, the family's floor per the
   # -ffp-contract=off policy. Sodium is compiled from the pinned vendor with
   # the same CRT; the multi-config generator puts binaries under bin/<config>.
-  # The #106 config and driver tests run here too -- setenv/unsetenv are
+  # The #106 config and transport tests run here too -- setenv/unsetenv are
   # shimmed over _putenv_s in the test file, so the windows leg proves the env
   # engine and the portable rung on the one platform whose only rung is
   # portable -- EXCEPT the empty-value distinction, which windows cannot
@@ -715,8 +715,8 @@ jobs:
         run: |
           set -o pipefail
           ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
-          grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
-          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
+          grep -qx 'transport_env_pin_is_honoured' functional-iocp.log
+          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
       - name: Run lifecycle unit binary
         if: matrix.leg == 'a'
@@ -730,7 +730,7 @@ jobs:
         if: matrix.leg == 'a'
         run: python tools/check_memory.py ./bin/Release/transport_memory.exe
 
-      # ---- leg (b): the SDK as a consumer sees it, and the driver contract ----
+      # ---- leg (b): the SDK as a consumer sees it, and the transport contract ----
 
       - name: Check production library boundary
         if: matrix.leg == 'b'
@@ -748,18 +748,18 @@ jobs:
         if: matrix.leg == 'b'
         run: python tools/check_test_environment.py ./bin/Release/test.exe
 
-      - name: Native driver contract
+      - name: Native transport contract
         if: matrix.leg == 'b'
         run: |
-          ./bin/Release/test_driver.exe
+          ./bin/Release/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
-      # driver_env_pin_is_honoured runs under the same pin and proves the
+      # transport_env_pin_is_honoured runs under the same pin and proves the
       # pinned transport is the one granted. tools/check_transport_matrix.py
-      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # refuses a transport row in sdk/rocketnet_drivers.inc with no cell on an
       # OS it builds for. A cell line is: server transport, client
       # transport, then case=card for each case expected to fail until that
       # card lands: the case fails, or prints a skip naming that card. An
@@ -784,7 +784,7 @@ jobs:
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
-          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured"
+          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured"
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
           mkdir -p build
@@ -807,7 +807,7 @@ jobs:
           failed=0
           while read -r server client expected; do
             [ -n "$server" ] && [ -d "$logs" ] || continue
-            [ -f "$logs/$server.$client.driver_env_pin_is_honoured.rc" ] || continue
+            [ -f "$logs/$server.$client.transport_env_pin_is_honoured.rc" ] || continue
             for case in $cases; do
               log="$logs/$server.$client.$case.log"
               rc=$(cat "$logs/$server.$client.$case.rc")
@@ -1008,7 +1008,7 @@ jobs:
 
       - name: Build the sanitized functional suite and the lifecycle binaries
         if: matrix.leg == 'functional suite'
-        run: cmake --build build --target functional test_lifecycle test_driver test_sodium --parallel
+        run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
 
       - name: Run unit tests
         if: matrix.leg == 'unit suite'
@@ -1017,7 +1017,7 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./bin/test
 
-      - name: Run unit tests with the driver pin preserved
+      - name: Run unit tests with the transport pin preserved
         if: matrix.leg == 'unit suite portable'
         env:
           ASAN_OPTIONS: detect_leaks=0
@@ -1042,7 +1042,7 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/test_lifecycle
-          ./bin/test_driver
+          ./bin/test_transport
           ./bin/test_sodium
 
       - name: Inactive XDP index negative control
@@ -1501,7 +1501,7 @@ jobs:
   # in a soak months later.
   #
   # WHAT CARRIES THE THREADS, and what does not. bin/test is the unit suite
-  # and starts no driver. bin/functional is the surface that used to live in
+  # and starts no transport. bin/functional is the surface that used to live in
   # that run: on this linux runner the ladder falls to the gso rung (xdp
   # refused for privilege, gso granted), so the server's GSO worker threads
   # run, the client receive thread runs, and the hammer tests drive the

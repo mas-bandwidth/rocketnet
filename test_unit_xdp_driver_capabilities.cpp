@@ -3,11 +3,11 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The XDP driver backend reports its kernel prefilter counters through the
-// transport counter surface (rocketnet_server_driver_operations_t
-// prefilter_counters). Only a driver with a kernel prefilter fills it; the
+// The XDP transport backend reports its kernel prefilter counters through the
+// transport counter surface (rocketnet_server_transport_io_operations_t
+// prefilter_counters). Only a transport with a kernel prefilter fills it; the
 // other backends' stay NULL. This checks the registry, not a live map: no
-// driver is created, no XDP program is loaded or attached.
+// transport is created, no XDP program is loaded or attached.
 //
 // The AF_XDP bind config asks for zero copy in the bind flags, never in the
 // attach flags, and its fallback asks for copy. The config is built and read;
@@ -41,15 +41,15 @@
 int rocketnet_server_socket_send_slot( ptrdiff_t offset );
 int rocketnet_server_socket_send_queue( const struct rocketnet_address_t * to, int num_queues );
 
-static void prefilter_counters_xdp_driver_reports_them()
+static void prefilter_counters_xdp_transport_reports_them()
 {
-    const rocketnet_driver_definition_t * xdp = rocketnet_driver_definition( ROCKETNET_DRIVER_XDP );
+    const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
     check( xdp->backend->server->prefilter_counters != NULL );
 
-    const rocketnet_driver_definition_t * portable = rocketnet_driver_definition( ROCKETNET_DRIVER_PORTABLE );
+    const rocketnet_transport_definition_t * portable = rocketnet_transport_definition( ROCKETNET_TRANSPORT_PORTABLE );
     check( portable->backend->server->prefilter_counters == NULL );
 
-    const rocketnet_driver_definition_t * gso = rocketnet_driver_definition( ROCKETNET_DRIVER_GSO );
+    const rocketnet_transport_definition_t * gso = rocketnet_transport_definition( ROCKETNET_TRANSPORT_GSO );
     check( gso->backend->server->prefilter_counters == NULL );
 }
 
@@ -196,15 +196,15 @@ static void xdp_socket_config_requests_zero_copy_at_bind()
     fflush( stdout );
 }
 
-static void prefilter_counters_xdp_driver_reports_them()
+static void prefilter_counters_xdp_transport_reports_them()
 {
-    printf( "prefilter_counters_xdp_driver_reports_them [SKIPPED the XDP driver backend registers only on Linux]\n" );
+    printf( "prefilter_counters_xdp_transport_reports_them [SKIPPED the XDP transport backend registers only on Linux]\n" );
     fflush( stdout );
 }
 
 #endif
 
-REGISTER_UNIT_TEST( prefilter_counters_xdp_driver_reports_them );
+REGISTER_UNIT_TEST( prefilter_counters_xdp_transport_reports_them );
 REGISTER_UNIT_TEST( xdp_socket_config_requests_zero_copy_at_bind );
 REGISTER_UNIT_TEST( xdp_umem_config_sizes_fill_and_completion_rings );
 REGISTER_UNIT_TEST( xdp_send_slot_refuses_bad_offsets_before_dividing );

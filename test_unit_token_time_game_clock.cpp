@@ -78,7 +78,7 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
+    snprintf( config.transport, sizeof(config.transport), "%s", "loopback" );
     config.game_clock_epoch = epoch;
 
     int status = 0;

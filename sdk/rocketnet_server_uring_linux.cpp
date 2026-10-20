@@ -12,11 +12,11 @@
 #include <inttypes.h>
 #include <string.h>
 
-// The io_uring server driver. See rocketnet_server_uring.h for the shape;
+// The io_uring server transport. See rocketnet_server_uring.h for the shape;
 // this file is the machinery. tla/RNUringDriver.tla models it: each function
 // that implements a model action names the action.
 //
-// One io_uring per driver, touched only by the main thread; no worker
+// One io_uring per transport, touched only by the main thread; no worker
 // thread. The receive side is one multishot RECVMSG per socket in the
 // SO_REUSEPORT group over that socket's provided buffer ring: the kernel
 // fills ring buffers and posts one CQE per datagram, and the main thread
@@ -25,7 +25,7 @@
 // transport reads never changes until the next receive_packets, even though
 // receive CQEs are also reaped inside send_packets.
 //
-// The send side is the gso driver's staging: game threads reserve a frame
+// The send side is the gso transport's staging: game threads reserve a frame
 // slot with one atomic add between flushes, and send_packets submits one
 // SENDMSG per slot with bytes, each slot carrying its own msghdr, iovec and
 // destination, then reaps within its completion budget and one bounded
@@ -80,7 +80,7 @@
 // destroy waits this long per round for the cancels, and gives up waiting
 // after this many empty rounds, or after ROCKETNET_URING_DESTROY_MAX_ROUNDS
 // rounds of at most ROCKETNET_URING_RECEIVE_BUDGET completions each. a destroy that gives up exits the ring and
-// closes the sockets, but leaks the buffer rings, the queues and the driver
+// closes the sockets, but leaks the buffer rings, the queues and the transport
 // allocation: the kernel may still write them (see rocketnet_server_uring_destroy)
 
 #define ROCKETNET_URING_DESTROY_WAIT_SECONDS                                 1
@@ -192,7 +192,7 @@ struct rocketnet_server_uring_t
 };
 
 // the ring operations, each through the fake completion source when the
-// unit suite's seam is compiled in and the driver has one
+// unit suite's seam is compiled in and the transport has one
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
 static_assert( sizeof(struct rocketnet_server_uring_test_completion_t) == sizeof(struct io_uring_cqe), "a fake completion is laid out as a cqe" );
@@ -295,7 +295,7 @@ static unsigned rocketnet_server_uring_ring_cq_ready( struct rocketnet_server_ur
 
 // ---------------------------------------------------------------------------
 
-// address -> sockaddr at the boundary, the gso driver's rule: ports and
+// address -> sockaddr at the boundary, the gso transport's rule: ports and
 // address words are network order in the sockaddr and host order in
 // rocketnet_address_t, and an ipv4 destination on a dual stack socket is sent
 // v4-mapped. the receive direction is rocketnet_uring_sockaddr_to_address.
@@ -331,7 +331,7 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
     }
 }
 
-// one reuseport socket, bound as the gso driver binds its group: family from
+// one reuseport socket, bound as the gso transport binds its group: family from
 // the bind address, dual stack when ipv6, the configured buffer sizes
 // requested and the grant reported, the first socket discovering an
 // ephemeral port the rest join, non-blocking, don't-fragment.
@@ -802,16 +802,16 @@ static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring
 // bytes left allocated by destroys that gave up waiting, and how many did
 
 static std::atomic<uint64_t> rocketnet_server_uring_leaked_bytes_total{0};
-static std::atomic<uint64_t> rocketnet_server_uring_leaked_drivers_total{0};
+static std::atomic<uint64_t> rocketnet_server_uring_leaked_transports_total{0};
 
 uint64_t rocketnet_server_uring_leaked_bytes()
 {
     return rocketnet_server_uring_leaked_bytes_total.load();
 }
 
-uint64_t rocketnet_server_uring_leaked_drivers()
+uint64_t rocketnet_server_uring_leaked_transports()
 {
-    return rocketnet_server_uring_leaked_drivers_total.load();
+    return rocketnet_server_uring_leaked_transports_total.load();
 }
 
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
@@ -847,9 +847,9 @@ void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t 
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
 
-// the fake driver: create's allocations and arms, with the source in place
+// the fake transport: create's allocations and arms, with the source in place
 // of the ring and the sockets. each queue's buffer ring is plain memory the
-// driver returns buffers to as it does to a kernel's, and every buffer holds
+// transport returns buffers to as it does to a kernel's, and every buffer holds
 // the multishot recvmsg layout of one datagram from 127.0.0.1:1000
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * context, int num_queues, const struct rocketnet_server_uring_test_source_t * source )
@@ -947,7 +947,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     if ( num_queues <= 0 )
         num_queues = ROCKETNET_URING_DEFAULT_QUEUES;
 
-    // refuse, never clamp: a queue count past this driver's geometry is a
+    // refuse, never clamp: a queue count past this transport's geometry is a
     // configuration error named here, not a silently different server
 
     if ( num_queues > ROCKETNET_URING_MAX_QUEUES )
@@ -1076,7 +1076,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 // only closes the ring fd while the kernel's exit work drains later. so it
 // exits the ring and closes the sockets, and leaks the buffer rings, the
 // queues (receive buffers and msghdrs, which the kernel writes) and the
-// driver allocation (send slots), counted in rocketnet_server_uring_leaked_bytes.
+// transport allocation (send slots), counted in rocketnet_server_uring_leaked_bytes.
 // that keeps RNUringDriver FreedOnlyWhenDrained: nothing the kernel can touch
 // is freed while cq may be nonempty or a receive armed.
 
@@ -1159,7 +1159,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
             }
 
             rocketnet_server_uring_leaked_bytes_total += leaked;
-            rocketnet_server_uring_leaked_drivers_total++;
+            rocketnet_server_uring_leaked_transports_total++;
 
             rocketnet_warn( "io_uring transport: destroy gave up waiting for the receive cancels and the sends; %" PRIu64 " bytes the kernel may still write are leaked, not freed", leaked );
             return;
@@ -1216,7 +1216,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
     memcpy( counters, uring->counters, sizeof(uring->counters) );
 }
 
-// the builtin driver's receive_drops hook: the size
+// the builtin transport's receive_drops hook: the size
 // drops (:636-638, :653-655), split at the receive ceiling; main thread, where the
 // CQEs are reaped
 
@@ -1546,7 +1546,7 @@ uint64_t rocketnet_server_uring_leaked_bytes()
     return 0;
 }
 
-uint64_t rocketnet_server_uring_leaked_drivers()
+uint64_t rocketnet_server_uring_leaked_transports()
 {
     return 0;
 }

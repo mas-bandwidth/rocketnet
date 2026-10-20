@@ -6,7 +6,7 @@
 // The server send pass at a cap below the client count: sdk/rocketnet_
 // message_server.cpp rotates the first connection served, so a cap of one
 // packet per tick serves two or three clients in turn instead of starving
-// all but the first. The server runs on the in-memory loopback driver with
+// all but the first. The server runs on the in-memory loopback transport with
 // step-driven clients and a test clock starting at 1000.0; no socket, no
 // thread, no sleep and no real time. Each client sends one reliable and one
 // unreliable message per tick for 60 s of test time at 10 Hz, and the
@@ -462,7 +462,7 @@ static void server_send_capacity_default_covers_clients()
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( config.backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( config.server_public_key, config.server_secret_key ) == ROCKETNET_STATUS_OK );
-    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     struct rocketnet_server_transport_t * transport = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
     check( transport != NULL );
     check( rocketnet_server_transport_send_capacity( transport ) >= config.max_clients );

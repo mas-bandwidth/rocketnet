@@ -24,7 +24,7 @@
 
 #define check rocketnet_unit_check
 
-extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
+extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 enum
 {
@@ -32,7 +32,7 @@ enum
     DESTROY_DISCONNECT_MAX_CLIENTS = 4
 };
 
-// the cases build both endpoints over the loopback driver their config
+// the cases build both endpoints over the loopback transport their config
 // structs name (destroy_disconnect_server_create and
 // destroy_disconnect_client_create below). the environment overlays the
 // struct (sdk/rocketnet_server_transport.cpp:955 and
@@ -120,7 +120,7 @@ static rocketnet_server_t * destroy_disconnect_server_create( const destroy_disc
     memcpy( config.backend_public_key, keys->backend_public, sizeof( config.backend_public_key ) );
     memcpy( config.server_public_key, keys->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, keys->server_secret, sizeof( config.server_secret_key ) );
-    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
 
     int status = -1;
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, now, &status );
@@ -158,11 +158,11 @@ static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disc
 
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     config.step_driven = 1;
 
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
-        NULL, token, &config, 0.0, 1000, rocketnet_loopback_driver.client, NULL );
+        NULL, token, &config, 0.0, 1000, rocketnet_loopback_transport.client, NULL );
     check( transport != NULL );
 
     rn_message_link_t link;
@@ -218,29 +218,29 @@ static const uint64_t * destroy_disconnect_client_counters( rocketnet_client_t *
 // transport for the client's address, whatever state the client is in.
 static void * destroy_disconnect_observed_endpoint = NULL;
 
-static void * destroy_disconnect_observed_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
+static void * destroy_disconnect_observed_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    void * instance = rocketnet_loopback_driver.client->create( context, config, bind );
+    void * instance = rocketnet_loopback_transport.client->create( context, config, bind );
     destroy_disconnect_observed_endpoint = instance;
     return instance;
 }
 
-static rocketnet_client_driver_operations_t destroy_disconnect_observed_operations()
+static rocketnet_client_transport_io_operations_t destroy_disconnect_observed_operations()
 {
-    rocketnet_client_driver_operations_t operations = *rocketnet_loopback_driver.client;
+    rocketnet_client_transport_io_operations_t operations = *rocketnet_loopback_transport.client;
     operations.create = destroy_disconnect_observed_create;
     return operations;
 }
 
 static rocketnet_client_t * destroy_disconnect_observed_client_create( const destroy_disconnect_keys_t * keys, uint16_t port, uint64_t client_id,
-                                                                       const rocketnet_client_driver_operations_t * operations, void ** endpoint )
+                                                                       const rocketnet_client_transport_io_operations_t * operations, void ** endpoint )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     destroy_disconnect_mint_token( keys, port, client_id, token );
 
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     config.step_driven = 1;
 
     destroy_disconnect_observed_endpoint = NULL;
@@ -273,7 +273,7 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
     {
         rocketnet_address_t from;
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-        if ( rocketnet_loopback_driver.client->receive( endpoint, &from, packet, (int) sizeof( packet ) ) <= 0 )
+        if ( rocketnet_loopback_transport.client->receive( endpoint, &from, packet, (int) sizeof( packet ) ) <= 0 )
             break;
         count++;
     }
@@ -483,13 +483,13 @@ static void destroy_without_live_connection_sends_nothing()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     destroy_disconnect_mint_token( &keys, 40000, 0xE301ULL, token );
 
-    // Each fake driver is static and zeroed in place: one fake holds two 256
+    // Each fake transport is static and zeroed in place: one fake holds two 256
     // datagram rings (test/fake_client_driver.h:37), and an unoptimised MSVC
     // build gives both blocks their own stack slot, past the default 1 MB stack.
 
-    // Client on the base fake driver: destroyed before any session keys exist.
+    // Client on the base fake transport: destroyed before any session keys exist.
     {
-        static rocketnet_fake_client_driver_t fake;
+        static rocketnet_fake_client_transport_io_t fake;
         memset( &fake, 0, sizeof( fake ) );
         rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
@@ -505,9 +505,9 @@ static void destroy_without_live_connection_sends_nothing()
         check( fake.send_batch_calls == 0 );
     }
 
-    // Client on the I/O-step fake driver: destroyed with no live connection.
+    // Client on the I/O-step fake transport: destroyed with no live connection.
     {
-        static rocketnet_fake_client_driver_t fake;
+        static rocketnet_fake_client_transport_io_t fake;
         memset( &fake, 0, sizeof( fake ) );
         rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
@@ -537,7 +537,7 @@ static void destroy_without_live_connection_sends_nothing()
     // the loopback endpoint of every client the server has heard from: each
     // endpoint is drained just before the destroy and again just after it,
     // and the second drain must be empty.
-    const rocketnet_client_driver_operations_t observed = destroy_disconnect_observed_operations();
+    const rocketnet_client_transport_io_operations_t observed = destroy_disconnect_observed_operations();
 
     // Server with zero clients: a server that never heard from a client,
     // beside a client endpoint that never sent, sends nothing on destroy.

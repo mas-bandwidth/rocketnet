@@ -1,9 +1,9 @@
 /*
-    rocketnet driver probe: Darwin surface report (#100, the #81 doctrine)
+    rocketnet transport probe: Darwin surface report (#100, the #81 doctrine)
 
     The macOS sibling of probe.c: every claim about Darwin's fast paths is
     a runtime attempt with the errno recorded, never an assumption. Run on
-    the target machine; the report is the survey the driver choice cites.
+    the target machine; the report is the survey the transport choice cites.
 
     What it measures:
 

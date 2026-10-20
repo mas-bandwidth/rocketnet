@@ -73,7 +73,7 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
 
 // The buffer loop of the Windows connection-type query (get_connection_type,
 // below), over a query callback so it is unit-tested with a refusing allocator
-// and a fake query (test_unit_driver_create_out_of_memory.cpp); compiled on
+// and a fake query (test_unit_transport_create_out_of_memory.cpp); compiled on
 // every platform. Each attempt asks rocketnet_malloc for bytes and runs the
 // query on the buffer. A refused allocation ends the fetch at once: the query
 // never sees a NULL buffer. An overflow answer, with bytes set to the size the
@@ -132,7 +132,7 @@ void rocketnet_platform_set_network_lookups_for_testing( const rocketnet_platfor
     rocketnet_platform_network_lookups_override.store( lookups, std::memory_order_release );
 }
 
-// Network-thread priority (docs/CLIENT-IO.md, DRIVERS.md). The calls and their
+// Network-thread priority (docs/CLIENT-IO.md, TRANSPORTS.md). The calls and their
 // values are the flow library's (flow_platform.cpp), unchanged; each platform
 // block below fills the real call table. A unit test replaces the table
 // (test_unit_thread_priority.cpp). A refused call is counted process-wide and
@@ -2606,7 +2606,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     }
 }
 
-// UDP's ordinary weather on the receive path (DRIVERS.md, ICMP errors). a
+// UDP's ordinary weather on the receive path (TRANSPORTS.md, ICMP errors). a
 // BSD stack reports an ICMP error (port or host unreachable, a peer that
 // died hard) to the next receive on a CONNECTED socket, and a full mbuf
 // pool reports ENOBUFS; neither says anything about the datagrams still
@@ -2693,7 +2693,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             const int error = errno;
 
             // ICMP-class and buffer weather: skip it and read on, the
-            // datagrams behind it are still queued (DRIVERS.md, ICMP errors)
+            // datagrams behind it are still queued (TRANSPORTS.md, ICMP errors)
 
             if ( rocketnet_platform_receive_weather( error ) )
                 continue;
@@ -3092,7 +3092,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
             // ICMP-class and buffer weather (and EINTR): skip it and keep
             // draining on the batch pump until EAGAIN -- never a pause and
-            // never the end of a drain (DRIVERS.md, ICMP errors).
+            // never the end of a drain (TRANSPORTS.md, ICMP errors).
 
             if ( rocketnet_platform_receive_weather( error ) )
                 continue;
@@ -3999,7 +3999,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     // own the port exclusively: without SO_EXCLUSIVEADDRUSE another local
     // process binds the same port with SO_REUSEADDR and takes its datagrams.
-    // set before bind, as the IOCP and RIO drivers do.
+    // set before bind, as the IOCP and RIO transports do.
 
     BOOL exclusive = TRUE;
     if ( setsockopt( s->handle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)( &exclusive ), sizeof( exclusive ) ) != 0 )
@@ -4640,7 +4640,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // ----------------------------------------------------------------
 
-// pump-request socket create (#106): the driver ladder's entry into the
+// pump-request socket create (#106): the transport ladder's entry into the
 // platform pump selection. pump NULL or "auto" is the pre-existing
 // behavior -- offer the platform's batch pump, honoring the
 // ROCKETNET_PUMP override. "portable" forces the portable pump: the
@@ -4650,13 +4650,13 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 // absorbs) refuses loudly here so a pinned rung refuses rather than
 // silently degrading. The first real batch call is the functional probe;
 // its own live-refusal pause-and-reprobe discipline (#102) remains the
-// driver's internal behavior below the ladder.
+// transport's internal behavior below the ladder.
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump )
 {
     const bool require_msgx = pump && strcmp( pump, "msgx" ) == 0;
 
-    // refusals here log at WARN, not ERROR: this call sits under the driver
+    // refusals here log at WARN, not ERROR: this call sits under the transport
     // ladder, whose own summary decides whether a refusal was a fall (warn)
     // or a create failure (error) -- an msgx refusal on a falling auto
     // ladder is normal operation, not an error line in every log

@@ -50,7 +50,7 @@ COLUMNS = {
     "operating system": "os",
     "architecture": "arch",
     "compiler": "compiler",
-    "drivers": "drivers",
+    "transports": "transports",
     "tier": "tier",
     "workflow": "workflow",
     "runner label": "label",

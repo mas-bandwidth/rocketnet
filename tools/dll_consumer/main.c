@@ -4,7 +4,7 @@
 */
 
 // A program that sees only rocketnet.h and one prebuilt development library:
-// a message server on 127.0.0.1 through the portable driver, a client that
+// a message server on 127.0.0.1 through the portable transport, a client that
 // connects with a development connect token, and one message each way within
 // five seconds of wall clock. tools/check_dll_consumer.py copies the header
 // and the library into an empty directory and builds this as C99 and (through

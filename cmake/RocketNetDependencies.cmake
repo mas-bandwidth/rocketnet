@@ -44,8 +44,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
     endforeach()
 endif()
-# liburing for the io_uring server driver: optional when building (absent,
-# the driver compiles to a create that refuses), required when the installed
+# liburing for the io_uring server transport: optional when building (absent,
+# the transport compiles to a create that refuses), required when the installed
 # package was built with it (ROCKETNET_IO_URING_REQUIRED, set by the config).
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_IO_URING AND NOT TARGET RocketNet::Uring)
     if(ROCKETNET_IO_URING_REQUIRED)
@@ -61,6 +61,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_IO_URING AND NOT TARGET Rock
             IMPORTED_LOCATION "${ROCKETNET_Uring_LIBRARY}"
             INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_Uring_INCLUDE_DIR}")
     else()
-        message(STATUS "liburing not found: the io_uring server driver is built to refuse")
+        message(STATUS "liburing not found: the io_uring server transport is built to refuse")
     endif()
 endif()

@@ -2,7 +2,7 @@
 #pragma once
 #include "rocketnet_internal.h"
 
-// Driver-owned staging generations. The caller holds its publication mutex
+// Transport-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
 // before publish; the worker retires only after copying its final packet.
 // When every generation is queued, acquire returns -1; reopen hands back the

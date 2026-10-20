@@ -1,5 +1,5 @@
 #!/bin/sh
-# rocketnet driver bench campaign runner (#81, landed by #98 item 7).
+# rocketnet transport bench campaign runner (#81, landed by #98 item 7).
 #
 # One sitting, start to finish, reproducible from the repo instead of from a
 # shell history on the box: preflight the host, run the harness-honesty plants,
@@ -32,7 +32,7 @@ say()
 
 : > "$REPORT"
 
-say "rocketnet driver bench campaign"
+say "rocketnet transport bench campaign"
 say "date            $( date -u +%Y-%m-%dT%H:%M:%SZ )"
 say "host            $( uname -srm ) $( hostname )"
 say "repo revision   $( git -C .. rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout' )"
@@ -123,7 +123,7 @@ PACE=100000
 # Ports derive from the pid rather than being fixed, the #107 class: two
 # campaigns on one box -- or a campaign beside a smoke run -- otherwise bind
 # the same numbers, and the loser reports a rate of zero that reads like a
-# slow driver rather than like a busy port.
+# slow transport rather than like a busy port.
 
 PORT_BASE=${BENCH_PORT_BASE:-$(( 20000 + ( $$ % 20000 ) ))}
 say "port base       $PORT_BASE (derived from pid; override with BENCH_PORT_BASE)"

@@ -60,7 +60,7 @@ The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
 (functional suite; it also runs `test_msgx`, `test_serialize` and
 `test_transport_control` as sibling executables, `functional/main.cpp`),
 `bin/test_msgx` (built only on Apple, `CMakeLists.txt`, the `if(APPLE)` block
-that adds it), `bin/test_lifecycle`, `bin/test_driver`, the
+that adds it), `bin/test_lifecycle`, `bin/test_transport`, the
 `bin/example_*` programs, `bin/soak`, `bin/soak_sim`, `bin/load` and
 `bin/transport_memory`.
 
@@ -83,14 +83,14 @@ equal to `sdk`.
 
 ## The macOS transports
 
-The driver registry has two rows that build on macOS: `portable` (every
+The transport registry has two rows that build on macOS: `portable` (every
 platform, server rank 30, client rank 30) and `msgx` (macOS, server rank 10,
 client rank 10); lower ranks win (`sdk/rocketnet_drivers.inc`, lines 5 and 8).
 So `auto` asks for `msgx` first on both endpoints and falls to `portable` when
 `msgx` refuses. The `loopback` row is pin-only, an in-memory transport for
 tests (`sdk/rocketnet_drivers.inc`, line 10). Both socket transports use the
 same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
-`rocketnet_msgx_driver`); what differs is the pump under the socket.
+`rocketnet_msgx_transport`); what differs is the pump under the socket.
 
 **msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
 (`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").
@@ -136,7 +136,7 @@ refuses the create and the log lists the valid names. A name the registry
 knows but macOS does not build (`gso`, `xdp`, `iocp`, `io_uring`, `rio`) is
 skipped with `transport <name> is not available here. skipped`, and a list
 left with no transport for the endpoint falls to `auto` with a warning
-(`sdk/rocketnet_config.cpp`, `rocketnet_driver_ladder_parse`):
+(`sdk/rocketnet_config.cpp`, `rocketnet_transport_ladder_parse`):
 
 ```sh
 ROCKETNET_SERVER_TRANSPORT=gso ./bin/example_transports
@@ -146,7 +146,7 @@ logs `transport list "gso" names no transport for this endpoint on this platform
 displaces whatever `transport` the program set (each create logs `server config override ROCKETNET_SERVER_TRANSPORT=gso (displaces <old>)`), so the
 example's own impossible pin is displaced too, its last check fails, and it
 exits 1. The functional
-case `driver_env_pin_is_honoured` fails under such a pin for the same reason.
+case `transport_env_pin_is_honoured` fails under such a pin for the same reason.
 
 Pinning `msgx` requires the batch symbols on the host: without them the create
 refuses instead of falling to `portable`. The first real batch call then
@@ -188,7 +188,7 @@ use an example program, or your game, to see it.
 CI pins every macOS pair on IPv4, IPv6 and dual stack: `portable/portable`,
 `portable/msgx`, `msgx/portable`, `msgx/msgx` and `loopback/loopback`, each
 running `test_transport_udp_loopback`, `test_transport_ipv6_loopback`,
-`test_transport_dual_stack_ipv4_client` and `driver_env_pin_is_honoured`
+`test_transport_dual_stack_ipv4_client` and `transport_env_pin_is_honoured`
 (`.github/workflows/ci.yml`, "Transport family matrix",
 `TRANSPORT_MATRIX_MACOS`). The commands are in "Verify a Mac" below.
 
@@ -410,12 +410,12 @@ make JOBS=4
 ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
 ./bin/test_msgx
 ./bin/test_lifecycle
-./bin/test_driver
+./bin/test_transport
 ./bin/example_transports
 
 for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loopback; do
   for name in test_transport_udp_loopback test_transport_ipv6_loopback \
-              test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured; do
+              test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured; do
     ROCKETNET_SERVER_TRANSPORT=${pair%%:*} ROCKETNET_CLIENT_TRANSPORT=${pair##*:} \
       ./bin/functional --run $name > /dev/null || echo "FAILED $pair $name"
   done
@@ -433,8 +433,8 @@ How to read them:
   60 seconds prints a warning; over 120 seconds it is killed and the suite
   fails (`test/suite_runner.h`; Debug scales the limit).
 - `./bin/functional` opens real sockets on loopback. With no pin set it prints
-  `driver_env_pin_is_honoured [SKIPPED ...]`; under the portable pin it prints
-  `driver_env_pin_is_honoured` alone, which is what CI greps for
+  `transport_env_pin_is_honoured [SKIPPED ...]`; under the portable pin it prints
+  `transport_env_pin_is_honoured` alone, which is what CI greps for
   (`.github/workflows/ci.yml`, "Run functional suite (portable rung pinned by
   env)").
 - The loop is CI's macOS transport matrix, case by case; it prints nothing

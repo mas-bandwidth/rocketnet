@@ -13,7 +13,7 @@
 //   * the pre-init refusal -> NOT_INITIALIZED
 //   * C2 (config env apply failure) -> CONFIG_ENV_INVALID
 //   * C3 (config validation failure) -> CONFIG_OUT_OF_RANGE
-//   * C5 (driver ladder parse failure) -> INVALID_TRANSPORT_LIST
+//   * C5 (transport ladder parse failure) -> INVALID_TRANSPORT_LIST
 //   * C6 (transport block malloc refusal) -> OUT_OF_MEMORY
 //   * C7 (fragmentation storage malloc refusal) -> OUT_OF_MEMORY
 //   * C8 (invalid connect token) -> INVALID_CONNECT_TOKEN
@@ -23,7 +23,7 @@
 //   * C4 (reassembly memory budget), whose maximum valid geometry (256 slots x
 //     the 256-fragment payload ceiling) is far under the 512 MiB component
 //     budget;
-//   * C10 (driver ladder exhausted), which needs a socket open to refuse;
+//   * C10 (transport ladder exhausted), which needs a socket open to refuse;
 //   * C11 (mutex/thread create failure), which needs a platform primitive to
 //     fail.
 
@@ -183,11 +183,11 @@ static void client_transport_create_ex_reports_every_status()
         check_create_status( ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, token, &config, &state, &status );
     }
 
-    // C5: an unparseable driver candidate list refuses at the ladder parse
+    // C5: an unparseable transport candidate list refuses at the ladder parse
     {
         struct rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
-        snprintf( config.driver, sizeof(config.driver), "%s", "no-such-driver" );
+        snprintf( config.transport, sizeof(config.transport), "%s", "no-such-transport" );
         check_create_status( ROCKETNET_STATUS_INVALID_TRANSPORT_LIST, token, &config, &state, &status );
     }
 

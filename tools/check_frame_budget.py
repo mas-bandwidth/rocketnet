@@ -2,7 +2,7 @@
 """
 Nightly client per-frame main-thread budget gate for RocketNet.
 
-Runs ./bin/client_main_thread_cost <driver> 32 2000 three times, checking the
+Runs ./bin/client_main_thread_cost <transport> 32 2000 three times, checking the
 1-minute load average before each run, parses the client_main_thread_cost
 output line for total_us_p99=<float>, takes the median across the 3 runs, and
 gates total_us_p99 <= 100.0 us.
@@ -28,7 +28,7 @@ PACKETS_PER_FRAME = 32
 FRAMES = 2000
 
 # Matches the real client_main_thread_cost output line:
-#   client_main_thread_cost driver=<d> packets_per_frame=32 frames=2000 ... total_us_p99=<float> ...
+#   client_main_thread_cost transport=<d> packets_per_frame=32 frames=2000 ... total_us_p99=<float> ...
 # Also accepts synthetic P=32 lines of the form:
 #   ... P=32 ... total_us p99=<float> ... or total_us_p99=<float>
 LINE_RE = re.compile(
@@ -77,7 +77,7 @@ def parse_p32_total_p99(stdout: str) -> Tuple[float, str]:
 
 
 def evaluate_gate(
-    driver: str,
+    transport: str,
     run_outputs: List[str],
     load1: Optional[float],
     cores: int,
@@ -107,14 +107,14 @@ def evaluate_gate(
         elif not is_quiet_host(cur_load, cur_cores):
             lines_out.append(f"VOID load={cur_load:.2f} cores={cur_cores}")
             lines_out.append(
-                f"frame_budget driver={driver} P=32 total_us_p99_median=VOID "
+                f"frame_budget transport={transport} P=32 total_us_p99_median=VOID "
                 f"runs=- gate={gate_us:g} verdict=VOID"
             )
             return (0 if report_only else 3), "\n".join(lines_out)
 
         if idx >= len(run_outputs):
             lines_out.append(
-                f"frame_budget driver={driver} P=32 total_us_p99_median=FAIL "
+                f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
                 f"runs=- gate={gate_us:g} verdict=FAIL (no runs collected)"
             )
             return 1, "\n".join(lines_out)
@@ -125,7 +125,7 @@ def evaluate_gate(
         except ValueError as exc:
             lines_out.extend(raw_lines)
             lines_out.append(
-                f"frame_budget driver={driver} P=32 total_us_p99_median=FAIL "
+                f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
                 f"runs=- gate={gate_us:g} verdict=FAIL ({exc})"
             )
             return 1, "\n".join(lines_out)
@@ -134,7 +134,7 @@ def evaluate_gate(
 
     if not samples:
         lines_out.append(
-            f"frame_budget driver={driver} P=32 total_us_p99_median=FAIL "
+            f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
             f"runs=- gate={gate_us:g} verdict=FAIL (no runs collected)"
         )
         return 1, "\n".join(lines_out)
@@ -145,7 +145,7 @@ def evaluate_gate(
     passed = median_us <= gate_us
     verdict = "PASS" if passed else "FAIL"
     lines_out.append(
-        f"frame_budget driver={driver} P=32 total_us_p99_median={median_us:.2f} "
+        f"frame_budget transport={transport} P=32 total_us_p99_median={median_us:.2f} "
         f"runs={runs_str} gate={gate_us:g} verdict={verdict}"
     )
     if passed or report_only:
@@ -155,7 +155,7 @@ def evaluate_gate(
 
 def run_benchmark_with_load_checks(
     binary: str,
-    driver: str,
+    transport: str,
     runs: int = DEFAULT_RUNS,
     gate_us: float = GATE_US,
     report_only: bool = False,
@@ -183,17 +183,17 @@ def run_benchmark_with_load_checks(
         elif not is_quiet_host(load1, cores):
             lines_out.append(f"VOID load={load1:.2f} cores={cores}")
             lines_out.append(
-                f"frame_budget driver={driver} P=32 total_us_p99_median=VOID "
+                f"frame_budget transport={transport} P=32 total_us_p99_median=VOID "
                 f"runs=- gate={gate_us:g} verdict=VOID"
             )
             return (0 if report_only else 3), "\n".join(lines_out)
 
-        rc, stdout, stderr = runner(binary, driver)
+        rc, stdout, stderr = runner(binary, transport)
         if rc != 0:
             lines_out.extend(raw_lines)
             err_msg = (stderr or stdout or "").strip()
             lines_out.append(
-                f"frame_budget driver={driver} P=32 total_us_p99_median=FAIL "
+                f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
                 f"runs=- gate={gate_us:g} verdict=FAIL (run {i + 1}/{runs} exited {rc}: {err_msg})"
             )
             return 1, "\n".join(lines_out)
@@ -203,7 +203,7 @@ def run_benchmark_with_load_checks(
         except ValueError as exc:
             lines_out.extend(raw_lines)
             lines_out.append(
-                f"frame_budget driver={driver} P=32 total_us_p99_median=FAIL "
+                f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
                 f"runs=- gate={gate_us:g} verdict=FAIL ({exc})"
             )
             return 1, "\n".join(lines_out)
@@ -217,7 +217,7 @@ def run_benchmark_with_load_checks(
     passed = median_us <= gate_us
     verdict = "PASS" if passed else "FAIL"
     lines_out.append(
-        f"frame_budget driver={driver} P=32 total_us_p99_median={median_us:.2f} "
+        f"frame_budget transport={transport} P=32 total_us_p99_median={median_us:.2f} "
         f"runs={runs_str} gate={gate_us:g} verdict={verdict}"
     )
     if passed or report_only:
@@ -228,16 +228,16 @@ def run_benchmark_with_load_checks(
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Check client per-frame main-thread cost budget.")
     parser.add_argument("pos_bin", nargs="?", help="Optional positional path to client_main_thread_cost binary.")
-    parser.add_argument("pos_driver", nargs="?", help="Optional positional driver name.")
+    parser.add_argument("pos_transport", nargs="?", help="Optional positional transport name.")
     parser.add_argument(
         "--bin",
         default=None,
         help="Path to client_main_thread_cost binary (default: ./bin/client_main_thread_cost).",
     )
     parser.add_argument(
-        "--driver",
+        "--transport",
         default=None,
-        help="Driver name (default: portable).",
+        help="Transport name (default: portable).",
     )
     parser.add_argument(
         "--runs",
@@ -259,11 +259,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     binary = args.bin or args.pos_bin or "./bin/client_main_thread_cost"
-    driver = args.driver or args.pos_driver or "portable"
+    transport = args.transport or args.pos_transport or "portable"
 
     code, report = run_benchmark_with_load_checks(
         binary=binary,
-        driver=driver,
+        transport=transport,
         runs=args.runs,
         gate_us=args.gate_us,
         report_only=args.report_only,

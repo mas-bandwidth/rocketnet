@@ -13,7 +13,7 @@
     using test/live_verify.h (sections 3 to 5). It runs at the max_clients
     the run sets, dumps counters and resident memory each minute, exits when
     its controlling ssh or stdin closes, and refuses to start when the XDP
-    driver is pinned and the interface reports the in-tree driver (section 9).
+    transport is pinned and the interface reports the in-tree driver (section 9).
 */
 
 #include "rocketnet.h"
@@ -927,12 +927,12 @@ int main( int argc, char ** argv )
 
     const char * env_transport = getenv( "ROCKETNET_SERVER_TRANSPORT" );
     if ( transport )
-        snprintf( config.driver, sizeof config.driver, "%s", transport );
+        snprintf( config.transport, sizeof config.transport, "%s", transport );
     else if ( env_transport )
-        snprintf( config.driver, sizeof config.driver, "%s", env_transport );
+        snprintf( config.transport, sizeof config.transport, "%s", env_transport );
 
     // section 9: when xdp is pinned, refuse the in-tree driver
-    if ( strcmp( config.driver, "xdp" ) == 0 )
+    if ( strcmp( config.transport, "xdp" ) == 0 )
     {
         char nic[64] = {0};
         if ( interface_for_address( address, nic, sizeof nic ) && in_tree_driver( nic ) )
@@ -957,14 +957,14 @@ int main( int argc, char ** argv )
     }
 
     struct rocketnet_server_transport_t * transport_obj = rocketnet_message_server_transport( server );
-    printf( "server transport %s\n", rocketnet_server_transport_driver( transport_obj ) );
+    printf( "server transport %s\n", rocketnet_server_transport_io_name( transport_obj ) );
     printf( "server max_clients %d\n", config.max_clients );
     if ( results_path )
     {
         g_results = fopen( results_path, "w" );
         if ( g_results )
         {
-            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_driver( transport_obj ) );
+            results_line( "bench", "%s\t%u\t%u\t%d\t%s", label, seed, send_kbps, max_clients, rocketnet_server_transport_io_name( transport_obj ) );
             results_event( "listening" );
         }
     }

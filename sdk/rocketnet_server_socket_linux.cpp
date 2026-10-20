@@ -722,7 +722,7 @@ static bool rocketnet_server_socket_ipv6_link_local( const rocketnet_address_t *
 
 // the network interface carrying the public address, read-only -- shared by
 // the pre-flight and create so they cannot disagree about which interface
-// the driver would use. IPv4 matches an AF_INET address, IPv6 an AF_INET6
+// the transport would use. IPv4 matches an AF_INET address, IPv6 an AF_INET6
 // address, each on an UP interface.
 
 static bool rocketnet_server_socket_find_interface( const rocketnet_address_t * public_address, char * interface_name, size_t interface_name_size, unsigned int * interface_index )
@@ -884,7 +884,7 @@ static int rocketnet_server_socket_count_cpu_list( const char * list )
 // twice (this function and the script's awk form, held to the same case
 // set by the fixture test here and the script's selftest): the interface
 // name matches as a bounded token -- preceded by line start, whitespace,
-// or '-' (driver-prefixed names like i40e-ens1f0-TxRx-0, the exact
+// or '-' (transport-prefixed names like i40e-ens1f0-TxRx-0, the exact
 // family B3 tells operators to build) and followed by '-', ':', '@',
 // whitespace, or end. pure string logic, exported for the fixture test.
 // accepted asymmetries with the script's form, recorded: this reader
@@ -978,7 +978,7 @@ uint64_t rocketnet_server_socket_memory_required(int num_queues)
 
 static bool rocketnet_server_socket_interface_is_veth( const char * interface_name )
 {
-    // the driver name the kernel reports for the interface (ETHTOOL_GDRVINFO)
+    // the transport name the kernel reports for the interface (ETHTOOL_GDRVINFO)
     const int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
     if ( probe_fd < 0 )
         return false;
@@ -1222,7 +1222,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 
             if ( matched_irqs == 0 )
             {
-                // HONESTY over a false rationale: some drivers' IRQ names
+                // HONESTY over a false rationale: some transports' IRQ names
                 // never carry the netdev name (mlx5-class), and VMs may
                 // have no per-queue vectors at all -- R4 cannot be
                 // verified BY NAME here, and saying so is different from
@@ -1401,7 +1401,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     }
 
     // one server, one public address, one family: IPv4 or IPv6, the family
-    // of the address it is created with (DRIVERS.md, AF_XDP)
+    // of the address it is created with (TRANSPORTS.md, AF_XDP)
 
     if ( public_address.type != ROCKETNET_ADDRESS_IPV4 && public_address.type != ROCKETNET_ADDRESS_IPV6 )
     {
@@ -1850,7 +1850,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        // create umem and xdp socket: zero copy first, copy if the driver refuses the zero-copy bind.
+        // create umem and xdp socket: zero copy first, copy if the transport refuses the zero-copy bind.
         // A refused bind leaves the umem's rings set, so the fallback starts from a fresh umem.
 
         int result = 0;
@@ -2108,7 +2108,7 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
         // destroy mutexes: a create that failed part way reaches here with
         // later queues' mutexes never created, so only a created one is
-        // destroyed (the IOCP driver's guard, rocketnet_server_iocp_windows.cpp:436)
+        // destroyed (the IOCP transport's guard, rocketnet_server_iocp_windows.cpp:436)
 
         if ( socket->send_mutex.ok )
             rocketnet_platform_mutex_destroy( &socket->send_mutex );
@@ -2250,7 +2250,7 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     // view passes that view's own from[] entry, which names the frame it
     // answers, used only with no gateway. no MAC (no gateway, nothing
     // learned, no frame answered) is a refusal the transport counts
-    // (ROCKETNET_DRIVER_PACKET_UNREACHABLE)
+    // (ROCKETNET_TRANSPORT_PACKET_UNREACHABLE)
 
     const uint8_t * answered_mac = NULL;
     const uintptr_t view_begin = (uintptr_t) &server_socket->process_packets.from[0];
@@ -2263,7 +2263,7 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     const uint8_t * destination_mac = rocketnet_xdp_reply_mac( &server_socket->reply_macs, to, answered_mac, &refused );
     if ( !destination_mac )
     {
-        *packet_id = ROCKETNET_DRIVER_PACKET_UNREACHABLE;
+        *packet_id = ROCKETNET_TRANSPORT_PACKET_UNREACHABLE;
         return NULL;
     }
 
@@ -2706,7 +2706,7 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
     return server_socket->num_queues;
 }
 
-// The driver's send_failures operation sums frames each queue's flush drops
+// The transport's send_failures operation sums frames each queue's flush drops
 // because the copy rejects their length or the codec refuses to build them.
 // Read both counts under the send_mutex used by their XDP writer.
 
@@ -2844,7 +2844,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
     while ( !socket->quit )
     {
-        // busy poll the driver
+        // busy poll the transport
 
         poll( fds, 1, 0 );
 
@@ -3095,7 +3095,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                     desc->len = batch_packet_bytes[i];
                 }
 
-                // submit send queue to driver
+                // submit send queue to transport
 
                 xsk_ring_prod__submit( &socket->send_queue, send_packets );
 
@@ -3110,7 +3110,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
         }
 
-        // IMPORTANT: Sleep so the driver gets all the time it wants. Otherwise, it can hitch us
+        // IMPORTANT: Sleep so the transport gets all the time it wants. Otherwise, it can hitch us
 
         rocketnet_platform_sleep( 0.0 );
     }

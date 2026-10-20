@@ -37,15 +37,15 @@ three runs; all values are microseconds.
 The raw runs:
 
 ```
-client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=6.763 send_us_p99=19.557 send_us_max=30.007 update_us_p50=7.293 update_us_p99=155.033 update_us_max=176.865 total_us_p50=14.748 total_us_p99=165.233 total_us_max=182.936 received=2186
-client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=6.493 send_us_p99=15.660 send_us_max=29.225 update_us_p50=8.076 update_us_p99=163.039 update_us_max=271.854 total_us_p50=14.758 total_us_p99=170.242 total_us_max=278.287 received=2178
-client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=7.744 send_us_p99=15.960 send_us_max=41.148 update_us_p50=7.835 update_us_p99=156.195 update_us_max=187.175 total_us_p50=15.599 total_us_p99=165.603 total_us_max=193.697 received=2194
-client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=50.335 send_us_p99=85.051 send_us_max=126.659 update_us_p50=9.097 update_us_p99=282.014 update_us_max=549.229 total_us_p50=59.573 total_us_p99=337.599 total_us_max=622.738 received=17565
-client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=48.913 send_us_p99=87.816 send_us_max=219.015 update_us_p50=8.766 update_us_p99=280.561 update_us_max=741.182 total_us_p50=57.930 total_us_p99=338.300 total_us_max=876.598 received=17584
-client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=48.952 send_us_p99=102.965 send_us_max=419.463 update_us_p50=9.017 update_us_p99=266.474 update_us_max=3021.105 total_us_p50=58.280 total_us_p99=329.243 total_us_max=3072.022 received=17584
-client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=273.387 send_us_p99=508.202 send_us_max=3373.172 update_us_p50=370.030 update_us_p99=1287.195 update_us_max=4959.403 total_us_p50=661.431 total_us_p99=1676.422 total_us_max=5241.467 received=70368
-client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=284.318 send_us_p99=508.913 send_us_max=3297.709 update_us_p50=365.782 update_us_p99=1328.684 update_us_max=4452.394 total_us_p50=659.567 total_us_p99=1736.945 total_us_max=4736.401 received=70368
-client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=313.173 send_us_p99=577.833 send_us_max=850.629 update_us_p50=417.580 update_us_p99=1189.481 update_us_max=5736.924 total_us_p50=750.991 total_us_p99=1640.845 total_us_max=6066.257 received=70352
+client_main_thread_cost transport=portable packets_per_frame=1 frames=2000 send_us_p50=6.763 send_us_p99=19.557 send_us_max=30.007 update_us_p50=7.293 update_us_p99=155.033 update_us_max=176.865 total_us_p50=14.748 total_us_p99=165.233 total_us_max=182.936 received=2186
+client_main_thread_cost transport=portable packets_per_frame=1 frames=2000 send_us_p50=6.493 send_us_p99=15.660 send_us_max=29.225 update_us_p50=8.076 update_us_p99=163.039 update_us_max=271.854 total_us_p50=14.758 total_us_p99=170.242 total_us_max=278.287 received=2178
+client_main_thread_cost transport=portable packets_per_frame=1 frames=2000 send_us_p50=7.744 send_us_p99=15.960 send_us_max=41.148 update_us_p50=7.835 update_us_p99=156.195 update_us_max=187.175 total_us_p50=15.599 total_us_p99=165.603 total_us_max=193.697 received=2194
+client_main_thread_cost transport=portable packets_per_frame=8 frames=2000 send_us_p50=50.335 send_us_p99=85.051 send_us_max=126.659 update_us_p50=9.097 update_us_p99=282.014 update_us_max=549.229 total_us_p50=59.573 total_us_p99=337.599 total_us_max=622.738 received=17565
+client_main_thread_cost transport=portable packets_per_frame=8 frames=2000 send_us_p50=48.913 send_us_p99=87.816 send_us_max=219.015 update_us_p50=8.766 update_us_p99=280.561 update_us_max=741.182 total_us_p50=57.930 total_us_p99=338.300 total_us_max=876.598 received=17584
+client_main_thread_cost transport=portable packets_per_frame=8 frames=2000 send_us_p50=48.952 send_us_p99=102.965 send_us_max=419.463 update_us_p50=9.017 update_us_p99=266.474 update_us_max=3021.105 total_us_p50=58.280 total_us_p99=329.243 total_us_max=3072.022 received=17584
+client_main_thread_cost transport=portable packets_per_frame=32 frames=2000 send_us_p50=273.387 send_us_p99=508.202 send_us_max=3373.172 update_us_p50=370.030 update_us_p99=1287.195 update_us_max=4959.403 total_us_p50=661.431 total_us_p99=1676.422 total_us_max=5241.467 received=70368
+client_main_thread_cost transport=portable packets_per_frame=32 frames=2000 send_us_p50=284.318 send_us_p99=508.913 send_us_max=3297.709 update_us_p50=365.782 update_us_p99=1328.684 update_us_max=4452.394 total_us_p50=659.567 total_us_p99=1736.945 total_us_max=4736.401 received=70368
+client_main_thread_cost transport=portable packets_per_frame=32 frames=2000 send_us_p50=313.173 send_us_p99=577.833 send_us_max=850.629 update_us_p50=417.580 update_us_p99=1189.481 update_us_max=5736.924 total_us_p50=750.991 total_us_p99=1640.845 total_us_max=6066.257 received=70352
 ```
 
 The same meter in the second attempt of this card, at `sprint/rocketnet-proof`
@@ -263,38 +263,38 @@ real time.
 
 ## The interface
 
-`rocketnet_client_driver_operations_t` in `sdk/rocketnet_driver.h` gains four
+`rocketnet_client_transport_io_operations_t` in `sdk/rocketnet_driver.h` gains four
 optional callbacks after the existing four, so every existing initializer
 stays valid and leaves them NULL:
 
 ```c
-struct rocketnet_client_driver_operations_t
+struct rocketnet_client_transport_io_operations_t
 {
-    void * (*create)( void *, const rocketnet_client_driver_config_t *, rocketnet_address_t * );
+    void * (*create)( void *, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * );
     void (*destroy)( void * );
     void (*send)( void *, const rocketnet_address_t *, const uint8_t *, int );
     int (*receive)( void *, rocketnet_address_t *, uint8_t *, int );
 
     // optional; I/O thread only. Sends num_packets datagrams in one batch,
     // borrowing sends and the bytes they point at for the call only.
-    void (*send_batch)( void * driver, const rocketnet_platform_send_t * sends, int num_packets );
+    void (*send_batch)( void * transport, const rocketnet_platform_send_t * sends, int num_packets );
     // optional; I/O thread only. Drains up to max_packets into caller
     // storage at packet_data + i * packet_stride, writing from[i] and
     // packet_bytes[i]; returns the count, zero when drained. Borrows the
     // storage for the call only.
-    int (*receive_batch)( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
+    int (*receive_batch)( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
     // optional, with wake; I/O thread only. Blocks until a wake is set,
     // the socket is readable (only when readable is true), or
     // timeout_seconds pass; consumes the wake. With readable false the
     // socket's readiness is ignored. Returns true when woken or readable.
-    bool (*wait)( void * driver, bool readable, double timeout_seconds );
+    bool (*wait)( void * transport, bool readable, double timeout_seconds );
     // optional, with wait; any thread. Sets the level-triggered wake, so a
     // wait in progress or the next wait returns at once.
-    void (*wake)( void * driver );
+    void (*wake)( void * transport );
 };
 ```
 
-`rocketnet_client_driver_open` checks once at create that `wait` and `wake`
+`rocketnet_client_transport_io_open` checks once at create that `wait` and `wake`
 are both set or both NULL. A backend with `wait` and `wake` runs the I/O
 thread design; `send_batch` and `receive_batch` are used when set, and the
 per-packet `send` and `receive` otherwise, called from the I/O thread. A
@@ -336,15 +336,15 @@ What the 100 us gate means for this design. The I/O thread design removes the se
 Raw head lines:
 
 ```
-client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=1.580 send_us_p99=5.880 send_us_max=220.396 update_us_p50=12.830 update_us_p99=30.101 update_us_max=55.381 total_us_p50=14.440 total_us_p99=51.272 total_us_max=271.788 received=70336
-client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=1.230 send_us_p99=113.003 send_us_max=744.361 update_us_p50=8.550 update_us_p99=20.441 update_us_max=106.293 total_us_p50=9.770 total_us_p99=133.444 total_us_max=769.612 received=70336
-client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=1.610 send_us_p99=2.810 send_us_max=179.975 update_us_p50=13.031 update_us_p99=17.441 update_us_max=45.521 total_us_p50=14.681 total_us_p99=20.051 total_us_max=211.246 received=70336
-client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=1.500 send_us_p99=2.180 send_us_max=1999.466 update_us_p50=4.260 update_us_p99=6.471 update_us_max=14.640 total_us_p50=5.760 total_us_p99=8.870 total_us_max=2008.496 received=17584
-client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=1.400 send_us_p99=1.990 send_us_max=4.870 update_us_p50=4.140 update_us_p99=4.990 update_us_max=10.820 total_us_p50=5.560 total_us_p99=7.590 total_us_max=12.300 received=17584
-client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=1.500 send_us_p99=2.120 send_us_max=5.290 update_us_p50=4.290 update_us_p99=4.980 update_us_max=14.471 total_us_p50=5.790 total_us_p99=7.340 total_us_max=17.121 received=17584
-client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=0.850 send_us_p99=1.260 send_us_max=3.480 update_us_p50=0.600 update_us_p99=1.350 update_us_max=7.070 total_us_p50=1.440 total_us_p99=2.520 total_us_max=8.020 received=2198
-client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=0.880 send_us_p99=1.640 send_us_max=4.110 update_us_p50=0.630 update_us_p99=1.960 update_us_max=4.010 total_us_p50=1.520 total_us_p99=3.380 total_us_max=6.170 received=2198
-client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=0.911 send_us_p99=1.420 send_us_max=5.791 update_us_p50=0.660 update_us_p99=1.260 update_us_max=3.030 total_us_p50=1.600 total_us_p99=2.750 total_us_max=6.802 received=2198
+client_main_thread_cost transport=portable packets_per_frame=32 frames=2000 send_us_p50=1.580 send_us_p99=5.880 send_us_max=220.396 update_us_p50=12.830 update_us_p99=30.101 update_us_max=55.381 total_us_p50=14.440 total_us_p99=51.272 total_us_max=271.788 received=70336
+client_main_thread_cost transport=portable packets_per_frame=32 frames=2000 send_us_p50=1.230 send_us_p99=113.003 send_us_max=744.361 update_us_p50=8.550 update_us_p99=20.441 update_us_max=106.293 total_us_p50=9.770 total_us_p99=133.444 total_us_max=769.612 received=70336
+client_main_thread_cost transport=portable packets_per_frame=32 frames=2000 send_us_p50=1.610 send_us_p99=2.810 send_us_max=179.975 update_us_p50=13.031 update_us_p99=17.441 update_us_max=45.521 total_us_p50=14.681 total_us_p99=20.051 total_us_max=211.246 received=70336
+client_main_thread_cost transport=portable packets_per_frame=8 frames=2000 send_us_p50=1.500 send_us_p99=2.180 send_us_max=1999.466 update_us_p50=4.260 update_us_p99=6.471 update_us_max=14.640 total_us_p50=5.760 total_us_p99=8.870 total_us_max=2008.496 received=17584
+client_main_thread_cost transport=portable packets_per_frame=8 frames=2000 send_us_p50=1.400 send_us_p99=1.990 send_us_max=4.870 update_us_p50=4.140 update_us_p99=4.990 update_us_max=10.820 total_us_p50=5.560 total_us_p99=7.590 total_us_max=12.300 received=17584
+client_main_thread_cost transport=portable packets_per_frame=8 frames=2000 send_us_p50=1.500 send_us_p99=2.120 send_us_max=5.290 update_us_p50=4.290 update_us_p99=4.980 update_us_max=14.471 total_us_p50=5.790 total_us_p99=7.340 total_us_max=17.121 received=17584
+client_main_thread_cost transport=portable packets_per_frame=1 frames=2000 send_us_p50=0.850 send_us_p99=1.260 send_us_max=3.480 update_us_p50=0.600 update_us_p99=1.350 update_us_max=7.070 total_us_p50=1.440 total_us_p99=2.520 total_us_max=8.020 received=2198
+client_main_thread_cost transport=portable packets_per_frame=1 frames=2000 send_us_p50=0.880 send_us_p99=1.640 send_us_max=4.110 update_us_p50=0.630 update_us_p99=1.960 update_us_max=4.010 total_us_p50=1.520 total_us_p99=3.380 total_us_max=6.170 received=2198
+client_main_thread_cost transport=portable packets_per_frame=1 frames=2000 send_us_p50=0.911 send_us_p99=1.420 send_us_max=5.791 update_us_p50=0.660 update_us_p99=1.260 update_us_max=3.030 total_us_p50=1.600 total_us_p99=2.750 total_us_max=6.802 received=2198
 ```
 
 Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
@@ -354,7 +354,7 @@ Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
 macOS throttles a backgrounded or occluded app (App Nap) and coalesces timers
 for threads at a low quality-of-service class. The client I/O thread's wait is
 a guard, not a cadence: `ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS` (1 ms), a
-kevent timeout on the driver wait. The game thread's own sleeps and run-loop
+kevent timeout on the transport wait. The game thread's own sleeps and run-loop
 timers are what a napped or background-policy process stretches (the measured
 numbers below).
 
@@ -532,7 +532,7 @@ socket with `POLLIN` when `readable` is true),
 `wake` (eventfd write), `send_batch` (`sendmmsg`) and `receive_batch`
 (`recvmmsg`). Tests: a functional loopback case
 `client_io_linux_handoff_round_trip` (real socket, real thread) and the
-transport-contract check in `./bin/test_driver`; the gate rows above from the
+transport-contract check in `./bin/test_transport`; the gate rows above from the
 meter. io_uring is not used: at the measured cost the I/O thread is idle most
 of the frame, `sendmmsg` already makes one syscall per frame, and io_uring is
 often disabled in containers and sandboxes; a card may revisit it with a
@@ -551,7 +551,7 @@ kqueue holding the socket's `EVFILT_READ` and an `EVFILT_USER` trigger; when
 `readable` changes, the same `kevent` call carries `EV_DISABLE` or
 `EV_ENABLE` for the read filter, so a full buffer waits on the trigger alone.
 Tests: functional `client_io_apple_handoff_round_trip` (SKIPPED twin
-elsewhere), `./bin/test_driver`, the meter gate on a macOS member. Red at
+elsewhere), `./bin/test_transport`, the meter gate on a macOS member. Red at
 BASE: `./bin/functional --run client_io_apple_handoff_round_trip` prints
 `unknown functional test client_io_apple_handoff_round_trip`, exit 2. Needs:
 rocketnet-client-io-transport.
@@ -644,8 +644,8 @@ client with no I/O thread. Zero, the default, keeps the I/O thread above. One
 runs `rocketnet_client_io_step` inside `rocketnet_client_update` and
 `rocketnet_client_send_packets` on the caller's thread, so a game or a test
 owns both the clock and the thread that reads the transport. The field is
-accepted with a driver whose receive returns at once when drained, the
-loopback driver included. A driver without a non-blocking I/O step is refused
+accepted with a transport whose receive returns at once when drained, the
+loopback transport included. A transport without a non-blocking I/O step is refused
 at create with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` and one log line naming
 `step_driven`.
 

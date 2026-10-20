@@ -41,7 +41,7 @@
    :columns ("Windows" "macOS" "Linux")
    :rows
    ((:feature "Unit suite (./bin/test)" :cells (y y y)
-     :evidence "Windows: test.exe Release green on the Windows member, rocketnet-driver-create-reports-out-of-memory b3162561; macOS and Linux: ./bin/test green Debug and Release, rocketnet-driver-create-reports-out-of-memory b3162561")
+     :evidence "Windows: test.exe Release green on the Windows member, rocketnet-transport-create-reports-out-of-memory b3162561; macOS and Linux: ./bin/test green Debug and Release, rocketnet-transport-create-reports-out-of-memory b3162561")
     (:feature "Functional suite (./bin/functional)" :cells (y y y)
      :evidence "Windows: functional.exe Release green, rocketnet-functional-builds-on-windows 85a98401, 10 of 10 runs in rocketnet-functional-tokens-use-the-test-clock d59e30de; macOS: ./bin/functional green, rocketnet-macos-client-timing-under-app-nap a2c4ac1f and rocketnet-macos-msgx-forced-portable-client-creates bb1521ab; Linux: ./bin/functional green Debug with the transport unset and pinned to portable, gso and io_uring, rocketnet-linux-pinned-portable-functional-green e73c2177")
     (:feature "Functional suite repeated, zero flakes" :cells (o o o)

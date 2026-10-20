@@ -10,8 +10,8 @@
 // allocator failing at each allocation in turn.
 //
 // Not reachable in the unit tier:
-//   * S13 TRANSPORT_LADDER_EXHAUSTED (a non-port-zero driver open refusal), which
-//     needs a driver open to refuse -- a socket -- and no unit-tier driver
+//   * S13 TRANSPORT_LADDER_EXHAUSTED (a non-port-zero transport open refusal), which
+//     needs a transport open to refuse -- a socket -- and no unit-tier transport
 //     refuses without opening one; the port-zero refusal (S12) is reachable
 //     because the ladder refuses the XDP rung before opening anything.
 
@@ -194,7 +194,7 @@ static void server_transport_create_ex_reports_every_status()
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        strcpy( config.driver, "loopback" );
+        strcpy( config.transport, "loopback" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
@@ -206,7 +206,7 @@ static void server_transport_create_ex_reports_every_status()
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        strcpy( config.driver, "portable" );
+        strcpy( config.transport, "portable" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
@@ -228,11 +228,11 @@ static void server_transport_create_ex_reports_every_status()
         check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
     }
 
-    // S8: a driver-list typo refuses at parse
+    // S8: a transport-list typo refuses at parse
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
-        strcpy( config.driver, "bogus" );
+        strcpy( config.transport, "bogus" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
@@ -256,16 +256,16 @@ static void server_transport_create_ex_reports_every_status()
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE );
     }
 
-    // S12: a port-zero address refused by a non-discovering driver (XDP) is
+    // S12: a port-zero address refused by a non-discovering transport (XDP) is
     // TRANSPORT_PORT_ZERO_UNSUPPORTED. The xdp row exists only on Linux:
     // elsewhere the ladder skips "xdp" for the platform and falls to the
-    // auto order (sdk/rocketnet_tests.cpp checks that fall), whose drivers
+    // auto order (sdk/rocketnet_tests.cpp checks that fall), whose transports
     // open a real socket, so off Linux the case is a named skip
     {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        strcpy( config.driver, "xdp" );
+        strcpy( config.transport, "xdp" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
@@ -280,7 +280,7 @@ static void server_transport_create_ex_reports_every_status()
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
-        strcpy( config.driver, "loopback" );
+        strcpy( config.transport, "loopback" );
         config.max_clients = 1;
 
         int reached_success = 0;

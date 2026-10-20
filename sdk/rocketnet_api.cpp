@@ -146,7 +146,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     memcpy( transport->filter_value, config->filter_value, sizeof( transport->filter_value ) );
     transport->max_payload_bytes = config->max_payload_bytes;
     transport->num_reassembly_slots = config->num_reassembly_slots;
-    if ( !rn_copy_config_string( transport->driver, sizeof( transport->driver ), config->transport, "auto", "client", "transport" ) )
+    if ( !rn_copy_config_string( transport->transport, sizeof( transport->transport ), config->transport, "auto", "client", "transport" ) )
         return false;
     transport->state_change_callback = config->state_change_callback;
     transport->time_callback = config->time_callback;
@@ -197,7 +197,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->simulated_latency_ms = config->simulated_latency_ms;
     transport->simulated_jitter_ms = config->simulated_jitter_ms;
     transport->simulated_duplicate_percent = config->simulated_duplicate_percent;
-    if ( !rn_copy_config_string( transport->driver, sizeof( transport->driver ), config->transport, "auto", "server", "transport" ) )
+    if ( !rn_copy_config_string( transport->transport, sizeof( transport->transport ), config->transport, "auto", "server", "transport" ) )
         return false;
     if ( !rn_copy_config_string( transport->public_address, sizeof( transport->public_address ), config->public_address, "", "server", "public_address" ) )
         return false;
@@ -396,9 +396,9 @@ static bool rn_client_config_valid( const struct rocketnet_client_transport_conf
     if ( !rocketnet_config_validate_public_link_simulator( "client", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
         return false;
     int num_available = 0;
-    const int * available = rocketnet_client_driver_availability( &num_available );
-    struct rocketnet_driver_ladder_t ladder;
-    if ( !rocketnet_driver_ladder_parse( transport->driver, available, num_available, &ladder ) )
+    const int * available = rocketnet_client_transport_io_availability( &num_available );
+    struct rocketnet_transport_ladder_t ladder;
+    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder ) )
         return false;
     return rocketnet_message_validate_config( message ) != 0;
 }
@@ -706,7 +706,7 @@ const char * rocketnet_client_transport_name( const struct rocketnet_client_t * 
         return NULL;
     if ( !client->connection )
         return NULL;
-    return rocketnet_client_transport_driver( rocketnet_message_client_transport( client->connection ) );
+    return rocketnet_client_transport_io_name( rocketnet_message_client_transport( client->connection ) );
 }
 
 // A message is sent only while the client is CONNECTED (standard/MESSAGES.md
@@ -1062,9 +1062,9 @@ static bool rn_server_config_valid( const struct rocketnet_server_transport_conf
     if ( !rocketnet_config_validate_public_link_simulator( "server", transport, fields, num_fields, rocketnet_public_link_simulator_development() ) )
         return false;
     int num_available = 0;
-    const int * available = rocketnet_server_driver_availability( &num_available );
-    struct rocketnet_driver_ladder_t ladder;
-    if ( !rocketnet_driver_ladder_parse( transport->driver, available, num_available, &ladder ) )
+    const int * available = rocketnet_server_transport_io_availability( &num_available );
+    struct rocketnet_transport_ladder_t ladder;
+    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder ) )
         return false;
     return rocketnet_message_validate_config( message ) != 0;
 }
@@ -1365,7 +1365,7 @@ const char * rocketnet_server_transport_name( const struct rocketnet_server_t * 
         return NULL;
     if ( !server->running )
         return NULL;
-    return rocketnet_server_transport_driver( rn_server_transport( server ) );
+    return rocketnet_server_transport_io_name( rn_server_transport( server ) );
 }
 
 int rocketnet_server_max_clients( const struct rocketnet_server_t * server )

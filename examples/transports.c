@@ -34,7 +34,7 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     int received = 0;
     int ok = 0;
     rocketnet_client_default_config( &config );
-    config.transport = "portable";   // the client side is portable; the server may be any driver
+    config.transport = "portable";   // the client side is portable; the server may be any transport
     if ( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         return 0;
     client = rocketnet_client_create( NULL, &config, NULL, 0 );

@@ -16,7 +16,7 @@
 
 // The userspace walk that decides which kernel replay marks to write and
 // forget. Once per server update, after packet processing and before the
-// driver flush, it forgets the address of every slot that held a mark and is
+// transport flush, it forgets the address of every slot that held a mark and is
 // no longer connected or whose mapping changed address, then marks every
 // connected slot whose session replay window's highest_opened is nonzero and
 // differs from what it last marked. All forgets come before any mark. The

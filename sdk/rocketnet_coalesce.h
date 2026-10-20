@@ -4,8 +4,8 @@
 */
 
 // The UDP coalescing rules, pure: no syscall, no allocation, no global state,
-// no platform socket header. Two rules live here, each as the Linux GSO driver
-// (sdk/rocketnet_server_gso_linux.cpp) applies it, so every driver that
+// no platform socket header. Two rules live here, each as the Linux GSO transport
+// (sdk/rocketnet_server_gso_linux.cpp) applies it, so every transport that
 // coalesces (Linux UDP_GRO / UDP_SEGMENT, Windows URO / USO) splits and builds
 // runs the same way:
 //

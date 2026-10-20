@@ -378,7 +378,7 @@ static inline bool rocketnet_xdp_frame_receive(
     return true;
 }
 
-// DRIVER BOUNDS: the checks the AF_XDP driver makes before it copies into
+// TRANSPORT BOUNDS: the checks the AF_XDP transport makes before it copies into
 // or reads from a UMEM frame, sets a cpu bit or sizes the stats read. Each
 // holds in a Release build; none relies on an assert.
 //

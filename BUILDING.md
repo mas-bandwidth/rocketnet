@@ -58,7 +58,7 @@ when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
 The functional-only sibling binaries are `test_serialize` (a real clock and
 `rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
-`usleep`), `test_driver`, `test_transport_control`, `test_lifecycle`,
+`usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
 `test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
@@ -518,7 +518,7 @@ explicitly named platform skips. Failures retain the captured diagnostic log.
 
 ### Windows IOCP server
 
-Native transport authors: [DRIVERS.md](DRIVERS.md) describes registration,
+Native transport authors: [TRANSPORTS.md](TRANSPORTS.md) describes registration,
 capabilities, ownership and the independently built extension example.
 
 Select `transport = "iocp"` in the existing server config, or set

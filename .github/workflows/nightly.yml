@@ -92,11 +92,11 @@ jobs:
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
-  # portable driver built with MSVC and the full test suite run on the runner.
+  # portable transport built with MSVC and the full test suite run on the runner.
   # /fp:precise comes from CMakeLists.txt's MSVC branch, the family's floor per
   # the -ffp-contract=off policy. Sodium is compiled from the pinned vendor
   # with the same CRT; the multi-config generator puts binaries under
-  # bin/<config>. The #106 config and driver tests run here too -- setenv and
+  # bin/<config>. The #106 config and transport tests run here too -- setenv and
   # unsetenv are shimmed over _putenv_s in the test file -- EXCEPT the
   # empty-value distinction, which windows cannot represent: its CRT has no
   # set-but-empty variable, so that one case is skipped, named and logged with
@@ -115,7 +115,7 @@ jobs:
     # stays. test/suite_runner.h:58 sets the bound to 698 MiB, measured on a Linux
     # Release build; test/suite_runner.h:89 reads this variable in its place. In
     # Debug on the fleet Windows runner test_swarm peaks near 750 MiB,
-    # driver_loopback_* near 1480 MiB and functional cases up to about 940 MiB,
+    # transport_loopback_* near 1480 MiB and functional cases up to about 940 MiB,
     # so 2048 covers each. Release jobs keep the 698 bound.
     env:
       ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
@@ -164,8 +164,8 @@ jobs:
         run: |
           set -o pipefail
           ./bin/Debug/functional.exe | tr -d '\r' | tee functional-iocp.log
-          grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
-          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
+          grep -qx 'transport_env_pin_is_honoured' functional-iocp.log
+          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
       - name: Run serialization surface (portable)
         shell: bash
@@ -188,18 +188,18 @@ jobs:
       - name: Memory plans against allocator observations
         run: python tools/check_memory.py ./bin/Debug/transport_memory.exe
 
-      - name: Native driver contract and external backend
+      - name: Native transport contract and external backend
         run: |
-          ./bin/Debug/test_driver.exe
+          ./bin/Debug/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./bin/Debug/test_transport_control.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/check_driver_extension.py build --config Debug
+          python tools/check_transport_extension.py build --config Debug
 
-  # THE OUT-OF-TREE DRIVER BACKEND, UNDER MSVC. Lifted from ci.yml's
+  # THE OUT-OF-TREE TRANSPORT BACKEND, UNDER MSVC. Lifted from ci.yml's
   # windows-2025 / Release leg (a) on 2026-09-13.
   #
-  # tools/check_driver_extension.py configures and builds a driver backend
+  # tools/check_transport_extension.py configures and builds a transport backend
   # that lives OUTSIDE this tree against the installed SDK, and fails if the
   # extension surface a consumer compiles against has drifted. It is a
   # contract check on a fixed input -- "does this API still present itself to
@@ -208,7 +208,7 @@ jobs:
   #
   # WHAT DID NOT MOVE, so the hole is the right size in the reader's head: the
   # SAME SCRIPT still runs on EVERY COMMIT on Linux and macOS, inside
-  # build-and-test's `Native driver contract and external backend` step, where
+  # build-and-test's `Native transport contract and external backend` step, where
   # it costs 15s. What waits until morning is specifically the WINDOWS
   # spelling of it, which cost 42-48s on top of a 92s MSVC configure-and-build
   # floor and was, alone, the last thing holding ci.yml above two minutes.
@@ -219,8 +219,8 @@ jobs:
   # A red here has a commit range and a bisect. Whoever is on the estate that
   # morning owns walking it back.
 
-  windows-driver-extension:
-    name: external driver backend / windows-2025
+  windows-transport-extension:
+    name: external transport backend / windows-2025
     # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
     if: false
     runs-on: windows-2025
@@ -228,7 +228,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-windows-driver-extension-${{ matrix.ref }}
+      group: nightly-windows-transport-extension-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -242,10 +242,10 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      - name: External driver backend
-        run: python tools/check_driver_extension.py build --config Release
+      - name: External transport backend
+        run: python tools/check_transport_extension.py build --config Release
 
-  # Windows MSVC AddressSanitizer over unit, lifecycle, IOCP/RIO driver and
+  # Windows MSVC AddressSanitizer over unit, lifecycle, IOCP/RIO transport and
   # functional suites (portable, iocp and rio transports) on the native Windows
   # fleet runner. Configured via -DROCKETNET_SANITIZE_ADDRESS=ON (adds
   # /fsanitize=address /Zi and link /DEBUG /INCREMENTAL:NO on every target and
@@ -286,7 +286,7 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/Release/test_lifecycle.exe
 
-      - name: Run IOCP and RIO driver suite under ASan
+      - name: Run IOCP and RIO transport suite under ASan
         shell: bash
         run: ./bin/Release/test_iocp.exe
 

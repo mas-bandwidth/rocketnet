@@ -242,7 +242,7 @@ static void check_sealed_packet()
 {
     // a session packet sealed and opened in memory: the associated data,
     // the sequence on the wire, the AEAD, the clear header. Sockets are not
-    // involved and neither is any driver.
+    // involved and neither is any transport.
 
     const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
@@ -346,20 +346,20 @@ static void check_base64_and_config()
     CHECK( !rocketnet_config_parse_int_value( "12x", &value ) );
 
     int num_available = 0;
-    const int * available = rocketnet_server_driver_availability( &num_available );
-    struct rocketnet_driver_ladder_t ladder;
-    CHECK( rocketnet_driver_ladder_parse( "auto", available, num_available, &ladder ) );
+    const int * available = rocketnet_server_transport_io_availability( &num_available );
+    struct rocketnet_transport_ladder_t ladder;
+    CHECK( rocketnet_transport_ladder_parse( "auto", available, num_available, &ladder ) );
     int auto_available = 0;
     for ( int i = 0; i < num_available; i++ )
-        if ( !rocketnet_driver_pin_only( available[i] ) )
+        if ( !rocketnet_transport_pin_only( available[i] ) )
             auto_available++;
     CHECK( ladder.num_candidates == auto_available );
-    CHECK( rocketnet_driver_ladder_parse( "portable", available, num_available, &ladder ) );
-    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_DRIVER_PORTABLE );
-    CHECK( !rocketnet_driver_ladder_parse( "rocket", available, num_available, &ladder ) );
+    CHECK( rocketnet_transport_ladder_parse( "portable", available, num_available, &ladder ) );
+    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
+    CHECK( !rocketnet_transport_ladder_parse( "rocket", available, num_available, &ladder ) );
 
     char env_name[64];
-    CHECK( rocketnet_config_env_var_name( "driver", env_name, sizeof( env_name ) ) );
+    CHECK( rocketnet_config_env_var_name( "transport", env_name, sizeof( env_name ) ) );
     CHECK( strcmp( env_name, "ROCKETNET_TRANSPORT" ) == 0 );
 }
 

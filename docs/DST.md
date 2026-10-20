@@ -69,7 +69,7 @@ seeds.
 **`scripts/netem-pair-soak` and `.github/workflows/nightly-soak.yml`.** The real thing: `bin/server`
 and N `bin/client` processes in two network namespaces joined by a veth pair under netem, real
 sockets, real threads, real time; nightly-soak also runs `soak_sim` unbounded-ish and sanitized. It is
-neither deterministic nor replayable, and it is the only instrument that covers drivers, threads
+neither deterministic nor replayable, and it is the only instrument that covers transports, threads
 and the kernel.
 
 **`test/live_verify.h` (in flight, not on BASE at this writing).** The live-message verify scheme

@@ -4,7 +4,7 @@
 */
 
 // The public client and server counter enums' unreleased-message counter.
-// The pair runs over the in-process loopback driver: no socket, no receive
+// The pair runs over the in-process loopback transport: no socket, no receive
 // thread (the client transport is created step-driven), and time is only ever
 // an argument, starting at 1000.0. A received message is held across an
 // update, the update refuses by name, and the public counter reads the
@@ -25,9 +25,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// the pair is built over the in-memory loopback driver, which this test names in
+// the pair is built over the in-memory loopback transport, which this test names in
 // the server transport config; the caller's ROCKETNET_SERVER_TRANSPORT pin wins
-// over the struct by design, so a CI leg pinned to a real driver would open a
+// over the struct by design, so a CI leg pinned to a real transport would open a
 // socket the step-driven loopback client never reaches. The pin is set aside
 // for the create and put back after, as test_unit_status_server_transport_create_ex.cpp does.
 #if defined(_WIN32)
@@ -40,7 +40,7 @@ static int public_not_released_unsetenv( const char * name ) { return unsetenv( 
 
 #define check rocketnet_unit_check
 
-extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
+extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 static void public_not_released_assert_hook( const char *, const char *, const char *, int )
 {
@@ -70,11 +70,11 @@ static void public_not_released_wake( void * )
 {
 }
 
-static rocketnet_client_driver_operations_t public_not_released_client_operations;
+static rocketnet_client_transport_io_operations_t public_not_released_client_operations;
 
 static void public_not_released_client_operations_init()
 {
-    public_not_released_client_operations = *rocketnet_loopback_driver.client;
+    public_not_released_client_operations = *rocketnet_loopback_transport.client;
     public_not_released_client_operations.wait = public_not_released_wait;
     public_not_released_client_operations.wake = public_not_released_wake;
 }
@@ -99,7 +99,7 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     memcpy( server_transport_config.backend_public_key, backend_public_key, sizeof( server_transport_config.backend_public_key ) );
     memcpy( server_transport_config.server_public_key, server_public_key, sizeof( server_transport_config.server_public_key ) );
     memcpy( server_transport_config.server_secret_key, server_secret_key, sizeof( server_transport_config.server_secret_key ) );
-    snprintf( server_transport_config.driver, sizeof( server_transport_config.driver ), "%s", "loopback" );
+    snprintf( server_transport_config.transport, sizeof( server_transport_config.transport ), "%s", "loopback" );
 
     const char * pin = getenv( "ROCKETNET_SERVER_TRANSPORT" );
     char saved_pin[256];

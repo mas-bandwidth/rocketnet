@@ -826,11 +826,11 @@
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG: Counts requests refused because the token lifetime exceeds its limit. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     \
-    /* A send the driver refused for want of a link-layer destination: the */ \
-    /* xdp driver on a segment with no default route, to an address with no */ \
-    /* learned MAC that answers no received frame (DRIVERS.md, xdp). Never */ \
+    /* A send the transport refused for want of a link-layer destination: the */ \
+    /* xdp transport on a segment with no default route, to an address with no */ \
+    /* learned MAC that answers no received frame (TRANSPORTS.md, xdp). Never */ \
     /* sent and never counted as sent. appended: indices are the contract. */ \
-    /** @brief ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS: Counts sends refused because the driver has no link-layer destination. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS: Counts sends refused because the transport has no link-layer destination. Unit: occurrences. Class: refusal; family: none. */ \
     X( SEND_NO_LINK_ADDRESS, REFUSAL, NONE ) \
     \
     /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
@@ -862,7 +862,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK: Counts fitting unreliable messages that took the queued path instead of being written in place in a packet buffer; one count per message, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
     X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
     \
-    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (rocketnet_platform_socket_send in sdk/rocketnet_platform.cpp) and the transport reads the driver's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp, sdk/rocketnet_server_transport.cpp); a driver without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (rocketnet_platform_socket_send in sdk/rocketnet_platform.cpp) and the transport reads the transport's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp, sdk/rocketnet_server_transport.cpp); a transport without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
     X( SEND_FAILED, REFUSAL, NONE ) \
     \
     /* The kernel prefilter's PASSED_FRAGMENT (sdk/rocketnet_wire.h): IP */ \
@@ -973,7 +973,7 @@ struct rocketnet_counters_t
     uint64_t handshakes_processed_this_update;
 };
 
-// Surface a driver's kernel prefilter counters through the transport counter
+// Surface a transport's kernel prefilter counters through the transport counter
 // surface: prefilter holds ROCKETNET_SERVER_XDP_NUM_COUNTERS values in
 // ROCKETNET_SERVER_XDP_COUNTER_* order. Each value is assigned (the kernel
 // totals are cumulative) to its transport counter; nothing else moves.

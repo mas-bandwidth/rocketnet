@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     A hard-killed peer or an ICMP error never stalls or degrades a receive
-    (DRIVERS.md, ICMP errors). A UDP send to a vanished peer comes back as
+    (TRANSPORTS.md, ICMP errors). A UDP send to a vanished peer comes back as
     ICMP port unreachable; a BSD stack reports it to the next receive on a
     connected socket as ECONNREFUSED. These cases run per server transport
     cell (portable, msgx, and msgx forced portable by ROCKETNET_PUMP=portable),
@@ -135,8 +135,8 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
     posix_hk_setenv( "ROCKETNET_PUMP", NULL );
     posix_hard_killed_require( server );
 
-    const char * expected_driver = strcmp( cell.server, "msgx" ) == 0 ? "msgx" : "portable";
-    posix_hard_killed_require( strcmp( rocketnet_server_transport_driver( server ), expected_driver ) == 0 );
+    const char * expected_transport = strcmp( cell.server, "msgx" ) == 0 ? "msgx" : "portable";
+    posix_hard_killed_require( strcmp( rocketnet_server_transport_io_name( server ), expected_transport ) == 0 );
     struct rocketnet_platform_socket_t * socket = rocketnet_server_transport_platform_socket_for_testing( server );
     posix_hard_killed_require( socket );
     posix_hard_killed_require( strcmp( rocketnet_platform_socket_pump( socket ), posix_hk_expected_server_pump( cell ) ) == 0 );

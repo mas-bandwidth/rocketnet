@@ -13,11 +13,11 @@ static double measure(dispatch_fixture * f, bool indirect, int count)
         for (int i = 0; i < count; ++i)
         {
             uint64_t id;
-            if (!rocketnet_server_driver_has(f->driver, ROCKETNET_DRIVER_STAGED)) abort();
-            uint8_t * frame = f->driver.operations->start_packet(f->driver.instance, &to, &id);
+            if (!rocketnet_server_transport_io_has(f->transport, ROCKETNET_TRANSPORT_STAGED)) abort();
+            uint8_t * frame = f->transport.operations->start_packet(f->transport.instance, &to, &id);
             frame[0] = (uint8_t)i;
-            if (!rocketnet_server_driver_has(f->driver, ROCKETNET_DRIVER_STAGED)) abort();
-            f->driver.operations->finish_packet(f->driver.instance, id, frame, 1);
+            if (!rocketnet_server_transport_io_has(f->transport, ROCKETNET_TRANSPORT_STAGED)) abort();
+            f->transport.operations->finish_packet(f->transport.instance, id, frame, 1);
         }
     }
     else
@@ -25,11 +25,11 @@ static double measure(dispatch_fixture * f, bool indirect, int count)
         for (int i = 0; i < count; ++i)
         {
             uint64_t id;
-            if (!f->driver.instance) abort();
-            uint8_t * frame = dispatch_fixture_start(f->driver.instance, &to, &id);
+            if (!f->transport.instance) abort();
+            uint8_t * frame = dispatch_fixture_start(f->transport.instance, &to, &id);
             frame[0] = (uint8_t)i;
-            if (!f->driver.instance) abort();
-            dispatch_fixture_finish(f->driver.instance, id, frame, 1);
+            if (!f->transport.instance) abort();
+            dispatch_fixture_finish(f->transport.instance, id, frame, 1);
         }
     }
     const auto end = std::chrono::steady_clock::now();
