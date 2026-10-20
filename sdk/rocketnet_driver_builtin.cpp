@@ -181,6 +181,11 @@ extern const rocketnet_driver_backend_t rocketnet_msgx_driver = { &portable_serv
 #include "rocketnet_server_gso.h"
 #include "rocketnet_server_socket.h"
 
+// the native drivers' drop counts behind send_failures and receive_drops,
+// defined at sdk/rocketnet_server_gso_linux.cpp:869 and sdk/rocketnet_server_socket_linux.cpp:2598
+void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
+uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
+
 static void * gso_create( void * context, const rocketnet_server_driver_config_t * config, rocketnet_address_t * bind )
 {
     if ( config->transport->num_xdp_queues > ROCKETNET_GSO_MAX_QUEUES )
@@ -193,15 +198,26 @@ static void * gso_create( void * context, const rocketnet_server_driver_config_t
 }
 static void gso_destroy( void * driver ) { rocketnet_server_gso_destroy( (rocketnet_server_gso_t*) driver ); }
 ROCKETNET_STAGED_ADAPTER(gso, rocketnet_server_gso_t, rocketnet_server_gso)
+// SEND_DROPPED: the datagrams a refused sendmmsg dropped
+static uint64_t gso_send_failures( void * driver )
+{
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( (rocketnet_server_gso_t*) driver, counters );
+    return counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED];
+}
+static void gso_receive_drops( void * driver, uint64_t * too_short, uint64_t * too_large )
+{ rocketnet_server_gso_receive_drops( (rocketnet_server_gso_t*) driver, too_short, too_large ); }
 static const rocketnet_server_driver_operations_t gso_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
     gso_create, gso_destroy, synchronous_stop,
-    gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL
+    gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures
 };
 extern const rocketnet_driver_backend_t rocketnet_gso_driver = { &gso_operations, NULL };
 
 #include "rocketnet_server_uring.h"
+void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large ); // sdk/rocketnet_server_uring_linux.cpp:1223
 static void * io_uring_create( void * context, const rocketnet_server_driver_config_t * config, rocketnet_address_t * bind )
 {
     if ( config->transport->num_xdp_queues > ROCKETNET_URING_MAX_QUEUES )
@@ -214,11 +230,22 @@ static void * io_uring_create( void * context, const rocketnet_server_driver_con
 }
 static void io_uring_destroy( void * driver ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t*) driver ); }
 ROCKETNET_STAGED_ADAPTER(io_uring, rocketnet_server_uring_t, rocketnet_server_uring)
+// SEND_DROPPED: send CQEs with a negative result, and destinations the
+// socket family cannot carry
+static uint64_t io_uring_send_failures( void * driver )
+{
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( (rocketnet_server_uring_t*) driver, counters );
+    return counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED];
+}
+static void io_uring_receive_drops( void * driver, uint64_t * too_short, uint64_t * too_large )
+{ rocketnet_server_uring_receive_drops( (rocketnet_server_uring_t*) driver, too_short, too_large ); }
 static const rocketnet_server_driver_operations_t io_uring_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
     io_uring_create, io_uring_destroy, synchronous_stop,
-    io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL
+    io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures
 };
 extern const rocketnet_driver_backend_t rocketnet_io_uring_driver = { &io_uring_operations, NULL };
 
@@ -269,12 +296,16 @@ static void xdp_peer_accepted( void * driver, int view_index )
 {
     rocketnet_server_socket_peer_accepted( (rocketnet_server_socket_t*) driver, view_index );
 }
+static uint64_t xdp_send_failures( void * driver )
+{
+    return rocketnet_server_socket_send_failures( (rocketnet_server_socket_t*) driver );
+}
 static const rocketnet_server_driver_operations_t xdp_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FINISH_FINAL | ROCKETNET_DRIVER_BINDS_PUBLIC_ADDRESS,
     xdp_create, xdp_destroy, xdp_stop,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_peer_accepted
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_peer_accepted, xdp_send_failures
 };
 extern const rocketnet_driver_backend_t rocketnet_xdp_driver = { &xdp_operations, NULL };
 #endif
@@ -379,4 +410,26 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 #endif
     else return false; // A custom driver's resource policy remains native to it.
     return plan.driver_bytes != 0;
+}
+
+// Builtin-only receive-drop hook. Match the operations table, not a configured
+// name, so custom drivers retain their own counter policy without a cast.
+bool rocketnet_server_driver_receive_drops( const rocketnet_server_driver_operations_t * operations,
+                                           void * driver, uint64_t * too_short, uint64_t * too_large )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    if ( operations == &gso_operations )
+        gso_receive_drops( driver, too_short, too_large );
+    else if ( operations == &io_uring_operations )
+        io_uring_receive_drops( driver, too_short, too_large );
+    else
+        return false;
+    return true;
+#else
+    (void) operations;
+    (void) driver;
+    (void) too_short;
+    (void) too_large;
+    return false;
+#endif
 }

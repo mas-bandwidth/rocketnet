@@ -1350,6 +1350,18 @@ int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_
  */
 int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
+// The payload send capacity: how many payload frames one update may start.
+// Create sets the default, at least the configured client count; the first
+// call is the unit seam that makes the next create read `packets` instead
+// (0 restores the default). The available query is what the message layer's
+// send pass reads before it gives a connection its turn.
+/** @brief Sets the send capacity the next server transport create reads, for a unit test. */
+void rocketnet_server_transport_set_create_send_capacity_for_test( int packets );
+/** @brief Returns the transport's payload send capacity. */
+int rocketnet_server_transport_send_capacity( const struct rocketnet_server_transport_t * server_transport );
+/** @brief Returns the payload frames that may still start this update. */
+int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
+
 // -----------------------------------------
 //                         frame sync
 // -----------------------------------------
