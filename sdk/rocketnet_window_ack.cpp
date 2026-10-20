@@ -22,15 +22,6 @@ static void rn_window_ack_count( const rn_region_t * region, int counter )
         rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &region->counters->values[counter], 1 );
 }
 
-static double rn_clamp_double( double x, double lo, double hi )
-{
-    if ( x < lo )
-        return lo;
-    if ( x > hi )
-        return hi;
-    return x;
-}
-
 // ----------------------------------------------------------------
 //      Descriptor first_send storage inside reserved[22] (6.4)
 // ----------------------------------------------------------------
