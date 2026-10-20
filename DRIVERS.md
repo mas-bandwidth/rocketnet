@@ -2,7 +2,7 @@
 
 The public transport API in `rocketnet.h` is independent of the backend.
 Native drivers implement `rocketnet_driver.h`; they do not add binding or
-wire-format rules.
+wire-format rules. For Linux driver selection, pinning, host requirements (`xdp`, `gso`, `io_uring`, `portable`) and host verification, see [docs/LINUX.md](docs/LINUX.md).
 
 `rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
 bound-port discovery property, backend record, platform mask, and server/client
