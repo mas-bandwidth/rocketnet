@@ -173,6 +173,14 @@
 
 #define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      ///< 1415
 
+/// @brief The receipt loss timeout of UNRELIABLE_WITH_ACK_RECEIPT, in
+/// milliseconds. A receipt packet with no acknowledgement reports LOSS at its
+/// send time plus the larger of this timeout and the connection's resend rto;
+/// an acknowledgement before then reports ACKED. A fixed constant, not a
+/// config field (rn_window_ack_receipt_sweep, sdk/rocketnet_window_ack.cpp).
+
+#define ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS                   2000
+
 /// Send budgets are kilobits per second of wire bytes (1 kbps = 1000 bit/s),
 /// per connection: the defaults of the config's send_kbps and
 /// per_client_send_kbps, each connection's starting rate.
@@ -284,7 +292,9 @@ enum rocketnet_reliability_t
     ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED                    = 4,
     /// Send once and report whether the carrying packet is acknowledged. A
     /// larger message is sent as a reliable block and can report ACKED only. A
-    /// single-packet message can report ACKED or LOSS.
+    /// single-packet message can report ACKED or LOSS: LOSS when no
+    /// acknowledgement arrives by its send time plus the larger of
+    /// ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS and the resend rto.
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT           = 5,
     /// Resend until acknowledged and report an ACKED receipt. Delivery is
     /// once without channel ordering. A connection failure does not produce a
@@ -301,8 +311,11 @@ enum rocketnet_receipt_status_t
     /// The peer's transport acknowledged the packet. This does not mean the
     /// peer application read the message.
     ROCKETNET_RECEIPT_STATUS_ACKED                              = 1,
-    /// An unreliable receipt packet was not acknowledged. The message is not
-    /// resent; reliable receipt modes do not produce LOSS.
+    /// An unreliable receipt packet was not acknowledged by its receipt
+    /// deadline (ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS, or the resend rto when that
+    /// is larger), the sender evicted it from its sent map, or the send budget
+    /// refused it. The message is not resent; reliable receipt modes do not
+    /// produce LOSS.
     ROCKETNET_RECEIPT_STATUS_LOSS                               = 2
 };
 

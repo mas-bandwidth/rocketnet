@@ -128,6 +128,17 @@ static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
     return ack->rto < ack->resend_interval ? ack->rto : ack->resend_interval;
 }
 
+// The receipt deadline of an UNRELIABLE_WITH_ACK_RECEIPT packet, in seconds
+// after its send: max( ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS, rto ), independent of
+// the resend delay and never below the rto (tla/RNReceipts.tla ReceiptDeadline).
+// rn_window_ack_receipt_sweep reports LOSS for a packet still unacknowledged at
+// it; an ACK before it reports ACKED.
+static inline double rn_window_ack_receipt_loss_delay( const rn_window_ack_t * ack )
+{
+    const double timeout = (double) ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS / 1000.0;
+    return ack->rto > timeout ? ack->rto : timeout;
+}
+
 // The resend delay of a chunk of a block: the RTO alone, not the 100 ms cap,
 // so a large block on a long path is not sent again before its acks can
 // return (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla Delay("c")).
