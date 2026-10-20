@@ -16,6 +16,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_counters.h"
 
 #if !defined(_WIN32)
 
@@ -286,6 +287,19 @@ static const char * posix_server_address( rocketnet_server_transport_t * server,
     return buffer;
 }
 
+// a connect red prints every counter that moved on both ends, so the reason
+// a handshake leg went unanswered is named, not guessed
+static void posix_print_counters( const char * side, const struct rocketnet_counters_t * counters )
+{
+    if ( !counters )
+        return;
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        if ( counters->values[i] != 0 )
+            printf( "    %s %s = %llu\n", side, rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
+    }
+}
+
 static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client, double seconds,
                                   const posix_cell_t * cell, int iteration )
 {
@@ -306,6 +320,8 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
     }
     printf( "connect [%s] iteration %d: client state %d after %.3fs, server has %d connected\n", cell->name, iteration, state,
             rocketnet_platform_time() - start, rocketnet_server_transport_num_connected_clients( server ) );
+    posix_print_counters( "server", rocketnet_server_transport_counters( server ) );
+    posix_print_counters( "client", rocketnet_client_transport_counters( client ) );
     fflush( stdout );
     return false;
 }
