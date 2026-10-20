@@ -73,11 +73,11 @@ comes first in `auto`, zero means the endpoint does not have that transport
 
 So the Linux server `auto` order is **xdp → gso → io_uring → portable**
 (`TRANSPORTS.md:188-189`), and `./bin/test_transport` fails if it is anything else
-(`test_transport.cpp`). A build without liburing has no `io_uring` in the
-list: xdp → gso → portable (`test_transport.cpp`, `TRANSPORTS.md:183-186`).
+(`test_driver.cpp`). A build without liburing has no `io_uring` in the
+list: xdp → gso → portable (`test_driver.cpp`, `TRANSPORTS.md:183-186`).
 `loopback` is in-process, never chosen by `auto`, and selected only by name
 (`TRANSPORTS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
-transport in `auto`, `portable` (`test_transport.cpp`); on Linux it
+transport in `auto`, `portable` (`test_driver.cpp`); on Linux it
 batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
 (`sdk/rocketnet_driver_builtin.cpp:54`, `:87-100`,
 `sdk/rocketnet_platform.cpp:645-668`).

@@ -558,7 +558,7 @@ use the transport's separate send path.
 
 ## Receive lengths and truncated datagrams
 
-Buffered drivers write at most the supplied capacity or per-packet stride,
+Buffered transports write at most the supplied capacity or per-packet stride,
 but return each datagram's original length, up to 65535 bytes. A larger byte
 count does not grant access to bytes beyond that buffer. Client batch
 compaction copies only the stored prefix; the prefilter counts oversized
@@ -566,5 +566,5 @@ reports without reading that prefix. The buffered server counts oversized
 reports before invoking an application admission callback, so that callback
 never sees a claimed length beyond its available storage. Negative lengths,
 lengths beyond 65535, and returned packet counts outside the requested range
-remain driver faults. A zero byte count in a batch is a received empty
+remain transport faults. A zero byte count in a batch is a received empty
 datagram; zero from a single-packet receive means drained.
