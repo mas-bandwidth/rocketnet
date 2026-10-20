@@ -340,6 +340,15 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
         rocketnet_free( context, frame_sync );
         return NULL;
     }
+#else
+    if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
+        rocketnet_error( "frame sync: could not create timer" );
+        rocketnet_free( context, frame_sync );
+        return NULL;
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     rocketnet_info( "frame sync: %.1f hz", frame_rate );

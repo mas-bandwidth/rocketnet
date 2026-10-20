@@ -194,7 +194,7 @@ static int rocketnet_platform_real_platform_start( void )
 static void* rocketnet_platform_real_create_waitable_timer( unsigned flags )
 {
     (void) flags;
-    return NULL;
+    return (void*) 1;
 }
 
 static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table =

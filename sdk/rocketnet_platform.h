@@ -667,7 +667,7 @@ struct rocketnet_platform_priority_calls_t
     /** @brief Windows: QueryPerformanceFrequency into the LARGE_INTEGER the argument points at. */
     void ( *timer_frequency )( void * frequency );
     /** @brief Platform mutex create on the embedded handle; 0 on success, an errno or nonzero on failure. */
-    int ( *mutex_init )( rocketnet_platform_mutex_t * mutex );
+    int ( *mutex_init )( struct rocketnet_platform_mutex_t * mutex );
     /** @brief Platform startup (Windows WSAStartup); 0 on success, nonzero on failure. */
     int ( *platform_start )( void );
     /** @brief Windows: CreateWaitableTimerExW; NULL off Windows or on failure. */

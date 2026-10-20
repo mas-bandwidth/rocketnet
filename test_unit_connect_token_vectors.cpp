@@ -430,29 +430,30 @@ static void vectors_regenerate_byte_identical()
     rocketnet_unit_check( generated == generated_again );
 
     std::string path = ctv_path();
+
+    const char * regenerate = getenv( "ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS" );
+    if ( regenerate && strcmp( regenerate, "1" ) == 0 )
+    {
+        std::string temp = path + ".tmp";
+        FILE * file = rocketnet_test_fopen( temp, "wb" );
+        rocketnet_unit_check( file != NULL );
+        rocketnet_unit_check( fwrite( generated.data(), 1, generated.size(), file ) == generated.size() );
+        rocketnet_unit_check( fclose( file ) == 0 );
+#if defined(_WIN32)
+        // The Windows CRT rename refuses to replace an existing destination.
+        const std::wstring wide_temp = rocketnet_test_wide_path( temp );
+        const std::wstring wide_path = rocketnet_test_wide_path( path );
+        rocketnet_unit_check( MoveFileExW( wide_temp.c_str(), wide_path.c_str(),
+                                           MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) != 0 );
+#else
+        rocketnet_unit_check( rename( temp.c_str(), path.c_str() ) == 0 );
+#endif
+    }
+
     std::string existing;
     int existed = ctv_read_file( path, existing );
     rocketnet_unit_check( existed );
     rocketnet_unit_check( existing == generated );
-
-    const char * regenerate = getenv( "ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS" );
-    if ( !regenerate || strcmp( regenerate, "1" ) != 0 )
-        return;
-
-    std::string temp = path + ".tmp";
-    FILE * file = rocketnet_test_fopen( temp, "wb" );
-    rocketnet_unit_check( file != NULL );
-    rocketnet_unit_check( fwrite( generated.data(), 1, generated.size(), file ) == generated.size() );
-    rocketnet_unit_check( fclose( file ) == 0 );
-#if defined(_WIN32)
-    // The Windows CRT rename refuses to replace an existing destination.
-    const std::wstring wide_temp = rocketnet_test_wide_path( temp );
-    const std::wstring wide_path = rocketnet_test_wide_path( path );
-    rocketnet_unit_check( MoveFileExW( wide_temp.c_str(), wide_path.c_str(),
-                                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) != 0 );
-#else
-    rocketnet_unit_check( rename( temp.c_str(), path.c_str() ) == 0 );
-#endif
 }
 
 // every vector in the file: its seed expands to the test backend key, its
