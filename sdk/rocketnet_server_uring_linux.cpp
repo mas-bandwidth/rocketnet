@@ -154,6 +154,15 @@ struct rocketnet_server_uring_t
     struct rocketnet_server_uring_bank_t banks[2];
 
     struct rocketnet_server_socket_process_packets_t process_packets;
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    // the test seam: a queue whose multishot is cancelled so its terminating
+    // CQE carries this error in place of -ECANCELED (zero: none pending), and
+    // the next send SQEs prepared with no destination, so the kernel answers
+    // each with a failed CQE
+    int test_receive_error[ROCKETNET_URING_MAX_QUEUES];
+    int test_fail_sends;
+#endif
 };
 
 // ---------------------------------------------------------------------------
@@ -567,6 +576,16 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 
     if ( kind == ROCKETNET_URING_TAG_RECV )
     {
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+        struct io_uring_cqe injected;
+        if ( uring->test_receive_error[queue_index] != 0 && ( cqe->flags & IORING_CQE_F_MORE ) == 0 && cqe->res == -ECANCELED )
+        {
+            injected = *cqe;
+            injected.res = uring->test_receive_error[queue_index];
+            uring->test_receive_error[queue_index] = 0;
+            cqe = &injected;
+        }
+#endif
         if ( cqe->res >= 0 )
             rocketnet_server_uring_receive_cqe( uring, queue_index, cqe );
 
@@ -673,6 +692,31 @@ uint64_t rocketnet_server_uring_leaked_drivers()
 {
     return rocketnet_server_uring_leaked_drivers_total.load();
 }
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+
+void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error )
+{
+    rocketnet_assert( uring );
+    rocketnet_assert( queue_index >= 0 && queue_index < uring->num_queues );
+    rocketnet_assert( error < 0 );
+    struct io_uring_sqe * sqe = rocketnet_server_uring_get_sqe( uring );
+    if ( !sqe )
+        return;
+    uring->test_receive_error[queue_index] = error;
+    uring->queues[queue_index].cancel_pending = true;
+    io_uring_prep_cancel64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, queue_index, 0 ), 0 );
+    io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_CANCEL, queue_index, 0 ) );
+    rocketnet_server_uring_submit( uring );
+}
+
+void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count )
+{
+    rocketnet_assert( uring );
+    uring->test_fail_sends = count > 0 ? count : 0;
+}
+
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
 {
@@ -1093,6 +1137,14 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
             memset( &info->message, 0, sizeof(info->message) );
             info->message.msg_name = &info->name;
             info->message.msg_namelen = namelen;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            if ( uring->test_fail_sends > 0 )
+            {
+                uring->test_fail_sends--;
+                info->message.msg_name = NULL;
+                info->message.msg_namelen = 0;
+            }
+#endif
             info->message.msg_iov = &info->iovec;
             info->message.msg_iovlen = 1;
 
@@ -1311,6 +1363,11 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_proces
     (void) uring;
     return NULL;
 }
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *, int, int ) {}
+void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
+#endif
 
 #endif // #if ROCKETNET_URING_BUILT
 
