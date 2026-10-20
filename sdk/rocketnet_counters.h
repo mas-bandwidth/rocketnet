@@ -928,7 +928,7 @@
     /* the client listens to that server alone and drops the datagram */ \
     /* before any protocol check, counted while the attempt holds the */ \
     /* server's address; after a terminal state clears it nothing is */ \
-    /* counted (sdk/rocketnet_client_transport.cpp:1141-1146). REFUSAL. */ \
+    /* counted (sdk/rocketnet_client_transport.cpp:1296-1301). REFUSAL. */ \
     /* appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE: Counts datagrams the client drops because their source is not the server it dialed, while the connection attempt holds that server's address; one count per datagram. Unit: datagrams. Class: refusal; family: none. */ \
     X( CLIENT_RECEIVE_FOREIGN_SOURCE, REFUSAL, NONE )
