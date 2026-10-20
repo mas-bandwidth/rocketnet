@@ -315,11 +315,11 @@ void rocketnet_platform_socket_set_receive_hook( rocketnet_platform_socket_t * s
     rocketnet_platform_receive_hook_user = user;
 }
 
-static bool rocketnet_platform_receive_hooked( rocketnet_platform_socket_t * socket, void * packet_data, int max_packet_size, struct sockaddr_storage * from, int * result )
+static bool rocketnet_platform_receive_hooked( rocketnet_platform_socket_t * socket, void * packet_data, int max_packet_size, struct sockaddr_storage * from, size_t from_bytes, int * result )
 {
     if ( rocketnet_platform_receive_hook_function == NULL || socket != rocketnet_platform_receive_hook_socket )
         return false;
-    memset( from, 0, sizeof( *from ) );
+    memset( from, 0, from_bytes );
     *result = rocketnet_platform_receive_hook_function( rocketnet_platform_receive_hook_user, packet_data, max_packet_size, from );
     return true;
 }
@@ -992,7 +992,7 @@ receive_again:
         flags |= MSG_TRUNC;
 
 #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
-        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, &result ) )
+        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, sizeof( sockaddr_from ), &result ) )
         {
             if ( result < 0 )
                 return 0;
@@ -2703,7 +2703,7 @@ receive_again:
         msg.msg_iovlen = 2;
 
 #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
-        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, &result ) )
+        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, sizeof( sockaddr_from ), &result ) )
         {
             if ( result < 0 )
                 return 0;
@@ -4241,7 +4241,7 @@ receive_again:
         DWORD flags = 0;
 
 #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
-        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, &result ) )
+        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, sizeof( sockaddr_from ), &result ) )
         {
             if ( result < 0 )
                 return 0;
