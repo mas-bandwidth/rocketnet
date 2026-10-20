@@ -1,0 +1,194 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+// The live receive path (rn_ordered_receive, sdk/rocketnet_channel.cpp) and
+// the dispatch by wire code (rn_channels_dispatch, same file): a violation
+// moves its own counter as well as MESSAGE_PROTOCOL_VIOLATION, a connection
+// that enables only a receipt variant takes the base code it travels as, and
+// a RELIABLE_SEQUENCED message on a wide channel is always sendable. Time is
+// an argument: the clock starts at 1000.0 and no socket is opened.
+
+#include <string.h>
+
+#include "test_unit_registry.h"
+#include "sdk/rocketnet_allocator.h"
+#include "sdk/rocketnet_channel.h"
+#include "sdk/rocketnet_message.h"
+
+#define check rocketnet_unit_check
+
+struct violation_packet_t
+{
+    uint64_t id;
+    int bytes;
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+};
+
+struct violation_node_t
+{
+    rocketnet_counters_t counters;
+    rn_arena_t * arena;
+    rn_region_t * region;
+    rn_ordered_t ordered;
+    uint64_t next_packet_id;
+};
+
+static void violation_config( rocketnet_message_config_t * config, int num_channels )
+{
+    rocketnet_message_default_config( config );
+    config->num_channels = num_channels;
+    config->window_messages = 1024;
+    config->receive_ring_bytes = 262144;
+    config->max_message_bytes = 262144;
+    config->send_buffer_bytes = 800000;
+    config->rto_min_ms = 20;
+    config->rto_initial_ms = 100;
+    config->rto_max_ms = 400;
+}
+
+static void violation_init( violation_node_t * node, const rocketnet_message_config_t * config )
+{
+    memset( node, 0, sizeof( *node ) );
+    node->arena = rn_arena_create( NULL, config, 1, &node->counters );
+    check( node->arena != NULL );
+    node->region = rn_arena_region( node->arena, 0 );
+    check( rn_ordered_init( &node->ordered, node->region, config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+    node->next_packet_id = 1;
+}
+
+static void violation_send( violation_node_t * node, uint32_t channel, int type, const uint8_t * data, uint32_t bytes )
+{
+    uint8_t * pointer = rn_channels_start( &node->ordered.channels, channel, type, bytes );
+    check( pointer != NULL );
+    if ( !pointer )
+        return;
+    memcpy( pointer, data, bytes );
+    check( rn_channels_finish( &node->ordered.channels, bytes ) );
+}
+
+static int violation_write( violation_node_t * node, double now, violation_packet_t * packets, int capacity )
+{
+    alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t * pointers[8];
+    check( capacity > 0 && capacity <= 8 );
+    for ( int i = 0; i < capacity; i++ )
+        pointers[i] = frames[i];
+    const int count = rn_ordered_write( &node->ordered, now, pointers, capacity );
+    for ( int i = 0; i < count; i++ )
+    {
+        packets[i].id = node->next_packet_id++;
+        packets[i].bytes = (int) node->ordered.builder.packet[i].payload_bytes;
+        check( packets[i].bytes > 0 && packets[i].bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+        memcpy( packets[i].data, frames[i], (size_t) packets[i].bytes );
+        rn_ordered_commit( &node->ordered, i, packets[i].id, now );
+    }
+    return count;
+}
+
+// A RELIABLE_ORDERED record on a channel past the receiver's count fails the
+// reader's check 5 (MESSAGE_BAD_CHANNEL) before any dispatch. The live path
+// counts that violation by its own counter, then MESSAGE_PROTOCOL_VIOLATION
+// once for the ended connection (rn_channels_count_violation).
+static void violation_malformed_ordered_record_moves_its_own_counter()
+{
+    rocketnet_message_config_t sender_config, receiver_config;
+    violation_config( &sender_config, 16 );
+    violation_config( &receiver_config, 8 );
+    violation_node_t sender, receiver;
+    violation_init( &sender, &sender_config );
+    violation_init( &receiver, &receiver_config );
+
+    const uint8_t value = 42;
+    violation_send( &sender, 12, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, &value, 1 );
+    violation_packet_t packet;
+    check( violation_write( &sender, 1000.0, &packet, 1 ) == 1 );
+
+    check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL] == 1 );
+    check( rn_ordered_decide( &receiver.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( violation_malformed_ordered_record_moves_its_own_counter );
+
+// A connection whose mask enables RELIABLE_WITH_RECEIPT and not RELIABLE takes
+// wire code 2 (rocketnet_message_enabled_codes), so the reader admits the
+// record and the dispatch delivers it: no TYPE_NOT_ENABLED, no violation.
+static void violation_receipt_only_reliable_connection_takes_its_records()
+{
+    rocketnet_message_config_t config;
+    violation_config( &config, 8 );
+    violation_node_t sender, receiver;
+    violation_init( &sender, &config );
+    violation_init( &receiver, &config );
+
+    const uint32_t mask = 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT;
+    check( rn_channels_init( &receiver.ordered.channels, receiver.region, receiver.region->num_channels, mask ) );
+    check( rn_channels_set_payload_capacity( &receiver.ordered.channels, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+    receiver.ordered.limits.enabled_codes = rn_channels_enabled_codes( &receiver.ordered.channels );
+    check( ( receiver.ordered.limits.enabled_codes & ( 1u << ROCKETNET_MESSAGE_CODE_RELIABLE ) ) != 0 );
+    check( ( receiver.ordered.channels.enabled_types & ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE ) ) == 0 );
+
+    const uint8_t value = 7;
+    violation_send( &sender, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT, &value, 1 );
+    violation_packet_t packet;
+    check( violation_write( &sender, 1000.0, &packet, 1 ) == 1 );
+
+    check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED] == 0 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+    check( rn_ordered_deliveries( &receiver.ordered ) == 1 );
+    const rn_delivery_t & delivery = receiver.region->deliveries[0];
+    check( delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE && delivery.bytes == 1 && delivery.data[0] == value );
+    rn_ordered_end_update( &receiver.ordered );
+
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( violation_receipt_only_reliable_connection_takes_its_records );
+
+#if ROCKETNET_MAX_CHANNELS > 256
+
+// A RELIABLE_SEQUENCED record on channel 256 carries the WIDE channel field:
+// a 16-byte header (rocketnet_message_flags_header_bytes,
+// sdk/rocketnet_message.cpp:52) and the form byte.
+// The largest single record is payload_capacity - 17 bytes; one byte more is
+// a block. The boundary size payload_capacity - 16 is written and delivered.
+static void violation_wide_reliable_sequenced_boundary_is_sent()
+{
+    rocketnet_message_config_t config;
+    violation_config( &config, 300 );
+    violation_node_t sender, receiver;
+    violation_init( &sender, &config );
+    violation_init( &receiver, &config );
+
+    const uint32_t channel = 256;
+    const uint32_t bytes = sender.ordered.channels.payload_capacity - 16;
+    static uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+    for ( uint32_t i = 0; i < bytes; i++ )
+        data[i] = (uint8_t) ( i * 13 + 5 );
+    violation_send( &sender, channel, ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED, data, bytes );
+
+    static violation_packet_t packets[8];
+    const int count = violation_write( &sender, 1000.0, packets, 8 );
+    check( count >= 1 );
+    for ( int i = 0; i < count; i++ )
+        check( rn_ordered_receive( &receiver.ordered, packets[i].data, packets[i].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rn_ordered_deliveries( &receiver.ordered ) == 1 );
+    const rn_delivery_t & delivery = receiver.region->deliveries[0];
+    check( delivery.channel == channel && delivery.bytes == (int) bytes && memcmp( delivery.data, data, bytes ) == 0 );
+    rn_ordered_end_update( &receiver.ordered );
+
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( violation_wide_reliable_sequenced_boundary_is_sent );
+
+#endif // #if ROCKETNET_MAX_CHANNELS > 256
