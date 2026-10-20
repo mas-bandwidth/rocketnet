@@ -48,6 +48,27 @@ The refreshed control generates 109,743 states, with 13,178 distinct states;
 the no-refusal witness generates 20,895 states, with 4,113 distinct states.
 The existing disconnect witness still rejects `StagedDisconnectFlushed`.
 
+### Reversed no-retry witness
+
+`MCRNDriverSendStagingBrokenNoRetry.cfg` sets `RetryFlushWhenEqual = FALSE`,
+so `Publish` queues only when `xdpCountersDiffer` holds. `Publish` now gates
+its queueing step on the counter condition the transport checks
+(`send_staged != send_flushed`, or the XDP re-flush), and a flush that runs
+leaves the counters equal. TLC rejects exactly `RetryFlushPublishes`:
+a start stages a generation and advances the counters; a flush queues it and
+leaves the counters equal; a second start stages the retained generation; a
+flush runs with the counters equal, queues nothing, and leaves
+`xdpStaged = TRUE` with `xdpQueue = 0` after the worker retires, so the flush
+that ran with work ready publishes nothing.
+
+Checked against the code by hand: removing the
+`driver == ROCKETNET_DRIVER_XDP` disjunct in
+`rocketnet_server_transport_send_packets` leaves the retained generation
+unpublished once `send_flushed` catches up to `send_staged`, until an
+unrelated commit advances the staged counter. The unit check
+`xdp_send_staging_reflushes_without_commit` fails for that schedule. The
+witness generates 37,363 states, with 6,461 distinct states.
+
 ## Transport model and historical disconnect witness
 
 The staged send path of the server transport: the reserve/commit seam every
