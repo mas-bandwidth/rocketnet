@@ -110,6 +110,40 @@ jobs:
       - name: Run the examples
         run: python3 tools/run_examples.py --build build
 
+      - name: Build universal and run the x86_64 slice under Rosetta 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-universal \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-universal --config Release --clean-first --parallel 4
+          lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
+          for arch in arm64 x86_64; do
+            lipo -archs build-universal/librocketnet.a | tr ' ' '\n' | grep -qx "$arch"
+            lipo -archs bin/librocketnet.dylib | tr ' ' '\n' | grep -qx "$arch"
+            otool -l -arch "$arch" bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION | grep -q 'minos 12.0'
+          done
+          python3 tools/check_package.py build-universal --config Release
+          python3 tools/check_dll_consumer.py --build build-universal
+          if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            echo "TOOL-MISSING Rosetta 2 (x86_64 translation) (arch -x86_64 refused) on $RUNNER_NAME"
+            exit 1
+          fi
+          arch -x86_64 ./bin/test
+          arch -x86_64 ./bin/test_lifecycle
+          arch -x86_64 ./bin/functional
+          # a pin covers every create in the process, so the suite's own
+          # per-pump cases run unpinned above; the pinned cells run the
+          # transport-matrix socket cases, as .github/workflows/ci.yml:322-373 does
+          for transport in portable msgx; do
+            for case in test_transport_udp_loopback test_transport_ipv6_loopback \
+                        test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured; do
+              env ROCKETNET_SERVER_TRANSPORT=$transport ROCKETNET_CLIENT_TRANSPORT=$transport \
+                arch -x86_64 ./bin/functional --run "$case"
+            done
+          done
+
   examples-windows:
     name: windows
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]

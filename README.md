@@ -11,8 +11,8 @@ See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
-- [USAGE.md](USAGE.md) — how to drive it: the frame, the delivered-batch and
-  burned-sequence contracts, configuration, and driver selection.
+- [USAGE.md](USAGE.md) — how to drive it: the frame, message sending and
+  receiving, channels, configuration, and state transitions.
 - [docs/LINUX.md](docs/LINUX.md) — the Linux server guide: the transport ladder
   (`xdp`, `gso`, `io_uring`, `portable`) and pinning, host requirements,
   provisioning, socket errors and ICMP, limits, containers, and verifying a host.

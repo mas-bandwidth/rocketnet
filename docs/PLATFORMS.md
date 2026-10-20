@@ -25,12 +25,12 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | x86_64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Windows 11 (self-hosted fleet) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - |
-| [macOS](MACOS.md) | x86_64 | none | none | unsupported | - | - |
 
 clang-cl x64 is built and tested nightly: the `windows-toolchains` job in
 `nightly.yml` builds the static and shared libraries, `test.exe` and
