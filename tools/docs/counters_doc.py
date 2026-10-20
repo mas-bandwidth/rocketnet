@@ -14,9 +14,11 @@
 # Nothing here renames, reorders or renumbers a counter: the indices are the
 # row order, as in the real enum.
 #
-# A row's comment: the group comment (the first comment after a blank line in
-# the table) and the row's own comment (the comment directly above it), either
-# or both, then the row's CLASS and FAMILY columns.
+# A row's comment: its doc comment (a /** @brief NAME: text */ line above the
+# row) when it has one, with the NAME: prefix dropped; else the group comment
+# (the first comment after a blank line in the table) and the row's own comment
+# (the comment directly above it), either or both, then the row's CLASS and
+# FAMILY columns.
 #
 # usage: counters_doc.py <sdk/rocketnet_counters.h> <output rocketnet_counters.h>
 import os
@@ -25,6 +27,7 @@ import sys
 
 ROW_RE = re.compile(r"^\s*X\(\s*([A-Z0-9_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z0-9_]+)\s*\)\s*\\?\s*$")
 COMMENT_RE = re.compile(r"^\s*/\*(.*)\*/\s*\\\s*$")
+DOC_RE = re.compile(r"^\s*/\*\*\s*@brief\s+(.*?)\s*\*/\s*\\\s*$")
 BLANK_RE = re.compile(r"^\s*\\\s*$")
 
 
@@ -41,6 +44,7 @@ def rows_of(header):
     rows = []
     group = None
     own = []
+    doc = None
     after_blank = True
     for i in range(start, len(lines)):
         line = lines[i]
@@ -49,11 +53,19 @@ def rows_of(header):
             text = " ".join(own) if own else None
             if group is None and text is not None and after_blank:
                 group = text
-            rows.append((i + 1, m.group(1), m.group(2), m.group(3), group, text))
+            prefix = "ROCKETNET_COUNTER_" + m.group(1) + ":"
+            if doc is not None and doc.startswith(prefix):
+                doc = doc[len(prefix):].strip()
+            rows.append((i + 1, m.group(1), m.group(2), m.group(3), group, text, doc))
             own = []
+            doc = None
             after_blank = False
             if not line.rstrip().endswith("\\"):
                 return rows
+            continue
+        m = DOC_RE.match(line)
+        if m:
+            doc = m.group(1)
             continue
         m = COMMENT_RE.match(line)
         if m:
@@ -62,6 +74,7 @@ def rows_of(header):
         if BLANK_RE.match(line):
             group = None
             own = []
+            doc = None
             after_blank = True
             continue
         sys.exit("error: %s:%d: a line of ROCKETNET_COUNTER_ROWS that is not a row, a comment or blank" % (header, i + 1))
@@ -95,13 +108,16 @@ def main():
     out.append(" * RECEIVED counter its outcomes sum into, or NONE. */")
     out.append("enum")
     out.append("{")
-    for index, (lineno, name, klass, family, group, own) in enumerate(rows):
+    for index, (lineno, name, klass, family, group, own, doc) in enumerate(rows):
         parts = []
-        if group:
+        if doc:
+            parts.append(sentence(doc))
+        elif group:
             parts.append(sentence(group))
-        if own and own != group:
+        if not doc and own and own != group:
             parts.append(sentence(own))
-        parts.append("Class %s, family %s." % (klass, family))
+        if not doc:
+            parts.append("Class %s, family %s." % (klass, family))
         out.append('#line %d "%s"' % (lineno, header))
         out.append("    ROCKETNET_COUNTER_%s = %d, ///< %s" % (name, index, " ".join(parts)))
     out.append('#line %d "%s"' % (rows[-1][0], header))
