@@ -5,9 +5,9 @@
 
 // The platform-layer nit a unit case shows with no socket, no thread and no
 // clock: the non-blocking flag merge the POSIX socket create paths pass to
-// fcntl F_SETFL (rocketnet_platform_nonblocking_flags,
-// sdk/rocketnet_platform.cpp:258, called at :744 and :2404), which keeps the
-// descriptor's other flags.
+// fcntl F_SETFL (rocketnet_platform_nonblocking_flags in
+// sdk/rocketnet_platform.cpp, called by both POSIX socket create paths), which
+// keeps the descriptor's other flags.
 
 #include "test_unit_registry.h"
 

@@ -2817,7 +2817,7 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
 // is the msgx pump live for this call? eligibility is decided at create;
 // a pause expires here, making the caller's next batch attempt the
 // re-probe. the client's batch send and receive run on its I/O thread
-// (sdk/rocketnet_driver_builtin.cpp:89-91) while
+// (portable_io_client_send_batch in sdk/rocketnet_driver_builtin.cpp) while
 // rocketnet_platform_socket_pump above reads the pause on its caller's
 // thread, so msgx_down_until is only loaded and stored atomically (relaxed:
 // it orders nothing else).
