@@ -1199,13 +1199,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     return client_transport;
 }
 
-// the destination of the Filling ring's committed slots: the protocol's
-// server address while it holds one; once the reset in
-// rocketnet_client_transport_disconnect has erased it, the address that
-// disconnect's deferred hand-off of its burst recorded with the ring
-// (rocketnet_client_io_hand_off, sdk/rocketnet_client_io.h:299). A later
-// hand-off by update, send_packets or destroy then sends the burst, and any
-// payload deferred ahead of it, to the server they were sealed for.
+// The destination of the Filling ring's committed slots: the protocol's
+// server address while it holds one; after disconnect resets it, the address
+// recorded on the ring by the deferred hand-off. Retrying during update,
+// send_packets or destroy therefore sends the burst to the server for which
+// it was sealed.
 static const rocketnet_address_t * rocketnet_client_transport_fill_destination( rocketnet_client_transport_t * client_transport )
 {
     if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
@@ -1402,6 +1400,9 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
     uint64_t committed = ring->num_packets;
     if ( committed > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
         committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
+
+    if ( !destination )
+        destination = rocketnet_client_transport_fill_destination( client_transport );
 
     const int stats_index = client_transport->current_stats_index;
     const rocketnet_address_t * to = destination ? destination : rocketnet_client_transport_fill_destination( client_transport );
