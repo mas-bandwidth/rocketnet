@@ -43,8 +43,7 @@
     them. A client whose socket shares a port with one of them never hears
     its server, since the IPv4 datagrams to that port reach the held socket.
     Darwin gives a dual stack IPv6 socket such a port, so the macOS client of
-    an IPv4 server binds an IPv4 socket (sdk/rocketnet_platform.cpp:2059,
-    read by sdk/rocketnet_client_transport.cpp:789).
+    an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:796).
 */
 
 #include "rocketnet_counters.h"
