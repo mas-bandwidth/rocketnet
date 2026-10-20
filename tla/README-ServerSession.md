@@ -71,7 +71,8 @@ outstanding cookies, which no slot record holds, so no property here depends on 
 | `ClientConnects(i, t)` | a request with token `t` opens a mapping into free slot `i`, a new session; a token in the used-token history is refused (each request comes from its own address, so a used token is a replay) |
 | `Establish(i)` | the response opens: the token is recorded in the history, the slot is CONNECTED, its reason cleared |
 | `Deny(i)`, `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)` | a denial during the handshake; the slot's timeout; the client's own disconnect; `disconnect_client(i)` with its burst |
-| `ServerSend(i)` | message start/finish to a connected slot |
+| `ServerSend(i)` | message start/finish to a connected slot (the `sendbeforeconnected` defect also enables it for a FREE or HANDSHAKE slot) |
+| `ServerDropSend(i)` | message start to a slot that is not CONNECTED, on a running or a stopped server (`rocketnet_server_start_message` returns NULL and counts `ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS`; the message layer's `MESSAGE_SEND_NOT_CONNECTED`): no slot field changes, nothing is held; the ghost `droppedIn` is the slot's state after a drop and `{}` after any other step (RN-2 m1.5). stop is one call, so no send happens while STOPPING |
 | `ClientSend(s)`, `Deliver(s)`, `Lose(s)` | the client of any session ever started sends (also after its connection ended); the packet arrives at that session's slot (the same address reconnecting into the same slot is the worst case) and opens only under the keys it was sealed with, into a connected slot |
 
 Restart is `Stop`, `StopComplete`, `Start`. Every path out of a slot's connection goes through
@@ -83,7 +84,8 @@ Restart is `Stop`, `StopComplete`, `Start`. Every path out of a slot's connectio
 |---|---|---|
 | `TypeOK`, `SlotOwnsItsSession` | invariant | types; an occupied slot holds its session, a free one none |
 | `StartOnlyFromStopped` | invariant | start succeeds only from STOPPED |
-| `NoSendUnlessConnected` | invariant | no message is queued to a slot that is not connected, and no send-side field is written outside CONNECTED |
+| `NoSendUnlessConnected` | invariant | no message is queued to a slot that is not connected (FREE or HANDSHAKE), and no send-side field is written outside CONNECTED |
+| `DropLeavesNothing` | invariant | a drop happens only to a FREE or HANDSHAKE slot, and such a slot holds no send-side field, so nothing dropped is sent to the client that connects into it |
 | `ResetIsInit` | invariant | a free slot's per-connection fields are all Init; the history holds every token this object established, the lifetime counter every connection, and the keys and config stay |
 | `RecordIsCurrent` | invariant | a slot's record holds only Init and its current session's writes |
 | `SlotReuseObservesNothing` | invariant | per slot, no packet of session s opens in another session, and no step reads a field another session wrote (a stale ack, a stale fragment, a replay-window false reject) |
@@ -102,6 +104,7 @@ Restart is `Stop`, `StopComplete`, `Start`. Every path out of a slot's connectio
 | `MCServerSessionUnresetSlot.cfg` | `Defect = "unresetslot"`, `UnresetField = "replay_window"`: `Reset(i)` skips the replay window | `SlotReuseObservesNothing`, exit 12 | 12 states: create, start, session 1 connects into slot 1 and is established, its packet opens (`replay_window = 1`), the slot times out (the reset leaves `replay_window = 1`), session 2 connects into slot 1 and is established, its first packet opens: `slot[1].sess = 2`, `observed = {[slot \|-> 1, field \|-> "replay_window"]}`, the new client's first sequence checked against the old client's window |
 | `MCServerSessionStopLeavesClient.cfg` | `Defect = "stopleavesclient"`: stop skips the last slot | `NoClientWhileStopped`, exit 12 | 6 states: create, start, session 1 opens a mapping into slot 2, stop, StopComplete: `state = "STOPPED"`, `slot[2].st = "HANDSHAKE"`, `slot[2].sess = 1` |
 | `MCServerSessionTouchesOtherSlot.cfg` | `Defect = "touchesotherslot"`: `Reset(i)` also clears slot i+1 | `ResetTouchesOnlyItsSlot`, exit 12 | 6 states: create, start, sessions 1 and 2 open mappings into slots 1 and 2, slot 1 is denied: both slots `FREE`, slot 1's reason `DENIED`, `collateral = {2}`: session 2 vanished with no reason and no reset path of its own |
+| `MCServerSessionSendBeforeConnected.cfg` | `Defect = "sendbeforeconnected"`: `ServerSend(i)` also runs for a slot that is not CONNECTED | `NoSendUnlessConnected`, exit 12 | 4 states: create, start, a send to a free slot: every slot `FREE`, `queuedIn = {"FREE"}`. In the code that is `rocketnet_server_start_message` to an index below max_clients with no client, which the message layer drops (`ServerDropSend`) |
 
 Each trace was read step by step against the defect its constant names. With the UnresetSlot
 instance and `INVARIANT ResetIsInit` instead, TLC fails `ResetIsInit` at the first reset (8
@@ -117,10 +120,11 @@ case, one for witnesses, 110-second cap per case):
 
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
-| `MCServerSession.cfg` | pass | 333,379 | 47,443 | 24.818 | 0 |
-| `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 87,120 | 19,643 | 3.384 | 12 |
-| `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 193 | 137 | 1.823 | 12 |
-| `MCServerSessionTouchesOtherSlot.cfg` | `ResetTouchesOnlyItsSlot` violated | 91 | 79 | 1.701 | 12 |
+| `MCServerSession.cfg` | pass | 693,276 | 81,520 | 31.262 | 0 |
+| `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 156,901 | 29,591 | 3.295 | 12 |
+| `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 289 | 166 | 1.541 | 12 |
+| `MCServerSessionTouchesOtherSlot.cfg` | `ResetTouchesOnlyItsSlot` violated | 124 | 95 | 2.222 | 12 |
+| `MCServerSessionSendBeforeConnected.cfg` | `NoSendUnlessConnected` violated | 9 | 8 | 1.867 | 12 |
 
 ## Bounds
 

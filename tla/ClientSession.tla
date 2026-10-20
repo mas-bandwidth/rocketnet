@@ -13,14 +13,21 @@
 \* connection. The fields deliberately kept across connections are `kept` (the
 \* lifetime counters and the config) and the disconnect reason.
 \*
+\* A message send outside CONNECTED is dropped (DropSend): it changes no
+\* per-connection field and nothing of it is held for a later send
+\* (standard/MESSAGES.md m1.5). The ghost droppedIn holds the state of the
+\* drop the last step made, {} after any other step, so it adds at most one
+\* copy of each state.
+\*
 \* Reversed witnesses, one constant: Defect = "unreset" makes Reset skip the
 \* field UnresetField; Defect = "connectanywhere" lets connect succeed from
-\* every state.
+\* every state; Defect = "queuebeforeconnected" lets Send write the send
+\* state in a handshake state, a send queued before CONNECTED.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS MaxSessions, MaxCreates, Defect, UnresetField
 
-ASSUME Defect \in {"none", "unreset", "connectanywhere"}
+ASSUME Defect \in {"none", "unreset", "connectanywhere", "queuebeforeconnected"}
 ASSUME MaxSessions \in Nat \ {0} /\ MaxCreates \in Nat \ {0}
 
 \* One field per row of the per-connection reset inventory.
@@ -70,14 +77,15 @@ Reset(c) == [f \in Fields |-> IF Defect = "unreset" /\ f = UnresetField THEN c[f
 StaleIn(c, fs, s) == {f \in fs : c[f] \notin {0, s}}
 
 VARIABLES st, cur, conn, reason, kept, link, nextSess, creates,
-          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn
+          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, droppedIn
 \* st, cur, conn, reason, kept: the client object (cur is the session tag of
 \*   the connection in progress, 0 outside one)
 \* link: the session tags of server packets in flight to this client (lossy)
 \* nextSess, creates: the environment's counters
-\* lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn: ghosts
+\* lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn,
+\*   droppedIn: ghosts
 vars == <<st, cur, conn, reason, kept, link, nextSess, creates,
-          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn>>
+          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, droppedIn>>
 ghosts == <<observed, crossDelivered, connectFrom, queuedIn>>
 
 Init ==
@@ -86,6 +94,7 @@ Init ==
     /\ link = {} /\ nextSess = 1 /\ creates = 0
     /\ lastEnd = "NONE" /\ connected = 0
     /\ observed = {} /\ crossDelivered = {} /\ connectFrom = {} /\ queuedIn = {}
+    /\ droppedIn = {}
 
 \* rocketnet_client_create: no token, DISCONNECTED, a fresh object.
 Create ==
@@ -136,6 +145,7 @@ Connect(tok) ==
 \* keep-alive moves to CONNECTED, which clears the disconnect reason.
 HandshakeStep ==
     /\ st \in HandshakeStates
+    /\ droppedIn' = {}
     /\ observed' = observed \cup StaleIn(conn, HandshakeReads, cur)
     /\ st' = NextStage(st)
     /\ IF NextStage(st) = "CONNECTED"
@@ -155,7 +165,7 @@ Deny == st \in HandshakeStates /\ End(conn, "CONNECTION_DENIED", "CONNECTION_DEN
 TokenExpires == st \in HandshakeStates /\ End(conn, "CONNECT_TOKEN_EXPIRED", "CONNECT_TOKEN_EXPIRED")
 
 \* The stage deadlines and the connected timeout.
-Timer == st \in Live /\ End(conn, TimedOut(st), TimedOut(st))
+Timer == st \in Live /\ End(conn, TimedOut(st), TimedOut(st)) /\ droppedIn' = {}
 
 ServerDisconnect == st = "CONNECTED" /\ End(conn, "DISCONNECTED", "SERVER_DISCONNECTED")
 
@@ -172,14 +182,24 @@ DisconnectFromError ==
     /\ st' = "DISCONNECTED" /\ cur' = 0 /\ conn' = Reset(conn)
     /\ UNCHANGED <<reason, kept, link, nextSess, creates, lastEnd, connected, ghosts>>
 
-\* Message start/finish: only while CONNECTED (refused otherwise, a stutter).
+\* Message start/finish: only while CONNECTED. The defect lets a send in a
+\* handshake state write the send state, held for after CONNECTED.
 Send ==
-    /\ st = "CONNECTED"
+    /\ st = "CONNECTED" \/ (Defect = "queuebeforeconnected" /\ st \in HandshakeStates)
     /\ observed' = observed \cup StaleIn(conn, SendReads, cur)
     /\ conn' = Write(conn, SendFields, cur)
     /\ queuedIn' = queuedIn \cup {st}
     /\ UNCHANGED <<st, cur, reason, kept, link, nextSess, creates, lastEnd,
                    connected, crossDelivered, connectFrom>>
+
+\* Message start outside CONNECTED (rocketnet_client_start_message returns
+\* NULL, counted in NOT_CONNECTED_DROPS): dropped, never queued. No
+\* per-connection field changes; the state is recorded in the ghost.
+DropSend ==
+    /\ st \notin {"NONE", "CONNECTED"}
+    /\ droppedIn' = {st}
+    /\ UNCHANGED <<st, cur, conn, reason, kept, link, nextSess, creates, lastEnd,
+                   connected, observed, crossDelivered, connectFrom, queuedIn>>
 
 \* The server side of any session ever started may still have packets in
 \* flight, including sessions that ended and sessions of a destroyed object.
@@ -210,12 +230,16 @@ Lose(s) ==
     /\ UNCHANGED <<st, cur, conn, reason, kept, nextSess, creates, lastEnd,
                    connected, ghosts>>
 
+\* Every step but a drop clears droppedIn (the two fair actions also say so
+\* themselves, so that their fairness conditions name a whole step).
 Next ==
-    \/ Create \/ Destroy
-    \/ \E tok \in Tokens : Connect(tok)
-    \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
-    \/ ClientDisconnect \/ DisconnectFromError \/ Send
-    \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
+    \/ /\ \/ Create \/ Destroy
+          \/ \E tok \in Tokens : Connect(tok)
+          \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
+          \/ ClientDisconnect \/ DisconnectFromError \/ Send
+          \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
+       /\ droppedIn' = {}
+    \/ DropSend
 
 Spec == Init /\ [][Next]_vars
 \* Fair delivery of the server's handshake replies, and the timers.
@@ -231,6 +255,7 @@ TypeOK ==
     /\ observed \subseteq Fields
     /\ crossDelivered \subseteq [from : Sessions, to : Tags]
     /\ connectFrom \subseteq States /\ queuedIn \subseteq States
+    /\ droppedIn \subseteq States
 
 \* A session is in progress exactly in the live states.
 CurrentOnlyWhileLive == (st \in Live) <=> (cur # 0)
@@ -239,6 +264,12 @@ ConnectOnlyFromDisconnected == connectFrom \subseteq {"DISCONNECTED"}
 
 NoSendUnlessConnected ==
     /\ queuedIn \subseteq {"CONNECTED"}
+    /\ st # "CONNECTED" => \A f \in SendFields \ RecvFields : conn[f] = 0
+
+\* A drop happens only outside CONNECTED and leaves nothing: outside CONNECTED
+\* no send state is written, so nothing dropped is sent once CONNECTED.
+DropLeavesNothing ==
+    /\ droppedIn \cap {"NONE", "CONNECTED"} = {}
     /\ st # "CONNECTED" => \A f \in SendFields \ RecvFields : conn[f] = 0
 
 \* Outside a connection every per-connection field is Init; the kept fields
