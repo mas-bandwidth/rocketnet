@@ -210,7 +210,7 @@ add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_S
 set(rocketnet_test_hook_targets)
 if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
-    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -362,10 +362,10 @@ if(ROCKETNET_BUILD_TESTS)
     set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
-    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1)
+    target_compile_definitions(test PRIVATE ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1)
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
-        # the test hook library only, matching the filter-epoch seam above, so
+        # the test hook library only, matching the link-simulator seam above, so
         # neither the installed static library nor the shared libraries carry it.
         target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
         target_compile_definitions(test PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
@@ -403,7 +403,7 @@ if(ROCKETNET_BUILD_TESTS)
         sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
-        ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1
+        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"

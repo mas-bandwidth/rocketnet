@@ -315,7 +315,6 @@ Registry rules:
 | SipHash key | `16` | bytes | size | [t2 Architecture and key inventory](#t2) |
 | prefilter header | `6` | bytes | size | [t5 Prefilter header](#t5) |
 | filter value | `4` | bytes | size | [t5 Prefilter header](#t5) |
-| prefilter magic | `16` | bytes | size | [t5 Prefilter header](#t5) |
 | sequence | `4` | bytes | size | [t4 Wire encoding primitives](#t4) |
 | per-packet overhead | `26` | bytes | size | [t8 Packet formats](#t8) |
 | associated data | `21` | bytes | size | [t9 Packet protection](#t9) |
