@@ -3638,7 +3638,7 @@ static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
 // Windows: SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL ) on the
 // network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
-// from platform init to platform term (game/Libraries/platform/platform.cpp:154 and :173 in the game that carried flow)
+// from platform init to platform term, matching the host application's lifecycle
 
 static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
 {
@@ -4102,6 +4102,69 @@ int rocketnet_platform_id()
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif // #ifndef SIO_UDP_CONNRESET
+
+#ifndef SIO_UDP_NETRESET
+#define SIO_UDP_NETRESET _WSAIOW(IOC_VENDOR, 15)
+#endif // #ifndef SIO_UDP_NETRESET
+
+static volatile LONG rocketnet_platform_udp_reset_refusal_logged = 0;
+static volatile LONG64 rocketnet_platform_receive_reset_count = 0;
+
+// windows-udp-connreset audit: every socket rocketnet creates on Windows
+// (portable server and client, iocp, rio) turns both ICMP reset reports off
+// here, so a hard-killed peer never turns into receive errors (DRIVERS.md,
+// "Windows connection reset")
+bool rocketnet_platform_socket_disable_udp_resets( uintptr_t handle )
+{
+    bool disabled = true;
+    const DWORD codes[2] = { SIO_UDP_CONNRESET, SIO_UDP_NETRESET };
+    const char * names[2] = { "SIO_UDP_CONNRESET", "SIO_UDP_NETRESET" };
+    for ( int i = 0; i < 2; i++ )
+    {
+        BOOL report = FALSE;
+        DWORD returned_bytes = 0;
+        if ( WSAIoctl( (SOCKET) handle, codes[i], &report, sizeof( report ), NULL, 0, &returned_bytes, NULL, NULL ) == SOCKET_ERROR )
+        {
+            disabled = false;
+            if ( InterlockedExchange( &rocketnet_platform_udp_reset_refusal_logged, 1 ) == 0 )
+                rocketnet_warn( "%s refused (Winsock %d): receive paths skip reset statuses instead", names[i], WSAGetLastError() );
+        }
+    }
+    return disabled;
+}
+
+bool rocketnet_platform_receive_status_is_reset( int status )
+{
+    switch ( status )
+    {
+        case WSAECONNRESET:
+        case WSAENETRESET:
+        case WSAECONNREFUSED:
+        case WSAEHOSTUNREACH:
+        case WSAENETUNREACH:
+        case ERROR_PORT_UNREACHABLE:
+        case ERROR_HOST_UNREACHABLE:
+        case ERROR_NETWORK_UNREACHABLE:
+        case ERROR_CONNECTION_REFUSED:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void rocketnet_platform_count_receive_reset()
+{
+    InterlockedIncrement64( &rocketnet_platform_receive_reset_count );
+}
+
+uint64_t rocketnet_platform_receive_resets()
+{
+    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
@@ -4135,13 +4198,10 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         return NULL;
     }
 
-    // IMPORTANT: tell windows we don't want to receive any connection reset messages
-    // for this socket, otherwise recvfrom errors out when client sockets disconnect hard
-    // in response to ICMP messages.
-    BOOL bNewBehavior = FALSE;
-    DWORD dwBytesReturned = 0;
-    WSAIoctl( s->handle, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL );
-
+    // IMPORTANT: tell windows we don't want to receive any connection or network
+    // reset reports for this socket, otherwise a receive errors out after a peer
+    // disconnects hard and its ICMP port unreachable comes back
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) s->handle );
     // own the port exclusively: without SO_EXCLUSIVEADDRUSE another local
     // process binds the same port with SO_REUSEADDR and takes its datagrams.
     // set before bind, as the IOCP and RIO drivers do.
@@ -4422,7 +4482,16 @@ receive_again:
                 break;
             }
 
-            if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT && error != WSAECONNRESET )
+            // an ICMP report of an earlier send is not the end of the
+            // queue: skip it and keep reading, or one dead peer ends every
+            // drain early (windows-udp-connreset audit, portable receive)
+            if ( rocketnet_platform_receive_status_is_reset( error ) )
+            {
+                rocketnet_platform_count_receive_reset();
+                continue;
+            }
+
+            if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT )
             {
                 rocketnet_debug( "WSARecvFrom failed with error %d", error );
             }
@@ -4657,6 +4726,7 @@ bool rocketnet_platform_client_ipv6_available()
     SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
     if ( probe == INVALID_SOCKET )
         return false;
+    rocketnet_platform_socket_disable_udp_resets( (uintptr_t) probe );
     closesocket( probe );
     return true;
 #else

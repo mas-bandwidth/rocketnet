@@ -39,9 +39,11 @@ contents:
   inside a call; destroy's drain reaps outside the budget, and its rounds
   are bounded in the code (`ROCKETNET_URING_DESTROY_MAX_ROUNDS`), not here.
 
-Three constants act as rule switches and carry the reversed witnesses:
-`ResetWaitsForReap`, `ReapIntoFill` and `BoundedReap`. All are `TRUE` in the
-rule.
+Four constants act as rule switches and carry the reversed witnesses:
+`ResetWaitsForReap`, `ReapIntoFill`, `BoundedReap` and `RearmOnReceive`.
+All are `TRUE` in the rule. `RearmOnReceive` says receive_packets re-arms a
+disarmed multishot (`rocketnet_server_uring_rearm_unarmed`); it is `FALSE`
+only in the reversed witness `MCRNUringDriverBrokenNoRearmRetry.cfg`.
 
 ## Each action against THE DESIGN
 
@@ -54,12 +56,12 @@ rule.
 | `KernelComplete(s)` | the kernel finishes the send (any res, where a negative one counts SEND_DROPPED) and posts the send CQE |
 | `KernelFill(b)` | the armed multishot RECVMSG fills a provided ring buffer and posts a receive CQE |
 | `KernelStop` | a CQE without IORING_CQE_F_MORE ends the multishot (ENOBUFS among the causes) |
-| `Reap(c)` | the main thread reaps one CQE inside a send or receive call, counted in `work`, and under `BoundedReap` only while `work < Budget`; or in destroy's drain. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` re-arms the multishot while the driver is running and never during destroy |
+| `Reap(c)` | the main thread reaps one CQE inside a send or receive call, counted in `work`, and under `BoundedReap` only while `work < Budget`; or in destroy's drain. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` ends the multishot. While running, the one-shot re-arm `rocketnet_server_uring_multishot_ended` attempts either succeeds (`armed` TRUE) or finds no submission entry (`RECEIVE_REARM_FAILED`, `armed` FALSE until a receive re-arms it): the model takes both. During destroy it is never re-armed |
 | `ReturnBuffer(b)` | after the copy, the buffer goes back to the ring |
 | `ResetIndex` | send_packets resets the reservation index to 0 only when no slot is `Kernel` owned and every send submitted has its CQE reaped; the call returns |
 | `SendReturn` | send_packets returns with some send still without its CQE, once its budget is spent or the cq is empty after its one wait: the index and every slot stay as they are, and a later call retires the rest (`SEND_DEFERRED`). Only under `BoundedReap` |
-| `RecvBegin` | receive_packets begins; its reaps count against the budget |
-| `Swap` | the end of receive_packets, once its reap stops (the cq is empty, or under `BoundedReap` the budget is spent): the old fill bank becomes the exposed bank and the new fill bank is emptied |
+| `RecvBegin` | receive_packets begins; its reaps count against the budget. It is enabled while `gen < MaxSteps` or while the multishot is disarmed, so a re-arm is never cut off by the generation bound |
+| `Swap` | the end of receive_packets, once its reap stops (the cq is empty, or under `BoundedReap` the budget is spent): the old fill bank becomes the exposed bank and the new fill bank is emptied (`gen` stops at `MaxSteps`). Under `RearmOnReceive` a disarmed multishot is armed again, as `rocketnet_server_uring_rearm_unarmed` does between the reap and the submit |
 | `TransportReads` | the transport reads the views of the exposed bank. A read changes no driver state, so here it is a stutter; what the read relies on is ExposedStable |
 | `Destroy` | cancels every multishot receive: the cancel posts its own CQE, and an armed multishot ends with a `Term` |
 | `Free` | destroy's drain ends: once no slot is kernel owned, the cq is empty and the multishot is disarmed, slots, banks and the ring are freed |
@@ -87,8 +89,12 @@ Liveness, under `SpecFair`:
 
 - `SubmittedEventuallyFree`: every `Kernel` slot is eventually `Free`.
 - `DestroyEventuallyFrees`: `Destroying ~> Freed`.
+- `ReceiveLiveness`: a disarmed running multishot is re-armed by a receive,
+  or destroy ends the run (`phase = "Running" /\ armed = FALSE` leads-to
+  `armed = TRUE \/ phase # "Running"`). A receive with no retry never re-arms,
+  a silent permanent receive stall.
 
-`SpecFair` gives weak fairness to the following:
+`SpecFair` gives weak fairness to the following, strong where marked:
 
 - **`KernelComplete(s)`, per slot.** The kernel completes every send.
 - **`Reap(c)`, per CQE.** A CQ is FIFO, so a pending CQE is never starved
@@ -103,11 +109,41 @@ Liveness, under `SpecFair`:
   first: the loop is an artifact of the model's set-valued cq, and strong
   fairness on the send CQEs states the FIFO order the code has.
 - **`ReturnBuffer(b)`.**
-- **`Finish(s) \/ Abort(s)` and `Submit`.** The game finishes what it
-  reserves and keeps calling `send_packets`, so a deferred send is retired
-  by a later call.
+- **`Finish(s) \/ Abort(s)`.** The game finishes what it reserves.
+- **`Submit`, strongly.** The game keeps calling `send_packets`, so a
+  deferred send is retired by a later call. Weak fairness is not enough
+  once receive re-arms: with weak fairness only, TLC found a loop of
+  receive calls (`KernelStop`, `RecvBegin`, `Reap(Term)`, `Swap` re-arms)
+  in which `Submit` is enabled only between calls, never continuously, so
+  a `Kernel` slot was never freed and `SubmittedEventuallyFree` failed. The
+  game loop calls `send_packets` every tick, whatever the receive side
+  does; strong fairness on `Submit` states that.
+- **`RecvBegin`, strongly.** The game keeps calling `receive_packets`.
+  `RecvBegin` is disabled during every send call, so weak fairness would
+  not make a receive (and its re-arm) happen.
 - **`ResetIndex`, `SendReturn` and `Swap`.** A call that may end does end.
 - **`Free`.** This is destroy's drain.
+
+One assumption is not a fairness condition: under `RearmOnReceive` the
+re-arm in `Swap` always succeeds. In the code
+`rocketnet_server_uring_rearm_unarmed` can also find no submission entry,
+counted `RECEIVE_REARM_FAILED`, and the queue stays disarmed for that call.
+`rocketnet_server_uring_get_sqe` submits and asks again before it fails, so
+only a submission queue that stays full fails it, and the next
+receive_packets tries again. `ReceiveLiveness` holds under this assumption:
+receive is re-armed once some receive call finds an entry.
+
+The model's `armed` is the kernel's view: `KernelStop` clears it when the
+multishot ends, before the `Term` is reaped. The code's `queue->armed`
+stays true until `rocketnet_server_uring_multishot_ended` reaps the `Term`,
+so `rocketnet_server_uring_rearm_unarmed` skips a queue whose `Term` is
+still in the completion queue. When a call's budget is spent with the
+`Term` still pending, the model's `Swap` re-arms one call earlier than the
+code does, and the model has no step in which that call leaves the queue
+disarmed. The later reap of the pending `Term` takes both outcomes in the
+model, so a failed one-shot re-arm disarms it again and the next call's
+`Swap` re-arms it, as the code does. The difference is at most one receive
+call in when the re-arm lands; `ReceiveLiveness` is not affected by it.
 
 ## What the model leaves out
 
@@ -122,18 +158,18 @@ Liveness, under `SpecFair`:
 
 ## The small instance and the runs
 
-`MCRNUringDriver.tla` extends the module with no overrides. The constants
-are `Slots = 2`, `Buffers = 2`, `MaxSteps = 2` (two datagrams, two bank
+`MCRNUringDriver.tla` extends the module with no overrides. Every case
+uses `Slots = 2`, `Buffers = 2`, `MaxSteps = 2` (two datagrams, two bank
 swaps) and `Budget = 1` (a call reaps one CQE, so deferral is exercised at
-every call). The four cases form group `rnuringdriver` in `CASES.tsv`.
+every call). The five cases form group `rnuringdriver` in `CASES.tsv`.
 
 To run them from the rocketnet checkout, with `$job`, `$jar` and `$java`
 as in `tla/README.md`:
 
 ```sh
-for i in 0 1 2 3; do
+for i in 0 1 2 3 4; do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group rnuringdriver --shards 4 --shard "$i" --workers 2 --timeout 110s \
+    --group rnuringdriver --shards 5 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnuringdriver-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
@@ -145,10 +181,14 @@ Outcomes measured on a linux-amd64 bench (Java 21.0.12.1, the pinned JAR,
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNUringDriver.cfg` | pass (6 invariants, 2 properties) | 0 | 329423 | 90259 | 53.7 |
-| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 732 | 360 | 0.7 |
-| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 110 | 67 | 0.7 |
-| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 964 | 457 | 0.7 |
+| `MCRNUringDriver.cfg` | pass (6 invariants, 3 properties) | 0 | 606276 | 159168 | 84.7 |
+| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 763 | 370 | 0.8 |
+| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 112 | 67 | 0.6 |
+| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 1011 | 473 | 0.7 |
+| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 531357 | 141455 | 20.3 |
+
+The control's 84.7 s is inside the 110 s record budget; before the re-arm
+rule (two liveness properties, weak fairness on `Submit`) it measured 53.7 s.
 
 ## Counterexamples, checked by hand against THE DESIGN
 
@@ -207,5 +247,22 @@ With the kernel posting a CQE per arriving datagram and the buffer going
 back to the ring at each reap, that loop has no bound: the defect the
 budget removes. The trace is a real defect of the broken rule.
 
-Each witness fails on exactly its declared invariant (exit 12), and the
-control passes every invariant and both liveness properties.
+**BrokenNoRearmRetry** (`RearmOnReceive = FALSE`): receive_packets never
+re-arms. TLC printed a lasso of 21 states: in a first receive call the
+kernel fills a buffer, the call reaps it, `KernelStop` ends the multishot
+(`armed` FALSE) and the call's `Swap` takes `gen` to 1 without re-arming;
+the second receive call reaps the `Term` with the one-shot re-arm finding
+no entry, and its `Swap` takes `gen` to `MaxSteps`, again without
+re-arming. The run then loops through a send call (`Submit`, `ResetIndex`)
+and receive calls (`RecvBegin`, `Swap`) with `armed` FALSE in every state
+while the phase stays `Running`. `ReceiveLiveness` fails (exit 13).
+
+By hand, against the code before the fix: the only re-arm was the one in
+the CQE handler at the end of a multishot. When `rocketnet_server_uring_arm`
+finds no submission entry there, the queue stays disarmed and
+receive_packets never looks at it again, so the queue receives nothing for
+the rest of the run. The trace is that defect.
+
+Each witness fails on exactly its declared invariant or property (exit 12
+for the invariants, exit 13 for `ReceiveLiveness`), and the control passes
+every invariant and all three liveness properties.

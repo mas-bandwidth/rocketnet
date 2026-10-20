@@ -97,7 +97,8 @@ struct rocketnet_client_io_t
 {
     const rocketnet_client_driver_t * driver;
     rocketnet_client_io_ring_view_t ring_view[2];
-    rocketnet_address_t to[2];                  // each ring's destination, written before its hand-off
+    rocketnet_address_t to[2];                  // each ring's destination, bound at its first hand-off attempt
+    bool to_held[2];                            // main thread only: the Filling ring's destination is bound (a deferred hand-off)
     rocketnet_client_send_rings_t rings;
     rocketnet_client_receive_handshake_t receive;
     rocketnet_client_receive_buffer_t * buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS];   // as many as the fixed design's receive handoff uses
@@ -107,6 +108,7 @@ struct rocketnet_client_io_t
     std::atomic<bool> quit;
     struct rocketnet_client_io_open_t open;
     uint64_t driver_faults;                     // a receive count or byte count this step refused
+    uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -120,6 +122,8 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->ring_view[0] = *view0;
     io->ring_view[1] = *view1;
     memset( io->to, 0, sizeof( io->to ) );
+    io->to_held[0] = false;
+    io->to_held[1] = false;
     rocketnet_client_send_rings_init( &io->rings );
     rocketnet_client_receive_handshake_init( &io->receive );
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
@@ -140,6 +144,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
     io->driver_faults = 0;
+    io->prefilter_too_large = NULL;
 }
 
 // tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -295,11 +300,24 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io )
 // hand-off of docs/CLIENT-IO.md _Reuse only after sent_: the committed slots
 // stay in the Filling ring and leave with the next hand-off. This function
 // never waits, spins or retries, and wakes the I/O thread only on HANDED_OFF.
+// The first attempt that finds committed slots binds the Filling ring's
+// destination to `to`; a later attempt for the same ring (after a LATE)
+// leaves it bound, so the slots leave for the address they were committed
+// with even when `to` has changed since, as the server address has when
+// disconnect has reset the protocol (RNClientIo SentToCommitted). A
+// HANDED_OFF result unbinds the ring for its next fill.
 inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t committed, const rocketnet_address_t * to )
 {
     rocketnet_assert( !io->quit.load( std::memory_order_relaxed ) );
-    io->to[io->rings.fill] = *to;
+    const int ring = io->rings.fill;
+    if ( committed > 0 && !io->to_held[ring] )
+    {
+        io->to[ring] = *to;
+        io->to_held[ring] = true;
+    }
     const int result = rocketnet_client_send_rings_hand_off( &io->rings, committed );
+    if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF )
+        io->to_held[ring] = false;
     if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF && io->driver->operations->wake )
         io->driver->operations->wake( io->driver->instance );
     return result;
@@ -419,7 +437,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             const int got = io->driver->operations->receive_batch( io->driver->instance, from, packet_data,
                 ROCKETNET_FRAME_SIZE, packet_bytes, max_packets );
             // a count past the slots asked for, or a byte count that is
-            // negative or past the stride, is a driver fault and is not stored
+            // negative or beyond the UDP envelope, is a driver fault and is not stored
             if ( got < 0 )
             {
                 io->driver_faults++;
@@ -439,6 +457,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 if ( packet_bytes[i] < 0 || packet_bytes[i] > ROCKETNET_FRAME_SIZE )
                 {
                     io->driver_faults++;
+                    if ( io->prefilter_too_large && packet_bytes[i] > ROCKETNET_FRAME_SIZE )
+                        (*io->prefilter_too_large)++;
                     continue;
                 }
                 if ( accepted != i )
@@ -472,6 +492,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             if ( bytes < 0 || bytes > ROCKETNET_MAX_PACKET_BYTES )
             {
                 io->driver_faults++;
+                if ( io->prefilter_too_large && bytes > ROCKETNET_MAX_PACKET_BYTES )
+                    (*io->prefilter_too_large)++;
                 break;
             }
             (void) rocketnet_client_receive_handshake_io_receive( handshake );

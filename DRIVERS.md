@@ -118,8 +118,15 @@ the create log line names each feature as yes or no.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
-once for a staging generation; the backend retains ownership until it can
-safely reuse that storage. None
+for staged work; the backend retains ownership until it can safely reuse
+that storage. XDP retries a flush on each `send_packets` call, including when
+no new commit advances the transport counter. With two staging buffers,
+`rocketnet_send_handoff_t::publish` queues at most one and keeps the other
+for producers until the worker retires the queued generation. The next flush
+publishes the retained work. `RNDriverSendStaging.Publish`, `WorkerRetire`
+and `RetryFlushPublishes` model this rule. Packet-slot capacity is still
+`ROCKETNET_XDP_SEND_QUEUE_SIZE` per buffer; retaining producer storage does
+not permit an unbounded backlog. None
 of these rules sets a frame, packet-send or ACK rate.
 
 ## Creation and shutdown
@@ -251,6 +258,37 @@ never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
 dropped-overflow receives, failed receive reposts, and RIO commit calls. Its send phase swap and one-bank receive limit are implemented in `rocketnet_server_rio_send_packets` and `rocketnet_server_rio_receive_packets` in `sdk/rocketnet_server_rio_windows.cpp`; its receive banks are modelled in `tla/RNRioDriver.tla`.
+
+## Windows connection reset
+
+When a UDP send reaches a port no socket holds, the peer's stack answers with
+an ICMP port unreachable. Winsock, unlike other stacks, reports that answer to
+the sending socket's next receive as `WSAECONNRESET` (or `WSAENETRESET` for a
+network unreachable), and an overlapped or registered receive completes with
+the matching unreachable status. A client that dies without closing its socket
+makes the server see one such report for every send to it, so a receive loop
+that stops at the first error, or a completion that is not posted again, stops
+serving every other client. Every socket rocketnet creates on Windows (the
+portable server and client sockets, `iocp` with and without USO and URO, and
+`rio`, IPv4 and IPv6) turns off `SIO_UDP_CONNRESET` and `SIO_UDP_NETRESET` at
+create through `rocketnet_platform_socket_disable_udp_resets`, which checks each
+`WSAIoctl` and logs a refusal once without failing the create. Every receive
+path still skips the reset and unreachable statuses and keeps draining: the
+portable receive reads on, an `iocp` re-post refused with one waits on the
+retry list for the worker's next wakeup, a failed `iocp` completion is
+reposted, and a `rio` slice whose re-post fails waits on a retry list for the
+next `receive_packets`. `rocketnet_platform_receive_resets` counts the reset
+statuses the portable receive skips and the `iocp` and `rio` completions and
+refused posts carry. The functional
+cases in `functional/windows_connreset.cpp` prove it for each server transport
+and family: `windows_connreset_hard_killed_client_*` ends one of four clients
+with `TerminateProcess` while the server keeps sending to it, and the other
+three see no receive gap past one update interval plus 50 ms, the dead client
+times out by the normal timeout and a fifth client connects;
+`windows_connreset_send_to_closed_port_*` sends 1000 datagrams to the closed
+port with exact receive counts on the live clients; and
+`windows_client_connreset_server_gone_*` connects a client whose requests first
+went to a closed port.
 
 ## The io_uring server driver
 

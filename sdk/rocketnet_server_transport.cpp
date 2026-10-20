@@ -506,6 +506,7 @@ int rocketnet_server_transport_send_capacity( const rocketnet_server_transport_t
 
 // How many payload frames may still start this update. The staged drivers
 // keep their own staging, so the transport-side cap does not apply to them.
+// tla/RNServerSendFair.tla Tick models this bounded cyclic send-pass cap.
 int rocketnet_server_transport_send_capacity_available( const rocketnet_server_transport_t * server_transport )
 {
     if ( !server_transport )
@@ -1928,7 +1929,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                                                         batch_capacity );
 
         // a count past the slots asked for, or a byte count that is negative
-        // or past the stride, is a driver fault and is not a received packet
+        // or beyond the UDP envelope, is a driver fault and is not a received packet
         if ( num_received < 0 )
         {
             server_transport->driver_faults++;
@@ -1945,9 +1946,18 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             struct rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
             const int packet_bytes = receive_buffer->packet_bytes[i];
-            if ( packet_bytes < 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            if ( packet_bytes < 0 )
             {
                 server_transport->driver_faults++;
+                continue;
+            }
+            if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            {
+                // An oversize datagram is rejected by the driver-results
+                // size/stride check, but it still counts PREFILTER_TOO_LARGE
+                // exactly once.
+                server_transport->driver_faults++;
+                server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
                 continue;
             }
 
@@ -2100,7 +2110,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // Drivers with FLUSH_ON_UPDATE publish update-generated responses here.
     // Other staged drivers publish at send_packets after the joined fill phase.
     // XDP retains published generations until the worker drains them; the
-    // staged/flushed counters avoid redundant driver calls between fills.
+    // staged/flushed counters avoid redundant calls on synchronous drivers;
+    // send_packets retries XDP publication even when those counters agree.
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
@@ -2707,9 +2718,12 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
         server_transport->stats_pending_packets_sent = 0;
         server_transport->stats_pending_bytes_sent = 0;
 
-        // Publish only work staged since the previous driver flush.
+        // RNDriverSendStaging.Publish: XDP may retain the producer
+        // generation while its worker owns the other buffer. Re-flush even
+        // without a new commit so worker retirement cannot strand that work.
 
-        if ( server_transport->send_staged != server_transport->send_flushed )
+        if ( server_transport->driver == ROCKETNET_DRIVER_XDP ||
+             server_transport->send_staged != server_transport->send_flushed )
         {
             server_transport->send_flushed = server_transport->send_staged;
             rocketnet_server_driver_send_packets( server_transport );
@@ -3009,3 +3023,40 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
 }
 
 #endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
+
+#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS) && !defined(ROCKETNET_CONFORMANCE_DEFAULTS_ONLY)
+// Unit-only fixture for the public flush path; no driver create, socket,
+// mutex, thread or clock is involved. The two calls have identical counters.
+static void rocketnet_server_transport_test_count_flush( void * context )
+{
+    ++*(int*)context;
+}
+
+int rocketnet_server_transport_test_xdp_reflush()
+{
+    void * storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_transport_t) );
+    if ( !storage ) return -1;
+    auto * transport = new (storage) rocketnet_server_transport_t();
+    transport->send_arena = rocketnet_send_arena_create( NULL, 1, 1 );
+    if ( !transport->send_arena )
+    {
+        transport->~rocketnet_server_transport_t();
+        rocketnet_free( NULL, storage );
+        return -1;
+    }
+    int flushes = 0;
+    rocketnet_server_driver_operations_t operations = {};
+    operations.flags = ROCKETNET_DRIVER_STAGED;
+    operations.flush = rocketnet_server_transport_test_count_flush;
+    transport->io.operations = &operations;
+    transport->io.instance = &flushes;
+    transport->driver = ROCKETNET_DRIVER_XDP;
+    transport->send_staged = 1;
+    rocketnet_server_transport_send_packets( transport );
+    rocketnet_server_transport_send_packets( transport );
+    rocketnet_send_arena_destroy( transport->send_arena );
+    transport->~rocketnet_server_transport_t();
+    rocketnet_free( NULL, storage );
+    return flushes;
+}
+#endif

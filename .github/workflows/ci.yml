@@ -142,8 +142,7 @@ jobs:
     # self-hosted apt step is skipped. They ran on [self-hosted,Linux,X64,rocketnet] until 2026-10-13, a label only
     # hulk carried: hulk went down and every Linux job sat QUEUED for hours.
     # macOS rows run on HOSTED macos-15 AS A STOPGAP (2026-10-13): no [self-hosted,macOS,ARM64,rocketnet] runner was
-    # ever registered, so those rows never started. Hosted macOS is $0.16/min and was ~80% of September's Actions
-    # bill; the self-hosted target is mini-m5 (the fleet's Apple-silicon Mac) once its org runner is registered, and
+    # ever registered, so those rows never started. The self-hosted target is mini-m5 (the fleet's Apple-silicon Mac) once its org runner is registered, and
     # these rows go back to a runner label then. matrix.os stays the display name and the image the row was written
     # against; runner, when set, is the label set runs-on uses instead.
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}

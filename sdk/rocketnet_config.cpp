@@ -261,28 +261,28 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
-    // The initial timeout must sit inside the configured RTO range.
-    if ( config->rto_min_ms > config->rto_max_ms )
+    // The initial timeout must sit inside the configured resend delay range.
+    if ( config->resend_delay_min_ms > config->resend_delay_max_ms )
     {
-        rocketnet_error( "message config rto_min_ms %d is above rto_max_ms %d", config->rto_min_ms, config->rto_max_ms );
+        rocketnet_error( "message config resend_delay_min_ms %d is above resend_delay_max_ms %d", config->resend_delay_min_ms, config->resend_delay_max_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
-    if ( config->rto_initial_ms < config->rto_min_ms || config->rto_initial_ms > config->rto_max_ms )
+    if ( config->resend_delay_initial_ms < config->resend_delay_min_ms || config->resend_delay_initial_ms > config->resend_delay_max_ms )
     {
-        rocketnet_error( "message config rto_initial_ms %d is outside rto_min_ms %d to rto_max_ms %d", config->rto_initial_ms, config->rto_min_ms, config->rto_max_ms );
+        rocketnet_error( "message config resend_delay_initial_ms %d is outside resend_delay_min_ms %d to resend_delay_max_ms %d", config->resend_delay_initial_ms, config->resend_delay_min_ms, config->resend_delay_max_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
-    // Reserve four initial RTOs before reliable_timeout_ms.
-    const int first_delay_ms = config->rto_initial_ms;
+    // Reserve four initial resend delays before reliable_timeout_ms.
+    const int first_delay_ms = config->resend_delay_initial_ms;
     if ( (int64_t) config->reliable_timeout_ms < (int64_t) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * (int64_t) first_delay_ms )
     {
-        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of rto_initial_ms %d",
-                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->rto_initial_ms );
+        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of resend_delay_initial_ms %d",
+                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->resend_delay_initial_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;

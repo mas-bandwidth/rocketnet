@@ -1,5 +1,71 @@
 # RNDriverSendStaging
 
+## XDP generation retention
+
+The XDP submodel composes with the existing transport model below. `XdpStart`
+represents a send that still has packet-slot capacity; the separate
+`FailedSend` transport action continues to model packet-capacity exhaustion.
+`NoRefusedSend` forbids refusal caused solely by handing both physical
+buffers to a lagging worker. It does not claim infinite packet storage.
+
+`Publish` models `rocketnet_send_handoff_t::publish` and
+`rocketnet_server_socket_send_packets`: when one generation is queued,
+publication retains the filling generation. `WorkerRetire` models the worker
+copy completing and `rocketnet_send_handoff_t::retire` freeing its storage.
+`rocketnet_server_transport_send_packets` retries XDP publication even when
+`send_staged == send_flushed`; `RetryFlushPublishes` checks that a subsequent
+flush publishes retained work after retirement. `XdpStagedEventuallyPublished`
+checks eventual publication under weak fairness of publication and retirement.
+The transport and XDP submodels interleave independently; this is a bounded
+abstraction of generation ownership, not a proof of the C++ memory model.
+
+The control uses `PublishWith(TRUE)` and checks both new invariants and the
+publication liveness property. All three cases run through `tlacheck run --group rndriversendstaging`; `tlacheck merge --keep tla/RUNS.tsv` writes the
+measured records. The frame and burst instance sizes remain unchanged.
+
+### Reversed no-refusal witness
+
+`MCRNDriverSendStagingBrokenRefusesSend.cfg` selects `SpecBrokenRefuses`, whose
+publish action is `PublishWith(FALSE)`. TLC rejects exactly `NoRefusedSend` at
+depth 6: initial state; start stages
+one generation; publish queues it; start stages the second; publish queues
+that too and leaves `xdpFilling = FALSE`; the next start sets
+`xdpRefused = TRUE`. No worker retirement occurs in this trace.
+
+Checked against the code by hand: in the pre-reopen implementation, restoring
+unconditional publication in `rocketnet_send_handoff_t::publish` permits both
+queued indexes; the second `rocketnet_server_socket_send_packets` clears
+`send_flow_index` and cannot acquire replacement storage, so
+`rocketnet_server_socket_start_packet_internal` returns NULL on the next send.
+The merged socket also has a defensive `reopen` recovery for an already fully
+queued state, so reproducing this code-level refusal now requires disabling
+both retention and that recovery. The bounded witness isolates the retention
+rule; the separate `SendHandoff` model checks reopen. The deterministic unit check
+`xdp_send_staging_retains_producer` fails at `!handoff.publish()` for
+that schedule (the second publish queues instead of retaining), and
+`check_send_handoff` in `test_lifecycle.cpp` fails at its `!queue.publish()`. With retention enabled, the second publish leaves its filling
+index intact. Repeated flushes preserve the queued index; retirement followed
+by another flush publishes the retained generation. The unit test
+`xdp_send_staging_reflushes_without_commit` separately exercises the actual
+transport flush path twice with equal counters and a fake staged backend.
+
+The refreshed control generates 109,743 states, with 13,178 distinct states;
+the no-refusal witness generates 20,895 states, with 4,113 distinct states.
+The existing disconnect witness still rejects `StagedDisconnectFlushed`.
+
+### Equal-counter retry proof
+
+The earlier exploratory no-retry TLC trace was removed from the committed
+case set. The production retry remains checked directly against the code:
+removing the
+`driver == ROCKETNET_DRIVER_XDP` disjunct in
+`rocketnet_server_transport_send_packets` leaves the retained generation
+unpublished once `send_flushed` catches up to `send_staged`, until an
+unrelated commit advances the staged counter. The unit check
+`xdp_send_staging_reflushes_without_commit` fails for that schedule.
+
+## Transport model and historical disconnect witness
+
 The staged send path of the server transport: the reserve/commit seam every
 driver serves, the staged branch of `send_packets`, the maintenance half of
 `update`, and the out-of-band `disconnect_client`. The code is
@@ -12,8 +78,8 @@ counter test at line 1745), and
 `rocketnet_server_transport_disconnect_client` (line 1812).
 
 - **The seam.** Reserve takes a staging slot for one frame; commit seals the
-  frame into the driver's own staging. A reserve that finds the staging full
-  fails and the frame is dropped.
+  frame into the driver's own staging. A reserve that exhausts packet-slot capacity
+  fails and the frame is dropped; XDP generation ownership is modelled separately.
 - **The publish rule.** On a staged driver a sealed frame leaves only at a
   driver flush, and `send_packets` flushes exactly when the staged counter
   differs from the flushed counter. The model states the rule the path
@@ -62,6 +128,7 @@ On a Linux bench with TLC 2.19 or later, from `tla/`:
 ```sh
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStaging.cfg MCRNDriverSendStaging
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenDisconnect.cfg MCRNDriverSendStaging
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenRefusesSend.cfg MCRNDriverSendStaging
 ```
 
 The small instance:
@@ -118,7 +185,7 @@ or flushing the send buffer. TLC must reject it, and does:
 
 ## Runs
 
-Both rows are in `tla/RUNS.tsv` from the runs on a Linux bench (TLC 2.19,
+The original two rows were in `tla/RUNS.tsv` from the runs on a Linux bench (TLC 2.19,
 `-workers 2`, 2026-10-14): the committed run passes at depth 7, and the
 reversed witness fails as expected at depth 3, with 21 states generated and
 19 distinct states found when TLC stopped.

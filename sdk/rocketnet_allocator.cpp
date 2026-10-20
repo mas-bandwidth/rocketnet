@@ -109,7 +109,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     // 128, 512 and 1024 bytes for the fixed pools; descriptors allow 128-byte
     // records. Tiny-record floods retain bounded exhaustion semantics.
     const int kbps = config->client_send_kbps > config->server_send_kbps ? config->client_send_kbps : config->server_send_kbps;
-    const uint64_t reserve = kbps > 0 ? ( (uint64_t) kbps * 125 * (uint64_t) config->rto_max_ms + 999 ) / 1000 : 0;
+    const uint64_t reserve = kbps > 0 ? ( (uint64_t) kbps * 125 * (uint64_t) config->resend_delay_max_ms + 999 ) / 1000 : 0;
     const uint64_t Q = (uint64_t) config->send_queue_messages + ( reserve + 127 ) / 128;
     const uint64_t SR = B + rn_align64( reserve + ( ( reserve + 1152 ) / 1153 ) * 15 );
     const uint32_t chunk_bytes[RN_STORE_NUM_CLASSES] = { RN_STORE_SMALL_BYTES, RN_STORE_MEDIUM_BYTES, RN_STORE_LARGE_BYTES };
@@ -1317,7 +1317,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include max-RTO payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
+    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_deliveries,

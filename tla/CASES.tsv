@@ -56,6 +56,7 @@ MCReceiveOrder.cfg	MCReceiveOrder.tla	pass	-	check	receiveorder	required	-
 MCReceiveOrderBrokenSlotsAfterKeypair.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenAdmittedAfterVerify.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenVersionNotFirst.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
+MCReceiveOrderBrokenTokenManyAddresses.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
 MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendstaging	required	-
 MCRNDriverSendStagingBrokenDisconnect.cfg	MCRNDriverSendStaging.tla	invariant	StagedDisconnectFlushed	check	rndriversendstaging	required	-
 MCRNSecurityTables.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
@@ -133,6 +134,7 @@ MCRNUringDriver.cfg	MCRNUringDriver.tla	pass	-	check	rnuringdriver	required	-
 MCRNUringDriverBrokenResetBeforeReap.cfg	MCRNUringDriver.tla	invariant	NoReuseWhileKernelOwned	check	rnuringdriver	required	-
 MCRNUringDriverBrokenOneBank.cfg	MCRNUringDriver.tla	invariant	ExposedStable	check	rnuringdriver	required	-
 MCRNUringDriverBrokenUnboundedReap.cfg	MCRNUringDriver.tla	invariant	ReapWithinBudget	check	rnuringdriver	required	-
+MCRNUringDriverBrokenNoRearmRetry.cfg	MCRNUringDriver.tla	temporal	ReceiveLiveness	check	rnuringdriver	required	-
 MCFragmentsAndAcks.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	committed-instance-safety-over-budget
 MCFragmentsAndAcksLive.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	committed-instance-liveness-over-budget
 MCFragmentsAndAcksLiveSmall.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
@@ -167,6 +169,7 @@ MCRNClientIoBrokenSwapWhileReading.cfg	MCRNClientIo.tla	invariant	ExposedStable	
 MCRNClientIoBrokenReceiveStall.cfg	MCRNClientIo.tla	invariant	NoReceiveStall	check	rnclientio	required	-
 MCRNClientIoBrokenHandOffWaits.cfg	MCRNClientIo.tla	invariant	HandOffNeverWaits	check	rnclientio	required	-
 MCRNClientIoBrokenFullWaitReadable.cfg	MCRNClientIo.tla	invariant	FullWaitsOnWake	check	rnclientio	required	-
+MCRNClientIoBrokenDestinationOverwrite.cfg	MCRNClientIo.tla	invariant	SentToCommitted	check	rnclientio	required	-
 MCRNEndpoint.cfg	MCRNEndpoint.tla	pass	-	ignore-terminal	rnendpoint	required	-
 MCRNEndpointLive.cfg	MCRNEndpoint.tla	pass	-	ignore-terminal	rnendpoint	required	-
 MCRNEndpointBrokenConfigUnreliable.cfg	MCRNEndpoint.tla	temporal	ConfigVerifiedDespiteFirstLoss	ignore-terminal	rnendpoint	required	-
@@ -236,6 +239,7 @@ MCLinkReverseWindow.cfg	MCLinkPatterns.tla	pass	-	check	link	required	-
 MCLinkReverseWindowBrokenOrder.cfg	MCLinkPatterns.tla	invariant	WindowOrderReversed	check	link	required	-
 MCLinkEveryNthBrokenCounter.cfg	MCLinkPatterns.tla	invariant	MCPatternsTypeOK	check	link	required	-
 MCLinkReverseWindowBreaksInOrder.cfg	MCLinkPatterns.tla	invariant	SurvivorsInOrder	check	link	required	-
+MCRNDriverSendStagingBrokenRefusesSend.cfg	MCRNDriverSendStaging.tla	invariant	NoRefusedSend	check	rndriversendstaging	required	-
 MCRNServerSendFair.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-
 MCRNServerSendFairWalk.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-
 MCRNServerSendFairBrokenFromZero.cfg	MCRNServerSendFair.tla	invariant	FairService	check	rnserversendfair	required	-

@@ -424,6 +424,34 @@ void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t 
  */
 int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+// Winsock reports an ICMP port, host or network unreachable that answers an
+// earlier send as an error on the next receive of a UDP socket: WSAECONNRESET
+// (SIO_UDP_CONNRESET) or WSAENETRESET (SIO_UDP_NETRESET), and an overlapped or
+// registered receive completes with the matching unreachable status. A peer
+// that dies without closing its socket makes a server see these on every
+// send to it. Every rocketnet socket turns both reports off at create, and
+// every receive path skips these statuses, counts them and keeps draining.
+
+// turns SIO_UDP_CONNRESET and SIO_UDP_NETRESET off on a UDP socket (a SOCKET
+// passed as uintptr_t). Each WSAIoctl result is checked; a refusal is logged
+// once per process and never fails the create. Returns true when both are off.
+bool rocketnet_platform_socket_disable_udp_resets( uintptr_t handle );
+
+// true for a Winsock or Win32 status an ICMP error report produces on a UDP
+// receive: WSAECONNRESET, WSAENETRESET, WSAECONNREFUSED, WSAEHOSTUNREACH,
+// WSAENETUNREACH, ERROR_PORT_UNREACHABLE, ERROR_HOST_UNREACHABLE,
+// ERROR_NETWORK_UNREACHABLE and ERROR_CONNECTION_REFUSED
+bool rocketnet_platform_receive_status_is_reset( int status );
+
+// the process-wide count of reset statuses the receive paths skipped: zero
+// while the reports stay off
+void rocketnet_platform_count_receive_reset();
+uint64_t rocketnet_platform_receive_resets();
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 /**
  * @brief Counts the datagrams this socket's sends dropped.
  *

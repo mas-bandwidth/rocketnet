@@ -584,9 +584,9 @@ with the xdp transport is verify-and-bind only: a non-mutating pre-flight checks
 that the machine is provisioned and refuses by name — each unmet condition logs
 the knob, the wanted value, and the script that sets it — and the library's own
 acts stay per-socket (its BPF program built, loaded and attached, AF_XDP binds,
-the memlock rlimit). Provisioning is `scripts/rocketnet-provision`, a shipped
-deliverable: the setup was hand-run once for the game and no game that uses
-rocketnet with XDP reconstructs it. The script's header carries the authoritative
+the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
+step that has been hand-run once; no application using XDP reconstructs it. The
+script's header carries the authoritative
 condition list; the pre-flight checks exactly those conditions.
 
 Cold, on a fresh box, as root:
@@ -633,8 +633,8 @@ Cold, on a fresh box, as root:
     #  the enforcement paths can drift silently.)
 
 This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
-the busy-poll pair — is the 10 Gbps point, as measured on the game's Linux
-server; the magnitude belongs to that machine, and the claim attaches to a
+the busy-poll pair — is the 10 Gbps point, as measured on a provisioned 10 GbE
+Linux host; the magnitude belongs to that machine, and the claim attaches to a
 verified-provisioned box, never to the library alone. The isolated-core mask, the
 queue count and the IRQ pinning scale together with NIC bandwidth: one queue
 wants one isolated core, and higher-bandwidth NICs need more cores (the script
