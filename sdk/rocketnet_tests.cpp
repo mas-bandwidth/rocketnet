@@ -137,8 +137,13 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
 #define ROCKETNET_TEST_LOG_RING_LINES 32
 #define ROCKETNET_TEST_LOG_RING_LINE_BYTES 1024
+// a slot holds "<time>: <level>: " in front of a whole captured line: the
+// level name is at most 7 bytes (sdk/rocketnet.cpp:179), so 64 bytes hold
+// the prefix for any clock reading below 10^40 seconds
+#define ROCKETNET_TEST_LOG_RING_PREFIX_BYTES 64
+#define ROCKETNET_TEST_LOG_RING_SLOT_BYTES ( ROCKETNET_TEST_LOG_RING_PREFIX_BYTES + ROCKETNET_TEST_LOG_RING_LINE_BYTES )
 
-static char rocketnet_test_log_ring[ROCKETNET_TEST_LOG_RING_LINES][ROCKETNET_TEST_LOG_RING_LINE_BYTES];
+static char rocketnet_test_log_ring[ROCKETNET_TEST_LOG_RING_LINES][ROCKETNET_TEST_LOG_RING_SLOT_BYTES];
 
 static int rocketnet_test_log_ring_lines;
 
@@ -147,7 +152,9 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     (void) context;
     (void) length;
     char line[ROCKETNET_TEST_LOG_RING_LINE_BYTES];
-    snprintf( line, sizeof(line), "%s", message );
+    const int line_length = snprintf( line, sizeof(line), "%s", message );
+    if ( line_length < 0 || (size_t) line_length >= sizeof(line) )
+        return;
 
     if ( level == ROCKETNET_LOG_LEVEL_NONE )
     {
@@ -157,7 +164,9 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     }
 
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_TEST_LOG_RING_LINES];
-    snprintf( slot, ROCKETNET_TEST_LOG_RING_LINE_BYTES, "%.6f: %s: %.1000s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    const int slot_length = snprintf( slot, ROCKETNET_TEST_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    if ( slot_length < 0 || (size_t) slot_length >= ROCKETNET_TEST_LOG_RING_SLOT_BYTES )
+        return;
     rocketnet_test_log_ring_lines++;
 }
 
@@ -3833,12 +3842,24 @@ void rocketnet_test_replay_long_skip_clears_whole_window()
     memset( &replay, 0, sizeof(replay) );
 
     const uint64_t window_bits = ROCKETNET_REPLAY_WINDOW_BITS;
+    const int window_words = (int) ( ROCKETNET_REPLAY_WINDOW_BITS / 64 );
     for ( uint64_t sequence = 1; sequence <= window_bits; sequence++ )
         rocketnet_replay_advance( &replay, sequence );
+
+    // every bit of the ring is set before the skip, so the clear below cannot
+    // pass by the ring never having held anything
+    for ( int w = 0; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == ~(uint64_t) 0 );
 
     rocketnet_replay_advance( &replay, 3 * window_bits );
     for ( uint64_t sequence = 2 * window_bits + 1; sequence < 3 * window_bits; sequence++ )
         rocketnet_check( !rocketnet_replay_already_received( &replay, sequence ) );
+
+    // the full-window skip clears every word of the ring; the newest
+    // sequence's own bit is the only survivor
+    rocketnet_check( replay.window[0] == (uint64_t) 1 );
+    for ( int w = 1; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == 0 );
 
     uint8_t encoded[ROCKETNET_ACK_BLOCK_MAX_BYTES];
     struct rocketnet_ack_block_t decoded;
@@ -12292,7 +12313,10 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
 
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
-                expected_uint64 = 9876543210987654321ULL;
+                // a ranged row (step_driven's 0 .. 1,
+                // sdk/rocketnet_config.cpp:88) takes its max; a 0 .. 0 row
+                // takes any value of the full width
+                expected_uint64 = field->max_value > field->min_value ? (uint64_t) field->max_value : 9876543210987654321ULL;
                 snprintf( value_string, sizeof(value_string), "%" PRIu64, expected_uint64 );
             }
             break;
@@ -14598,6 +14622,14 @@ void rocketnet_unit_prepare()
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
+    // the unit suite runs over the loopback driver with no sockets, so a
+    // transport pin in the environment must not reach it: the pin replaces
+    // the candidate list at create and the ladder falls through to a real
+    // driver. Both pins are cleared for the run, as posix_pair_create does
+    // around its creates (functional/posix_socket_errors.cpp). A case that
+    // tests pin handling itself sets and reads its own pins after this.
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
     if ( rocketnet_unit_environment == NULL )
         rocketnet_unit_environment = new rocketnet_test_environment_t();
 }

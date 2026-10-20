@@ -2,6 +2,9 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
+    Functional test: it reads a real clock and sleeps with rocketnet_sleep, so
+    it is a functional sibling binary, never a ./bin/test case.
+
     Exercises serialize::WriteStream and serialize::ReadStream bound directly
     over frames acquired and received through the C transport API.
 */
