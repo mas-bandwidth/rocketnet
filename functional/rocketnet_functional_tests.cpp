@@ -8101,6 +8101,8 @@ extern void windows_server_drops_runt_and_garbage_rio_ipv4();
 extern void windows_server_drops_runt_and_garbage_rio_ipv6();
 extern void windows_client_drops_oversize_and_garbage_ipv4();
 extern void windows_client_drops_oversize_and_garbage_ipv6();
+extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
+extern void windows_per_packet_receive_counts_empty_datagram_ipv6();
 // a hard-killed client never stalls a Windows receive (functional/windows_connreset.cpp)
 extern void windows_connreset_hard_killed_client_portable_ipv4();
 extern void windows_connreset_hard_killed_client_portable_ipv6();
@@ -8440,6 +8442,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "windows_server_drops_runt_and_garbage_rio_ipv6", windows_server_drops_runt_and_garbage_rio_ipv6 },
     { "windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4 },
     { "windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6 },
+    { "windows_per_packet_receive_counts_empty_datagram_ipv4", windows_per_packet_receive_counts_empty_datagram_ipv4 },
+    { "windows_per_packet_receive_counts_empty_datagram_ipv6", windows_per_packet_receive_counts_empty_datagram_ipv6 },
     { "windows_connreset_hard_killed_client_portable_ipv4", windows_connreset_hard_killed_client_portable_ipv4 },
     { "windows_connreset_hard_killed_client_portable_ipv6", windows_connreset_hard_killed_client_portable_ipv6 },
     { "windows_connreset_hard_killed_client_iocp_ipv4", windows_connreset_hard_killed_client_iocp_ipv4 },

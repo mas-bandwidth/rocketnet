@@ -493,6 +493,48 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     windows_socket_errors_session_finish( &session );
 }
 
+// the per-packet receive (rocketnet_platform_socket_receive_packet) returns 0
+// for a drained socket, so it reads past a zero-length datagram
+// (sdk/rocketnet_platform.cpp, rocketnet_platform_socket_receive_datagram with
+// keep_empty false) and counts it on rocketnet_platform_receive_empties. The
+// case sends a zero-length datagram and then a real one at a platform socket:
+// the first call returns the real one, and the empty one is counted once.
+static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, ipv6 ? "[::1]:0" : "127.0.0.1:0" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.5f, 64 * 1024, 64 * 1024 );
+    windows_socket_errors_require( socket != NULL );
+    windows_socket_errors_require( bind_address.port != 0 );
+
+    const uint64_t empties_before = rocketnet_platform_receive_empties();
+
+    windows_socket_errors_sender_t sender;
+    windows_socket_errors_sender_open( &sender, ipv6, bind_address.port );
+    windows_socket_errors_datagram_t empty;
+    windows_socket_errors_sender_send( &sender, &empty );
+    windows_socket_errors_datagram_t real;
+    real.bytes.resize( 64, 0x5a );
+    windows_socket_errors_sender_send( &sender, &real );
+    windows_socket_errors_sender_close( &sender );
+
+    uint8_t packet[ROCKETNET_MAX_PACKET_BYTES];
+    rocketnet_address_t from;
+    const int first = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );
+    const uint64_t empties = rocketnet_platform_receive_empties() - empties_before;
+    const int second = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );
+
+    printf( "windows_per_packet_receive_counts_empty_datagram %s: first receive %d bytes, empties counted %llu, second receive %d bytes\n",
+            ipv6 ? "ipv6" : "ipv4", first, (unsigned long long) empties, second );
+    fflush( stdout );
+
+    windows_socket_errors_require( first == 64 );
+    windows_socket_errors_require( empties == 1 );
+    windows_socket_errors_require( second == 0 );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
 #define WINDOWS_SOCKET_ERRORS_CASES( name )                                                                     \
     void name##_portable_ipv4() { windows_socket_errors_transport_t t = { "portable", false }; name( &t ); }   \
     void name##_portable_ipv6() { windows_socket_errors_transport_t t = { "portable", true };  name( &t ); }   \
@@ -506,5 +548,8 @@ WINDOWS_SOCKET_ERRORS_CASES( windows_server_drops_runt_and_garbage )
 
 void windows_client_drops_oversize_and_garbage_ipv4() { windows_client_drops_oversize_and_garbage( false ); }
 void windows_client_drops_oversize_and_garbage_ipv6() { windows_client_drops_oversize_and_garbage( true ); }
+
+void windows_per_packet_receive_counts_empty_datagram_ipv4() { windows_per_packet_receive_counts_empty_datagram( false ); }
+void windows_per_packet_receive_counts_empty_datagram_ipv6() { windows_per_packet_receive_counts_empty_datagram( true ); }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

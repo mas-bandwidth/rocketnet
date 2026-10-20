@@ -3405,6 +3405,7 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
 static volatile LONG rocketnet_platform_udp_reset_refusal_logged = 0;
 static volatile LONG64 rocketnet_platform_receive_reset_count = 0;
+static volatile LONG64 rocketnet_platform_receive_empty_count = 0;
 
 // windows-udp-connreset audit: every socket rocketnet creates on Windows
 // (portable server and client, iocp, rio) turns both ICMP reset reports off
@@ -3456,6 +3457,11 @@ void rocketnet_platform_count_receive_reset()
 uint64_t rocketnet_platform_receive_resets()
 {
     return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
+}
+
+uint64_t rocketnet_platform_receive_empties()
+{
+    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_empty_count, 0, 0 );
 }
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
@@ -3708,7 +3714,8 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 // oversize one), or -1 when the socket is drained or the receive failed. A
 // zero-length datagram returns 0 when keep_empty is set, so a batch hands it
 // to the transport's prefilter and it is counted there (PREFILTER_TOO_SHORT);
-// otherwise it is skipped, since 0 from the per-packet call reads as drained
+// otherwise it is skipped, since 0 from the per-packet call reads as drained,
+// and counted (rocketnet_platform_receive_empties)
 static int rocketnet_platform_socket_receive_datagram( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size, bool keep_empty )
 {
     rocketnet_assert( socket );
@@ -3770,7 +3777,10 @@ static int rocketnet_platform_socket_receive_datagram( rocketnet_platform_socket
             // protocol admits -- and returning 0 here would read as
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet (#100's review). skip it, keep reading:
-            // both pumps share this semantic.
+            // both pumps share this semantic. The skip is counted
+            // process-wide (rocketnet_platform_receive_empties), so no
+            // dropped datagram goes uncounted.
+            InterlockedIncrement64( &rocketnet_platform_receive_empty_count );
             continue;
         }
 
