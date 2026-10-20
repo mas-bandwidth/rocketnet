@@ -126,14 +126,23 @@ struct rocketnet_server_payload_ring_t
 
     uint8_t padding_1[4096];
 
-    struct rocketnet_server_payload_slot_info_t info[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
-
-    uint8_t padding_2[4096];
-
-    alignas(16) uint8_t data[ROCKETNET_FRAME_STRIDE*ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
-
-    uint8_t padding_3[4096];
+    // one allocation at create, payload_ring_capacity slots of each
+    // (rocketnet_server_payload_ring_bytes): the infos 64-aligned, then the
+    // frames, every root 16-aligned
+    struct rocketnet_server_payload_slot_info_t * info;
+    uint8_t * data;
+    void * block;
 };
+
+static uint64_t rocketnet_server_payload_ring_bytes( int capacity )
+{
+    return 64 + (uint64_t) capacity * ( sizeof( struct rocketnet_server_payload_slot_info_t ) + ROCKETNET_FRAME_STRIDE );
+}
+
+static int rocketnet_server_payload_ring_default_capacity( int max_clients )
+{
+    return max_clients > ROCKETNET_SERVER_MAX_SEND_PACKETS ? max_clients : ROCKETNET_SERVER_MAX_SEND_PACKETS;
+}
 
 static_assert( ROCKETNET_FRAME_STRIDE % 16 == 0, "frame stride must keep every slot root 16-aligned" );
 static_assert( ROCKETNET_FRAME_STRIDE >= ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING, "a slot must hold the slack and a full wire packet" );
@@ -715,7 +724,8 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
         payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ||
         config->num_xdp_queues < 0 || config->num_xdp_queues > 1024) return false;
 
-    plan.transport_bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_transport_t)});
+    plan.transport_bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_transport_t),
+        rocketnet_server_payload_ring_bytes(rocketnet_server_payload_ring_default_capacity(clients))});
     for (uint64_t bytes : {rocketnet_encryption_map_allocation_bytes(clients * ROCKETNET_ENCRYPTION_MAP_RATIO),
         rocketnet_token_table_allocation_bytes(clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO),
         rocketnet_client_slots_allocation_bytes(clients), rocketnet_server_acks_allocation_bytes(clients),
@@ -1142,7 +1152,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     server_transport->context = context;
     server_transport->time = time;
     server_transport->payload_ring_capacity = rocketnet_server_send_capacity_override > 0 ? rocketnet_server_send_capacity_override :
-        ( config->max_clients > ROCKETNET_SERVER_MAX_SEND_PACKETS ? config->max_clients : ROCKETNET_SERVER_MAX_SEND_PACKETS );
+        rocketnet_server_payload_ring_default_capacity( config->max_clients );
     server_transport->game_clock_epoch = config->game_clock_epoch;
     rocketnet_server_link_drain( server_transport );
 
@@ -1463,6 +1473,14 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     protocol->acked_connection_ids = (uint64_t*) rocketnet_malloc( context, (size_t) max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof(uint64_t) );
     server_transport->client_wire_totals = (struct rocketnet_server_wire_totals_t*) rocketnet_malloc( context, (size_t) max_clients * sizeof(struct rocketnet_server_wire_totals_t) );
     server_transport->client_wire_totals_capacity = max_clients;
+    server_transport->payload_ring.block = rocketnet_malloc( context, (size_t) rocketnet_server_payload_ring_bytes( server_transport->payload_ring_capacity ) );
+    if ( server_transport->payload_ring.block )
+    {
+        uint8_t * aligned = (uint8_t *) ( ( (uintptr_t) server_transport->payload_ring.block + 63 ) & ~(uintptr_t) 63 );
+        memset( aligned, 0, (size_t) server_transport->payload_ring_capacity * sizeof( struct rocketnet_server_payload_slot_info_t ) );
+        server_transport->payload_ring.info = (struct rocketnet_server_payload_slot_info_t *) aligned;
+        server_transport->payload_ring.data = aligned + (size_t) server_transport->payload_ring_capacity * sizeof( struct rocketnet_server_payload_slot_info_t );
+    }
     if ( protocol->connection_ids )
         memset( protocol->connection_ids, 0, (size_t) max_clients * sizeof(uint64_t) );
     if ( server_transport->client_wire_totals )
@@ -1497,7 +1515,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     if ( server_transport->io.operations->replay_mark )
         server_transport->replay_marks = rocketnet_server_replay_marks_create( context, max_clients );
 
-    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !server_transport->client_wire_totals || !protocol->reassembly || !server_transport->send_arena || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
+    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !server_transport->client_wire_totals || !server_transport->payload_ring.block || !protocol->reassembly || !server_transport->send_arena || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
@@ -1539,6 +1557,8 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         rocketnet_free( server_transport->context, server_transport->protocol.acked_connection_ids );
     if ( server_transport->client_wire_totals )
         rocketnet_free( server_transport->context, server_transport->client_wire_totals );
+    if ( server_transport->payload_ring.block )
+        rocketnet_free( server_transport->context, server_transport->payload_ring.block );
     if ( server_transport->protocol.reassembly )
         rocketnet_reassembly_set_destroy( server_transport->protocol.reassembly );
     if ( server_transport->send_arena )
