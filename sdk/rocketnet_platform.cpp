@@ -2058,7 +2058,14 @@ uint16_t rocketnet_platform_preferred_client_port()
 
 bool rocketnet_platform_client_dual_stack()
 {
-    return true;
+    // false: the client binds the server's family. Darwin picks the
+    // ephemeral port of an IPv6 socket without regard to the IPv4 sockets
+    // already bound (a dual stack socket binds a port an IPv4 wildcard
+    // socket holds), and the kernel delivers an IPv4 datagram to the IPv4
+    // socket on that port, so a dual stack client of an IPv4 server never
+    // hears its server. An IPv4 socket's ephemeral port is never one another
+    // IPv4 socket holds.
+    return false;
 }
 
 // ---------------------------------------------------
