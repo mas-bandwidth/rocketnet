@@ -63,7 +63,9 @@
 #else
 #include <dirent.h>
 #include <fcntl.h>
+#if defined(__GLIBC__)
 #include <malloc.h>
+#endif
 #include <sched.h>
 #include <sys/vfs.h>
 #include <unistd.h>
