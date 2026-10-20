@@ -142,6 +142,10 @@ static char rocketnet_test_log_ring[ROCKETNET_TEST_LOG_RING_LINES][ROCKETNET_TES
 
 static int rocketnet_test_log_ring_lines;
 
+// the capture stamps each entry with a monotonically increasing event ordinal,
+// never a clock read: the unit suite reads no real time.
+static uint64_t rocketnet_test_log_ring_stamp;
+
 static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
     (void) context;
@@ -157,7 +161,9 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     }
 
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_TEST_LOG_RING_LINES];
-    snprintf( slot, ROCKETNET_TEST_LOG_RING_LINE_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
+    snprintf( slot, ROCKETNET_TEST_LOG_RING_LINE_BYTES, "%llu: %s: %s",
+              (unsigned long long) rocketnet_test_log_ring_stamp, rocketnet_log_level_name( level ), line );
+    rocketnet_test_log_ring_stamp++;
     rocketnet_test_log_ring_lines++;
 }
 
@@ -214,14 +220,6 @@ do                                                                              
 // the exact-delta helper and the conservation assert, checked by this suite
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
 #include "../test/counters_expect.h"
-
-void rocketnet_test_time()
-{
-    double start = rocketnet_platform_time();
-    rocketnet_platform_sleep( 0.1 );
-    double finish = rocketnet_platform_time();
-    rocketnet_check( finish > start );
-}
 
 // the clamp is a pure function: a non-finite time or a step backwards is the
 // last good time, counted and (in a debug build) asserted; a forward step
@@ -1524,92 +1522,6 @@ void rocketnet_test_connect_token_mint()
     rocketnet_connect_token_identifier( id_1, token_data );
     rocketnet_connect_token_identifier( id_2, token_data_2 );
     rocketnet_check( memcmp( id_1, id_2, 16 ) != 0 );
-}
-
-struct rocketnet_mint_thread_result_t
-{
-    bool ok;
-    int mints;
-};
-
-// one thread's independent run: mint into its own buffer, then verify and open
-// every token against the test keys and its own private fields
-static void rocketnet_test_connect_token_mint_thread( struct rocketnet_signed_connect_data_t signed_fields,
-                                                      struct rocketnet_connect_token_private_t private_fields,
-                                                      uint64_t base_client_id,
-                                                      int iterations,
-                                                      struct rocketnet_mint_thread_result_t * result )
-{
-    result->ok = true;
-    result->mints = 0;
-
-    for ( int i = 0; i < iterations; i++ )
-    {
-        struct rocketnet_connect_token_private_t fields = private_fields;
-        fields.client_id = base_client_id + (uint64_t) i;
-
-        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-        if ( !rocketnet_write_connect_token( &signed_fields, &fields, rocketnet_test_backend_secret_key, token_data ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        struct rocketnet_connect_token_t token;
-        rocketnet_read_connect_token( &token, token_data );
-        if ( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        struct rocketnet_connect_token_private_t opened;
-        if ( !rocketnet_open_connect_token_private( &opened, token.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) )
-        {
-            result->ok = false;
-            return;
-        }
-
-        if ( opened.client_id != fields.client_id )
-        {
-            result->ok = false;
-            return;
-        }
-
-        if ( memcmp( opened.client_to_server_key, fields.client_to_server_key, ROCKETNET_KEY_BYTES ) != 0 ||
-             memcmp( opened.server_to_client_key, fields.server_to_client_key, ROCKETNET_KEY_BYTES ) != 0 )
-        {
-            result->ok = false;
-            return;
-        }
-
-        result->mints++;
-    }
-}
-
-void rocketnet_test_connect_token_mint_concurrent()
-{
-    // two threads mint independent tokens at once, each with its own client
-    // ids and output buffer, and each opens only its own tokens: minting must
-    // touch no state outside its own call
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_connect_token_private_t private_fields;
-    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
-
-    const int iterations = 300;
-    struct rocketnet_mint_thread_result_t results[2];
-
-    std::thread thread_a( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
-                          ROCKETNET_TEST_CLIENT_ID + 1, iterations, &results[0] );
-    std::thread thread_b( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
-                          ROCKETNET_TEST_CLIENT_ID + 0x100000, iterations, &results[1] );
-    thread_a.join();
-    thread_b.join();
-
-    rocketnet_check( results[0].ok );
-    rocketnet_check( results[1].ok );
-    rocketnet_check( results[0].mints == iterations );
-    rocketnet_check( results[1].mints == iterations );
 }
 
 void rocketnet_test_connect_token_refusals()
@@ -6782,21 +6694,7 @@ void rocketnet_test_payload_size_sweep()
 }
 
 
-static bool threads_work = false;
 
-static void test_thread_function(void*)
-{
-    threads_work = true;
-}
-
-void rocketnet_test_platform_thread()
-{
-    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, test_thread_function, NULL );
-    rocketnet_check( thread );
-    rocketnet_platform_thread_join( thread );
-    rocketnet_platform_thread_destroy( thread );
-    rocketnet_check( threads_work );
-}
 
 void rocketnet_test_platform_mutex()
 {
@@ -8561,33 +8459,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     (void) client_index;
 
     rocketnet_set_assert_callback( saved_assert );
-}
-
-void rocketnet_test_frame_sync_wait()
-{
-    // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
-    // the assertion is pacing and accounting, never precision -- precision
-    // was the issue #56 measurement campaign's job, and CI runners are noisy.
-
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 250.0 );
-    rocketnet_check( frame_sync );
-
-    const double start = rocketnet_platform_time();
-    for ( int i = 0; i < 25; i++ )
-    {
-        rocketnet_frame_sync_wait( frame_sync );
-    }
-    const double elapsed = rocketnet_platform_time() - start;
-
-    struct rocketnet_frame_sync_stats_t stats;
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 25 );
-    rocketnet_check( elapsed > 0.06 );                              // it actually paced: a free run finishes in microseconds
-    rocketnet_check( elapsed < 5.0 );                               // and it did not wedge
-    rocketnet_check( !stats.spinning || stats.priority_held );      // never an unprivileged spin
-    rocketnet_check( stats.guard_seconds <= ( 1.0 / 250.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
-
-    rocketnet_frame_sync_destroy( frame_sync );
 }
 
 // --- the general acks ---
@@ -14399,7 +14270,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
-    { "test_time", rocketnet_test_time },
     { "test_update_time_clamp", rocketnet_test_update_time_clamp },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
@@ -14435,7 +14305,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_signed_connect_data", rocketnet_test_signed_connect_data },
     { "test_connect_token_frozen", rocketnet_test_connect_token_frozen },
     { "test_connect_token_mint", rocketnet_test_connect_token_mint },
-    { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent },
     { "test_connect_token_refusals", rocketnet_test_connect_token_refusals },
     { "test_prefilter", rocketnet_test_prefilter },
     { "test_packet_associated_data", rocketnet_test_packet_associated_data },
@@ -14505,7 +14374,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
     { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
     { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
-    { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
@@ -14566,7 +14434,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_hostile_id_does_not_poison_slot", rocketnet_test_fragment_hostile_id_does_not_poison_slot },
     { "test_fragment_too_large_clauses", rocketnet_test_fragment_too_large_clauses },
     { "test_send_arena", rocketnet_test_send_arena },
-    { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_public_config_env_round_trip", rocketnet_test_public_config_env_round_trip },
     { "test_public_config_resolve", rocketnet_test_public_config_resolve },

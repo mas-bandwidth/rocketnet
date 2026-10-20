@@ -8406,9 +8406,16 @@ static void rocketnet_test_hostname_resolve_localhost()
                    rocketnet_address_equal(&address, &ipv6));
 }
 
+extern void rocketnet_test_platform_thread();
+extern void rocketnet_test_frame_sync_wait();
+extern void rocketnet_test_connect_token_mint_concurrent();
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
+    { "test_platform_thread", rocketnet_test_platform_thread },
+    { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
+    { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
     { "thread_priority_timing_receive_gaps", thread_priority_timing_receive_gaps },
