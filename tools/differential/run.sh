@@ -37,7 +37,7 @@ INCLUDES="-I sdk -I build/generated -I sodium"
 # CoreFoundation/SystemConfiguration frameworks the dev library needs. The
 # portable driver needs only pthreads everywhere.
 case "$(uname -s)" in
-    Linux)  PLATFORM_LIBS="-lbpf -lxdp -lpthread" ;;
+    Linux)  PLATFORM_LIBS="-lbpf -lxdp -luring -lpthread" ;;
     Darwin) PLATFORM_LIBS="-lpthread -framework CoreFoundation -framework SystemConfiguration" ;;
     *)      PLATFORM_LIBS="-lpthread" ;;
 esac
