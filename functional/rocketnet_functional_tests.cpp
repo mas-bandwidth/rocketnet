@@ -7196,6 +7196,8 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/vfs.h>
+#include <sys/file.h>
+#include <fcntl.h>
 #include <spawn.h>
 #include <string>
 #include <vector>
@@ -7210,6 +7212,14 @@ static pid_t rocketnet_xdp_veth_capture_pid = -1;
 static struct rocketnet_server_transport_t * rocketnet_xdp_veth_server = NULL;
 static bool rocketnet_xdp_veth_made = false;
 static char rocketnet_xdp_veth_pcap[64] = "";
+
+// every xdp veth case makes the same namespace, pair and port, and its setup
+// deletes whatever an earlier run left under those names. two of them at
+// once (the whole suite runs cases in parallel workers) delete each other's
+// pair mid-case, so a case holds this exclusive lock from its setup until its
+// teardown; the kernel drops it if the process dies first
+#define ROCKETNET_XDP_VETH_LOCK         "/run/rocketnet-xdp-veth.lock"
+static int rocketnet_xdp_veth_lock_fd = -1;
 
 static void rocketnet_xdp_veth_teardown()
 {
@@ -7239,6 +7249,11 @@ static void rocketnet_xdp_veth_teardown()
         rocketnet_xdp_veth_pcap[0] = '\0';
     }
     rocketnet_server_socket_forbid_commit();
+    if ( rocketnet_xdp_veth_lock_fd >= 0 )
+    {
+        close( rocketnet_xdp_veth_lock_fd );
+        rocketnet_xdp_veth_lock_fd = -1;
+    }
 }
 
 static void rocketnet_xdp_veth_run( const char * command )
@@ -7293,6 +7308,19 @@ static bool rocketnet_xdp_veth_inside_virtme()
 // object made here is removed by rocketnet_xdp_veth_teardown
 static void rocketnet_xdp_veth_setup( bool ipv6 )
 {
+    // one xdp veth case at a time on this machine (ROCKETNET_XDP_VETH_LOCK)
+    if ( rocketnet_xdp_veth_lock_fd < 0 )
+    {
+        rocketnet_xdp_veth_lock_fd = open( ROCKETNET_XDP_VETH_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0600 );
+        rocketnet_check( rocketnet_xdp_veth_lock_fd >= 0 );
+        int locked;
+        do
+        {
+            locked = flock( rocketnet_xdp_veth_lock_fd, LOCK_EX );
+        } while ( locked != 0 && errno == EINTR );
+        rocketnet_check( locked == 0 );
+    }
+
     // the boot tier the xdp pre-flight verifies; a guest boots with an empty
     // bpffs mount point
 
