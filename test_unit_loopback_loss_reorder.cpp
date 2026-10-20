@@ -254,11 +254,11 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 
 // the counters of the fixed run at the base, with the link simulator off and
 // with it on at 5 ms latency (the simulator on, both patterns zero).
-// Hashes reflect the nine message-violation counters appended in sdk/rocketnet_counters.h.
+// Hashes reflect the nine message-violation counters and CLIENT_RECEIVE_FOREIGN_SOURCE appended in sdk/rocketnet_counters.h.
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xbd190b8677ba72a6 ), UINT64_C( 0x5219d21d4aad11e4 ), 24 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x2f8f7c52d926c366 ), UINT64_C( 0xb3f9e4a743573664 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xbd190b8677ba72a6 ), UINT64_C( 0x5219d21d4aad11e4 ), 25 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x2f8f7c52d926c366 ), UINT64_C( 0xb3f9e4a743573664 ), 25 };
 
 static void loopback_patterns_off_same_trace()
 {
