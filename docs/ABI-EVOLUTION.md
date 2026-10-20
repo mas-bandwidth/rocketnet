@@ -247,7 +247,7 @@ count, and a member with no internal counter and no code path is not admitted.
 
 ## 9. The lifecycle API in ABI 1
 
-`ROCKETNET_ABI_VERSION` is 1 at v1.0.0 (soname `librocketnet.so.1`).
+`ROCKETNET_ABI_VERSION` is 1 at v1.0.0-preview-1 (soname `librocketnet.so.1`).
 Client creation returns a disconnected object and connection begins with
 `rocketnet_client_connect`. Server creation returns a stopped object;
 `rocketnet_server_start`, `rocketnet_server_stop` and

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The v1.0.0 API rulings, pinned. Each ruling has a compile-time check that
+// The v1.0.0-preview-1 API rulings, pinned. Each ruling has a compile-time check that
 // the old form fails to compile (a static_assert on the declared type, or an
 // #error on a removed name), and a run-time case where the old form returned
 // a different value. Every case runs in memory, with no clock, sockets or

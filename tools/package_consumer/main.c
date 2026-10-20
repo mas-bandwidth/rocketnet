@@ -31,6 +31,9 @@ int main(void)
 {
     CHECK(rocketnet_abi_version() == ROCKETNET_ABI_VERSION);
     CHECK(rocketnet_version() == ROCKETNET_VERSION);
+#ifdef EXPECT_VERSION_FULL
+    CHECK(strcmp(ROCKETNET_VERSION_FULL, EXPECT_VERSION_FULL) == 0);
+#endif
     CHECK(rocketnet_abi_type_size("rocketnet_client_config_t") == sizeof(struct rocketnet_client_config_t));
     CHECK(rocketnet_abi_field_offset("rocketnet_client_config_t", "state_change_callback") == offsetof(struct rocketnet_client_config_t, state_change_callback));
     CHECK(rocketnet_abi_field_size("rocketnet_server_config_t", "transport") == sizeof(const char *));
