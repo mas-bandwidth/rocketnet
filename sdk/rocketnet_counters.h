@@ -662,7 +662,7 @@
     /* Layer 3 receive window: a reliable number already received (6.5). */ \
     /* PATH_LOSS: a reliable number received twice, the resend of a lost ack */ \
     /* or packet. */ \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE: Counts reliable message numbers received more than once. Unit: occurrences. Class: path_loss; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE: Counts reliable message numbers received more than once (a k-chunk duplicate counts k). Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_DUPLICATE, PATH_LOSS, NONE ) \
     /* Numbering met either the count or ring bound (CHANNELS 6.2). Count */ \
     /* once per stall, even when the scheduler retries the same head. */ \
@@ -707,13 +707,13 @@
     X( MESSAGE_UNRELIABLE_OVER_BUDGET, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND: Counts ordered records refused because their number is behind the channel read index. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_ORDERING_BEHIND, REFUSAL, NONE ) \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE: Counts sequenced messages ignored because a newer sequence is already held. Unit: occurrences. Class: path_loss; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE: Counts sequenced messages ignored because their ordering is behind or their sequence is behind the watermark. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_SEQUENCED_STALE, PATH_LOSS, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED: Counts held sequenced messages replaced by a newer sequence. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_SEQUENCED_SUPERSEDED, PATH_LOSS, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL: Counts sequenced messages refused because the hold slot is occupied. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_SEQUENCED_HOLD_FULL, REFUSAL, NONE ) \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL: Counts message sends refused because the receipt ring has no free entry. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL: Counts receipts dropped because the receipt ring is full (the ring drops the oldest). Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_RECEIPT_RING_FULL, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED: Counts message receipts acknowledged by the peer. Unit: occurrences. Class: expected; family: none. */ \
     X( MESSAGE_RECEIPT_ACKED, EXPECTED, NONE ) \
@@ -862,7 +862,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK: Counts fitting unreliable messages that took the queued path instead of being written in place in a packet buffer; one count per message, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
     X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
     \
-    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (sdk/rocketnet_platform.cpp:80) and the transport reads the driver's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp:2020, sdk/rocketnet_server_transport.cpp:2764); a driver without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (rocketnet_platform_socket_send in sdk/rocketnet_platform.cpp) and the transport reads the driver's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp, sdk/rocketnet_server_transport.cpp); a driver without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
     X( SEND_FAILED, REFUSAL, NONE ) \
     \
     /* The kernel prefilter's PASSED_FRAGMENT (sdk/rocketnet_wire.h): IP */ \
@@ -892,7 +892,37 @@
     /* create to CONNECTED take it. Counted on the owner's counters, once */ \
     /* per dropped start. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED: Counts application message starts dropped because the connection was not CONNECTED; one count per dropped start, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
-    X( MESSAGE_SEND_NOT_CONNECTED, EXPECTED, NONE )
+    X( MESSAGE_SEND_NOT_CONNECTED, EXPECTED, NONE ) \
+    \
+    /* The remaining wire-check violations (STANDARD.md _Messages_, the check */ \
+    /* order; sdk/rocketnet_message.h ROCKETNET_MESSAGE_VIOLATION_*), each with */ \
+    /* its own counter: a malformed payload (check 1), a record truncated below */ \
+    /* its header (check 2), flag bits a correct sender never writes (check 3), */ \
+    /* a length outside the record (check 4), a reliable or CONTROL record on a */ \
+    /* fragmented payload (check 9), a CONTROL record with an invalid body */ \
+    /* (check 12), the layer-3 window refusals NUMBER_OUTSIDE_WINDOW and */ \
+    /* SLOT_COLLISION (check 10), and a second ordered record with one channel's */ \
+    /* ordering index (DUPLICATE_ORDERING). Every violation also moves */ \
+    /* MESSAGE_PROTOCOL_VIOLATION once for the connection it ends. REFUSAL: a */ \
+    /* clean peer never sends any. appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_FORM: Counts records refused because their payload has no valid form byte. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_FORM, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_TRUNCATED: Counts records refused because a record is shorter than its header. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_TRUNCATED, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS: Counts records refused because their flag bits are invalid. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_FLAGS, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH: Counts records refused because their length lies outside the record. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_LENGTH, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_SIZE: Counts records refused because a reliable or CONTROL record rides a fragmented payload. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_SIZE, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL: Counts CONTROL records refused because their body is invalid. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_BAD_CONTROL, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW: Counts reliable records refused because their number is outside the receive window. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_NUMBER_OUTSIDE_WINDOW, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION: Counts reliable records refused because their receive descriptor slot is occupied by another number. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_SLOT_COLLISION, REFUSAL, NONE ) \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING: Counts reliable ordered records refused because another record with the same channel and ordering index is already held. Unit: occurrences. Class: refusal; family: none. */ \
+    X( MESSAGE_DUPLICATE_ORDERING, REFUSAL, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

@@ -42,7 +42,6 @@ rocketnet_get_thread_priority_refusals
 rocketnet_init
 rocketnet_log_level_name
 rocketnet_num_status_codes
-rocketnet_protocol_version
 rocketnet_server_abort_message
 rocketnet_server_client_connected
 rocketnet_server_client_counter
