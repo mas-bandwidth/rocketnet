@@ -812,7 +812,7 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_set_allocator( void * (*mallo
 /// The platform passes read these process-wide variables, which are not
 /// config fields:
 ///
-/// Environment: ROCKETNET_PUMP=portable forces the portable datagram pump and refuses the msgx pump; any other value leaves the probe (sdk/rocketnet_platform.cpp:2442, :4567).
+/// Environment: ROCKETNET_PUMP=portable forces the portable datagram pump and refuses the msgx pump; any other value allows the batch pump decision.
 /// Environment: ROCKETNET_GATEWAY_ETHERNET_ADDRESS overrides gateway MAC discovery, xx:xx:xx:xx:xx:xx (linux); a malformed value refuses the socket (sdk/rocketnet_server_socket_linux.cpp:488).
 
 struct rocketnet_client_config_t

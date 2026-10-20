@@ -17,6 +17,14 @@
 
 thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
 
+// The packet header already carries the filter field a keyed check reads:
+// the prefilter header (ROCKETNET_PREFILTER_BYTES in sdk/rocketnet_wire.h,
+// written by rocketnet_write_prefilter_header) holds the packet type, a
+// filter epoch byte and a ROCKETNET_FILTER_VALUE_BYTES filter value. v1.0 has
+// no keyed filter-epoch check and writes ROCKETNET_FILTER_EPOCH_UNKEYED; the
+// field stays exactly as it is, so a keyed filter can return later as a value
+// change, never a format change.
+
 void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * filter_value )
 {
     rocketnet_write_uint8( p, packet_type );
@@ -56,99 +64,6 @@ void rocketnet_keyed_filter_value( const uint8_t * magic,
     out_filter_value[1] = hash[1];
     out_filter_value[2] = hash[2];
     out_filter_value[3] = hash[3];
-}
-
-#if defined(ROCKETNET_FILTER_EPOCH_TEST_HOOKS)
-
-thread_local uint64_t rocketnet_filter_epochs_mac_calls;
-
-uint64_t rocketnet_filter_epochs_mac_count()
-{
-    return rocketnet_filter_epochs_mac_calls;
-}
-
-static void rocketnet_filter_epochs_count_mac()
-{
-    rocketnet_filter_epochs_mac_calls++;
-}
-
-#else
-
-static void rocketnet_filter_epochs_count_mac()
-{
-}
-
-#endif // #if defined(ROCKETNET_FILTER_EPOCH_TEST_HOOKS)
-
-// RNFilterEpochs Install and Retire: the backend hands the generation, which
-// must be 1 first and otherwise the next of the newest; a full table drops its
-// oldest generation, and the retired magic is wiped.
-
-int rocketnet_filter_epochs_install( struct rocketnet_filter_epochs_t * epochs, uint8_t epoch, const uint8_t * magic )
-{
-    rocketnet_assert( epochs );
-    rocketnet_assert( magic );
-
-    if ( epoch == 0 )
-        return 0;
-
-    uint8_t expected = 1;
-    if ( epochs->live_count > 0 )
-    {
-        const uint8_t newest = epochs->epochs[epochs->live_count - 1];
-        expected = newest == 255 ? 1 : (uint8_t) ( newest + 1 );
-    }
-
-    if ( epoch != expected )
-        return 0;
-
-    if ( epochs->live_count == ROCKETNET_FILTER_EPOCHS_LIVE )
-    {
-        sodium_memzero( epochs->magics[0], ROCKETNET_FILTER_MAGIC_BYTES );
-        for ( int i = 1; i < ROCKETNET_FILTER_EPOCHS_LIVE; i++ )
-        {
-            epochs->epochs[i - 1] = epochs->epochs[i];
-            memcpy( epochs->magics[i - 1], epochs->magics[i], ROCKETNET_FILTER_MAGIC_BYTES );
-        }
-        epochs->live_count--;
-    }
-
-    epochs->epochs[epochs->live_count] = epoch;
-    memcpy( epochs->magics[epochs->live_count], magic, ROCKETNET_FILTER_MAGIC_BYTES );
-    epochs->live_count++;
-    return 1;
-}
-
-// RNFilterEpochs Check: epoch 0 is never keyed, and an epoch naming no live
-// generation is refused on the comparison; both cost no MAC. A live epoch
-// costs exactly one MAC, under the magic that epoch names.
-
-int rocketnet_filter_epochs_check( const struct rocketnet_filter_epochs_t * epochs,
-                                   const uint8_t * packet_data,
-                                   int packet_bytes )
-{
-    rocketnet_assert( epochs );
-
-    if ( !packet_data || packet_bytes < ROCKETNET_PREFILTER_BYTES )
-        return 0;
-
-    const uint8_t epoch = packet_data[1];
-    if ( epoch == 0 )
-        return 0;
-
-    for ( int i = 0; i < epochs->live_count; i++ )
-    {
-        if ( epochs->epochs[i] != epoch )
-            continue;
-
-        uint8_t value[ROCKETNET_FILTER_VALUE_BYTES];
-        rocketnet_filter_epochs_count_mac();
-        rocketnet_keyed_filter_value( epochs->magics[i], packet_data[0], (uint16_t) packet_bytes,
-                                      packet_data + ROCKETNET_PREFILTER_BYTES, value );
-        return memcmp( packet_data + 2, value, ROCKETNET_FILTER_VALUE_BYTES ) == 0 ? 1 : 0;
-    }
-
-    return 0;
 }
 
 int rocketnet_prefilter_counter( int refusal_code )

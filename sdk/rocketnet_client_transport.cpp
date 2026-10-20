@@ -1201,6 +1201,15 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 const double ROCKETNET_CLIENT_DESTROY_HANDOFF_WAIT_SECONDS = 2.0;
 const double ROCKETNET_CLIENT_DESTROY_STEP_WAIT_SECONDS = 2.0;
 
+// Preserve the destination recorded with a deferred disconnect burst after
+// the protocol reset has erased its server address.
+static const rocketnet_address_t * rocketnet_client_transport_fill_destination( rocketnet_client_transport_t * client_transport )
+{
+    if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
+        return &client_transport->protocol.server_address;
+    return &client_transport->client_io.to[client_transport->client_io.rings.fill];
+}
+
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1250,7 +1259,7 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
             if ( !gave_up )
             {
                 rocketnet_client_send_rings_reopen( &io->rings, other );
-                const int result = rocketnet_client_io_hand_off( io, committed, &client_transport->protocol.server_address );
+                const int result = rocketnet_client_io_hand_off( io, committed, rocketnet_client_transport_fill_destination( client_transport ) );
                 rocketnet_assert( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
                 (void) result;
             }
@@ -1429,7 +1438,8 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
         committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
 
     const int stats_index = client_transport->current_stats_index;
-    const int address_type = destination ? destination->type : client_transport->protocol.server_address.type;
+    const rocketnet_address_t * to = destination ? destination : rocketnet_client_transport_fill_destination( client_transport );
+    const int address_type = to->type;
 
     for ( uint64_t i = client_transport->stats_counted; i < committed; i++ )
     {
@@ -1446,7 +1456,7 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
     if ( committed == 0 )
         return;
 
-    const int result = rocketnet_client_io_hand_off( &client_transport->client_io, committed, destination ? destination : &client_transport->protocol.server_address );
+    const int result = rocketnet_client_io_hand_off( &client_transport->client_io, committed, to );
 
     if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF )
     {

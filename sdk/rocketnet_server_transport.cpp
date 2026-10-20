@@ -1659,6 +1659,22 @@ const char * rocketnet_server_transport_driver( struct rocketnet_server_transpor
     return rocketnet_driver_name( server_transport->driver );
 }
 
+#if ROCKETNET_DEVELOPMENT
+
+// the development seam the ICMP-error functional cases read the live pump
+// and the socket through (DRIVERS.md, ICMP errors): the portable and msgx
+// drivers' instance is the platform socket itself
+
+struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    if ( server_transport->driver == ROCKETNET_DRIVER_PORTABLE || server_transport->driver == ROCKETNET_DRIVER_MSGX )
+        return (struct rocketnet_platform_socket_t*) server_transport->io.instance;
+    return NULL;
+}
+
+#endif // #if ROCKETNET_DEVELOPMENT
+
 // process the previous stats frames into published per-second numbers, then
 // advance the bucket when enough time has passed. The sum walks the fixed
 // ring every update at bounded cost, and only buckets younger than one
