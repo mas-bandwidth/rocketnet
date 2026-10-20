@@ -72,6 +72,28 @@ calls them on the main thread once per update, after packet processing, and
 nothing else writes the driver's replay map. XDP is the only built-in backend
 that reports it.
 
+## Per-update send and receive budgets
+
+Every driver receives at least twice what it sends in one update:
+`receive_capacity >= 2 * send_budget`, checked by
+`test_unit_receive_budget_twice_send.cpp` and locked by a
+`ROCKETNET_STATIC_ASSERT` beside each driver's constants. The send budget
+is what one update stages or submits; the receive capacity is the bank,
+ring, staging or completion budget the send path can fill while it waits.
+The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
+(`sdk/rocketnet_constants.h`, 16000) bounds every driver's drain.
+
+| Driver | Send budget | Receive capacity |
+| --- | --- | --- |
+| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
+| msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
+| loopback | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 2048 per endpoint (`sdk/rocketnet_driver_loopback.h:26`) |
+| gso | 4096 (`sdk/rocketnet_server_gso.h:49`) | 8192 per queue (`sdk/rocketnet_server_gso.h:57`) |
+| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:49`,`sdk/rocketnet_server_uring.h:70`) | 4096 receive buffers per queue;16000 bank (`sdk/rocketnet_server_uring.h:55`,`sdk/rocketnet_server_uring.h:69`) |
+| xdp | 4096 (`sdk/rocketnet_constants.h:57`) | 16384 staging (`sdk/rocketnet_constants.h:58`) |
+| iocp | 2048 (`sdk/rocketnet_server_iocp.h:22`) | 4096 queue (`sdk/rocketnet_server_iocp.h:24`) |
+| rio | 2048 per phase (`sdk/rocketnet_server_rio.h:34`) | 4096 posted receives (`sdk/rocketnet_server_rio.h:35`) |
+
 ## UDP coalescing
 
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
@@ -141,6 +163,26 @@ receive thread and buffers remain shared infrastructure. Receive can run
 concurrently with sends; both calls borrow their buffers synchronously. Destroy
 runs after that thread has joined and must release any additional backend-owned
 work. Client fast-path I/O is not required by this interface.
+
+## ICMP errors
+
+A UDP send to a peer that died hard comes back as ICMP port or host
+unreachable. A BSD stack reports such an error to the next receive or send on a
+connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. The portable and
+msgx sockets are never connected, so on macOS the kernel does not route these
+errors to them. The receive arms still treat ECONNREFUSED, EHOSTUNREACH,
+ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
+(`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
+portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm
+(`rocketnet_platform_socket_receive_packets`) skip the error and keep
+draining. The error is never fatal, never ends a drain, and never
+pauses the msgx pump. EAGAIN ends a drain, because the queue is empty. Any other
+receive errno pauses the msgx pump with one warning per pause
+(`rocketnet_msgx_pause`). The send side
+already classes the same errnos as weather. A backend's receive keeps the same
+contract: one peer's death never stalls or degrades another peer's traffic.
+The functional cases in functional/posix_hard_killed_peer.cpp hold this per
+transport cell, and an injected-errno seam covers each receive arm.
 
 ## Server network threads and their priority
 
@@ -221,7 +263,12 @@ way the GSO driver binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
 batched `SENDMSG` per staged slot, in chunks no larger than the free submission
-queue space, and returns once every send has completed. A queue count past
+queue space. Each `send_packets` and `receive_packets` call reaps at most a
+fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`,
+`ROCKETNET_URING_RECEIVE_BUDGET`) and `send_packets` waits at most once, so an
+update returns under sustained traffic; completions past a budget stay queued
+for the next call, and a send without its completion keeps its slot until a
+later call reaps it. A queue count past
 `ROCKETNET_URING_MAX_QUEUES` refuses the create; zero selects
 `ROCKETNET_URING_DEFAULT_QUEUES`.
 
@@ -235,12 +282,14 @@ in the Linux `auto` order; it has no client side.
 
 Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,
 submit syscalls, send drops, receive drops for size, bank overflow and
-unconvertible source, receives ended for want of buffers, and multishot
-re-arms. A destroy that gives up waiting for outstanding completions leaks the
+unconvertible source, receives ended for want of buffers, multishot
+re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
+send calls that returned with sends still owned by the kernel
+(`SEND_DEFERRED`). A destroy that gives up waiting for outstanding completions leaks the
 kernel-visible memory rather than freeing it and counts it in
 `rocketnet_server_uring_leaked_bytes()` and `rocketnet_server_uring_leaked_drivers()`.
-The send staging, the two receive banks and destroy are modelled in
-`tla/RNUringDriver.tla`.
+The send staging, the two receive banks, the per-call completion budget and
+destroy are modelled in `tla/RNUringDriver.tla`.
 
 ## The XDP receive filter
 
@@ -419,3 +468,14 @@ The Linux connection-type label is an IPv4 main-table heuristic. It does not
 model policy routing or multipath entries without a direct output-interface
 attribute, and may report the wired fallback for those configurations. This
 label does not choose the transport route or limit IPv6 endpoint support.
+
+## Bounded server payload sends
+
+Unstaged server transports reserve at least one payload slot per configured
+client, with a minimum of 256 slots. A lower test capacity exercises contention.
+The message send pass starts after the last served connection and offers one
+frame per connection per round. Full capacity leaves queued reliable work due
+for the next update. In-place unreliable writes use only surplus capacity above
+a complete round of connected peers; otherwise they join the queue so application call order cannot
+starve another connection or that connection's reliable work. Control packets
+use the transport's separate send path.

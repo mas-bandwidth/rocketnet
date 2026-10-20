@@ -3,12 +3,8 @@
 #include "rocketnet_config.h"
 #include <string.h>
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 == offsetof( struct rocketnet_client_config_t, simulated_loss_percent ), "client public revision 1 must end before simulator fields" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 < ROCKETNET_CLIENT_CONFIG_BYTES_2, "client public config revisions must grow" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_config_t ), "client public config current revision must match its struct" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 == offsetof( struct rocketnet_server_config_t, simulated_loss_percent ), "server public revision 1 must end before simulator fields" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2, "server public config revisions must grow" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_2 == sizeof( struct rocketnet_server_config_t ), "server public config current revision must match its struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 == sizeof( struct rocketnet_client_config_t ), "client public config revision 1 must be the whole struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 == sizeof( struct rocketnet_server_config_t ), "server public config revision 1 must be the whole struct" );
 
 struct abi_field_t { const char * name; size_t offset; size_t size; };
 struct abi_type_t { const char * name; size_t size; const abi_field_t * fields; int count; };
@@ -145,6 +141,7 @@ static const abi_type_t types[] =
     TYPE(client_config)
     TYPE(server_config)
     TYPE(receipt)
+    { "rocketnet_address_type_t", sizeof(enum rocketnet_address_type_t), NULL, 0 },
     TYPE(client_transport_config)
     TYPE(server_transport_config)
     TYPE(client_transport_stats)
@@ -212,6 +209,11 @@ size_t rocketnet_abi_field_size(const char * type_name, const char * field_name)
         return SIZE_MAX;
     const auto * field = find_field(type_name, field_name);
     return field ? field->size : SIZE_MAX;
+}
+
+const char * rocketnet_abi_layouts( size_t index )
+{
+    return index < sizeof(types) / sizeof(types[0]) ? types[index].name : NULL;
 }
 
 #if !defined( ROCKETNET_ABI_QUERIES_ONLY )

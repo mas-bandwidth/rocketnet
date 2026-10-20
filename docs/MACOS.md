@@ -22,8 +22,11 @@ row (`.github/workflows/ci.yml`, the `macos-15` entries of the
 `self-hosted, macOS, ARM64, rocketnet-macos`). The same runner carries the
 macOS nightly rows: soak, frame budget and examples
 (`docs/PLATFORMS.md`; `.github/workflows/nightly-soak.yml`,
-`nightly-frame-budget.yml`, `nightly-examples.yml`). macOS on x86_64 is an
-unsupported row (`docs/PLATFORMS.md`).
+`nightly-frame-budget.yml`, `nightly-examples.yml`). macOS on x86_64 is a
+nightly row: the examples nightly builds the library and the suites universal
+(arm64 and x86_64) and runs the x86_64 slice under Rosetta 2
+(`docs/PLATFORMS.md`; `nightly-examples.yml`, the step "Build universal and
+run the x86_64 slice under Rosetta 2"; the recipe is in `BUILDING.md`).
 
 ## Build
 
@@ -92,11 +95,19 @@ same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
 **msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
 (`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").
 The two symbols are resolved with `dlsym` at platform init, with no link-time
-reference, so their absence is never a load failure. At socket create, a
-non-blocking socket with both symbols runs one real `recvmsg_x` as a probe; a
-result of zero or more, or `EAGAIN`/`EWOULDBLOCK`, grants the pump, and any
-other errno leaves that socket on the portable per-packet loop (the probe block
-under `#if TARGET_OS_OSX` in `rocketnet_platform_socket_create_internal`).
+reference, so their absence is never a load failure. At socket create a
+non-blocking socket with both symbols becomes an `msgx` candidate; create reads
+nothing. The macOS `recvmsg_x` rejects `MSG_PEEK` with `EINVAL`, so create
+cannot peek at queued traffic. The first real batch call is the functional
+probe: a `recvmsg_x` there delivers what it reads, so a fixed-port bind that
+already has a datagram queued keeps it. A result of zero or more, or
+`EAGAIN`/`EWOULDBLOCK`, keeps the pump;
+any other errno pauses it and that same call finishes on the portable
+per-packet loop, losing nothing (`rocketnet_msgx_pause`, the receive block in
+`rocketnet_platform_socket_receive_packets`). The functional case
+`test_posix_platform_send_seam` queues one datagram on the bound socket between
+bind and that first batch call, checks that create left it queued, and requires
+the batch call to deliver it with the pump still `msgx`.
 
 At runtime a send errno that is ordinary UDP weather (`EAGAIN`, `EWOULDBLOCK`,
 `ENOBUFS`, `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EMSGSIZE`,
@@ -137,9 +148,12 @@ example's own impossible pin is displaced too, its last check fails, and it
 exits 1. The functional
 case `driver_env_pin_is_honoured` fails under such a pin for the same reason.
 
-Pinning `msgx` requires the probe to grant it: a refused probe fails the create
-instead of falling to `portable`. Pinning `portable` skips the probe, so a
-fixed-port bind never has a queued datagram consumed by it
+Pinning `msgx` requires the batch symbols on the host: without them the create
+refuses instead of falling to `portable`. The first real batch call then
+decides the live pump; if the kernel refuses it there, the pinned transport
+pauses `msgx` and runs `portable` rather than failing after create. Pinning
+`portable` skips the batch decision entirely, so a fixed-port bind never has a
+queued datagram read before the caller does
 (`rocketnet_platform_socket_create_with_pump`).
 
 **`ROCKETNET_PUMP=portable`** is the older override, kept with its meaning:
@@ -187,15 +201,28 @@ an `EVFILT_USER` trigger (`sdk/rocketnet_platform.cpp`, the kqueue wake). The
 thread is a plain `pthread_create` with default attributes
 (`rocketnet_platform_thread_create`). Right after the create, the creating
 thread makes one call on it, the flow library's setting, unchanged: `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )`
-(`rocketnet_platform_client_thread_priority`, `sdk/rocketnet_platform.cpp:3135`).
+(`rocketnet_platform_client_thread_priority` in `sdk/rocketnet_platform.cpp`,
+through `rocketnet_platform_network_thread_priority`).
 That is the only thing the library sets on its macOS network threads: no QoS
-class, no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and no App Nap call (a
-search of `sdk/` for `qos_class`, `NSProcessInfo` and `LSAppNapIsDisabled`
-finds nothing). `rocketnet_set_thread_priority( false )` turns the call off
-(`docs/CLIENT-IO.md`, Thread priority). Apart from it, the only scheduling
-policy the SDK sets is the Mach time-constraint policy on the thread that waits
-in frame sync, put back to the standard policy afterwards
-(`sdk/rocketnet_frame_sync.cpp:180`).
+class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
+function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and
+no App Nap call (a search of `sdk/` for `qos_class`, `NSProcessInfo` and
+`LSAppNapIsDisabled` finds nothing). `rocketnet_set_thread_priority( false )`
+turns the call off (`docs/CLIENT-IO.md`, Thread priority), and with it off the
+library makes no scheduling call on any thread. Apart from it, the only
+scheduling policy the SDK sets is the Mach time-constraint policy on the thread
+that waits in frame sync, put back to the standard policy afterwards
+(`rocketnet_frame_sync_elevate_priority` and
+`rocketnet_frame_sync_restore_priority` in `sdk/rocketnet_frame_sync.cpp`);
+`rocketnet_frame_sync_elevate_priority` returns before that call when
+`rocketnet_platform_thread_priority_enabled` is false.
+
+The functional case `thread_priority_timing_receive_gaps`
+(`functional/thread_priority_timing.cpp`, `priority_timing_run`) reads the I/O
+thread's scheduling and QoS class from inside the thread and checks both: the
+class is never `QOS_CLASS_USER_INTERACTIVE`, on or off, and with the switch on
+the thread reads back `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` or the
+create counted a refusal.
 
 A game that wants the client's I/O on a thread it owns sets `step_driven = 1`
 in `rocketnet_client_config_t` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1`): the

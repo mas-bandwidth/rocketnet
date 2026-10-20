@@ -3,14 +3,11 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// A start_packet that the send arena, the packet lease table or the payload
-// ring refuses has already spent a session sequence:
-// rocketnet_server_transport_start_packet takes it at
-// sdk/rocketnet_server_transport.cpp:2154 and refuses at :2166 (arena),
-// :2183 and :2238 (lease), :2195 (staged driver ring) and :2210 (ring);
-// rocketnet_client_transport_start_packet takes it at
-// sdk/rocketnet_client_transport.cpp:1532 and refuses at :1546 (ring), :1566
-// (arena) and :1585 (lease). Nothing is sent on that sequence.
+// A client start_packet can refuse after spending its sequence
+// (sdk/rocketnet_client_transport.cpp:1532, :1549, :1570 and :1587). The
+// server assigns a sequence only when finish accepts the payload and reserves
+// every wire frame, so a server lease, ring or arena refusal, an abort, or a
+// refused finish leaves no sequence gap.
 // tla/FragmentsAndAcks.tla models such a sequence as a burn (BurnOne,
 // :300-310; "a burn spends sequences nothing is ever sent on", :19-20) and
 // checks BurnedNeverNamed (:705-707): a burned sequence is never opened and
@@ -23,11 +20,11 @@
 // the ack blocks (every real packet acked, no unknown sequence), the loss
 // counters and stats, rtt, the replay window (every later packet delivered,
 // none refused), and on the message layer the reliable channel's resends and
-// the RTO estimate. The lease table is not driven here: on the loopback
-// driver a fill phase holds at most the payload ring's 256 frames plus
-// ROCKETNET_SEND_ARENA_SLOTS arena frames, below the table's refusal point
-// (half its capacity, sdk/rocketnet_packet_lease.h:37), so a lease refusal
-// needs a staged driver; it spends the sequence the same way as the other two.
+// the RTO estimate. The lease table is not driven here: on the loopback driver
+// a fill phase holds at most the payload ring's 256 frames plus
+// ROCKETNET_SEND_ARENA_SLOTS arena frames, below its refusal point (half its
+// capacity, sdk/rocketnet_packet_lease.h:37). The server assigns the sequence
+// after lease insertion, so that refusal also leaves no gap.
 
 #include "test_unit_registry.h"
 
@@ -200,8 +197,9 @@ REGISTER_UNIT_TEST( sequence_burn_receiver_block_skips_unopened );
 // A transport pair on the in-memory loopback driver, stepped from 1000.0 by
 // 10 ms, no socket. The burning side fills its own capacity with real packets
 // and then calls start_packet until it refuses for real (SEND_RING_FULL or
-// SEND_ARENA_FULL counts each refusal), so every refusal spends a session
-// sequence nothing is sent on. The control run sends the very same real
+// SEND_ARENA_FULL counts each refusal). Client refusals spend their sequence;
+// the server assigns sequences only at an accepted finish, so its refusals spend
+// none. The control run sends the very same real
 // packets in the very same rounds and never makes the refused calls. Both
 // runs report the measures of sequence_burn_measures_t.
 
@@ -519,15 +517,13 @@ static void sequence_burn_compare( int side, int kind, const char * name )
     rocketnet_unit_check( burned.server_loss == control.server_loss );
 
     // the client's loss stat is receive-side, from gaps in the server's
-    // session sequence (ROCKETNET_CLIENT_STAT_PACKET_LOSS, sdk/rocketnet.h:395;
-    // sdk/rocketnet_client_transport.cpp:1170 feeds the tracker): a sequence
-    // the server burned is a gap and is counted there. A client burn leaves
-    // the server's stat, which is ack-based, untouched.
+    // session sequence (ROCKETNET_CLIENT_STAT_PACKET_LOSS, sdk/rocketnet.h;
+    // sdk/rocketnet_client_transport.cpp:1170 feeds the tracker). A start the
+    // server's ring or arena refuses takes no sequence, so it leaves no gap and
+    // the stat is the control's. A client burn leaves the server's stat, which
+    // is ack-based, untouched.
     rocketnet_unit_check( control.client_loss == 0.0f );
-    if ( side == BURN_SIDE_SERVER )
-        rocketnet_unit_check( burned.client_loss > 0.0f );
-    else
-        rocketnet_unit_check( burned.client_loss == 0.0f );
+    rocketnet_unit_check( burned.client_loss == control.client_loss );
 }
 
 static void sequence_burn_server_ring_full_is_harmless() { sequence_burn_compare( BURN_SIDE_SERVER, BURN_KIND_RING, "server.ring" ); }
@@ -538,6 +534,143 @@ static void sequence_burn_client_ring_full_is_harmless() { sequence_burn_compare
 REGISTER_UNIT_TEST( sequence_burn_client_ring_full_is_harmless );
 static void sequence_burn_client_arena_full_is_harmless() { sequence_burn_compare( BURN_SIDE_CLIENT, BURN_KIND_ARENA, "client.arena" ); }
 REGISTER_UNIT_TEST( sequence_burn_client_arena_full_is_harmless );
+
+static void sequence_burn_server_finish_populates_sequence()
+{
+    struct sequence_burn_pair_t pair;
+    rocketnet_unit_check( sequence_burn_pair_setup( &pair ) );
+    bool connected = false;
+    for ( int i = 0; i < 400 && !connected; i++ )
+    {
+        connected = rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                    rocketnet_server_transport_is_client_connected( pair.server, 0 );
+        if ( !connected )
+        {
+            struct sequence_burn_measures_t ignored;
+            memset( &ignored, 0, sizeof( ignored ) );
+            sequence_burn_round( &pair, BURN_SIDE_SERVER, BURN_KIND_RING, false, -1, NULL, &ignored );
+        }
+    }
+    rocketnet_unit_check( connected );
+
+    // Direct, collapsed arena and fragmented sends all publish the first
+    // committed wire sequence when finish consumes the lease.
+    const int requests[] = { BURN_SMALL_BYTES, BURN_ARENA_REQUEST, BURN_ARENA_REQUEST };
+    const int sizes[] = { BURN_SMALL_BYTES, BURN_SMALL_BYTES, BURN_ARENA_REQUEST };
+    uint64_t previous_sequence = 0;
+    for ( int i = 0; i < 3; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, requests[i], &context );
+        rocketnet_unit_check( frame != NULL );
+        rocketnet_unit_check( context.sequence == 0 );
+        memset( frame + context.payload_index, 0xB0, sizes[i] );
+        rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, sizes[i] ) > 0 );
+        rocketnet_unit_check( context.sequence > previous_sequence );
+        previous_sequence = context.sequence;
+    }
+    sequence_burn_pair_teardown( &pair );
+}
+REGISTER_UNIT_TEST( sequence_burn_server_finish_populates_sequence );
+
+enum sequence_burn_uncommitted_kind_t
+{
+    BURN_UNCOMMITTED_NONE = 0,
+    BURN_UNCOMMITTED_ABORT,
+    BURN_UNCOMMITTED_REFUSED_FINISH,
+    BURN_UNCOMMITTED_FRAGMENT_RESERVE
+};
+
+static float sequence_burn_server_uncommitted_loss( int kind, bool fill_ring = false )
+{
+    struct sequence_burn_pair_t pair;
+    rocketnet_unit_check( sequence_burn_pair_setup( &pair ) );
+
+    bool connected = false;
+    for ( int i = 0; i < 400 && !connected; i++ )
+    {
+        connected = rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                    rocketnet_server_transport_is_client_connected( pair.server, 0 );
+        if ( !connected )
+        {
+            struct sequence_burn_measures_t ignored;
+            memset( &ignored, 0, sizeof( ignored ) );
+            sequence_burn_round( &pair, BURN_SIDE_SERVER, BURN_KIND_RING, false, -1, NULL, &ignored );
+        }
+    }
+    rocketnet_unit_check( connected );
+
+    if ( fill_ring )
+    {
+        for ( int filled = 0; filled < 256; filled++ )
+            rocketnet_unit_check( sequence_burn_send_one( &pair, BURN_SIDE_SERVER, BURN_SMALL_BYTES, 0, filled ) );
+    }
+
+    if ( kind != BURN_UNCOMMITTED_NONE )
+    {
+        const int request = kind == BURN_UNCOMMITTED_FRAGMENT_RESERVE ? BURN_ARENA_REQUEST : BURN_SMALL_BYTES;
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, request, &context );
+        rocketnet_unit_check( frame != NULL );
+        if ( frame )
+        {
+            if ( kind == BURN_UNCOMMITTED_ABORT )
+            {
+                rocketnet_server_transport_abort_packet( pair.server, &context );
+            }
+            else if ( kind == BURN_UNCOMMITTED_FRAGMENT_RESERVE )
+            {
+                memset( frame + context.payload_index, 0xB0, BURN_ARENA_REQUEST );
+                rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, BURN_ARENA_REQUEST ) == 0 );
+            }
+            else
+            {
+                memset( frame + context.payload_index, 0xB0, BURN_SMALL_BYTES );
+                rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, 0 ) == 0 );
+            }
+        }
+    }
+
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_client_transport_send_packets( pair.client );
+
+    struct sequence_burn_measures_t measures;
+    memset( &measures, 0, sizeof( measures ) );
+    for ( int round = 0; round < BURN_ROUNDS + BURN_SETTLE_ROUNDS; round++ )
+        sequence_burn_round( &pair, BURN_SIDE_SERVER, BURN_KIND_RING, false, round, NULL, &measures );
+
+    struct rocketnet_client_transport_stats_t client_stats;
+    rocketnet_client_transport_stats( pair.client, &client_stats );
+    sequence_burn_pair_teardown( &pair );
+    return client_stats.packet_loss;
+}
+
+static void sequence_burn_server_abort_does_not_count_as_loss()
+{
+    const float control = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_NONE );
+    const float burned = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_ABORT );
+    rocketnet_unit_check( control == 0.0f );
+    rocketnet_unit_check( burned == control );
+}
+REGISTER_UNIT_TEST( sequence_burn_server_abort_does_not_count_as_loss );
+
+static void sequence_burn_server_refused_finish_does_not_count_as_loss()
+{
+    const float control = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_NONE );
+    const float burned = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_REFUSED_FINISH );
+    rocketnet_unit_check( control == 0.0f );
+    rocketnet_unit_check( burned == control );
+}
+REGISTER_UNIT_TEST( sequence_burn_server_refused_finish_does_not_count_as_loss );
+
+static void sequence_burn_server_unreserved_fragment_finish_does_not_count_as_loss()
+{
+    const float control = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_NONE, true );
+    const float burned = sequence_burn_server_uncommitted_loss( BURN_UNCOMMITTED_FRAGMENT_RESERVE, true );
+    rocketnet_unit_check( control == 0.0f );
+    rocketnet_unit_check( burned == control );
+}
+REGISTER_UNIT_TEST( sequence_burn_server_unreserved_fragment_finish_does_not_count_as_loss );
 
 // ---- the reliable channel and its RTO over real refused starts -------------
 //
@@ -550,7 +683,8 @@ REGISTER_UNIT_TEST( sequence_burn_client_arena_full_is_harmless );
 // object's link.start_packet, the one transport call the layer starts frames
 // through, sdk/rocketnet_message_object.h:65) first claims every free ring
 // slot with a start it aborts, then makes the layer's own call, which the
-// transport refuses for real (SEND_RING_FULL) after spending its sequence.
+// transport refuses for real (SEND_RING_FULL). Client starts spend their
+// sequence before this refusal; server starts spend none until finish.
 // The layer's write pass then treats the frame as not started
 // (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1100) and writes the
 // rest next update. The control run is the same traffic with no seam. Measured
@@ -828,7 +962,8 @@ static void sequence_burn_message_compare( int side, const char * name )
     // (10 ms here), so the samples differ by less than a step; the burned
     // sequences add no sample and no back-off
     rocketnet_unit_check( fabs( burned.srtt - control.srtt ) < 0.01 );
-    rocketnet_unit_check( fabs( burned.rto - control.rto ) < 0.01 );
+    const double rto_difference_bound = 2.0 * fabs( burned.srtt - control.srtt ) + 4.0 * fabs( burned.rttvar - control.rttvar ) + 1e-9;
+    rocketnet_unit_check( fabs( burned.rto - control.rto ) <= rto_difference_bound );
 }
 
 static void sequence_burn_server_reliable_and_rto_unchanged() { sequence_burn_message_compare( BURN_SIDE_SERVER, "server.message" ); }

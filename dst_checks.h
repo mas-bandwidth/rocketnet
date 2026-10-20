@@ -73,6 +73,12 @@ struct rocketnet_dst_check_stream_t
     uint8_t reliable_delivered[ROCKETNET_DST_CHECK_SEQ_BYTES];
     uint8_t reliable_sent[ROCKETNET_DST_CHECK_SEQ_BYTES];
 
+    // The oldest reliable sequence still unresolved (sent and not delivered).
+    // The two tables above are ROCKETNET_DST_CHECK_SEQ_BITS wide, so an index
+    // that far past this base would read a newer sequence's bit; the helpers
+    // refuse it by name (dst_lap) instead of aliasing.
+    uint32_t reliable_base;
+
     // unreliable (RNChannel::UnreliableAtMostOnce, RNEndpoint::
     // UnreliableAtMostOnce).
     uint8_t unreliable_delivered[ROCKETNET_DST_CHECK_SEQ_BYTES];
@@ -191,14 +197,62 @@ static inline int rocketnet_dst_check_stream_index( int session, int channel, in
     return ( session * 9 + channel ) * 8 + type;
 }
 
-static inline int rocketnet_dst_check_bit( const uint8_t * bits, uint32_t i )
+// One sequence table holds ROCKETNET_DST_CHECK_SEQ_BITS bits. base is the
+// oldest index the table still answers for: every bit below it is resolved.
+// An index at or past base + the width would read a newer sequence's bit, so
+// the checks fail naming the table, index, base and lap instead of aliasing.
+// The tables that never resolve an entry (opened, unreliable_delivered,
+// receipt_seen) pass base 0.
+static inline int rocketnet_dst_check_lap( struct rocketnet_dst_check_state_t * st,
+                                           const char * table, uint32_t base, uint32_t i )
 {
+    if ( i < base || i - base < ROCKETNET_DST_CHECK_SEQ_BITS )
+        return 0;
+    char what[192];
+    snprintf( what, sizeof(what), "table=%s seq=%u base=%u lap=%u",
+              table, i, base, ( i - base ) / ROCKETNET_DST_CHECK_SEQ_BITS );
+    rocketnet_dst_check_fail( st, "dst_lap", what );
+    return 1;
+}
+
+static inline int rocketnet_dst_check_bit( struct rocketnet_dst_check_state_t * st,
+                                           const uint8_t * bits, uint32_t base, uint32_t i,
+                                           const char * table )
+{
+    if ( i < base )
+        return 1;                       // resolved below the oldest unresolved index
+    if ( rocketnet_dst_check_lap( st, table, base, i ) )
+        return 0;
     return ( bits[( i % ROCKETNET_DST_CHECK_SEQ_BITS ) / 8] >> ( i % 8 ) ) & 1;
 }
 
-static inline void rocketnet_dst_check_set_bit( uint8_t * bits, uint32_t i )
+static inline void rocketnet_dst_check_set_bit( struct rocketnet_dst_check_state_t * st,
+                                                uint8_t * bits, uint32_t base, uint32_t i,
+                                                const char * table )
 {
+    if ( i < base )
+        return;                         // resolved below the oldest unresolved index
+    if ( rocketnet_dst_check_lap( st, table, base, i ) )
+        return;
     bits[( i % ROCKETNET_DST_CHECK_SEQ_BITS ) / 8] |= (uint8_t) ( 1u << ( i % 8 ) );
+}
+
+// Moves the reliable base past the contiguous delivered sequences and clears
+// the slot each one vacates, so the index 4096 later starts clean instead of
+// inheriting the resolved sequence's bit.
+static inline void rocketnet_dst_check_reliable_resolve( struct rocketnet_dst_check_stream_t * s )
+{
+    while ( s->has_last_sent && s->reliable_base <= s->last_sent_seq )
+    {
+        const uint32_t at = s->reliable_base % ROCKETNET_DST_CHECK_SEQ_BITS;
+        if ( !( s->reliable_delivered[at / 8] & (uint8_t) ( 1u << ( at % 8 ) ) ) )
+            break;
+        s->reliable_sent[at / 8] &= (uint8_t) ~( 1u << ( at % 8 ) );
+        s->reliable_delivered[at / 8] &= (uint8_t) ~( 1u << ( at % 8 ) );
+        s->sent_size_set[at] = 0;
+        s->sent_size[at] = 0;
+        s->reliable_base++;
+    }
 }
 
 static inline struct rocketnet_dst_check_stream_t * rocketnet_dst_check_stream(
@@ -228,20 +282,25 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
     struct rocketnet_dst_check_stream_t * s =
         rocketnet_dst_check_stream( st, session, channel, type, generation, identity );
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
-    if ( reliable )
+    const int lap = rocketnet_dst_check_lap( st, "sent_size", s->reliable_base, sequence );
+    if ( reliable && !lap )
     {
-        if ( !rocketnet_dst_check_bit( s->reliable_sent, sequence ) )
+        if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, sequence, "reliable_sent" ) )
         {
-            rocketnet_dst_check_set_bit( s->reliable_sent, sequence );
+            rocketnet_dst_check_set_bit( st, s->reliable_sent, s->reliable_base, sequence, "reliable_sent" );
             s->reliable_sent_count++;
         }
     }
-    s->sent_size[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = (uint16_t) ( bytes > 65535 ? 65535 : bytes );
-    s->sent_size_set[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = 1;
+    if ( !lap )
+    {
+        s->sent_size[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = (uint16_t) ( bytes > 65535 ? 65535 : bytes );
+        s->sent_size_set[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = 1;
+    }
     s->last_sent_seq = sequence;
     s->last_sent_step = st->step;
     s->has_last_sent = 1;
-    if ( reliable )
+    rocketnet_dst_check_reliable_resolve( s );
+    if ( reliable && !lap )
         s->outstanding_bytes += (uint32_t) bytes;
     if ( channel == 8 && ( type == 1 || type == 4 ) )
     {
@@ -284,7 +343,7 @@ static inline int rocketnet_dst_check_reliable_once( struct rocketnet_dst_check_
 {
     (void) time;
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( rocketnet_dst_check_bit( s->reliable_delivered, seq ) )
+    if ( rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
     {
         char what[160];
         snprintf( what, sizeof(what), "stream=%d seq=%u generation=%u delivered twice",
@@ -292,15 +351,16 @@ static inline int rocketnet_dst_check_reliable_once( struct rocketnet_dst_check_
         rocketnet_dst_check_fail( st, "reliable_once", what );
         return 1;
     }
-    if ( !rocketnet_dst_check_bit( s->reliable_sent, seq ) )
+    if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, seq, "reliable_sent" ) )
     {
         char what[160];
         snprintf( what, sizeof(what), "stream=%d seq=%u was never sent", stream, seq );
         rocketnet_dst_check_fail( st, "reliable_once", what );
         return 1;
     }
-    rocketnet_dst_check_set_bit( s->reliable_delivered, seq );
+    rocketnet_dst_check_set_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" );
     s->reliable_delivered_count++;
+    rocketnet_dst_check_reliable_resolve( s );
     return 0;
 }
 
@@ -354,14 +414,14 @@ static inline int rocketnet_dst_check_unreliable_once( struct rocketnet_dst_chec
 {
     (void) time;
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( rocketnet_dst_check_bit( s->unreliable_delivered, seq ) )
+    if ( rocketnet_dst_check_bit( st, s->unreliable_delivered, 0, seq, "unreliable_delivered" ) )
     {
         char what[160];
         snprintf( what, sizeof(what), "stream=%d seq=%u delivered twice", stream, seq );
         rocketnet_dst_check_fail( st, "unreliable_once", what );
         return 1;
     }
-    rocketnet_dst_check_set_bit( s->unreliable_delivered, seq );
+    rocketnet_dst_check_set_bit( st, s->unreliable_delivered, 0, seq, "unreliable_delivered" );
     return 0;
 }
 
@@ -370,7 +430,7 @@ static inline int rocketnet_dst_check_unreliable_once( struct rocketnet_dst_chec
 static inline void rocketnet_dst_check_opened( struct rocketnet_dst_check_state_t * st,
                                                int stream, uint32_t seq )
 {
-    rocketnet_dst_check_set_bit( st->stream[stream].opened, seq );
+    rocketnet_dst_check_set_bit( st, st->stream[stream].opened, 0, seq, "opened" );
 }
 
 // Mirrors RNReceipts::AckedMeansPacketOpened, RNChannelTypes::
@@ -382,7 +442,7 @@ static inline int rocketnet_dst_check_acked( struct rocketnet_dst_check_state_t 
 {
     (void) time;
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( !rocketnet_dst_check_bit( s->opened, seq ) )
+    if ( !rocketnet_dst_check_bit( st, s->opened, 0, seq, "opened" ) )
     {
         char what[160];
         snprintf( what, sizeof(what), "stream=%d seq=%u acked but not opened", stream, seq );
@@ -433,11 +493,13 @@ static inline int rocketnet_dst_check_liveness_delivered( struct rocketnet_dst_c
 {
     (void) time;
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    for ( uint32_t seq = 0; seq < ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
+    const uint32_t lo = s->reliable_base;
+    const uint32_t hi = lo + ROCKETNET_DST_CHECK_SEQ_BITS;
+    for ( uint32_t seq = lo; seq < hi; seq++ )
     {
-        if ( !rocketnet_dst_check_bit( s->reliable_sent, seq ) )
+        if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, seq, "reliable_sent" ) )
             continue;
-        if ( !rocketnet_dst_check_bit( s->reliable_delivered, seq ) )
+        if ( !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
         {
             char what[160];
             snprintf( what, sizeof(what), "stream=%d seq=%u undelivered at the liveness bound",
@@ -455,6 +517,10 @@ static inline int rocketnet_dst_check_whole_message( struct rocketnet_dst_check_
                                                      int stream, uint32_t seq, int bytes )
 {
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
+    if ( seq < s->reliable_base )
+        return 0;
+    if ( rocketnet_dst_check_lap( st, "sent_size", s->reliable_base, seq ) )
+        return 1;
     const uint32_t at = seq % ROCKETNET_DST_CHECK_SEQ_BITS;
     if ( s->sent_size_set[at] && s->sent_size[at] != (uint16_t) bytes )
     {
@@ -511,9 +577,9 @@ static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_chec
     }
     for ( uint32_t earlier = 0; earlier < seq && earlier < ROCKETNET_DST_CHECK_SEQ_BITS; earlier++ )
     {
-        if ( !rocketnet_dst_check_bit( s->reliable_sent, earlier ) )
+        if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, earlier, "reliable_sent" ) )
             continue;
-        if ( !rocketnet_dst_check_bit( s->reliable_delivered, earlier ) )
+        if ( !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, earlier, "reliable_delivered" ) )
         {
             char what[200];
             snprintf( what, sizeof(what), "stream=%d seq=%u delivered before %u", stream, seq, earlier );
@@ -565,7 +631,8 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
         rocketnet_dst_check_reliable_once( st, time, stream, sequence );
 
     if ( type == 4 )
-        rocketnet_dst_check_set_bit( s->reliable_delivered, sequence );
+        rocketnet_dst_check_set_bit( st, s->reliable_delivered, s->reliable_base, sequence, "reliable_delivered" );
+        rocketnet_dst_check_reliable_resolve( s );
 
     if ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 )
     {
@@ -607,14 +674,14 @@ static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_
 {
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
     (void) type;
-    if ( rocketnet_dst_check_bit( s->receipt_seen, seq ) )
+    if ( rocketnet_dst_check_bit( st, s->receipt_seen, 0, seq, "receipt_seen" ) )
     {
         char what[160];
         snprintf( what, sizeof(what), "stream=%d seq=%u two receipt outcomes", stream, seq );
         rocketnet_dst_check_fail( st, "receipt_one_outcome", what );
         return 1;
     }
-    rocketnet_dst_check_set_bit( s->receipt_seen, seq );
+    rocketnet_dst_check_set_bit( st, s->receipt_seen, 0, seq, "receipt_seen" );
     return 0;
 }
 
@@ -626,7 +693,7 @@ static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_
                                                                int stream, uint32_t seq )
 {
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( !rocketnet_dst_check_bit( s->reliable_delivered, seq ) )
+    if ( !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
     {
         char what[160];
         snprintf( what, sizeof(what), "stream=%d seq=%u a receipt without a delivery", stream, seq );
@@ -839,10 +906,10 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                     // flight.
                     const uint32_t settled = s->last_sent_seq > 20 ? s->last_sent_seq - 20 : 0;
                     for ( uint32_t seq = s->quiet_start_seq + 1;
-                          seq <= settled && seq < ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
+                          seq <= settled && seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
                     {
-                        if ( rocketnet_dst_check_bit( s->reliable_sent, seq ) &&
-                             !rocketnet_dst_check_bit( s->reliable_delivered, seq ) )
+                        if ( rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, seq, "reliable_sent" ) &&
+                             !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
                         {
                             char what[160];
                             snprintf( what, sizeof(what), "stream=%d seq=%u settled=%u last=%u at=%llu id=%llu",
@@ -858,12 +925,15 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                 {
                     // Sequenced delivery never goes backwards and may drop a
                     // superseded value, so a sequence sent in the quiet window
-                    // or a newer one serves as the newest delivered.
-                    uint32_t newest = 0;
-                    int any = 0;
-                    for ( uint32_t seq = 0; seq < ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
+                    // or a newer one serves as the newest delivered. Every
+                    // sequence below the base is delivered; the window starts
+                    // there.
+                    uint32_t newest = s->reliable_base > 0 ? s->reliable_base - 1 : 0;
+                    int any = s->reliable_base > 0;
+                    for ( uint32_t seq = s->reliable_base;
+                          seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
                     {
-                        if ( rocketnet_dst_check_bit( s->reliable_delivered, seq ) )
+                        if ( rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
                         {
                             newest = seq;
                             any = 1;
@@ -888,10 +958,13 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
                                                      const struct rocketnet_counters_t * counters,
                                                      const char * end )
 {
-    char report[256];
+    // "<end>: <report>" fits the check state's detail[256] (dst_checks.h:120):
+    // end is "server" or "clients" (dst_harness.h:1264-1265), and the report
+    // is one counter name and two u64 (sdk/rocketnet_counters.cpp:137)
+    char report[240];
     if ( !rocketnet_counters_conserved( counters, report, sizeof(report) ) )
     {
-        char what[320];
+        char what[256];
         snprintf( what, sizeof(what), "%s: %s", end, report );
         rocketnet_dst_check_fail( st, "conservation", what );
     }
@@ -901,7 +974,8 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
 // the faults this run injects is a FAIL.
 static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst_check_state_t * st,
                                                             const struct rocketnet_counters_t * counters,
-                                                            const char * end )
+                                                            const char * end,
+                                                            int duplicate_ack_faults_enabled )
 {
     for ( int i = 0; i < rocketnet_num_counters(); i++ )
     {
@@ -910,6 +984,9 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             continue;
         const int explained =
             i == ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW ||
+            // A replayed standalone ACK is a benign refusal when seeded
+            // duplicate/reorder/delay faults can replay next-update ACKs.
+            ( duplicate_ack_faults_enabled && i == ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED ) ||
             i == ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED ||

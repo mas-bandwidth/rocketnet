@@ -4,6 +4,7 @@
 */
 #pragma once
 
+#include "rocketnet_constants.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
 
@@ -18,9 +19,14 @@
 // at the drain, which the reliable layer answers with resends.
 #define ROCKETNET_IOCP_DEFAULT_WORKERS 1
 #define ROCKETNET_IOCP_MAX_WORKERS 32
-#define ROCKETNET_IOCP_SEND_QUEUE_SIZE 16384
+#define ROCKETNET_IOCP_SEND_QUEUE_SIZE 2048
 #define ROCKETNET_IOCP_RECEIVES_PER_WORKER 128
-#define ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE 1024
+#define ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE 4096
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
+                         "receive budget twice send: IOCP receive queue holds at least twice the send queue" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
+                         "receive budget twice send: server process batch holds at least twice the IOCP send queue" );
 
 // UDP segmentation offload (USO) on send and UDP receive offload (URO) on
 // receive, Windows 11 and Server 2022 or later. Each is a capability create

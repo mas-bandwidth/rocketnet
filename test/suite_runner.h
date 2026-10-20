@@ -46,6 +46,7 @@
 #include <spawn.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 #include <unistd.h>
 extern char **environ;
 #endif
@@ -70,6 +71,7 @@ struct suite_case
     std::string exec_path; // empty: re-exec this binary with --run name
     bool skipped;
     std::string skip_line;
+    int group; // suite_main's group_of: cases of different groups never run at once
 };
 
 struct suite_result
@@ -184,6 +186,22 @@ inline int suite_job_count()
 
 inline void suite_print_summary( const std::vector<suite_result> & results, bool strict_names )
 {
+    // A passing run with no verbose switch prints no summary. A failure
+    // still prints, and the unit suite (strict_names) is unchanged.
+    if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+    {
+        bool quiet = true;
+        for ( size_t i = 0; i < results.size(); i++ )
+        {
+            if ( results[i].failed )
+            {
+                quiet = false;
+                break;
+            }
+        }
+        if ( quiet )
+            return;
+    }
     std::vector<suite_result> ran;
     for ( size_t i = 0; i < results.size(); i++ )
         if ( !results[i].skipped )
@@ -253,13 +271,131 @@ inline int suite_usage( char ** argv )
 
 #if !defined(_WIN32)
 
+// A passing case prints its name, or a name plus " [SKIPPED". Anything else
+// stays in the capture unless the case fails. The verbose switch does not
+// capture, so the child prints straight through. strict_names (the unit
+// suite) does not capture.
+inline bool suite_passing_line( const std::string & line )
+{
+    if ( line.empty() )
+        return false;
+    const char first = line[0];
+    if ( !( ( first >= 'A' && first <= 'Z' ) || ( first >= 'a' && first <= 'z' ) || first == '_' ) )
+        return false;
+    size_t n = 1;
+    while ( n < line.size() )
+    {
+        const char c = line[n];
+        const bool ident = ( c >= 'A' && c <= 'Z' ) || ( c >= 'a' && c <= 'z' ) ||
+                           ( c >= '0' && c <= '9' ) || c == '_';
+        if ( !ident )
+            break;
+        n++;
+    }
+    if ( n == line.size() )
+        return true;
+    return line.compare( n, 9, " [SKIPPED" ) == 0;
+}
+
+inline void suite_drain( int fd, std::string & output )
+{
+    if ( fd < 0 )
+        return;
+    char buf[4096];
+    for ( ;; )
+    {
+        const ssize_t n = ::read( fd, buf, sizeof( buf ) );
+        if ( n > 0 )
+        {
+            output.append( buf, (size_t) n );
+            continue;
+        }
+        if ( n < 0 && errno == EINTR )
+            continue;
+        break;
+    }
+}
+
+inline void suite_emit_captured( const std::string & output, bool show_all )
+{
+    std::string pending = output;
+    if ( !pending.empty() && pending.back() != '\n' )
+        pending.push_back( '\n' );
+    size_t i = 0;
+    while ( i < pending.size() )
+    {
+        const size_t nl = pending.find( '\n', i );
+        std::string line = pending.substr( i, nl == std::string::npos ? std::string::npos : nl - i );
+        if ( !line.empty() && line.back() == '\r' )
+            line.pop_back();
+        if ( show_all || suite_passing_line( line ) )
+            printf( "%s\n", line.c_str() );
+        if ( nl == std::string::npos )
+            break;
+        i = nl + 1;
+    }
+    fflush( stdout );
+}
+
+// Runs one case in a child with its stdout and stderr read through a pipe,
+// then prints every line when it failed and only the name lines when it
+// passed. The child may exit(1), abort or be killed and the parent still has
+// every line it wrote. This is the same names-only shape the suite applies to
+// its children, so `--run <case>` does not leak a passing case's diagnostics
+// without ROCKETNET_TEST_VERBOSE.
+inline int suite_run_names_only( int ( *worker )( const char * ), const char * name )
+{
+    fflush( stdout );
+    fflush( stderr );
+    int pipefd[2];
+    if ( pipe( pipefd ) != 0 )
+        return worker( name );
+    const pid_t pid = fork();
+    if ( pid < 0 )
+    {
+        close( pipefd[0] );
+        close( pipefd[1] );
+        return worker( name );
+    }
+    if ( pid == 0 )
+    {
+        close( pipefd[0] );
+        if ( dup2( pipefd[1], STDOUT_FILENO ) < 0 || dup2( pipefd[1], STDERR_FILENO ) < 0 )
+            _exit( 127 );
+        if ( pipefd[1] != STDOUT_FILENO && pipefd[1] != STDERR_FILENO )
+            close( pipefd[1] );
+        const int rc = worker( name );
+        fflush( stdout );
+        fflush( stderr );
+        _exit( rc );
+    }
+    close( pipefd[1] );
+    std::string output;
+    suite_drain( pipefd[0], output );
+    close( pipefd[0] );
+    int status = 0;
+    pid_t waited;
+    do
+    {
+        waited = waitpid( pid, &status, 0 );
+    } while ( waited < 0 && errno == EINTR );
+    int rc = 1;
+    if ( waited >= 0 && WIFEXITED( status ) )
+        rc = WEXITSTATUS( status );
+    else if ( waited >= 0 && WIFSIGNALED( status ) )
+        rc = 128 + WTERMSIG( status );
+    suite_emit_captured( output, rc != 0 );
+    return rc;
+}
+
 inline int suite_main( int argc, char ** argv,
     int ( *worker )( const char * name ),
     int ( *count )(),
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
     const char ** skip_lines, int nskips,
-    bool strict_names )
+    bool strict_names,
+    int ( *group_of )( const char * name ) = NULL )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -268,6 +404,16 @@ inline int suite_main( int argc, char ** argv,
         for ( int i = 3; i < argc; i++ )
             if ( argv[i][0] == '-' )
                 return suite_usage( argv );
+        // Under a suite run the parent already captures this process, so
+        // stream straight through; a second capture would lose lines when the
+        // parent kills the process group at the time limit.
+        if ( std::getenv( "ROCKETNET_TEST_SUITE_CAPTURE" ) != NULL )
+        {
+            unsetenv( "ROCKETNET_TEST_SUITE_CAPTURE" );
+            return worker( argv[2] );
+        }
+        if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+            return suite_run_names_only( worker, argv[2] );
         return worker( argv[2] );
     }
     for ( int i = 1; i < argc; i++ )
@@ -308,6 +454,16 @@ inline int suite_main( int argc, char ** argv,
         pending.push_back( item );
     }
 
+    // group_of (NULL: every case is group 0) keeps cases that measure wall
+    // time apart from cases that load the host: the cases run in ascending
+    // group order, and a case starts only while every running case is of its
+    // own group, so a group runs in parallel within itself and alone
+    for ( size_t i = 0; i < pending.size(); i++ )
+        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
+        return a.group < b.group;
+    } );
+
     for ( int i = 0; i < nskips; i++ )
     {
         printf( "%s\n", skip_lines[i] );
@@ -322,7 +478,13 @@ inline int suite_main( int argc, char ** argv,
         pid_t pid;
         std::chrono::steady_clock::time_point start;
         bool killed;
+        int group;
+        int out_fd;
+        std::string output;
     };
+    const bool suite_capture = !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL;
+    if ( suite_capture )
+        setenv( "ROCKETNET_TEST_SUITE_CAPTURE", "1", 1 );
     std::vector<running_t> running;
     std::vector<suite_result> results;
     size_t next = 0;
@@ -330,7 +492,7 @@ inline int suite_main( int argc, char ** argv,
 
     while ( next < pending.size() || !running.empty() )
     {
-        while ( (int) running.size() < jobs && next < pending.size() )
+        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
         {
             const suite_case item = pending[next++];
             if ( item.skipped )
@@ -369,15 +531,53 @@ inline int suite_main( int argc, char ** argv,
                 spawn_argv[1] = NULL;
             }
 
+            int pipefd[2] = { -1, -1 };
+            posix_spawn_file_actions_t actions;
+            posix_spawn_file_actions_t * actionsp = NULL;
+            bool actions_live = false;
+            if ( suite_capture )
+            {
+                if ( pipe( pipefd ) != 0 )
+                {
+                    suite_result result;
+                    result.name = item.name;
+                    result.seconds = 0;
+                    result.skipped = false;
+                    result.failed = true;
+                    result.peak_rss_mb = -1;
+                    result.detail = item.name + " failed to spawn";
+                    results.push_back( result );
+                    failures++;
+                    continue;
+                }
+                fcntl( pipefd[0], F_SETFD, FD_CLOEXEC );
+                int fl = fcntl( pipefd[0], F_GETFL, 0 );
+                if ( fl >= 0 )
+                    fcntl( pipefd[0], F_SETFL, fl | O_NONBLOCK );
+                posix_spawn_file_actions_init( &actions );
+                actions_live = true;
+                posix_spawn_file_actions_adddup2( &actions, pipefd[1], STDOUT_FILENO );
+                posix_spawn_file_actions_adddup2( &actions, pipefd[1], STDERR_FILENO );
+                posix_spawn_file_actions_addclose( &actions, pipefd[0] );
+                posix_spawn_file_actions_addclose( &actions, pipefd[1] );
+                actionsp = &actions;
+            }
+
             posix_spawnattr_t attr;
             posix_spawnattr_init( &attr );
             posix_spawnattr_setflags( &attr, POSIX_SPAWN_SETPGROUP );
             posix_spawnattr_setpgroup( &attr, 0 );
             pid_t pid = 0;
-            const int spawned = posix_spawn( &pid, path.c_str(), NULL, &attr, spawn_argv, environ );
+            const int spawned = posix_spawn( &pid, path.c_str(), actionsp, &attr, spawn_argv, environ );
             posix_spawnattr_destroy( &attr );
+            if ( actions_live )
+                posix_spawn_file_actions_destroy( &actions );
+            if ( pipefd[1] >= 0 )
+                close( pipefd[1] );
             if ( spawned != 0 )
             {
+                if ( pipefd[0] >= 0 )
+                    close( pipefd[0] );
                 suite_result result;
                 result.name = item.name;
                 result.seconds = 0;
@@ -394,6 +594,8 @@ inline int suite_main( int argc, char ** argv,
             child.pid = pid;
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
+            child.group = item.group;
+            child.out_fd = pipefd[0];
             running.push_back( child );
         }
 
@@ -406,6 +608,7 @@ inline int suite_main( int argc, char ** argv,
             const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - running[i].start ).count();
             if ( got == 0 )
             {
+                suite_drain( running[i].out_fd, running[i].output );
                 if ( !running[i].killed && seconds > limit_s )
                 {
                     kill( -running[i].pid, SIGKILL );
@@ -455,6 +658,13 @@ inline int suite_main( int argc, char ** argv,
                 result.detail = running[i].name + buf;
             }
             suite_check_rss( result, suite_max_case_rss_mb() );
+            if ( running[i].out_fd >= 0 )
+            {
+                suite_drain( running[i].out_fd, running[i].output );
+                close( running[i].out_fd );
+                running[i].out_fd = -1;
+                suite_emit_captured( running[i].output, result.failed );
+            }
             if ( result.failed )
                 failures++;
             results.push_back( result );
@@ -477,7 +687,8 @@ inline int suite_main( int argc, char ** argv,
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
     const char ** skip_lines, int nskips,
-    bool strict_names )
+    bool strict_names,
+    int ( *group_of )( const char * name ) = NULL )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -525,6 +736,16 @@ inline int suite_main( int argc, char ** argv,
         }
         pending.push_back( item );
     }
+    // group_of (NULL: every case is group 0) keeps cases that measure wall
+    // time apart from cases that load the host: the cases run in ascending
+    // group order, and a case starts only while every running case is of its
+    // own group, so a group runs in parallel within itself and alone
+    for ( size_t i = 0; i < pending.size(); i++ )
+        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
+        return a.group < b.group;
+    } );
+
     for ( int i = 0; i < nskips; i++ )
     {
         printf( "%s\n", skip_lines[i] );
@@ -539,6 +760,7 @@ inline int suite_main( int argc, char ** argv,
         HANDLE process;
         std::chrono::steady_clock::time_point start;
         bool killed;
+        int group;
     };
     std::vector<running_t> running;
     std::vector<suite_result> results;
@@ -547,7 +769,7 @@ inline int suite_main( int argc, char ** argv,
 
     while ( next < pending.size() || !running.empty() )
     {
-        while ( (int) running.size() < jobs && next < pending.size() )
+        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
         {
             const suite_case item = pending[next++];
             if ( item.skipped )
@@ -594,6 +816,7 @@ inline int suite_main( int argc, char ** argv,
             child.process = info.hProcess;
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
+            child.group = item.group;
             running.push_back( child );
         }
 

@@ -26,6 +26,19 @@ static int receipt_find_serial( const uint32_t * serials, int count, uint32_t se
     return -1;
 }
 
+static void unreliable_receipts_settle_config( rocketnet_channel_harness_t * h )
+{
+    const struct rn_endpoint_t * client_endpoint = &h->message_client->object.connections[0];
+    const struct rn_endpoint_t * server_endpoint = &h->message_server->object.connections[h->client_slot];
+    for ( int i = 0; i < 60 * 10; i++ )
+    {
+        if ( rn_endpoint_deadline( client_endpoint ) == RN_ENDPOINT_NO_DEADLINE &&
+             rn_endpoint_deadline( server_endpoint ) == RN_ENDPOINT_NO_DEADLINE )
+            return;
+        receipt_check( rocketnet_channel_harness_pump( h, 1.0 / 60.0 ) );
+    }
+}
+
 void unreliable_receipts_over_lossy_link()
 {
     enum { messages = 48, steps = 60 * 12 };
@@ -33,6 +46,7 @@ void unreliable_receipts_over_lossy_link()
     receipt_check( rocketnet_channel_harness_create( &h ) );
     rocketnet_channel_harness_set_link( &h, 0.02, 0.05, 12.0f, 5.0f );
     receipt_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
+    unreliable_receipts_settle_config( &h );
     rocketnet_channel_harness_read_counters( &h );
     const uint64_t resends_at_connect = h.resends;                                 // the connection's reliable CONFIG may be resent while connecting (CHANNELS.md 10.3)
 

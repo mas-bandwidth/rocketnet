@@ -85,7 +85,7 @@ void rocketnet_message_default_config( struct rocketnet_message_config_t * confi
 static const struct rocketnet_config_field_t rocketnet_client_config_fields[] =
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
-    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 0, 0 },
+    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 1, 0 },
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
@@ -261,7 +261,7 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
-    // the clamp of 6.4 needs min <= max, and the first timeout sits inside it
+    // The initial timeout must sit inside the configured RTO range.
     if ( config->rto_min_ms > config->rto_max_ms )
     {
         rocketnet_error( "message config rto_min_ms %d is above rto_max_ms %d", config->rto_min_ms, config->rto_max_ms );
@@ -277,14 +277,12 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
-    // at least ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS sends of the longest first
-    // delay fit before the reliable timeout (6.4; tla/RNResendTiming.tla
-    // ConfigAccepted and AttemptsBeforeTimeout)
-    const int first_delay_ms = ROCKETNET_MESSAGE_RESEND_INTERVAL_MS > config->rto_initial_ms ? ROCKETNET_MESSAGE_RESEND_INTERVAL_MS : config->rto_initial_ms;
+    // Reserve four initial RTOs before reliable_timeout_ms.
+    const int first_delay_ms = config->rto_initial_ms;
     if ( (int64_t) config->reliable_timeout_ms < (int64_t) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * (int64_t) first_delay_ms )
     {
-        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of max( the %d ms resend interval, rto_initial_ms %d )",
-                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, config->rto_initial_ms );
+        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of rto_initial_ms %d",
+                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->rto_initial_ms );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
@@ -713,6 +711,22 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             break;
 
             case ROCKETNET_CONFIG_KIND_UINT64:
+            {
+                // a row whose max is above its min has that range (the
+                // step_driven row's 0 .. 1 at :88); a 0 .. 0 row takes any value
+                if ( field->max_value > field->min_value )
+                {
+                    uint64_t value;
+                    memcpy( &value, base, sizeof(value) );
+                    if ( value < (uint64_t) field->min_value || value > (uint64_t) field->max_value )
+                    {
+                        rocketnet_error( "%s config %s %" PRIu64 " is out of range (%" PRId64 " to %" PRId64 ")", transport_name, field->name, value, field->min_value, field->max_value );
+                        return false;
+                    }
+                }
+            }
+            break;
+
             case ROCKETNET_CONFIG_KIND_BYTES:
             {
                 // any value of the full width is structurally valid;
@@ -751,7 +765,7 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
     return true;
 }
 
-#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+#if ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
 static bool rocketnet_public_link_simulator_test_hook = false;
 void rocketnet_public_link_simulator_test_development( int enabled )
 {
@@ -761,7 +775,7 @@ void rocketnet_public_link_simulator_test_development( int enabled )
 
 bool rocketnet_public_link_simulator_development( void )
 {
-#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+#if ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
     return ROCKETNET_DEVELOPMENT != 0 || rocketnet_public_link_simulator_test_hook;
 #else
     return ROCKETNET_DEVELOPMENT != 0;

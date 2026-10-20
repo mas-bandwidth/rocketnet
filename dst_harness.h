@@ -1263,8 +1263,10 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             }
             rocketnet_dst_check_conservation( &w->check, &w->server_counters, "server" );
             rocketnet_dst_check_conservation( &w->check, &w->client_counters, "clients" );
-            rocketnet_dst_check_unexplained_refusal( &w->check, &w->server_counters, "server" );
-            rocketnet_dst_check_unexplained_refusal( &w->check, &w->client_counters, "clients" );
+            rocketnet_dst_check_unexplained_refusal( &w->check, &w->server_counters, "server",
+                ( options->faults & ( ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_REORDER | ROCKETNET_DST_FAULT_DELAY ) ) != 0 );
+            rocketnet_dst_check_unexplained_refusal( &w->check, &w->client_counters, "clients",
+                ( options->faults & ( ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_REORDER | ROCKETNET_DST_FAULT_DELAY ) ) != 0 );
         }
         if ( w->check.failed && !w->failed )
         {
@@ -1390,7 +1392,8 @@ static inline void rocketnet_dst_format_failure( const struct rocketnet_dst_resu
                                                  const struct rocketnet_dst_options_t * options,
                                                  char * out, size_t out_bytes )
 {
-    char replay[512];
+    // "./bin/dst --seeds " (18) + two u64 and a dash (41) + flags[256] (255) = 314
+    char replay[320];
     rocketnet_dst_replay_command( result->seed, options, replay, sizeof(replay) );
     snprintf( out, out_bytes, "FAIL seed=%llu step=%llu check=%s what=%s\nreplay: %s",
               (unsigned long long) result->seed, (unsigned long long) result->step,
