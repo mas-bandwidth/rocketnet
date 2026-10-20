@@ -23,8 +23,9 @@
 //     the allocator no more than its bound when it refuses, and runs the
 //     query no more than its bound when the query keeps overflowing;
 //   * platform_init_survives_a_refusing_allocator: rocketnet_init_ex under an
-//     allocator that refuses every request completes, and platform init asks
-//     no more than the bound; on Windows this walks get_connection_type.
+//     allocator that refuses its first DRIVER_OOM_GIVE_WAY requests completes,
+//     and platform init asks no more than the bound; on Windows this walks
+//     get_connection_type.
 //
 // The socket drivers (portable, msgx, gso, iocp) and the kernel-object
 // drivers (xdp, io_uring, rio) open a socket or a kernel object in their
@@ -428,9 +429,10 @@ extern void * rocketnet_platform_adapters_fetch( void * context, unsigned long b
 // bound ends and its count is read, rather than hanging the suite
 enum { DRIVER_OOM_GIVE_WAY = 64 };
 
-// the fake query: a NULL buffer is answered with overflow, as
-// GetAdaptersAddresses answers a NULL buffer; otherwise the scripted answer,
-// with the size it asks for on overflow
+// the fake query: the scripted answer, with the size it asks for on overflow.
+// The fetch never passes a NULL buffer; if it did, the fake answers overflow,
+// as GetAdaptersAddresses answers a NULL buffer, so a fetch with its NULL
+// check removed loops until the allocator gives way and the count is read
 static int driver_oom_query_calls = 0;
 static int driver_oom_query_answer = DRIVER_OOM_ADAPTERS_OK;
 static int driver_oom_query_overflows = 0;
@@ -471,9 +473,9 @@ static void platform_adapters_fetch_is_bounded()
         void * buffer = rocketnet_platform_adapters_fetch( &state, 15000, driver_oom_query );
         const int asked = state.calls - before;
         state.refuse_through = 0;
-        if ( asked > DRIVER_OOM_ADAPTERS_ATTEMPTS )
-            printf( "platform_adapters_fetch_is_bounded: a refusing allocator was asked %d times (bound %d)\n", asked, DRIVER_OOM_ADAPTERS_ATTEMPTS );
-        check( asked <= DRIVER_OOM_ADAPTERS_ATTEMPTS );
+        if ( asked != 1 )
+            printf( "platform_adapters_fetch_is_bounded: a refusing allocator was asked %d times (one expected, bound %d)\n", asked, DRIVER_OOM_ADAPTERS_ATTEMPTS );
+        check( asked == 1 );
         if ( buffer )
             rocketnet_free( &state, buffer );
         check( buffer == NULL );
@@ -522,8 +524,9 @@ static void platform_adapters_fetch_is_bounded()
 
 // platform init under an allocator that refuses every request (until it gives
 // way): init completes, and platform discovery asks no more than the bound. On
-// Windows that is get_connection_type, and the connection type is unknown;
-// elsewhere discovery stops at its first refused allocation.
+// Windows the one allocator request in rocketnet_platform_init is the first
+// attempt of get_connection_type, so the count is exactly one and the
+// connection type is unknown; elsewhere the case checks the bound only.
 static void platform_init_survives_a_refusing_allocator()
 {
     driver_oom_allocator_t state;
