@@ -1190,3 +1190,18 @@ in their sections.
   - F2, F3 and F4 are gaps against the standard.
   - F5 to F8 are questions for the maintainer.
   - F9 to F11 are observations.
+
+## XDP send generation ownership
+
+`RNDriverSendStaging` models `rocketnet_send_handoff_t::publish`,
+`rocketnet_server_socket_send_packets` and the transport retry in
+`rocketnet_server_transport_send_packets`. `Publish` retains the final
+producer generation while `WorkerRetire` frees the queued generation;
+`XdpStart` remains possible when packet-slot capacity exists. `NoRefusedSend`
+forbids generation-exhaustion refusal, `RetryFlushPublishes` checks a flush
+retries retained work without a new commit, and
+`XdpStagedEventuallyPublished` requires eventual publication under fair
+publication and retirement. `MCRNDriverSendStagingBrokenRefusesSend.cfg`
+restores two queued generations and violates `NoRefusedSend` at depth 6.
+The existing transport model separately retains packet-capacity drops.
+See `tla/README-RNDriverSendStaging.md` for the hand-checked trace.

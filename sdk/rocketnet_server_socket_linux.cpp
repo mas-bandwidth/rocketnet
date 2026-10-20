@@ -2283,8 +2283,11 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
         if ( index >= 0 && socket->send_buffer[index].num_packets > 0 )
         {
-            socket->send_handoff.publish();
-            socket->send_flow_index.store( -1, std::memory_order_relaxed );
+            // RNDriverSendStaging.Publish: retain the last producer buffer.
+            // A busy worker leaves this generation staged for the next
+            // transport send_packets call (SendPackets re-flush rule).
+            if ( socket->send_handoff.publish() )
+                socket->send_flow_index.store( -1, std::memory_order_relaxed );
         }
         rocketnet_server_socket_acquire_send_buffer( socket );
         rocketnet_platform_mutex_release( &socket->send_mutex );
@@ -2438,7 +2441,13 @@ bool rocketnet_server_socket_test_inactive_generation()
         rocketnet_server_socket_finish_packet(server, aborted_id, aborted, 32);
         rocketnet_server_socket_abort_packet(server, aborted_id, aborted);
         valid &= socket->send_buffer[generation].packet_info[1].packet_bytes == 0;
-        rocketnet_server_socket_send_packets(server);
+        // Construct the legacy inactive state for the defensive entry-point
+        // checks below; normal publish retains the final producer buffer.
+        socket->send_handoff.queued[generation] = generation;
+        socket->send_handoff.count++;
+        socket->send_handoff.filling = -1;
+        socket->send_flow_index.store(-1);
+        rocketnet_server_socket_acquire_send_buffer(socket);
     }
     valid &= socket->send_flow_index.load() == -1;
     if (valid)

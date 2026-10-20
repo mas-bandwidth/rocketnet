@@ -33,10 +33,13 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS MaxFrames,                \* the abstract frames are 1..MaxFrames
           MaxStaged,                \* the staging capacity, in frames
           MaxBurst,                 \* the most frames one disconnect seals
+          RetainProducer,          \* XDP keeps its final producer generation
           DisconnectAdvancesStaged  \* commit through disconnect advances staged
 
 ASSUME MaxFrames \in Nat \ {0} /\ MaxStaged \in 1..MaxFrames
 ASSUME MaxBurst \in 1..MaxFrames /\ DisconnectAdvancesStaged \in BOOLEAN
+
+ASSUME RetainProducer \in BOOLEAN
 
 Frames == 1..MaxFrames
 
@@ -48,14 +51,20 @@ VARIABLES staged,     \* the staged counter: frames committed, ever
           reserved,   \* the frame between reserve and commit; 0 for none
           discOwed,   \* disconnect frames committed and not yet sent
           ranSend,    \* the last action was send_packets
+          xdpQueue, xdpFilling, xdpStaged, xdpDirty, xdpRefused,
+          xdpRanFlush, xdpReadyBeforeFlush,
           tick        \* update's generation tick
 
-vars == <<staged, flushed, buffer, sent, dropped, reserved, discOwed,
+transportVars == <<staged, flushed, buffer, sent, dropped, reserved, discOwed,
           ranSend, tick>>
+
+xdpVars == <<xdpQueue, xdpFilling, xdpStaged, xdpDirty, xdpRefused,
+             xdpRanFlush, xdpReadyBeforeFlush>>
+vars == <<transportVars, xdpVars>>
 
 Fresh == Frames \ (buffer \cup sent \cup dropped \cup {reserved})
 
-Init ==
+TransportInit ==
     /\ staged = 0
     /\ flushed = 0
     /\ buffer = {}
@@ -133,7 +142,51 @@ DisconnectClient ==
                 /\ UNCHANGED staged
         /\ UNCHANGED <<flushed, sent, dropped, reserved, tick>>
 
-Next ==
+\* XDP worker/publication submodel: two physical generations. Packet-slot
+\* exhaustion is separate; XdpStart represents a send with capacity left.
+XdpInit ==
+    /\ xdpQueue = 0
+    /\ xdpFilling = TRUE
+    /\ xdpStaged = FALSE
+    /\ xdpDirty = FALSE
+    /\ xdpRefused = FALSE
+    /\ xdpRanFlush = FALSE
+    /\ xdpReadyBeforeFlush = FALSE
+
+Init == TransportInit /\ XdpInit
+
+XdpStart ==
+    /\ IF xdpFilling
+       THEN /\ xdpStaged' = TRUE
+            /\ xdpDirty' = TRUE
+            /\ UNCHANGED xdpRefused
+       ELSE /\ xdpRefused' = TRUE
+            /\ UNCHANGED <<xdpStaged, xdpDirty>>
+    /\ xdpRanFlush' = FALSE
+    /\ UNCHANGED <<xdpQueue, xdpFilling, xdpReadyBeforeFlush>>
+
+\* rocketnet_send_handoff_t::publish retains filling if no replacement is free.
+\* rocketnet_server_transport_send_packets retries even when counters agree.
+Publish ==
+    /\ xdpRanFlush' = TRUE
+    /\ xdpReadyBeforeFlush' = (xdpStaged /\ xdpQueue = 0)
+    /\ IF xdpStaged /\ (xdpDirty \/ RetainProducer)
+                    /\ xdpQueue < (IF RetainProducer THEN 1 ELSE 2)
+       THEN /\ xdpQueue' = xdpQueue + 1
+            /\ xdpStaged' = FALSE
+            /\ xdpFilling' = (xdpQueue + 1 < 2)
+       ELSE UNCHANGED <<xdpQueue, xdpStaged, xdpFilling>>
+    /\ xdpDirty' = FALSE
+    /\ UNCHANGED xdpRefused
+
+WorkerRetire ==
+    /\ xdpQueue > 0
+    /\ xdpQueue' = xdpQueue - 1
+    /\ xdpFilling' = TRUE
+    /\ xdpRanFlush' = FALSE
+    /\ UNCHANGED <<xdpStaged, xdpDirty, xdpRefused, xdpReadyBeforeFlush>>
+
+TransportNext ==
     \/ \E f \in Frames : Reserve(f)
     \/ Commit
     \/ \E f \in Frames : FailedSend(f)
@@ -141,14 +194,31 @@ Next ==
     \/ Update
     \/ DisconnectClient
 
+Next ==
+    \/ /\ TransportNext /\ UNCHANGED xdpVars
+    \/ /\ (XdpStart \/ Publish \/ WorkerRetire) /\ UNCHANGED transportVars
+
 Spec == Init /\ [][Next]_vars
 
 \* StagedFramesEventuallySent is checked under weak fairness of send_packets
-SpecFair == Spec /\ WF_vars(SendPackets)
+SpecFair == Spec /\ WF_vars(SendPackets /\ UNCHANGED xdpVars)
+                 /\ WF_vars(Publish /\ UNCHANGED transportVars)
+                 /\ WF_vars(WorkerRetire /\ UNCHANGED transportVars)
 
 -----------------------------------------------------------------------------
 
+NoRefusedSend == ~xdpRefused
+RetryFlushPublishes == (xdpRanFlush /\ xdpReadyBeforeFlush) => ~xdpStaged
+XdpStagedEventuallyPublished == xdpStaged ~> ~xdpStaged
+
 TypeOK ==
+    /\ xdpQueue \in 0..2
+    /\ xdpFilling \in BOOLEAN
+    /\ xdpStaged \in BOOLEAN
+    /\ xdpDirty \in BOOLEAN
+    /\ xdpRefused \in BOOLEAN
+    /\ xdpRanFlush \in BOOLEAN
+    /\ xdpReadyBeforeFlush \in BOOLEAN
     /\ staged \in 0..MaxFrames
     /\ flushed \in 0..MaxFrames
     /\ buffer \subseteq Frames
