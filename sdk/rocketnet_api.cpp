@@ -64,7 +64,8 @@ uint32_t rocketnet_version( void )
     X( sequenced_holds ) X( receipt_ring ) X( rto_initial_ms ) X( rto_min_ms ) X( rto_max_ms ) X( reliable_timeout_ms )
 
 // the send budget fields: one int each, read under the endpoint's env name.
-// 0 or less removes the budget; the ceiling is the budget's own.
+// 0 or less sets the budget to its ceiling, ROCKETNET_SEND_BUDGET_MAX_KBPS
+// (rn_budget_kbps); above the ceiling is refused.
 
 static const struct rocketnet_config_field_t rn_client_budget_fields[] =
 {
@@ -671,34 +672,33 @@ const char * rocketnet_client_transport_name( const struct rocketnet_client_t * 
     return rocketnet_client_transport_driver( rocketnet_message_client_transport( client->connection ) );
 }
 
-// Messages flow only while CONNECTED: in every other state a send is refused
-// and counted (rocketnet_api_misuse_count).
-static struct rocketnet_message_client_t * rn_client_connected( struct rocketnet_client_t * client )
-{
-    if ( client->connection && rocketnet_message_client_state( client->connection ) == ROCKETNET_CLIENT_STATE_CONNECTED )
-        return client->connection;
-    rocketnet_api_misuse_record();
-    return NULL;
-}
-
+// A message is sent only while the client is CONNECTED (standard/MESSAGES.md
+// m1.5; tla/ClientSession.tla DropSend). In every other state a start is
+// dropped: NULL, no log, not misuse, nothing held for later, counted once in
+// NOT_CONNECTED_DROPS. With no connection object the count goes straight to
+// the lifetime counters; with one, the message layer drops it and counts
+// MESSAGE_SEND_NOT_CONNECTED, which the public counter reads.
 uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return NULL;
-    struct rocketnet_message_client_t * connection = rn_client_connected( client );
-    if ( !connection )
+    if ( !client->connection )
+    {
+        client->lifetime[ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS]++;
         return NULL;
-    return rocketnet_message_client_start( connection, channel, (int) reliability, bytes );
+    }
+    return rocketnet_message_client_start( client->connection, channel, (int) reliability, bytes );
 }
 
+// a finish with no start pending (a dropped start included) returns 0,
+// counted nowhere
 uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
-    struct rocketnet_message_client_t * connection = rn_client_connected( client );
-    if ( !connection )
+    if ( !client->connection )
         return 0;
-    return rocketnet_message_client_finish( connection, bytes_written );
+    return rocketnet_message_client_finish( client->connection, bytes_written );
 }
 
 void rocketnet_client_abort_message( struct rocketnet_client_t * client )
@@ -740,8 +740,8 @@ int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocket
     return rocketnet_message_client_receipts( client->connection, (struct rocketnet_message_receipt_t *) out, capacity );
 }
 
-// a rate above the ceiling is out of range; a client with no connection has
-// no budget to set
+// a rate above the ceiling is out of range; a connection that is not
+// CONNECTED has no budget to set (the config's rate is its starting rate)
 static bool rn_send_kbps_in_range( const char * endpoint, int kbps )
 {
     if ( kbps <= ROCKETNET_SEND_BUDGET_MAX_KBPS )
@@ -756,7 +756,7 @@ enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !rn_send_kbps_in_range( "client", kbps ) )
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    if ( !client->connection )
+    if ( rn_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     return rocketnet_message_client_set_send_kbps( client->connection, rn_budget_kbps( kbps ) ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
@@ -788,6 +788,7 @@ static uint64_t rn_client_connection_counter( struct rocketnet_message_client_t 
         case ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS:         return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
         case ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED:        return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
         case ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED: return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED );
+        case ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS:  return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
         default:                                            return 0;
     }
 }
@@ -1345,34 +1346,47 @@ enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const str
     return (enum rocketnet_disconnect_reason_t) rocketnet_message_server_disconnect_reason( rn_server( server ), slot );
 }
 
+// A message is sent only to a CONNECTED client (standard/MESSAGES.md m1.5;
+// tla/ServerSession.tla ServerDropSend). An index below max_clients with no
+// CONNECTED client is dropped: NULL, not misuse, nothing held for later,
+// counted once in NOT_CONNECTED_DROPS (the message layer's
+// MESSAGE_SEND_NOT_CONNECTED while running, the lifetime counters while
+// stopped). An index at or past max_clients is misuse.
 uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return NULL;
     if ( rn_server_destination_refused( destination_id ) )
         return NULL;
-    int slot;
-    if ( !rn_server_slot( server, destination_id, &slot ) )
+    if ( destination_id >= (uint64_t) server->max_clients )
     {
         rocketnet_api_misuse_record();
         return NULL;
     }
-    return rocketnet_message_server_start( rn_server( server ), slot, channel, reliability, bytes );
+    if ( !server->running )
+    {
+        server->lifetime[ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS]++;
+        return NULL;
+    }
+    return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability, bytes );
 }
 
+// a finish with no start pending (a dropped start included) returns 0,
+// counted nowhere; an index at or past max_clients is misuse
 uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, uint64_t destination_id, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
     if ( rn_server_destination_refused( destination_id ) )
         return 0;
-    int slot;
-    if ( !rn_server_slot( server, destination_id, &slot ) )
+    if ( destination_id >= (uint64_t) server->max_clients )
     {
         rocketnet_api_misuse_record();
         return 0;
     }
-    return rocketnet_message_server_finish( rn_server( server ), slot, bytes_written );
+    if ( !server->running )
+        return 0;
+    return rocketnet_message_server_finish( rn_server( server ), (int) destination_id, bytes_written );
 }
 
 void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_t destination_id )
@@ -1431,6 +1445,10 @@ enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_
     int slot;
     if ( !rn_server_slot( server, client_index, &slot ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    // a slot with no CONNECTED client has no budget to set: the slot's reset
+    // starts each connection at the config's rate
+    if ( !rocketnet_message_server_client_connected( rn_server( server ), slot ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     return rocketnet_message_server_set_send_kbps( rn_server( server ), slot, rn_budget_kbps( kbps ) ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
 
@@ -1461,6 +1479,7 @@ static uint64_t rn_server_running_counter( const struct rocketnet_server_t * ser
         case ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST:            return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
         case ROCKETNET_SERVER_COUNTER_BUDGET_DROPS:             return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
         case ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED:    return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED );
+        case ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS:      return rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
         default:                                                return 0;
     }
 }
