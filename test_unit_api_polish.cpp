@@ -189,7 +189,7 @@ static_assert( ROCKETNET_RELIABILITY_UNRELIABLE == 0 && ROCKETNET_RELIABILITY_UN
                ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT == 6 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT == 7, "ruling 3: reliability values" );
 static_assert( ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == 2, "ruling 3: receipt values" );
 static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == 1 &&
-               ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT == 2 && ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == 3 &&
+               ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == 3 &&
                ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT == 4 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == 5 &&
                ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == 6, "ruling 3: disconnect reason values" );
 static_assert( ROCKETNET_UPDATE_OK == 0 && ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED == -1, "ruling 3: update values" );
@@ -323,3 +323,47 @@ static void api_polish_null_client_state_is_invalid()
     rocketnet_set_assert_callback( NULL );
 }
 REGISTER_UNIT_TEST( api_polish_null_client_state_is_invalid );
+
+// --- the production minter refuses a token no peer accepts ---------------------
+
+// a timeout of zero or below (t13.2: a production server refuses both), and an
+// expire stamp at or before the create stamp (the token is already expired when
+// it is made), are refused with INVALID_ARGUMENT and the output is untouched
+static void api_polish_production_token_refuses_dead_tokens()
+{
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    const char * addresses[] = { "127.0.0.1:40000" };
+    const uint64_t create = 1000;
+
+    struct dead_token_case_t { uint64_t expire; int32_t timeout_seconds; };
+    const dead_token_case_t cases[] =
+    {
+        { create + 30, 0 },             // no lifetime: timeout zero
+        { create + 30, -1 },            // no timeout: a production server refuses it
+        { create, 10 },                 // expire == create
+        { create - 1, 10 },             // expire < create
+        { 0, 10 },                      // expire already past at the create stamp
+    };
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        memset( token, 0xA5, sizeof( token ) );
+        check( rocketnet_write_production_connect_token( backend_secret, server_public, 0x1234ULL, addresses, 1, 7,
+                                                         create, cases[i].expire, cases[i].timeout_seconds, NULL,
+                                                         token, sizeof( token ) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+        for ( size_t j = 0; j < sizeof( token ); j++ )
+            check( token[j] == 0xA5 );
+    }
+
+    // the smallest live token still mints
+    check( rocketnet_write_production_connect_token( backend_secret, server_public, 0x1234ULL, addresses, 1, 7,
+                                                     create, create + 1, 1, NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( api_polish_production_token_refuses_dead_tokens );

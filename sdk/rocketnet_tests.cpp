@@ -2891,11 +2891,14 @@ void rocketnet_test_cookie_bounds_signature_verifies()
         rocketnet_test_server_teardown( &test );
     }
 
-    // more distinct sources than the table holds cannot churn their way out
-    // of a spent count: a source that failed and was displaced by churn would
-    // be re-verified, so the bound must hold even when the table overflows.
-    // one host reaches this with source ports alone, since the address
-    // carries the port.
+    // more distinct sources than the table holds: no source the table
+    // remembers is displaced, so each of them stays refused for the rest of
+    // the window. a source the full table cannot remember has no recorded
+    // failure and is verified on each request, because refusing it would
+    // refuse every honest first-time source (no global lockout,
+    // tla/RNSecurityTables.tla HonestConnectsUnderFlood); those verifies are
+    // bounded per update by the handshake work budget. one host reaches this
+    // with source ports alone, since the address carries the port.
     {
         struct rocketnet_test_server_t test;
         rocketnet_test_server_setup( &test );
@@ -2933,8 +2936,13 @@ void rocketnet_test_cookie_bounds_signature_verifies()
                             - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
         uint64_t refused = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT]
                             - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT];
-        rocketnet_check( failures == (uint64_t) budget );
-        rocketnet_check( refused == (uint64_t) ( num_sources * rounds - budget ) );
+        // round one: every source verifies once (the first 64 fill the table,
+        // the rest go unrecorded). later rounds: the 64 remembered sources are
+        // refused before the verify, the 32 unremembered ones verify again.
+        const int slots = ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS;
+        rocketnet_check( failures == (uint64_t) ( num_sources + ( rounds - 1 ) * ( num_sources - slots ) ) );
+        rocketnet_check( refused == (uint64_t) ( ( rounds - 1 ) * slots ) );
+        rocketnet_check( test.server.counters->handshakes_processed_this_update <= (uint64_t) ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
 
         rocketnet_test_server_teardown( &test );
     }
@@ -3825,12 +3833,24 @@ void rocketnet_test_replay_long_skip_clears_whole_window()
     memset( &replay, 0, sizeof(replay) );
 
     const uint64_t window_bits = ROCKETNET_REPLAY_WINDOW_BITS;
+    const int window_words = (int) ( ROCKETNET_REPLAY_WINDOW_BITS / 64 );
     for ( uint64_t sequence = 1; sequence <= window_bits; sequence++ )
         rocketnet_replay_advance( &replay, sequence );
+
+    // every bit of the ring is set before the skip, so the clear below cannot
+    // pass by the ring never having held anything
+    for ( int w = 0; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == ~(uint64_t) 0 );
 
     rocketnet_replay_advance( &replay, 3 * window_bits );
     for ( uint64_t sequence = 2 * window_bits + 1; sequence < 3 * window_bits; sequence++ )
         rocketnet_check( !rocketnet_replay_already_received( &replay, sequence ) );
+
+    // the full-window skip clears every word of the ring; the newest
+    // sequence's own bit is the only survivor
+    rocketnet_check( replay.window[0] == (uint64_t) 1 );
+    for ( int w = 1; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == 0 );
 
     uint8_t encoded[ROCKETNET_ACK_BLOCK_MAX_BYTES];
     struct rocketnet_ack_block_t decoded;
@@ -5725,9 +5745,9 @@ void rocketnet_test_integrity_limit()
         // mapping lookup, so it never reaches the open and never counts
         // against the mapping's integrity (STANDARD.md: a connection response
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
-        // never a later refusal"; card rnfix-response-wrong-size-counted-r2:
-        // "an exact-size check before the lookup"). two such: one too short
-        // to carry a tag, one that would open to the wrong size. the class
+        // never a later refusal": an exact-size check runs before the
+        // lookup). two such: one too short to carry a tag, one that would
+        // open to the wrong size. the class
         // still filed as DID_NOT_OPEN is a response that opens to non-zero
         // padding.
         uint8_t short_response[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES - 1];
@@ -6761,16 +6781,6 @@ void rocketnet_test_payload_size_sweep()
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
-void rocketnet_test_hostname_resolve_localhost()
-{
-    rocketnet_address_t address, ipv6;
-    rocketnet_check(rocketnet_platform_hostname_resolve("localhost", "40000", &address));
-    rocketnet_check(address.port == 40000);
-    rocketnet_check(rocketnet_address_parse(&ipv6, "[::1]:40000"));
-    rocketnet_check((address.type == ROCKETNET_ADDRESS_IPV4 && address.data.ipv4[0] == 127) ||
-                   rocketnet_address_equal(&address, &ipv6));
-}
-
 
 static bool threads_work = false;
 
@@ -7625,7 +7635,6 @@ static const char * rocketnet_test_layer_exports[] =
     "rocketnet_user_id_string",
     "rocketnet_random_float",
     "rocketnet_random_uint8",
-    "rocketnet_random_uint16",
     "rocketnet_random_uint32",
     "rocketnet_random_uint64",
     "rocketnet_random_bytes",
@@ -7899,7 +7908,6 @@ static const char * rocketnet_test_layer_null_exempt_exports[] =
     "rocketnet_clear_and_free",
     "rocketnet_random_float",
     "rocketnet_random_uint8",
-    "rocketnet_random_uint16",
     "rocketnet_random_uint32",
     "rocketnet_random_uint64",
     "rocketnet_protocol_version",
@@ -12316,9 +12324,11 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
                 // checks termination only (the driver list's CONTENT is
                 // parsed by the ladder at create, which this walk never
                 // reaches), so a per-field special case here would be
-                // decoration
+                // decoration. the value is cut to the field's capacity, so
+                // the 16-byte interface_name row takes "value-under-tes"
 
-                snprintf( value_string, sizeof(value_string), "value-under-test" );
+                const size_t capacity = (size_t) field->size < sizeof(value_string) ? (size_t) field->size : sizeof(value_string);
+                snprintf( value_string, capacity, "value-under-test" );
             }
             break;
 
@@ -13416,7 +13426,6 @@ public:
         }
         clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
         clear("ROCKETNET_PUBLIC_ADDRESS");
-        clear("ROCKETNET_SERVER_NUM_QUEUES");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
@@ -13482,7 +13491,7 @@ void rocketnet_test_suite_environment()
 
 void rocketnet_test_server_transport_entries_carry_connection_id()
 {
-    // docs/CHANNELS.md P9a, P9b (card C0a): a slot released and reassigned
+    // docs/CHANNELS.md P9a, P9b: a slot released and reassigned
     // inside one update. Client A holds slot 0; A's payload, whose ack block
     // acknowledges three server packets, then A's disconnect, then client B
     // connecting into the freed slot 0, then B's payload -- with no batch
@@ -14493,7 +14502,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
     { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
     { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
-    { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
     { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },
