@@ -9,9 +9,11 @@
 (* cannot add a mapping until that claim expires with the handshake        *)
 (* deadline.  TokenRequestBroken is the same request without the claim     *)
 (* rung, the BASE defect: one token buys one half-open mapping per address *)
-(* until the map is full.  MCSpecBrokenTokenManyAddresses selects it for   *)
-(* MCReceiveOrderBrokenTokenManyAddresses.cfg; OneHalfOpenPerToken fails   *)
-(* in the second state, matching the code probe in the card's unit case.   *)
+(* until the map is full.  MCSpecBrokenTokenManyAddresses selects it, and  *)
+(* OneHalfOpenPerToken fails in the second state, matching the code probe  *)
+(* in test_unit_handshake_budgets.cpp.  Its reversed witness is a          *)
+(* configuration file over this module, which the case plan in            *)
+(* tla/CASES.tsv must name before the runner will measure it.              *)
 (***************************************************************************)
 EXTENDS ReceiveOrder, FiniteSets
 
