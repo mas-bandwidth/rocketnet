@@ -501,7 +501,7 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     return true;
 }
 
-// "transport, never driver, no alias" (Glenn, 2026-10-18). the table row
+// the environment names the transport, never the driver, with no alias. the table row
 // "driver" is read only as ROCKETNET_<ENDPOINT>_TRANSPORT. the old driver
 // spellings, process-wide ROCKETNET_DRIVER and per-endpoint
 // ROCKETNET_<ENDPOINT>_DRIVER, are refused aloud, naming the variable to use

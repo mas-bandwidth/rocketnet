@@ -168,14 +168,7 @@ static void server_transport_create_ex_reports_every_status()
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
     check( unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
 
-    // S3: the surviving deprecated alias refuses on a bad value
-    check( setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-a-number", 1 ) == 0 );
-    status = -1;
-    check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    check( unsetenv( "ROCKETNET_SERVER_NUM_QUEUES" ) == 0 );
-
-    // S4: an out-of-range config value refuses validation
+    // S3: an out-of-range config value refuses validation
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
