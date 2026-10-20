@@ -281,6 +281,13 @@ static int loopback_server_receive_batch( void * driver, rocketnet_address_t * f
     while ( received < count && ep->count > 0 )
     {
         rocketnet_loopback_packet_t * packet = &ep->packets[ep->head % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
+        if ( stride <= 0 || packet->bytes <= 0 || packet->bytes > stride )
+        {
+            ++ep->dropped;
+            ++ep->head;
+            --ep->count;
+            continue;
+        }
         from[received] = packet->from;
         bytes[received] = packet->bytes;
         memcpy( data + (size_t) received * stride, packet->data, (size_t) packet->bytes );

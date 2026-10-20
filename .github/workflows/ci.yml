@@ -1846,9 +1846,12 @@ jobs:
       - name: Benchmark campaign result gate
         run: python3 bench/test_campaign.py
 
+  # bench/instruction_baseline.json is pinned to GNU-15.2.0 / valgrind-3.26.0;
+  # the fleet label also matches gcc-13 hosts, so route this job to the quiet
+  # runner label that carries the pinned toolchain.
   instruction-gate:
     name: instruction count gate
-    runs-on: [self-hosted, Linux, X64, fleet]
+    runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
     timeout-minutes: 3
     steps:
 
