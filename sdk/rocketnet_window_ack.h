@@ -129,14 +129,20 @@ static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
 }
 
 // The receipt deadline of an UNRELIABLE_WITH_ACK_RECEIPT packet, in seconds
-// after its send: max( ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS, rto ), independent of
-// the resend delay and never below the rto (tla/RNReceipts.tla ReceiptDeadline).
-// rn_window_ack_receipt_sweep reports LOSS for a packet still unacknowledged at
-// it; an ACK before it reports ACKED.
+// after its send: the adaptive rto, the larger of the unclamped rto
+// (rto_scale x srtt + 2 rttvar) and the clamped resend rto, so it is
+// independent of the resend delay and never below the rto. Until the first
+// rtt sample it is ROCKETNET_RECEIPT_RTO_UNKNOWN_MS, matching RakNet's receipt
+// rto when the rtt is unknown, so a slow-acking or long path never reports a
+// delivered message lost before the path is known (tla/RNReceipts.tla
+// ReceiptDeadline). rn_window_ack_receipt_sweep reports LOSS for a packet still
+// unacknowledged at it; an ACK before it reports ACKED.
 static inline double rn_window_ack_receipt_loss_delay( const rn_window_ack_t * ack )
 {
-    const double timeout = (double) ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS / 1000.0;
-    return ack->rto > timeout ? ack->rto : timeout;
+    if ( !ack->has_rtt )
+        return (double) ROCKETNET_RECEIPT_RTO_UNKNOWN_MS / 1000.0;
+    const double adaptive = ack->rto_scale * ack->srtt + 2.0 * ack->rttvar;
+    return adaptive > ack->rto ? adaptive : ack->rto;
 }
 
 // The resend delay of a chunk of a block: the RTO alone, not the 100 ms cap,

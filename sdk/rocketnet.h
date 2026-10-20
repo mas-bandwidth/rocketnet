@@ -173,13 +173,14 @@
 
 #define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      ///< 1415
 
-/// @brief The receipt loss timeout of UNRELIABLE_WITH_ACK_RECEIPT, in
-/// milliseconds. A receipt packet with no acknowledgement reports LOSS at its
-/// send time plus the larger of this timeout and the connection's resend rto;
-/// an acknowledgement before then reports ACKED. A fixed constant, not a
-/// config field (rn_window_ack_receipt_sweep, sdk/rocketnet_window_ack.cpp).
+/// @brief The receipt rto of UNRELIABLE_WITH_ACK_RECEIPT before the first rtt
+/// sample, in milliseconds. It matches RakNet's receipt rto when the rtt is
+/// unknown (docs/RAKNET-RELIABILITY.md 7.3 and 10). Once an rtt sample exists
+/// the receipt deadline is the adaptive rto, which adapts to the path and can
+/// settle far below this value (rn_window_ack_receipt_loss_delay, sdk/
+/// rocketnet_window_ack.h). It is an initialization, not a fixed deadline.
 
-#define ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS                   2000
+#define ROCKETNET_RECEIPT_RTO_UNKNOWN_MS                    2000
 
 /// Send budgets are kilobits per second of wire bytes (1 kbps = 1000 bit/s),
 /// per connection: the defaults of the config's send_kbps and
@@ -293,8 +294,9 @@ enum rocketnet_reliability_t
     /// Send once and report whether the carrying packet is acknowledged. A
     /// larger message is sent as a reliable block and can report ACKED only. A
     /// single-packet message can report ACKED or LOSS: LOSS when no
-    /// acknowledgement arrives by its send time plus the larger of
-    /// ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS and the resend rto.
+    /// acknowledgement arrives by its receipt deadline, the adaptive rto
+    /// (never below the resend rto; ROCKETNET_RECEIPT_RTO_UNKNOWN_MS until the
+    /// first rtt sample).
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT           = 5,
     /// Resend until acknowledged and report an ACKED receipt. Delivery is
     /// once without channel ordering. A connection failure does not produce a
@@ -312,10 +314,10 @@ enum rocketnet_receipt_status_t
     /// peer application read the message.
     ROCKETNET_RECEIPT_STATUS_ACKED                              = 1,
     /// An unreliable receipt packet was not acknowledged by its receipt
-    /// deadline (ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS, or the resend rto when that
-    /// is larger), the sender evicted it from its sent map, or the send budget
-    /// refused it. The message is not resent; reliable receipt modes do not
-    /// produce LOSS.
+    /// deadline (the adaptive rto, never below the resend rto, and
+    /// ROCKETNET_RECEIPT_RTO_UNKNOWN_MS until the first rtt sample), the sender
+    /// evicted it from its sent map, or the send budget refused it. The
+    /// message is not resent; reliable receipt modes do not produce LOSS.
     ROCKETNET_RECEIPT_STATUS_LOSS                               = 2
 };
 

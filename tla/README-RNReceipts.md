@@ -26,9 +26,9 @@ layer implementation exists.
   events with no live transport slot are stuttering inputs.
 - `Tick` ages sent, unacked numbers. `SweepLoss` scans eligible type-5
   descriptors at their receipt deadline or after map eviction. The deadline
-  `ReceiptDeadline` is the larger of `ReceiptTimeout` and `RTO`, as
+  `ReceiptDeadline` is the larger of `AdaptiveRTO` and the resend `RTO`, as
   `rn_window_ack_receipt_loss_delay` (`sdk/rocketnet_window_ack.h`) takes the
-  larger of `ROCKETNET_RECEIPT_LOSS_TIMEOUT_MS` and the rto. Its retained
+  larger of the unclamped adaptive rto and the resend rto. Its retained
   outcome suppresses a late ACK. `Disconnect` represents the documented
   `RELIABLE_TIMEOUT` error when a sent, still-unacked reliable number
   reaches its first-send deadline, even if other traffic progresses.

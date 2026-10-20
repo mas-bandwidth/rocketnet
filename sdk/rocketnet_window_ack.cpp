@@ -700,8 +700,8 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
     rocketnet_assert( ack );
     // RNReceipts SweepLoss: sent order makes the first unexpired entry the
     // stopping point. An entry expires at its send time plus the receipt
-    // deadline (rn_window_ack_receipt_loss_delay), not the resend rto.
-    // Reliable references remain in the map for late ACKs.
+    // deadline (rn_window_ack_receipt_loss_delay), the adaptive rto, not the
+    // resend rto. Reliable references remain in the map for late ACKs.
     if ( ack->receipt_sweep < ack->pkt_head )
         ack->receipt_sweep = ack->pkt_head;
     while ( ack->receipt_sweep < ack->pkt_tail )
