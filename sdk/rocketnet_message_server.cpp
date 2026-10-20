@@ -34,6 +34,7 @@
 // (THE COPIES (b), rn_channels_dispatch_ordered). rn_message_object_send is the
 // one other copy: the convenience copies the caller's bytes into the record.
 
+#include <limits.h>
 #include <string.h>
 
 #include "rocketnet_internal.h"
@@ -255,6 +256,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
     object->pending_connection = -1;
+    object->send_first = 0;
     object->block = block;
     object->owns_block = owns_block ? 1 : 0;
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
@@ -614,8 +616,11 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     // RNOutgoingBuild StartInPlace: a fitting unreliable message takes a
     // transport frame and is written in it, its header's room in front and
     // the form byte's after; header + bytes + 1, the declared maximum,
-    // decides the frame
-    if ( unreliable && object->link.start_packet )
+    // decides the frame. Not while the transport refused a frame in the last
+    // update (send_constrained): in-place starts take frames in the caller's
+    // order, so under a frame shortage every message waits for the fair send
+    // pass instead (tla/RNServerSendFair.tla InPlace)
+    if ( unreliable && object->link.start_packet && !object->send_constrained )
     {
         int header = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
         if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
@@ -630,6 +635,8 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                 object->link.abort_packet( object->link.transport, &context );
                 frame = NULL;
             }
+            if ( !frame )
+                object->send_refused = 1;
             if ( frame )
             {
                 rn_endpoint_in_place_begin( connection, channel, reliability, bytes, header );
@@ -760,14 +767,18 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 // the object starts one frame from the transport at a time, the endpoint
 // writes it in place (THE COPIES (a)), and the object finishes it and tells the
 // endpoint whether it left, under the transport's packet id (RNSlots Send).
+// At most max_plans plans are taken; the endpoint's pass stays open
+// (write_phase not RN_ENDPOINT_WRITE_IDLE) until rn_endpoint_next_packet_bytes
+// returns 0. *refused is set when the transport hands back no frame: the plan
+// writes nothing and its reliable records stay due (rn_endpoint_packet_failed).
 
-static void rn_message_connection_write( rn_message_object_t * object, int index )
+static void rn_message_connection_write( rn_message_object_t * object, int index, int max_plans, int * refused )
 {
     rn_message_connection_t * connection = &object->connections[index];
     rn_message_link_t * link = &object->link;
     const double now = object->time;
 
-    for ( ;; )
+    for ( int plans = 0; plans < max_plans; plans++ )
     {
         const int request = rn_endpoint_next_packet_bytes( connection, now );
         if ( request == 0 )
@@ -777,6 +788,7 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
         uint8_t * frame = link->start_packet( link->transport, index, request, &context );
         if ( !frame )
         {
+            *refused = 1;
             rn_endpoint_packet_failed( connection, 0, now );    // no frame: nothing written
             continue;
         }
@@ -796,21 +808,65 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
     }
 }
 
+// The send pass shares the transport's frames of one update fairly
+// (tla/RNServerSendFair.tla). The walk starts at object->send_first and goes
+// round the connections twice: the first round takes one plan per connection,
+// so every connection is offered a frame before any connection takes a
+// second, and the second round takes the rest of each pass still open. The
+// next update starts at the first connection the transport refused a frame
+// to, in the first round if any, else in the second; with no refusal the start
+// stays. A capacity of K frames per update so reaches every connection with a
+// send waiting within ceil(N / K) updates of N connections. A refused plan
+// writes nothing and its reliable records stay due: a capacity below the
+// connection count slows each connection down and disconnects none. Any
+// refusal in an update, here or at an in-place start, sets send_constrained
+// for the next update, which sends every unreliable message through this pass.
+
+static bool rn_message_connection_sends( const rn_message_object_t * object, int index )
+{
+    if ( object->connections[index].state != RN_MESSAGE_CONNECTION_CONNECTED )
+        return false;
+    // the client transport accepts sends only while CONNECTED (11.3):
+    // until then the queue holds only the CONFIG control record, which
+    // waits unnumbered; application sends were dropped at start
+    if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
+        return false;
+    return true;
+}
+
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     rn_message_object_close_in_place( object );
-    for ( int i = 0; i < object->num_connections; i++ )
+    const int n = object->num_connections;
+    const int first = ( object->send_first >= 0 && object->send_first < n ) ? object->send_first : 0;
+    int refused_first_round = -1;
+    int refused_second_round = -1;
+    for ( int offset = 0; offset < n; offset++ )
     {
-        rn_message_connection_t * connection = &object->connections[i];
-        if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+        const int i = ( first + offset ) % n;
+        if ( !rn_message_connection_sends( object, i ) )
             continue;
-        // the client transport accepts sends only while CONNECTED (11.3):
-        // until then the queue holds only the CONFIG control record, which
-        // waits unnumbered; application sends were dropped at start
-        if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
-            continue;
-        rn_message_connection_write( object, i );
+        int refused = 0;
+        rn_message_connection_write( object, i, 1, &refused );
+        if ( refused && refused_first_round < 0 )
+            refused_first_round = i;
     }
+    for ( int offset = 0; offset < n; offset++ )
+    {
+        const int i = ( first + offset ) % n;
+        if ( !rn_message_connection_sends( object, i ) || object->connections[i].write_phase == RN_ENDPOINT_WRITE_IDLE )
+            continue;
+        int refused = 0;
+        rn_message_connection_write( object, i, INT_MAX, &refused );
+        if ( refused && refused_second_round < 0 )
+            refused_second_round = i;
+    }
+    if ( refused_first_round >= 0 )
+        object->send_first = refused_first_round;
+    else if ( refused_second_round >= 0 )
+        object->send_first = refused_second_round;
+    object->send_constrained = ( object->send_refused || refused_first_round >= 0 || refused_second_round >= 0 ) ? 1 : 0;
+    object->send_refused = 0;
     object->link.send_packets( object->link.transport );
 }
 

@@ -102,9 +102,13 @@ struct rocketnet_server_receive_buffer_t
 // one atomic add; each slot's info sits alone on its cache line so
 // concurrent finishes never share one; the frame stride keeps every root
 // 16-aligned. the response ring above stays single-threaded under update
-// and is deliberately not this.
+// and is deliberately not this. The ring holds at least one packet per
+// client per update at ROCKETNET_MAX_CLIENTS; payload_ring_capacity, read
+// at create, is the slots one update may use (the whole ring by default).
 
-#define ROCKETNET_SERVER_PAYLOAD_RING_SIZE      ROCKETNET_SERVER_MAX_SEND_PACKETS
+#define ROCKETNET_SERVER_PAYLOAD_RING_SIZE      1024
+
+static_assert( ROCKETNET_SERVER_PAYLOAD_RING_SIZE >= ROCKETNET_MAX_CLIENTS, "the payload ring holds one packet per client per update" );
 
 struct alignas(64) rocketnet_server_payload_slot_info_t
 {

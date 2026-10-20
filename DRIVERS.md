@@ -45,6 +45,21 @@ Two I/O shapes preserve the existing implementations:
   XDP, GSO and IOCP use this shape, with their own pools and worker arrangements.
   The transport does not allocate, recycle or schedule those backend frames.
 
+On a buffered driver one update stages at most `payload_ring_capacity` payload
+packets: `ROCKETNET_SERVER_PAYLOAD_RING_SIZE`, 1024, at least
+`ROCKETNET_MAX_CLIENTS` (`sdk/rocketnet_server_transport.cpp:109`), read at
+create (`sdk/rocketnet_server_transport.cpp:1189`). A start past it returns NULL
+and counts `SEND_RING_FULL` (`sdk/rocketnet_server_transport.cpp:2233`, `:2369`).
+`rocketnet_server_transport_send_capacity` reports the value. The message
+layer shares a shortage fairly (`tla/RNServerSendFair.tla`):
+`rn_message_object_send_packets` (`sdk/rocketnet_message_server.cpp:837`) offers
+every connection one packet, in rotation from the first connection refused in
+the previous update, before any connection takes a second, and a refusal holds
+back in-place unreliable starts for the next update
+(`sdk/rocketnet_message_server.cpp:623`, `:868`). A refused packet writes
+nothing and its reliable messages stay due, so a capacity below the client
+count slows each client down and disconnects none.
+
 The staged callbacks are start, finish, abort, flush and receive. Start returns
 a `ROCKETNET_FRAME_STRIDE` root; the wire starts at `ROCKETNET_FRAME_WIRE_OFFSET`.
 The caller-visible payload alignment must remain valid. Receive returns at most

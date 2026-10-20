@@ -154,6 +154,9 @@ struct rn_message_object_t
     double clock_origin;                        // the game's time the transport's 0.0 stands for
     int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1
+    int send_first;                             // the connection the next send pass starts at (rn_message_object_send_packets)
+    int send_refused;                           // 1 once the transport refused a frame in this update
+    int send_constrained;                       // 1 when it refused one in the last update: no in-place starts
 
     // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame
