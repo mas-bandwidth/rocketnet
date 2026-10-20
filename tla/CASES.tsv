@@ -204,3 +204,11 @@ MCRNClientReceiveQuitMac.cfg	MCRNClientReceiveQuit.tla	pass	-	check	rnclientrece
 MCRNClientReceiveQuitWindows.cfg	MCRNClientReceiveQuit.tla	pass	-	check	rnclientreceivequit	required	-
 MCRNClientReceiveQuitBrokenWakeBeforeQuit.cfg	MCRNClientReceiveQuit.tla	invariant	WokenSeesQuit	check	rnclientreceivequit	required	-
 MCRNClientReceiveQuitBrokenNoWakeNoTimeout.cfg	MCRNClientReceiveQuit.tla	temporal	DestroyCompletes	check	rnclientreceivequit	required	-
+MCLinkSpecEveryNth.cfg	MCLink.tla	pass	-	check	link	required	-
+MCLinkWireFairEveryNth.cfg	MCLink.tla	pass	-	check	link	required	-
+MCLinkEveryNth.cfg	MCLinkPatterns.tla	pass	-	check	link	required	-
+MCLinkEveryNthBrokenPeriod.cfg	MCLinkPatterns.tla	invariant	EveryNthDropped	check	link	required	-
+MCLinkReverseWindow.cfg	MCLinkPatterns.tla	pass	-	check	link	required	-
+MCLinkReverseWindowBrokenOrder.cfg	MCLinkPatterns.tla	invariant	WindowOrderReversed	check	link	required	-
+MCLinkEveryNthBrokenCounter.cfg	MCLinkPatterns.tla	invariant	MCPatternsTypeOK	check	link	required	-
+MCLinkReverseWindowBreaksInOrder.cfg	MCLinkPatterns.tla	invariant	SurvivorsInOrder	check	link	required	-
