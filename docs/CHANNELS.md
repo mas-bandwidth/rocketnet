@@ -1291,8 +1291,12 @@ rocketnet_server_abort_message( server, client_index );
 The client is the same shape with one endpoint. That endpoint is reset at
 create, because the client receives payloads from state 3 on (P8), and it is
 never reset again. The client transport accepts sends only in state 4
-(`sdk/rocketnet_client_protocol.cpp:1056-1057`). Sends before CONNECTED wait in the queue
-without being numbered. One client object makes one connection, like the
+(`sdk/rocketnet_client_protocol.cpp:1056-1057`). An application send before CONNECTED is
+dropped at start message: `NULL`, counted once in `MESSAGE_SEND_NOT_CONNECTED`
+(`ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS`), and never sent (RN-2 m1.5,
+tla/ClientSession.tla DropSend); the server drops a send to a slot that is not
+CONNECTED the same way. Only the CONFIG control record, announced at create, is
+held, unnumbered, until CONNECTED. One client object makes one connection, like the
 transport. The client receives with `rocketnet_client_receive_message`, modelled on the
 transport's receive. CONNECTED is emitted
 when the transport first reports state 4. DISCONNECTED is emitted when the

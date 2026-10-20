@@ -35,12 +35,32 @@ From the repository root, after the normal build, in two terminals:
 The server listens on `127.0.0.1:40000`, receives one reliable-ordered message
 from the client, echoes it, and exits after its first client disconnects. Both
 programs finish in under ten seconds and print `PASS` as their last line.
-`tools/run_examples.py --build build` runs the pair in that order. To see the
+
+## The port
+
+Both programs take the port from `--port <n>`, else from the environment
+variable `ROCKETNET_EXAMPLE_PORT`, else the default `40000`; the server binds
+`127.0.0.1` at that port and the client's token names the same address. Give
+both the same port:
+
+```sh
+./bin/example_client_server_server --port 41234
+./bin/example_client_server_client --port 41234
+```
+
+A value that is not 1 to 65535 prints a `FAIL` line and exits non-zero.
+`tools/run_examples.py --build build` runs the pair in that order, in a fresh
+temporary working directory, on a free UDP port it asks the operating system
+for and passes through `ROCKETNET_EXAMPLE_PORT`, so two runs at once never
+share a port or a key file. When the server cannot bind that port, because
+another process took it between the pick and the start, the script says so
+and picks again, at most three tries. To see the
 refusal, start a fresh server and run the client's own flag:
 
 ```sh
 ./bin/example_client_server_client --wrong-protocol
 ```
+`--wrong-protocol` combines with `--port <n>` in either order.
 The client mints the token for another protocol id, the server ignores it, and
 the client prints `expected refusal:` with the refused state and then `PASS`.
 Stop that server when the run finishes.

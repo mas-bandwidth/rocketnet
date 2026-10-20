@@ -18,7 +18,7 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | supported | .github/workflows/ci.yml | windows-2025 |
+| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
@@ -26,8 +26,8 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | x86_64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
+| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp, rio | nightly | .github/workflows/nightly-soak.yml | self-hosted, Windows, X64, rocketnet-windows |
+| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp, rio | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Windows 11 (self-hosted fleet) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - |
@@ -43,8 +43,8 @@ and checks its exports. Nothing runs on arm64, so its row stays unsupported.
 The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
 and verifying on a Mac. The drivers column names the backends the row actually
 exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
-portable on every platform, gso and xdp on Linux, msgx on macOS and iocp on
-Windows. A driver that the row does not name is not part of that row's claim.
+portable on every platform, gso and xdp on Linux, msgx on macOS and iocp and rio
+on Windows. A driver that the row does not name is not part of that row's claim.
 
 ## Policy rules
 
@@ -115,8 +115,9 @@ new support claim:
   and leak gates on the supported Linux x86_64 platform.
 - `nightly-soak.yml` runs its soak job on `ubuntu-latest` with the
   `self-hosted, Linux, X64, fleet` label, its soak job on the
-  `self-hosted, macOS, ARM64, rocketnet-macos` label, and on hosted
-  `windows-2025`, and its sanitized-soak job on hosted `ubuntu-24.04`.
+  `self-hosted, macOS, ARM64, rocketnet-macos` label, its soak-windows job on
+  the `self-hosted, Windows, X64, rocketnet-windows` label, and its
+  sanitized-soak job on the `self-hosted, Linux, X64, fleet` label.
 - `nightly-frame-budget.yml` runs its Linux leg on the
   `self-hosted, Linux, X64, rocketnet-quiet` label, its macOS leg report-only
   on `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on
