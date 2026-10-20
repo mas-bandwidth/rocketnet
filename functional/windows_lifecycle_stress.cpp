@@ -447,6 +447,11 @@ void windows_client_connect_disconnect_cycles()
     for ( int t = 0; t < 3; t++ )
     {
         const char * transport = k_windows_server_transports[t];
+
+        // Count from before the server is created, so the span that ends after
+        // the server is destroyed also holds what the server itself leaves behind.
+        const windows_process_counts_t before_server = windows_record_counts();
+
         struct rocketnet_server_t * server = windows_start_server( "127.0.0.1:0", transport, 8 );
         const uint16_t port = rocketnet_server_port( server );
         rocketnet_check( port != 0 );
@@ -483,6 +488,9 @@ void windows_client_connect_disconnect_cycles()
         windows_assert_counts_within( transport, before_loop, after_loop, 2 );
 
         rocketnet_server_destroy( server );
+
+        const windows_process_counts_t after_server = windows_record_counts();
+        windows_assert_counts_within( transport, before_server, after_server, 2 );
     }
 
     const windows_process_counts_t overall_after = windows_record_counts();
