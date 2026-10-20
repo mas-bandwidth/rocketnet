@@ -331,7 +331,8 @@ static inline bool rocketnet_client_link_patterns( const rocketnet_client_transp
 }
 
 // The I/O ring core (hand-off and caller step) carries the sends and the
-// receives, unless the patterns put them through the link simulator.
+// receives, unless the transport has a link simulator (any loss, latency, jitter,
+// duplicate or pattern field set), whose send and receive carry them instead.
 static inline bool rocketnet_client_io_core( const rocketnet_client_transport_t * transport )
 {
     return ( transport->io_thread || transport->step_in_update ) && !transport->link_simulator;
