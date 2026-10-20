@@ -446,7 +446,7 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
         windows_socket_errors_tick( &session );
     uint64_t expect_size = 0;
     for ( size_t i = 0; i < datagrams.size(); i++ )
-        if ( datagrams[i].bytes.size() < ROCKETNET_PREFILTER_BYTES || datagrams[i].bytes.size() > ROCKETNET_RECEIVE_CEILING )
+        if ( (int) datagrams[i].bytes.size() < ROCKETNET_PREFILTER_BYTES || (int) datagrams[i].bytes.size() > ROCKETNET_RECEIVE_CEILING )
             expect_size++;
     const uint64_t expect_foreign = (uint64_t) datagrams.size() - expect_size;
     const uint64_t size_before = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_DROPPED_SIZE );
