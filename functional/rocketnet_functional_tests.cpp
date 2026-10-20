@@ -1980,7 +1980,7 @@ void rocketnet_test_platform_socket()
     {
         rocketnet_address_t bind_address;
         rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "0.0.0.0" );
+        rocketnet_address_parse( &bind_address, "127.0.0.1" );
         rocketnet_address_parse( &local_address, "127.0.0.1" );
         rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
         local_address.port = bind_address.port;
@@ -2000,7 +2000,7 @@ void rocketnet_test_platform_socket()
     {
         rocketnet_address_t bind_address;
         rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "0.0.0.0" );
+        rocketnet_address_parse( &bind_address, "127.0.0.1" );
         rocketnet_address_parse( &local_address, "127.0.0.1" );
         rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f, 64*1024, 64*1024 );
         local_address.port = bind_address.port;
@@ -2020,7 +2020,7 @@ void rocketnet_test_platform_socket()
     {
         rocketnet_address_t bind_address;
         rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "0.0.0.0" );
+        rocketnet_address_parse( &bind_address, "127.0.0.1" );
         rocketnet_address_parse( &local_address, "127.0.0.1" );
         rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f, 64*1024, 64*1024 );
         local_address.port = bind_address.port;
@@ -2038,7 +2038,7 @@ void rocketnet_test_platform_socket()
     {
         rocketnet_address_t bind_address;
         rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "[::]" );
+        rocketnet_address_parse( &bind_address, "[::1]" );
         rocketnet_address_parse( &local_address, "[::1]" );
         rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
         local_address.port = bind_address.port;
@@ -2058,7 +2058,7 @@ void rocketnet_test_platform_socket()
     {
         rocketnet_address_t bind_address;
         rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "[::]" );
+        rocketnet_address_parse( &bind_address, "[::1]" );
         rocketnet_address_parse( &local_address, "[::1]" );
         rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f, 64*1024, 64*1024 );
         local_address.port = bind_address.port;
@@ -2078,7 +2078,7 @@ void rocketnet_test_platform_socket()
     {
         rocketnet_address_t bind_address;
         rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "[::]" );
+        rocketnet_address_parse( &bind_address, "[::1]" );
         rocketnet_address_parse( &local_address, "[::1]" );
         rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f, 64*1024, 64*1024 );
         local_address.port = bind_address.port;
@@ -2100,7 +2100,7 @@ static void rocketnet_test_darwin_oversize_receive( const char * pump )
 {
     rocketnet_address_t bind_address;
     rocketnet_address_t local_address;
-    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
     rocketnet_address_parse( &local_address, "127.0.0.1" );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024, pump );
     rocketnet_check( socket != NULL );
@@ -2155,7 +2155,7 @@ void rocketnet_test_receive_drops_oversize_datagram()
 
     rocketnet_address_t bind_address;
     rocketnet_address_t local_address;
-    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
     rocketnet_address_parse( &local_address, "127.0.0.1" );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
     rocketnet_check( socket != NULL );
@@ -2334,9 +2334,9 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
 
 void rocketnet_test_platform_batch_pump()
 {
-    rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", ROCKETNET_TEST_EXPECTED_PUMP );
+    rocketnet_test_pump_exchange( "127.0.0.1", "127.0.0.1", ROCKETNET_TEST_EXPECTED_PUMP );
 
-    rocketnet_test_pump_exchange( "[::]", "[::1]", ROCKETNET_TEST_EXPECTED_PUMP );
+    rocketnet_test_pump_exchange( "[::1]", "[::1]", ROCKETNET_TEST_EXPECTED_PUMP );
 }
 
 void rocketnet_test_platform_batch_pump_degraded()
@@ -2350,13 +2350,13 @@ void rocketnet_test_platform_batch_pump_degraded()
     setenv( "ROCKETNET_PUMP", "portable", 1 );
 
     rocketnet_address_t bind_address;
-    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
     rocketnet_check( socket );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), "portable" ) == 0 );
     rocketnet_platform_socket_destroy( socket );
 
-    rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", "portable" );
+    rocketnet_test_pump_exchange( "127.0.0.1", "127.0.0.1", "portable" );
 
     unsetenv( "ROCKETNET_PUMP" );
 }
@@ -2376,7 +2376,7 @@ void rocketnet_test_platform_batch_pump_degraded()
 static void rocketnet_test_pump_chaff_exchange( void )
 {
     rocketnet_address_t bind_address;
-    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
     rocketnet_check( socket );
 
@@ -2516,7 +2516,7 @@ void rocketnet_test_platform_batch_pump_refused_destination()
     rocketnet_address_t bind_address;
     rocketnet_address_t local_address;
     rocketnet_address_t refused_address;
-    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
     rocketnet_address_parse( &local_address, "127.0.0.1" );
     rocketnet_address_parse( &refused_address, "0.0.0.0" );        // port 0: the kernel refuses it at send
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
@@ -3246,6 +3246,7 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
+    // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 client
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::]", &server_config);
     rocketnet_check( server );
 
@@ -4301,6 +4302,7 @@ void rocketnet_test_server_rio_wire_ipv6()
 void rocketnet_test_server_rio_wire_dual_stack()
 {
     rocketnet_address_t bind_address;
+    // wildcard bind kept: the case is the ipv6 wildcard listen serving ipv4 and ipv6 peers
     rocketnet_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
     rocketnet_check( rio );
@@ -4957,52 +4959,18 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     rocketnet_test_env_restore( &driver_guard );
 }
 
-// the deprecated env aliases (the pre-#106 spellings): honored where the
-// successor is unset, logged loudly naming the successor, yielding loudly
-// beside it -- and the public address alias feeds the one resolved
-// address create uses everywhere
+// the public address env override feeds the one resolved address create
+// uses everywhere, scoped to the first create in the process
 
 void rocketnet_test_config_env_aliases()
 {
-    struct rocketnet_test_env_guard_t alias_guard;
-    rocketnet_test_env_save( &alias_guard, "ROCKETNET_SERVER_NUM_QUEUES" );
-
-    struct rocketnet_test_env_guard_t successor_guard;
-    rocketnet_test_env_save( &successor_guard, "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
-
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
-    // the alias is honored where the successor is unset...
-
-    unsetenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3", 1 );
-
     struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config( &config );
-    snprintf( config.driver, sizeof(config.driver), "portable" );
+    struct rocketnet_server_transport_t * server;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    // ...parsed strictly...
-
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3x", 1 );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
-
-    // ...and yields to the successor when both are set
-
-    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-even-a-number", 1 );
-    setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    rocketnet_test_env_restore( &alias_guard );
-    rocketnet_test_env_restore( &successor_guard );
-
-    // the public address rides the table now, scoped first-create-consumes
+    // the public address rides the table, scoped first-create-consumes
     // for the env layer. proven deterministically, no fixed port: the
     // create PARAMETER is unparseable, so the create succeeds if and only
     // if the env override displaced it -- and the second create proves the
@@ -5534,6 +5502,7 @@ void rocketnet_test_server_gso_wire_dual_stack()
     // an ipv6 wildcard listen accepts an ipv4 peer, whose source surfaces
     // as native ipv4 -- the v4-mapped normalization the standard makes law
 
+    // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 peer
     rocketnet_test_server_gso_wire_exchange( "test_server_gso_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );
 }
 
@@ -5939,6 +5908,7 @@ void rocketnet_test_server_uring_wire_dual_stack()
     // an ipv6 wildcard listen accepts an ipv4 peer, whose source surfaces
     // as native ipv4 -- the v4-mapped normalization the standard makes law
 
+    // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 peer
     rocketnet_test_server_uring_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 1 );
 }
 
@@ -6704,7 +6674,7 @@ void rocketnet_test_platform_wake_linux_wakes_and_reads()
 void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 {
     rocketnet_address_t bind_address;
-    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
     rocketnet_platform_socket_t * receiver = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
     rocketnet_check( receiver );
 
@@ -7215,6 +7185,7 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #include "rocketnet_server_socket.h"
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <sys/vfs.h>
 #include <string>
 #include <vector>
@@ -7399,11 +7370,42 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
             }
             char filter[64];
             snprintf( filter, sizeof(filter), "udp port %d", ROCKETNET_XDP_VETH_PORT );
-            execlp( "ip", "ip", "netns", "exec", ROCKETNET_XDP_VETH_NETNS, "tcpdump", "-i", ROCKETNET_XDP_VETH_FAR, "-n", "-U", "-s", "0", "-w", rocketnet_xdp_veth_pcap, filter, (char*) NULL );
+            // --immediate-mode: each packet reaches the file as it arrives.
+            // Without it, libpcap's TPACKET_V3 ring holds packets in a block
+            // until the block's timeout retires it, and the packets of a block
+            // not yet retired when SIGINT stops tcpdump never reach the file.
+            execlp( "ip", "ip", "netns", "exec", ROCKETNET_XDP_VETH_NETNS, "tcpdump", "--immediate-mode", "-i", ROCKETNET_XDP_VETH_FAR, "-n", "-U", "-s", "0", "-w", rocketnet_xdp_veth_pcap, filter, (char*) NULL );
             _exit( 127 );
         }
         rocketnet_xdp_veth_capture_pid = pid;
-        rocketnet_platform_sleep( 1.0 );        // tcpdump opens its packet socket
+
+        // tcpdump -U -w writes the 24-byte pcap global header once its packet
+        // socket is open and filtered, so the exchange starts only after the
+        // file holds it, and a capture that never opens fails by name.
+        const double capture_wait_start = rocketnet_platform_time();
+        bool capture_ready = false;
+        bool capture_exited = false;
+        while ( rocketnet_platform_time() - capture_wait_start < 10.0 )
+        {
+            struct stat pcap_stat;
+            if ( stat( rocketnet_xdp_veth_pcap, &pcap_stat ) == 0 && pcap_stat.st_size >= 24 )
+            {
+                capture_ready = true;
+                break;
+            }
+            if ( waitpid( pid, NULL, WNOHANG ) == pid )
+            {
+                rocketnet_xdp_veth_capture_pid = -1;
+                capture_exited = true;
+                break;
+            }
+            rocketnet_platform_sleep( 0.01 );
+        }
+        if ( !capture_ready )
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: the capture never became ready: tcpdump %s before it wrote the pcap header", case_name, capture_exited ? "exited" : "took more than 10 seconds" );
+        else
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: capture ready after %.3f seconds", case_name, rocketnet_platform_time() - capture_wait_start );
+        rocketnet_check( capture_ready );
     }
     else
     {
@@ -8367,8 +8369,22 @@ void windows_client_connect_disconnect_cycles();
 void windows_destroy_while_traffic();
 #endif
 
+// getaddrinfo can open a socket (the nscd lookup on glibc), so name
+// resolution is a functional case, never a unit one.
+
+static void rocketnet_test_hostname_resolve_localhost()
+{
+    rocketnet_address_t address, ipv6;
+    rocketnet_check(rocketnet_platform_hostname_resolve("localhost", "40000", &address));
+    rocketnet_check(address.port == 40000);
+    rocketnet_check(rocketnet_address_parse(&ipv6, "[::1]:40000"));
+    rocketnet_check((address.type == ROCKETNET_ADDRESS_IPV4 && address.data.ipv4[0] == 127) ||
+                   rocketnet_address_equal(&address, &ipv6));
+}
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
+    { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
     { "thread_priority_timing_receive_gaps", thread_priority_timing_receive_gaps },

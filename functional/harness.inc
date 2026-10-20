@@ -200,7 +200,6 @@ public:
         }
         clear("ROCKETNET_PUBLIC_ADDRESS");
         clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
-        clear("ROCKETNET_SERVER_NUM_QUEUES");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
         clear("ROCKETNET_PUMP");

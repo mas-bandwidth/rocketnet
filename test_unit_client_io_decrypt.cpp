@@ -163,9 +163,9 @@ static void client_io_decrypt_opens_before_publish()
     const int bytes1 = client_io_decrypt_push_payload( &f, 1, 0xA1, false );
     const int bytes2 = client_io_decrypt_push_payload( &f, 2, 0xA2, false );
 
-    const uint64_t opens_before_step = rocketnet_crypto_tally.aead_open;
+    const uint64_t opens_before_step = rocketnet_crypto_tally_get().aead_open;
     check( rocketnet_client_io_step( &f.io, false ) == ROCKETNET_CLIENT_IO_WORKED );
-    check( rocketnet_crypto_tally.aead_open - opens_before_step == 2 );
+    check( rocketnet_crypto_tally_get().aead_open - opens_before_step == 2 );
 
     rocketnet_client_receive_buffer_t * buffer = rocketnet_client_io_expose( &f.io );
     check( buffer );
@@ -181,7 +181,7 @@ static void client_io_decrypt_opens_before_publish()
         check( memcmp( buffer->packet_data[i] + ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES, plaintext, (size_t) plaintext_bytes ) == 0 );
     }
 
-    const uint64_t opens_before_consume = rocketnet_crypto_tally.aead_open;
+    const uint64_t opens_before_consume = rocketnet_crypto_tally_get().aead_open;
     for ( int i = 0; i < 2; i++ )
     {
         uint8_t payload[ROCKETNET_FRAME_SIZE];
@@ -190,7 +190,7 @@ static void client_io_decrypt_opens_before_publish()
         check( payload_bytes == 1 );
         check( payload[0] == (uint8_t) ( 0xA1 + i ) );
     }
-    check( rocketnet_crypto_tally.aead_open == opens_before_consume );
+    check( rocketnet_crypto_tally_get().aead_open == opens_before_consume );
     check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] == 2 );
     check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN] == 0 );
     check( f.client.replay_session.highest_opened == 2 );
@@ -213,9 +213,9 @@ static void client_io_decrypt_replay_refused_before_open()
     client_io_decrypt_push_payload( &f, 1, 0xB1, false );
     client_io_decrypt_push_payload( &f, 1, 0xB1, false );
 
-    const uint64_t opens_before_step = rocketnet_crypto_tally.aead_open;
+    const uint64_t opens_before_step = rocketnet_crypto_tally_get().aead_open;
     check( rocketnet_client_io_step( &f.io, false ) == ROCKETNET_CLIENT_IO_WORKED );
-    check( rocketnet_crypto_tally.aead_open - opens_before_step == 1 );
+    check( rocketnet_crypto_tally_get().aead_open - opens_before_step == 1 );
 
     rocketnet_client_receive_buffer_t * buffer = rocketnet_client_io_expose( &f.io );
     check( buffer );
@@ -223,12 +223,12 @@ static void client_io_decrypt_replay_refused_before_open()
     check( buffer->verdict[0] == ROCKETNET_CLIENT_IO_VERDICT_OPENED );
     check( buffer->verdict[1] == ROCKETNET_CLIENT_IO_VERDICT_ALREADY_RECEIVED );
 
-    const uint64_t opens_before_consume = rocketnet_crypto_tally.aead_open;
+    const uint64_t opens_before_consume = rocketnet_crypto_tally_get().aead_open;
     uint8_t payload[ROCKETNET_FRAME_SIZE];
     int payload_bytes = 0;
     check( client_io_decrypt_consume( &f, buffer, 0, payload, &payload_bytes ) == 1 );
     check( client_io_decrypt_consume( &f, buffer, 1, payload, &payload_bytes ) == 0 );
-    check( rocketnet_crypto_tally.aead_open == opens_before_consume );
+    check( rocketnet_crypto_tally_get().aead_open == opens_before_consume );
     check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED] == 1 );
     check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] == 1 );
     check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED] == 2 );
@@ -258,9 +258,9 @@ static void client_io_decrypt_no_open_after_retire()
 
     client_io_decrypt_push_payload( &f, 1, 0xC1, false );
 
-    const uint64_t opens_before_step = rocketnet_crypto_tally.aead_open;
+    const uint64_t opens_before_step = rocketnet_crypto_tally_get().aead_open;
     check( rocketnet_client_io_step( &f.io, false ) == ROCKETNET_CLIENT_IO_WORKED );
-    check( rocketnet_crypto_tally.aead_open == opens_before_step );
+    check( rocketnet_crypto_tally_get().aead_open == opens_before_step );
 
     rocketnet_client_receive_buffer_t * buffer = rocketnet_client_io_expose( &f.io );
     check( buffer );
@@ -299,9 +299,9 @@ static void client_io_decrypt_verdicts_counted_in_order()
     client_io_decrypt_push_payload( &f, 2, 0xD2, true );
     client_io_decrypt_push_payload( &f, 3, 0xD3, false );
 
-    const uint64_t opens_before_step = rocketnet_crypto_tally.aead_open;
+    const uint64_t opens_before_step = rocketnet_crypto_tally_get().aead_open;
     check( rocketnet_client_io_step( &f.io, false ) == ROCKETNET_CLIENT_IO_WORKED );
-    check( rocketnet_crypto_tally.aead_open - opens_before_step == 3 );
+    check( rocketnet_crypto_tally_get().aead_open - opens_before_step == 3 );
 
     rocketnet_client_receive_buffer_t * buffer = rocketnet_client_io_expose( &f.io );
     check( buffer );
@@ -357,9 +357,9 @@ static void client_io_decrypt_other_source_stays_raw()
     client_io_decrypt_push_payload_from( &f, &other, 1, 0xE1, false );
     client_io_decrypt_push_payload( &f, 1, 0xE1, false );
 
-    const uint64_t opens_before_step = rocketnet_crypto_tally.aead_open;
+    const uint64_t opens_before_step = rocketnet_crypto_tally_get().aead_open;
     check( rocketnet_client_io_step( &f.io, false ) == ROCKETNET_CLIENT_IO_WORKED );
-    check( rocketnet_crypto_tally.aead_open - opens_before_step == 1 );
+    check( rocketnet_crypto_tally_get().aead_open - opens_before_step == 1 );
 
     rocketnet_client_receive_buffer_t * buffer = rocketnet_client_io_expose( &f.io );
     check( buffer );

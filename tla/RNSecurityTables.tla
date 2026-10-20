@@ -34,6 +34,17 @@
 (* RefuseAdmittedAtResponse TRUE.  Holds[t] is the set of addresses        *)
 (* holding token t's keys; only they can open a response, and every        *)
 (* other address is the replaying attacker.                                *)
+(*                                                                         *)
+(* FloodSpec is the failed-signature budget under a forged-request flood   *)
+(* (rocketnet_signature_verify_budget_allow and _record_failure,           *)
+(* sdk/rocketnet_server_protocol.cpp): forging sources, each past the      *)
+(* cookie gate at its own address, fail the verify until the window's     *)
+(* budget is spent and the source table is full, while one honest client *)
+(* with a valid token connects.  RefuseUnremembered TRUE is the code       *)
+(* before 2026-10-20: a full table refused every source it could not       *)
+(* remember, so the honest client was locked out for the window.  FALSE   *)
+(* is the code now: only a source with a recorded failure is refused.     *)
+(* Spec leaves the flood variables at their initial values.                *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -61,9 +72,24 @@ Gens == 1..3
 ExpTime(tk) == IF Expire[tk] = 0 THEN MaxClock + 1 ELSE Expire[tk]
 
 VARIABLES clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
-          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied
-vars == <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
-          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
+          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied,
+          failCount, failTable, honest, floodVerifies
+tableVars == <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
+               gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
+floodVars == <<failCount, failTable, honest, floodVerifies>>
+vars == <<tableVars, floodVars>>
+
+\* The failed-signature budget's small instance (sdk/rocketnet_server.h:
+\* ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET 90, _TABLE_SLOTS 64).  These
+\* are definitions, not constants, so the configurations of Spec need no
+\* new lines; a reversed witness overrides RefuseUnremembered with <-.
+\* The budget is spent before the table fills only if FailBudget > FailSlots,
+\* as in the code; two forgers against one slot overflow the table.
+FailBudget == 2
+FailSlots == 1
+Forgers == {"F1", "F2"}
+HonestAddr == "H"
+RefuseUnremembered == FALSE
 
 PrevGen == IF gen = 1 THEN 3 ELSE gen - 1
 NextRotate == gen * RotatePeriod
@@ -95,6 +121,7 @@ Init ==
     /\ slots = {} /\ others = 0
     /\ deniedPulse = FALSE /\ admits = [t \in Tokens |-> 0]
     /\ lateAdmit = FALSE /\ evictedLive = FALSE /\ churnDenied = FALSE
+    /\ failCount = 0 /\ failTable = {} /\ honest = "start" /\ floodVerifies = 0
 
 IsExpired(u) == IF history[u] = None THEN FALSE ELSE history[u].exp <= clock
 
@@ -228,11 +255,81 @@ Tick ==
     /\ UNCHANGED <<history, admitted, insertOrder, mapGen, mapBorn, slots, others,
                    deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
-Next == (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g))
-        \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
-        \/ OtherJoins \/ OtherLeaves \/ Tick
+Next == /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g))
+           \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
+           \/ OtherJoins \/ OtherLeaves \/ Tick
+        /\ UNCHANGED floodVars
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
 SpecFair == Spec
+
+\* ---------------------------------------------------------------------------
+\* The flood.  rocketnet_signature_verify_budget_allow: while the window's
+\* failure count is under the budget everyone verifies; once it is spent a
+\* source with a recorded failure is refused.  With RefuseUnremembered (the
+\* code before 2026-10-20, `if ( empty_slot == -1 ) return 0;`) a source
+\* the full table does not hold is refused too.  Every request here has
+\* passed the cookie gate and spends one unit of the per-update handshake
+\* work budget (VerifyBudget, ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE),
+\* checked before this gate.  The window does not roll over: the flood
+\* keeps it spent for longer than one honest attempt runs (the handshake
+\* deadline, 5 s, is under the window, 10 s).
+FailAllow(a) ==
+    \/ failCount < FailBudget
+    \/ /\ a \notin failTable
+       /\ ~(RefuseUnremembered /\ Cardinality(failTable) >= FailSlots)
+
+\* a forged request from f: past the work budget and the failure gate, the
+\* verify fails and rocketnet_signature_verify_budget_record_failure runs:
+\* the count rises (held at FailBudget here; the code only compares it
+\* against the budget), and the source is remembered while a slot is free.
+Forge(f) ==
+    /\ floodVerifies < VerifyBudget
+    /\ FailAllow(f)
+    /\ floodVerifies' = floodVerifies + 1
+    /\ failCount' = IF failCount < FailBudget THEN failCount + 1 ELSE failCount
+    /\ failTable' = IF f \notin failTable /\ Cardinality(failTable) < FailSlots
+                     THEN failTable \cup {f} ELSE failTable
+    /\ UNCHANGED <<honest, tableVars>>
+
+\* the honest client's request: a valid token, so the verify passes and
+\* nothing is recorded; it gets the challenge.  It retransmits at the send
+\* rate, so a request refused by the work budget arrives again later.
+HonestRequest ==
+    /\ honest = "start"
+    /\ floodVerifies < VerifyBudget
+    /\ FailAllow(HonestAddr)
+    /\ floodVerifies' = floodVerifies + 1
+    /\ honest' = "challenged"
+    /\ UNCHANGED <<failCount, failTable, tableVars>>
+
+\* the response opens under the handshake key: no failure budget applies
+HonestResponse ==
+    /\ honest = "challenged"
+    /\ honest' = "connected"
+    /\ UNCHANGED <<failCount, failTable, floodVerifies, tableVars>>
+
+\* the top of an update resets the work budget
+FloodUpdate ==
+    /\ floodVerifies > 0
+    /\ floodVerifies' = 0
+    /\ UNCHANGED <<failCount, failTable, honest, tableVars>>
+
+FloodNext == (\E f \in Forgers : Forge(f)) \/ HonestRequest \/ HonestResponse \/ FloodUpdate
+\* the honest request is enabled again after every update while the flood
+\* takes the budget, hence strong fairness for it
+FloodSpec == Init /\ [][FloodNext]_vars
+             /\ SF_vars(HonestRequest) /\ WF_vars(HonestResponse) /\ WF_vars(FloodUpdate)
+
+\* No global lockout: an honest client with a valid token connects while
+\* forging sources keep the failed-signature budget spent and the source
+\* table full.
+HonestConnectsUnderFlood == <>(honest = "connected")
+\* the work budget bounds the verifies of one update, and the table never
+\* passes its slots
+FloodInvariants == /\ floodVerifies \in 0..VerifyBudget
+                   /\ failCount \in 0..FailBudget
+                   /\ failTable \subseteq Forgers /\ Cardinality(failTable) <= FailSlots
+                   /\ honest \in {"start", "challenged", "connected"}
 
 TypeOK ==
     /\ clock \in 0..MaxClock /\ gen \in Gens /\ verifies \in 0..VerifyBudget + 1
