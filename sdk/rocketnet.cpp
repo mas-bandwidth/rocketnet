@@ -156,6 +156,21 @@ void rocketnet_log_level_override_apply( const char * value )
                     value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level.load( std::memory_order_relaxed ) );
 }
 
+void rocketnet_set_thread_priority( bool enabled )
+{
+    rocketnet_platform_set_thread_priority_enabled( enabled );
+}
+
+bool rocketnet_get_thread_priority( void )
+{
+    return rocketnet_platform_thread_priority_enabled();
+}
+
+uint64_t rocketnet_get_thread_priority_refusals( void )
+{
+    return rocketnet_platform_thread_priority_refusals();
+}
+
 enum rocketnet_log_level_t rocketnet_get_log_level( void )
 {
     return (enum rocketnet_log_level_t) log_level.load( std::memory_order_relaxed );
@@ -361,6 +376,24 @@ void rocketnet_default_free_function( void * context, void * p )
 }
 
 static void * (*rocketnet_malloc_function)( void * context, size_t bytes ) = rocketnet_default_malloc_function;
+
+// the allocations rocketnet_malloc has refused on this thread, ever: a size
+// past the header overhead or a NULL from the installed allocator. A driver
+// open reads it before and after a create (sdk/rocketnet_driver.cpp), so a
+// create that returned NULL after a refusal reports OUT_OF_MEMORY
+static thread_local uint64_t rocketnet_allocation_refusals_on_this_thread = 0;
+
+uint64_t rocketnet_allocation_refusals()
+{
+    return rocketnet_allocation_refusals_on_this_thread;
+}
+
+// counts a failed allocation made outside rocketnet_malloc (a page-aligned
+// buffer a driver registers with the kernel) as a refusal on this thread
+void rocketnet_allocation_refused()
+{
+    ++rocketnet_allocation_refusals_on_this_thread;
+}
 static void (*rocketnet_free_function)( void * context, void * p ) = rocketnet_default_free_function;
 
 static std::mutex rocketnet_lifecycle_mutex;
@@ -439,7 +472,10 @@ void * rocketnet_malloc( void * context, size_t bytes )
     const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     if ( bytes > SIZE_MAX - overhead )
+    {
+        ++rocketnet_allocation_refusals_on_this_thread;
         return NULL;
+    }
     void * (*allocate)( void *, size_t );
     void (*release)( void *, void * );
     {
@@ -451,6 +487,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
     void * base = allocate( context, bytes + overhead );
     if ( !base )
     {
+        ++rocketnet_allocation_refusals_on_this_thread;
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         --rocketnet_allocations;
         return NULL;

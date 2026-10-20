@@ -9,6 +9,13 @@
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <atomic>
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#include <pthread.h>
+#include <sched.h>
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
@@ -67,6 +74,119 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
 // off, in which case an IPv6 socket create behaves as it does on a host with
 // no IPv6 stack. the client's availability probe reads the same flag.
 static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
+
+// Network-thread priority (docs/CLIENT-IO.md, DRIVERS.md). The calls and their
+// values are the flow library's (flow_platform.cpp), unchanged; each platform
+// block below fills the real call table. A unit test replaces the table
+// (test_unit_thread_priority.cpp). A refused call is counted process-wide and
+// logged once per call kind; it never fails the caller.
+
+static std::atomic<bool> rocketnet_platform_thread_priority_on{ true };
+static std::atomic<uint64_t> rocketnet_platform_thread_priority_refusal_count{ 0 };
+static std::atomic<bool> rocketnet_platform_thread_priority_logged[ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT];
+static std::atomic<const rocketnet_platform_priority_calls_t *> rocketnet_platform_priority_calls_override{ NULL };
+
+static const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls()
+{
+    const rocketnet_platform_priority_calls_t * calls = rocketnet_platform_priority_calls_override.load( std::memory_order_acquire );
+    return calls ? calls : rocketnet_platform_priority_calls_real();
+}
+
+void rocketnet_platform_set_priority_calls_for_testing( const rocketnet_platform_priority_calls_t * calls )
+{
+    rocketnet_platform_priority_calls_override.store( calls, std::memory_order_release );
+}
+
+void rocketnet_platform_thread_priority_reset_logged_for_testing()
+{
+    for ( int i = 0; i < ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT; ++i )
+        rocketnet_platform_thread_priority_logged[i].store( false, std::memory_order_relaxed );
+}
+
+void rocketnet_platform_set_thread_priority_enabled( bool enabled )
+{
+    rocketnet_platform_thread_priority_on.store( enabled, std::memory_order_relaxed );
+}
+
+bool rocketnet_platform_thread_priority_enabled()
+{
+    return rocketnet_platform_thread_priority_on.load( std::memory_order_relaxed );
+}
+
+void rocketnet_platform_thread_priority_refused( int kind, const char * prefix, const char * call, const char * reason, const char * effect )
+{
+    rocketnet_platform_thread_priority_refusal_count.fetch_add( 1, std::memory_order_relaxed );
+    if ( kind < 0 || kind >= ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT )
+        return;
+    if ( rocketnet_platform_thread_priority_logged[kind].exchange( true, std::memory_order_relaxed ) )
+        return;
+    rocketnet_warn( "%s: %s refused (%s); %s", prefix, call, reason, effect );
+}
+
+uint64_t rocketnet_platform_thread_priority_refusals()
+{
+    return rocketnet_platform_thread_priority_refusal_count.load( std::memory_order_relaxed );
+}
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// POSIX: the one call, pthread_setschedparam( thread, SCHED_RR,
+// sched_get_priority_min( SCHED_RR ) ), on the created thread
+static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
+{
+    struct sched_param param;
+    param.sched_priority = priority;
+    return pthread_setschedparam( thread->handle, policy, &param );
+}
+
+static int rocketnet_platform_real_set_thread_priority( rocketnet_platform_thread_t * thread, int priority )
+{
+    (void) thread;
+    (void) priority;
+    return 1;
+}
+
+static unsigned int rocketnet_platform_real_time_period( unsigned int period )
+{
+    (void) period;
+    return 0;
+}
+
+static void rocketnet_platform_real_timer_frequency( void * frequency )
+{
+    (void) frequency;
+}
+
+static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table =
+{
+    rocketnet_platform_real_set_sched,
+    rocketnet_platform_real_set_thread_priority,
+    rocketnet_platform_real_time_period,
+    rocketnet_platform_real_time_period,
+    rocketnet_platform_real_timer_frequency,
+};
+
+const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real()
+{
+    return &rocketnet_platform_priority_calls_real_table;
+}
+
+static void rocketnet_platform_network_thread_priority( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+    const int priority = sched_get_priority_min( SCHED_RR );
+    const int result = rocketnet_platform_priority_calls()->set_sched( thread, SCHED_RR, priority );
+    if ( result != 0 )
+    {
+        char call[64];
+        snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+    }
+}
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
@@ -1419,17 +1539,15 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you have linux clients, you can adjust the priority of the client thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
+    // SCHED_RR at sched_get_priority_min( SCHED_RR ), as flow sets it (flow_platform.cpp:537-543)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you have linux servers, you can adjust the priority of the server thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
+    // SCHED_RR at sched_get_priority_min( SCHED_RR ), as flow sets it (flow_platform.cpp:545-551)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 // ---------------------------------------------------
@@ -3210,17 +3328,15 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you are developing for mac or ios you can adjust the affinity and priority for the client thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
+    // SCHED_RR at sched_get_priority_min( SCHED_RR ) and nothing else, as flow sets it (flow_platform.cpp:1630-1636)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you are developing for mac or ios you can adjust the affinity and priority for the server thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
+    // SCHED_RR at sched_get_priority_min( SCHED_RR ) and nothing else, as flow sets it (flow_platform.cpp:1638-1644)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 // ---------------------------------------------------
@@ -3435,22 +3551,114 @@ extern void rocketnet_free( void * context, void * p );
 
 static int get_connection_type();
 
-static int timer_initialized = 0;
 static LARGE_INTEGER timer_frequency;
 static LARGE_INTEGER timer_start;
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+
+// Windows: SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL ) on the
+// network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
+// from platform init to platform term (game/Libraries/platform/platform.cpp:154 and :173 in the game that carried flow)
+
+static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
+{
+    (void) thread;
+    (void) policy;
+    (void) priority;
+    return 0;
+}
+
+static int rocketnet_platform_real_set_thread_priority( rocketnet_platform_thread_t * thread, int priority )
+{
+    return SetThreadPriority( thread->handle, priority ) ? 1 : 0;
+}
+
+static unsigned int rocketnet_platform_real_time_begin_period( unsigned int period )
+{
+    return (unsigned int) timeBeginPeriod( period );
+}
+
+static unsigned int rocketnet_platform_real_time_end_period( unsigned int period )
+{
+    return (unsigned int) timeEndPeriod( period );
+}
+
+static void rocketnet_platform_real_timer_frequency( void * frequency )
+{
+    QueryPerformanceFrequency( (LARGE_INTEGER*) frequency );
+}
+
+static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table =
+{
+    rocketnet_platform_real_set_sched,
+    rocketnet_platform_real_set_thread_priority,
+    rocketnet_platform_real_time_begin_period,
+    rocketnet_platform_real_time_end_period,
+    rocketnet_platform_real_timer_frequency,
+};
+
+const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real()
+{
+    return &rocketnet_platform_priority_calls_real_table;
+}
+
+static void rocketnet_platform_network_thread_priority( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+    if ( !rocketnet_platform_priority_calls()->set_thread_priority( thread, THREAD_PRIORITY_TIME_CRITICAL ) )
+    {
+        char reason[32];
+        snprintf( reason, sizeof( reason ), "error %lu", (unsigned long) GetLastError() );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_THREAD_PRIORITY, "thread priority", "SetThreadPriority THREAD_PRIORITY_TIME_CRITICAL", reason, "the thread runs at its default priority" );
+    }
+}
+
+// true from a granted timeBeginPeriod( 1 ) at init to its timeEndPeriod( 1 )
+// at term; a refused or skipped begin has no end
+static bool timer_period_begun = false;
+
+static void rocketnet_platform_timer_period_end()
+{
+    if ( !timer_period_begun )
+        return;
+    timer_period_begun = false;
+    const unsigned int result = rocketnet_platform_priority_calls()->time_end_period( 1 );
+    if ( result != TIMERR_NOERROR )
+    {
+        char reason[32];
+        snprintf( reason, sizeof( reason ), "error %u", result );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_END_PERIOD, "timer period", "timeEndPeriod 1", reason, "the timer period request stays until the process exits" );
+    }
+}
 
 // init
 
 bool rocketnet_platform_init()
 {
-    QueryPerformanceFrequency( &timer_frequency );
+    timer_period_begun = false;
+    if ( rocketnet_platform_thread_priority_enabled() )
+    {
+        const unsigned int result = rocketnet_platform_priority_calls()->time_begin_period( 1 );
+        if ( result == TIMERR_NOERROR )
+        {
+            timer_period_begun = true;
+        }
+        else
+        {
+            char reason[32];
+            snprintf( reason, sizeof( reason ), "error %u", result );
+            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_BEGIN_PERIOD, "timer period", "timeBeginPeriod 1", reason, "the timer keeps its default period" );
+        }
+    }
+    rocketnet_platform_priority_calls()->timer_frequency( &timer_frequency );
     QueryPerformanceCounter( &timer_start );
 
     WSADATA WsaData;
     if ( WSAStartup( MAKEWORD(2,2), &WsaData ) != NO_ERROR )
     {
         rocketnet_error( "WSAStartup failed" );
+        rocketnet_platform_timer_period_end();
         return false;
     }
 
@@ -3462,6 +3670,7 @@ bool rocketnet_platform_init()
 void rocketnet_platform_term()
 {
     WSACleanup();
+    rocketnet_platform_timer_period_end();
 }
 
 int rocketnet_platform_connection_type()
@@ -3550,15 +3759,15 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If your client runs on windows, you can set the thread priority and affinity of the client thread here
-    rocketnet_assert( thread );
-    SetThreadPriority( thread->handle, THREAD_PRIORITY_TIME_CRITICAL );
+    // THREAD_PRIORITY_TIME_CRITICAL, as flow sets it (flow_platform.cpp:1839-1844)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you have a server that runs on windows, you can set the priority and affinity of the server thread here
-    rocketnet_assert( thread );
-    SetThreadPriority( thread->handle, THREAD_PRIORITY_TIME_CRITICAL );
+    // THREAD_PRIORITY_TIME_CRITICAL, as flow sets it (flow_platform.cpp:1846-1851)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
@@ -4181,7 +4390,7 @@ static int get_connection_type()
     IP_ADAPTER_ADDRESSES * address = addresses;
     while ( address )
     {
-        if ( address->IfType == IF_TYPE_IEEE80211 && address->OperStatus == NET_IF_OPER_STATUS_UP )
+        if ( address->IfType == IF_TYPE_IEEE80211 && address->OperStatus == IfOperStatusUp )
         {
             result = ROCKETNET_CONNECTION_TYPE_WIFI;
             break;
