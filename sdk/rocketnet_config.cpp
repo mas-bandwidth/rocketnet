@@ -767,7 +767,7 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
     return true;
 }
 
-#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+#if ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
 static bool rocketnet_public_link_simulator_test_hook = false;
 void rocketnet_public_link_simulator_test_development( int enabled )
 {
@@ -777,7 +777,7 @@ void rocketnet_public_link_simulator_test_development( int enabled )
 
 bool rocketnet_public_link_simulator_development( void )
 {
-#if ROCKETNET_FILTER_EPOCH_TEST_HOOKS
+#if ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
     return ROCKETNET_DEVELOPMENT != 0 || rocketnet_public_link_simulator_test_hook;
 #else
     return ROCKETNET_DEVELOPMENT != 0;

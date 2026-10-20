@@ -8417,6 +8417,87 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     rocketnet_server_destroy( server );
 }
 
+// A production connect token naming both families, 127.0.0.1 and [::1] at
+// the server's port, against a portable server bound to 127.0.0.1 (port 0),
+// from a client whose host reports no IPv6 stack (the seam
+// rocketnet_platform_set_ipv6_socket_available_for_testing): the client
+// selects the IPv4 address and binds IPv4, the server matches the token's
+// IPv4 address although its IPv6 flag is set, and the client connects.
+
+static void rocketnet_test_two_address_token_connects_over_ipv4()
+{
+    uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
+    for ( int i = 0; i < ROCKETNET_BACKEND_SEED_BYTES; i++ )
+        seed[i] = (uint8_t) ( 0x5A ^ i );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    rocketnet_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = 2;
+    server_config.transport = "portable";
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
+    rocketnet_check( server );
+
+    char ipv4_address[64];
+    char ipv6_address[64];
+    snprintf( ipv4_address, sizeof( ipv4_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    snprintf( ipv6_address, sizeof( ipv6_address ), "[::1]:%d", (int) rocketnet_server_port( server ) );
+    const char * addresses[] = { ipv4_address, ipv6_address };
+    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( 0, rocketnet_platform_time() );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_production_connect_token( backend_secret, server_public, server_config.protocol_id,
+                                                               addresses, 2, 0x2FA4, create_timestamp, create_timestamp + 300, 10, NULL,
+                                                               token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_platform_set_ipv6_socket_available_for_testing( false );
+
+    struct rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    client_config.transport = "portable";
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    rocketnet_check( client );
+    const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, token );
+    printf( "two address token: connect status %d\n", (int) connect_status );
+    rocketnet_check( connect_status == ROCKETNET_STATUS_OK );
+
+    const double wall_start = rocketnet_time();
+    while ( rocketnet_time() - wall_start < 10.0 )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - wall_start );
+        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+             rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+            break;
+        if ( rocketnet_client_state( client ) < ROCKETNET_CLIENT_STATE_DISCONNECTED )
+            break;
+        rocketnet_sleep( 0.005 );
+    }
+    printf( "two address token: client state %d\n", (int) rocketnet_client_state( client ) );
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+
+    rocketnet_platform_set_ipv6_socket_available_for_testing( true );
+}
+
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
@@ -8638,6 +8719,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_config_precedence", rocketnet_test_config_precedence },
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries },
     { "public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected },
+    { "two_address_token_connects_over_ipv4", rocketnet_test_two_address_token_connects_over_ipv4 },
     { "test_server_driver_pin_portable", rocketnet_test_server_driver_pin_portable },
     { "test_server_driver_pin_loopback", rocketnet_test_server_driver_pin_loopback },
     { "test_driver_env_pins_loopback", rocketnet_test_driver_env_pins_loopback },
@@ -8761,19 +8843,34 @@ void rocketnet_functional_prepare()
         rocketnet_functional_environment = new rocketnet_test_environment_t();
 }
 
-int rocketnet_functional_test_count()
+// the hard-killed peer and ICMP-error cases (functional/posix_hard_killed_peer.cpp)
+// are a generated table of their own, one case per transport cell, after the
+// static table
+
+int rocketnet_posix_hard_killed_peer_test_count();
+const char * rocketnet_posix_hard_killed_peer_test_name( int index );
+void rocketnet_posix_hard_killed_peer_test_run( int index );
+
+static int rocketnet_functional_static_test_count()
 {
     return (int) ( sizeof( rocketnet_functional_tests ) / sizeof( rocketnet_functional_tests[0] ) );
 }
 
+int rocketnet_functional_test_count()
+{
+    return rocketnet_functional_static_test_count() + rocketnet_posix_hard_killed_peer_test_count();
+}
+
 const char * rocketnet_functional_test_name( int index )
 {
+    if ( index >= rocketnet_functional_static_test_count() )
+        return rocketnet_posix_hard_killed_peer_test_name( index - rocketnet_functional_static_test_count() );
     return rocketnet_functional_tests[index].name;
 }
 
 int rocketnet_functional_run_named( const char * name )
 {
-    for ( int i = 0; i < rocketnet_functional_test_count(); i++ )
+    for ( int i = 0; i < rocketnet_functional_static_test_count(); i++ )
     {
         if ( strcmp( rocketnet_functional_tests[i].name, name ) != 0 )
             continue;
@@ -8781,6 +8878,16 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
         fflush( stdout );
         rocketnet_functional_tests[i].function();
+        return 0;
+    }
+    for ( int i = 0; i < rocketnet_posix_hard_killed_peer_test_count(); i++ )
+    {
+        if ( strcmp( rocketnet_posix_hard_killed_peer_test_name( i ), name ) != 0 )
+            continue;
+        rocketnet_test_log_ring_clear();
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
+        fflush( stdout );
+        rocketnet_posix_hard_killed_peer_test_run( i );
         return 0;
     }
     fprintf( stderr, "unknown functional test %s\n", name );

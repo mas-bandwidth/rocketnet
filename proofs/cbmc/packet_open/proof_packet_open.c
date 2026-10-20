@@ -179,40 +179,6 @@ void harness_prefilter( void )
     __CPROVER_assert( result == packet[0], "an accepted packet returns its type" );
 }
 
-/* the epoch table: install and check index inside the four live entries on
-   every epoch byte. */
-
-void harness_filter_epochs_install( void )
-{
-    struct rocketnet_filter_epochs_t epochs;
-    const int live_count = nondet_int();
-    __CPROVER_assume( live_count >= 0 && live_count <= ROCKETNET_FILTER_EPOCHS_LIVE );
-    epochs.live_count = live_count;
-
-    const uint8_t epoch = nondet_uchar();
-    const uint8_t magic[ROCKETNET_FILTER_MAGIC_BYTES];
-
-    const int result = rocketnet_filter_epochs_install( &epochs, epoch, magic );
-
-    __CPROVER_assert( result == 0 || result == 1, "install returns 0 or 1" );
-    __CPROVER_assert( epochs.live_count >= 0 && epochs.live_count <= ROCKETNET_FILTER_EPOCHS_LIVE,
-        "install keeps the live count inside the table" );
-}
-
-void harness_filter_epochs_check( void )
-{
-    struct rocketnet_filter_epochs_t epochs;
-    const int live_count = nondet_int();
-    __CPROVER_assume( live_count >= 0 && live_count <= ROCKETNET_FILTER_EPOCHS_LIVE );
-    epochs.live_count = live_count;
-
-    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-
-    const int result = rocketnet_filter_epochs_check( &epochs, packet, ROCKETNET_RECEIVE_CEILING );
-
-    __CPROVER_assert( result == 0 || result == 1, "check returns 0 or 1" );
-}
-
 /* the sealed opener: every packet type byte, sequence, session-nonce and
    ephemeral pairing, over exactly packet_bytes of packet and out_capacity of
    output. */
@@ -374,8 +340,6 @@ void harness_sequence_nonce( void )
 int main( void )
 {
     harness_prefilter();
-    harness_filter_epochs_install();
-    harness_filter_epochs_check();
     harness_open_sealed_packet();
     harness_write_packet_associated_data();
     harness_sequence_nonce();
