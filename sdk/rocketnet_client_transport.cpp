@@ -481,12 +481,18 @@ struct rocketnet_platform_wake_layout_t
 #endif
 #endif
 
+// The memory plan seam allocates this mirror of the platform thread_shim_data_t
+// that rocketnet_platform_thread_create allocates beside the thread, so the seam
+// allocates the bytes rocketnet_platform_thread_allocation_bytes counts. The
+// Windows shim carries no thread pointer; the POSIX shims do.
 struct rocketnet_thread_shim_layout_t
 {
     void * context;
     void * real_thread_data;
     void * real_thread_function;
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     void * thread;
+#endif
 };
 
 // Test seam for socket-free, thread-free client memory plan unit testing.
