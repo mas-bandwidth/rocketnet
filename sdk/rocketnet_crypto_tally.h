@@ -23,4 +23,14 @@ struct rocketnet_crypto_tally_t
 
 extern thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
 
+static inline struct rocketnet_crypto_tally_t rocketnet_crypto_tally_get( void )
+{
+    return rocketnet_crypto_tally;
+}
+
+static inline void rocketnet_crypto_tally_set( const struct rocketnet_crypto_tally_t t )
+{
+    rocketnet_crypto_tally = t;
+}
+
 #endif

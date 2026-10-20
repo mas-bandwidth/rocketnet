@@ -25,8 +25,8 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp, rio | nightly | .github/workflows/nightly-soak.yml | self-hosted, Windows, X64, rocketnet-windows |
-| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp, rio | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
+| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | self-hosted, Windows, X64, rocketnet-windows |
+| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Windows 11 (self-hosted fleet) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - |
@@ -118,16 +118,16 @@ new support claim:
   `self-hosted, macOS, ARM64, rocketnet-macos` label, its soak-windows job on
   the `self-hosted, Windows, X64, rocketnet-windows` label, and its
   sanitized-soak job on the `self-hosted, Linux, X64, fleet` label.
-- `nightly-frame-budget.yml` runs its Linux leg on the
-  `self-hosted, Linux, X64, rocketnet-quiet` label, its macOS leg report-only
-  on `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on
-  hosted `windows-2025`. The macOS leg is report-only because the fleet Mac
-  is not reserved quiet; its one runner takes one job at a time and the
-  workflow concurrency group keeps one run per ref.
-- `nightly-examples.yml` runs its Linux leg on
-  `self-hosted, Linux, X64, fleet`, its macOS leg on
-  `self-hosted, macOS, ARM64, rocketnet-macos`, and its Windows leg on hosted
-  `windows-2025`.
+- `nightly-frame-budget.yml` has its Linux leg on
+  `self-hosted, Linux, X64, rocketnet-quiet`, macOS leg on
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
+  `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
+- `nightly-examples.yml` has its Linux leg on
+  `self-hosted, Linux, X64, fleet`, macOS leg on
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
+  `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
+- `nightly.yml`'s `windows-driver-extension` job (hosted `windows-2025`) is
+  disabled (`if: false`, no Windows fleet runner registered).
 - `ci.yml`'s `platform-selftests` job runs on the
   `self-hosted, Linux, X64, fleet` and
   `self-hosted, macOS, ARM64, rocketnet-macos` labels.
