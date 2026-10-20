@@ -28,12 +28,10 @@
 #include <string.h>
 #include <time.h>
 
-#if !defined(_WIN32)
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#endif // #if !defined(_WIN32)
 #include <atomic>
 
 #if defined(__linux__)
