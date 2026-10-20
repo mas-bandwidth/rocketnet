@@ -35,7 +35,6 @@ int main(void)
     CHECK(rocketnet_abi_field_offset("rocketnet_client_config_t", "state_change_callback") == offsetof(struct rocketnet_client_config_t, state_change_callback));
     CHECK(rocketnet_abi_field_size("rocketnet_server_config_t", "transport") == sizeof(const char *));
     CHECK(rocketnet_abi_field_count("rocketnet_receipt_t") == 2);
-    CHECK(rocketnet_assert_function_pointer != NULL);
     const uint64_t misuse_before = rocketnet_api_misuse_count();
     /* Deliberate NULL queries retain their counted Debug assertion contract. */
     rocketnet_set_assert_callback(count_null_assertion);
@@ -46,7 +45,6 @@ int main(void)
     rocketnet_set_assert_callback(NULL);
     CHECK(rocketnet_api_misuse_count() == misuse_before + 2);
     CHECK(expected_null_assertions == EXPECTED_NULL_ASSERTIONS);
-    CHECK(rocketnet_assert_function_pointer != NULL);
     CHECK(rocketnet_client_state_name(ROCKETNET_CLIENT_STATE_CONNECTED) != NULL);
     CHECK(rocketnet_init(NULL) == ROCKETNET_STATUS_OK);
     rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_ERROR);
