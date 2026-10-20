@@ -6958,6 +6958,11 @@ extern void rocketnet_test_lifecycle_driver();
 
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_batch_pump_refused_destination, "test_platform_batch_pump_refused_destination", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_pump_zero_length_chaff, "test_platform_pump_zero_length_chaff", "on windows: posix raw-socket injector" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_receive_weather_portable, "test_seam_receive_weather_skips_portable", "on windows: posix receive-weather seam" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_send_to_closed_port, "test_posix_send_to_closed_port", "on windows: posix icmp cases" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_server_gone, "test_posix_client_server_gone", "on windows: posix icmp cases" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_hard_killed_client, "test_posix_hard_killed_client", "on windows: posix spawn cases" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_hard_killed_child_client, "test_posix_hard_killed_child_client", "on windows: posix spawn cases" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_iocp, "test_server_driver_pin_iocp", "not on windows: the iocp driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_rio, "test_server_driver_pin_rio", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_probe, "test_server_rio_probe", "not on windows: the rio driver is windows-only" )
@@ -8071,6 +8076,14 @@ extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_seam_receive_weather_skips_msgx();
+extern void rocketnet_test_seam_receive_weather_skips_portable();
+extern void rocketnet_test_posix_hard_killed_client();
+extern void rocketnet_test_posix_hard_killed_child_client();
+extern void rocketnet_test_posix_send_to_closed_port();
+extern void rocketnet_test_posix_client_server_gone();
+#endif
 
 // A destroyed client's receive thread always exits: destroy stores quit and
 // wakes the receive thread's wait explicitly before the join. These cases use
@@ -8248,9 +8261,22 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
+    { "test_seam_receive_weather_skips_portable", rocketnet_test_seam_receive_weather_skips_portable },
+    { "test_posix_send_to_closed_port", rocketnet_test_posix_send_to_closed_port },
+    { "test_posix_client_server_gone", rocketnet_test_posix_client_server_gone },
+    { "test_posix_hard_killed_client", rocketnet_test_posix_hard_killed_client },
+    { "test_posix_hard_killed_child_client", rocketnet_test_posix_hard_killed_child_client },
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_functional_skip_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_functional_skip_pump_zero_length_chaff },
+    { "test_seam_receive_weather_skips_portable", rocketnet_functional_skip_receive_weather_portable },
+    { "test_posix_send_to_closed_port", rocketnet_functional_skip_posix_send_to_closed_port },
+    { "test_posix_client_server_gone", rocketnet_functional_skip_posix_client_server_gone },
+    { "test_posix_hard_killed_client", rocketnet_functional_skip_posix_hard_killed_client },
+    { "test_posix_hard_killed_child_client", rocketnet_functional_skip_posix_hard_killed_child_client },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_seam_receive_weather_skips_msgx", rocketnet_test_seam_receive_weather_skips_msgx },
 #endif
     { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats },
     { "test_client_stats_of_empty_slot_read_zero", rocketnet_test_client_stats_of_empty_slot_read_zero },

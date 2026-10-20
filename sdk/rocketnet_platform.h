@@ -421,6 +421,16 @@ int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_
  */
 const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
+#if ROCKETNET_DEVELOPMENT
+/**
+ * @brief Test-only seam: injects an errno into the next recvmsg/recvmsg_x
+ * result on any socket. Compiled only into the development library.
+ * @param error Errno value to inject; zero clears a pending injection.
+ * @return None.
+ */
+void rocketnet_platform_test_inject_recv_errno( int error );
+#endif
+
 #ifdef __cplusplus
 }
 #endif

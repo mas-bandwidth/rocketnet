@@ -100,6 +100,19 @@ once for a staging generation; the backend retains ownership until it can
 safely reuse that storage. None
 of these rules sets a frame, packet-send or ACK rate.
 
+## ICMP errors
+
+A UDP send to a vanished peer can come back as an ICMP port unreachable
+(or, for a disconnected network, host or network unreachable). On a connected
+BSD socket these surface to the next receive as `ECONNREFUSED`, `EHOSTUNREACH`,
+`ENETUNREACH`, `EHOSTDOWN` or `ENETDOWN`. rocketnet's sockets are unconnected, so
+these errnos do not arrive on their own; the contract is that every receive arm
+treats the whole ICMP class plus buffer backpressure (`ENOBUFS`) as
+skip-and-continue: the error is logged or ignored, the drain continues while
+datagrams remain, the msgx pump is never paused on them, and the connection
+state is untouched. A genuinely unknown errno still pauses the msgx pump for
+its retry window. The send side already classes the same errnos as weather.
+
 ## Creation and shutdown
 
 The factory borrows resolved configuration for the call and retains only what

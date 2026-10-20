@@ -1675,6 +1675,29 @@ extern void * rocketnet_malloc( void * context, size_t bytes );
 
 extern void rocketnet_free( void * context, void * p );
 
+// UDP's ordinary weather on the receive path: errnos that surface as
+// transient ICMP or buffer conditions when a peer vanishes or the stack is
+// momentarily backed up. they are skip-and-continue -- never a drain end,
+// never a pause -- mirroring the send-side weather below.
+
+static bool rocketnet_msgx_receive_weather( int error )
+{
+    return error == EAGAIN || error == EWOULDBLOCK || error == EINTR || error == ENOBUFS ||
+           error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
+           error == EHOSTDOWN || error == ENETDOWN;
+}
+
+#if ROCKETNET_DEVELOPMENT
+// test seam: injects an errno into the next recvmsg/recvmsg_x result, so the
+// functional suite can prove every weather errno is skipped. compiled only
+// into the development library, never the production build.
+int rocketnet_platform_test_recv_inject_errno = 0;
+void rocketnet_platform_test_inject_recv_errno( int error )
+{
+    rocketnet_platform_test_recv_inject_errno = error;
+}
+#endif
+
 // ---------------------------------------------------
 
 // The darwin batch pump (#100): sendmsg_x/recvmsg_x, Darwin's batch UDP
@@ -2255,12 +2278,24 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
         result = int( recvmsg( socket->handle, &msg, 0 ) );
 
+#if ROCKETNET_DEVELOPMENT
+        if ( rocketnet_platform_test_recv_inject_errno != 0 )
+        {
+            errno = rocketnet_platform_test_recv_inject_errno;
+            rocketnet_platform_test_recv_inject_errno = 0;
+            result = -1;
+        }
+#endif
+
         if ( result < 0 )
         {
-            if ( errno != EAGAIN && errno != EINTR )
-            {
-                rocketnet_debug( "recvfrom failed with error %d", errno );
-            }
+            if ( errno == EINTR )
+                continue;
+            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+                return 0;
+            if ( rocketnet_msgx_receive_weather( errno ) )
+                continue;
+            rocketnet_debug( "recvfrom failed with error %d", errno );
             return 0;
         }
 
@@ -2619,16 +2654,27 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
         errno = 0;
         ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+#if ROCKETNET_DEVELOPMENT
+        if ( rocketnet_platform_test_recv_inject_errno != 0 )
+        {
+            errno = rocketnet_platform_test_recv_inject_errno;
+            rocketnet_platform_test_recv_inject_errno = 0;
+            result = -1;
+        }
+#endif
         if ( result < 0 )
         {
             if ( errno == EINTR )
                 continue;
             if ( errno == EAGAIN || errno == EWOULDBLOCK )
                 return total;
+            if ( rocketnet_msgx_receive_weather( errno ) )
+                continue;
 
-            // outside ordinary weather: pause the pump and finish this
-            // call per-packet -- what earlier chunks drained is already
-            // delivered, nothing about this call's contract changes.
+            // outside ordinary weather (a genuinely unknown errno): pause
+            // the pump and finish this call per-packet -- what earlier
+            // chunks drained is already delivered, nothing about this
+            // call's contract changes.
 
             rocketnet_msgx_pause( socket, "recvmsg_x", errno );
             goto per_packet;
