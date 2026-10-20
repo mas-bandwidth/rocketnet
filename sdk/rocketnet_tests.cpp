@@ -12580,8 +12580,10 @@ void rocketnet_test_public_config_resolve()
 
     // every server field lands
 
+    // the sized form fills every revision: rocketnet_server_config_resolve
+    // reads the whole struct, second_public_address included
     struct rocketnet_server_config_t server;
-    rocketnet_server_dev_config( &server );
+    rocketnet_server_dev_config_sized( &server, sizeof( server ) );
     server.protocol_id = 0x1122334455667788ULL;
     server.max_clients = 5;
     memcpy( server.filter_value, filter, 4 );
@@ -12593,7 +12595,7 @@ void rocketnet_test_public_config_resolve()
     server.per_client_send_kbps = 4321;
     server.num_channels = 6; server.reliable_timeout_ms = 6000;
     struct rocketnet_server_config_t dev;
-    rocketnet_server_dev_config( &dev );
+    rocketnet_server_dev_config_sized( &dev, sizeof( dev ) );
     rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
     rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
     rocketnet_check( memcmp( server_transport.filter_value, filter, 4 ) == 0 );
