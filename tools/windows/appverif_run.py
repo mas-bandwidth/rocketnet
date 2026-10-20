@@ -54,6 +54,9 @@ AVRF_NS = "{Application Verifier}"
 FRAMES_SHOWN = 8
 MAX_EXPORTED_LOGS = 4096
 
+# taskkill's reason for a process that exited before it could be terminated.
+TASK_GONE_REASON = "There is no running instance of the task."
+
 # appverif -configure's error for a stop code no registered provider issues.
 UNISSUED_STOP_PREFIX = "AVRF: Error: Stop code ["
 UNISSUED_STOP_SUFFIX = "] is not issued by any of the registered providers."
@@ -285,8 +288,16 @@ def terminate_process_tree(process: subprocess.Popen) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
-    if stopped.returncode != 0:
-        output = " ".join((stopped.stdout + " " + stopped.stderr).split())
+    # taskkill /T exits non-zero when a process of the tree exits between its
+    # listing and its termination ("There is no running instance of the
+    # task."); only an ERROR line with any other reason is a process left alive.
+    errors = [
+        line.strip()
+        for line in (stopped.stdout + "\n" + stopped.stderr).splitlines()
+        if line.strip().startswith("ERROR:") and TASK_GONE_REASON not in line
+    ]
+    if errors or (stopped.returncode != 0 and not stopped.stdout.strip()):
+        output = " ".join(errors) or " ".join((stopped.stdout + " " + stopped.stderr).split())
         raise RuntimeError(f"taskkill failed to stop process tree {process.pid} (exit {stopped.returncode}): {output}")
 
 
