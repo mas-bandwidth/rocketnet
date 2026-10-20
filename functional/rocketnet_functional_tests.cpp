@@ -7030,6 +7030,8 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_mmsg_batch_
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_apple_handoff_round_trip, "client_io_apple_handoff_round_trip", "mac and ios only: the msgx client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_receive_thread_quit_wake_ends_a_long_wait, "client_receive_thread_quit_wake_ends_a_long_wait", "posix only: the windows receive thread sleeps and its quit wake is a no-op" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_receive_thread_quit_wake_before_wait_returns, "client_receive_thread_quit_wake_before_wait_returns", "posix only: the windows receive thread sleeps and its quit wake is a no-op" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -8365,6 +8367,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait },
     { "client_receive_thread_quit_wake_before_wait_returns", rocketnet_test_client_receive_thread_quit_wake_before_wait_returns },
+#else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    { "client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_functional_skip_client_receive_thread_quit_wake_ends_a_long_wait },
+    { "client_receive_thread_quit_wake_before_wait_returns", rocketnet_functional_skip_client_receive_thread_quit_wake_before_wait_returns },
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
