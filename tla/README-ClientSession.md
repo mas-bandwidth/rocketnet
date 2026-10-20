@@ -51,6 +51,15 @@ writes the reset inventory each field below stands for and cites this model.
 | `HandshakeStep` | the server's reply to the current stage arrives; the challenge writes the session keys; the establishing keep-alive reaches CONNECTED and clears the reason |
 | `Deny`, `TokenExpires`, `Timer` | a denial during the handshake; the token expiring during the handshake; each stage's deadline and the connected timeout |
 | `ServerDisconnect`, `ClientDisconnect` | the server's disconnect; the client's disconnect from the handshake or connected |
+
+The model's reasons map to `enum rocketnet_disconnect_reason_t` (`sdk/rocketnet.h:339-347`):
+`ServerDisconnect`'s `SERVER_DISCONNECTED` is `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`
+(`6`), recorded by the message object's client terminal check
+(`sdk/rocketnet_message_server.cpp:477-478`) when the client transport counted the server's
+disconnect packet (`sdk/rocketnet_client_protocol.cpp:1202`, read by
+`sdk/rocketnet_message_client.cpp:89`). `ClientDisconnect`'s `CLIENT_DISCONNECTED` and a
+`Timer` end read `ROCKETNET_DISCONNECT_REASON_NONE` from `rocketnet_client_disconnect_reason`
+(`sdk/rocketnet_api.cpp:641`); the model names them apart, the API does not.
 | `DisconnectFromError` | disconnect from an error state: back to DISCONNECTED, the reason kept |
 | `Send` | message start/finish, only while CONNECTED (the `queuebeforeconnected` defect also enables it in a handshake state) |
 | `DropSend` | message start outside CONNECTED (`rocketnet_client_start_message` returns NULL and counts `ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS`; the message layer's `MESSAGE_SEND_NOT_CONNECTED`, `rn_message_object_start` in `sdk/rocketnet_message_server.cpp`): no per-connection field changes, nothing is held; the ghost `droppedIn` is `{st}` after a drop and `{}` after any other step (RN-2 m1.5) |

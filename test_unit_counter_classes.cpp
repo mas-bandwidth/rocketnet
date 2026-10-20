@@ -309,6 +309,7 @@ static const char * const counters_appended_names[] =
     "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
     "SEND_FAILED",
     "XDP_KERNEL_PASSED_FRAGMENT",
+    "XDP_KERNEL_DROPPED_FIRST_FRAGMENT",
     "MESSAGE_SEND_NOT_CONNECTED",
 };
 

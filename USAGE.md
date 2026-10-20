@@ -500,7 +500,11 @@ slot and its client, `rocketnet_server_num_connected_clients` counts them, and
 `rocketnet_server_disconnect_client` ends one deliberately.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
 ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
-`rocketnet_disconnect_reason_name`. A NULL client reads as
+`rocketnet_disconnect_reason_name`. A client whose server disconnected it,
+stopped, or was destroyed reads `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`
+once its update accepts the server's disconnect packet, until its next
+connection reaches CONNECTED; a deliberate `rocketnet_client_disconnect` and a
+connection timeout read `ROCKETNET_DISCONNECT_REASON_NONE`. A NULL client reads as
 `ROCKETNET_CLIENT_STATE_INVALID`.
 
 ```c

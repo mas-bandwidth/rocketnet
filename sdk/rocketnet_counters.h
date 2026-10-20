@@ -889,6 +889,16 @@
     /** @brief ROCKETNET_COUNTER_XDP_KERNEL_PASSED_FRAGMENT: Counts IP fragments the kernel prefilter passed to the kernel stack. Unit: occurrences. Class: expected; family: none. */ \
     X( XDP_KERNEL_PASSED_FRAGMENT, EXPECTED, NONE ) \
     \
+    /* The kernel prefilter's DROPPED_FIRST_FRAGMENT (sdk/rocketnet_wire.h): */ \
+    /* the first IP fragment (the one carrying the UDP header) of a */ \
+    /* datagram to the server's address and port, dropped in XDP before */ \
+    /* any size, epoch or filter check. RocketNet assumes a 1500-byte MTU */ \
+    /* path, so a fragment for the server is hostile or misconfigured; */ \
+    /* without its first fragment the kernel never reassembles the */ \
+    /* datagram. REFUSAL. appended: indices are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT: Counts first IP fragments of datagrams to the server address and port that the kernel prefilter dropped. Unit: occurrences. Class: refusal; family: none. */ \
+    X( XDP_KERNEL_DROPPED_FIRST_FRAGMENT, REFUSAL, NONE ) \
+    \
     /* An application send on a connection that is not CONNECTED: a client */ \
     /* whose transport has not reached CONNECTED or has left it, a server */ \
     /* slot with no CONNECTED client (standard/MESSAGES.md m1.5; */ \
