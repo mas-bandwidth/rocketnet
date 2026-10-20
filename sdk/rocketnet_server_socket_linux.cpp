@@ -1787,7 +1787,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // fails create at the top of queue n, after the earlier queues are
         // fully built (their mutexes created, their xdp threads running) and
         // before queue n creates anything, so destroy meets a queue whose
-        // mutexes were never created (test_xdp_filter.cpp,
+        // mutexes were never created (test_xdp_filter.cpp:1603,
         // xdp_create_fails_part_way_tears_down)
         {
             const char * fail_at_queue = rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE" );
@@ -2070,7 +2070,7 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
         // destroy mutexes: a create that failed part way reaches here with
         // later queues' mutexes never created, so only a created one is
-        // destroyed (the IOCP driver's guard, rocketnet_server_iocp_windows.cpp)
+        // destroyed (the IOCP driver's guard, rocketnet_server_iocp_windows.cpp:436)
 
         if ( socket->send_mutex.ok )
             rocketnet_platform_mutex_destroy( &socket->send_mutex );

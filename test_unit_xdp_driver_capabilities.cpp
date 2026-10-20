@@ -37,7 +37,7 @@
 
 #include <stddef.h>
 
-// sdk/rocketnet_server_socket_linux.cpp
+// sdk/rocketnet_server_socket_linux.cpp:2134 and :2149
 int rocketnet_server_socket_send_slot( ptrdiff_t offset );
 int rocketnet_server_socket_send_queue( const struct rocketnet_address_t * to, int num_queues );
 
