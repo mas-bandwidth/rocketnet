@@ -397,11 +397,11 @@ static void mo_config( rocketnet_message_config_t * config )
     config->send_buffer_bytes = 65536;
     config->send_queue_messages = 64;
     config->packets_in_flight = 64;
-    config->max_packets_per_update = 8;
+    config->packets_per_update = 8;
     config->unreliable_deliveries = 64;
-    config->rto_initial_ms = 100;
-    config->rto_min_ms = 20;
-    config->rto_max_ms = 400;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_max_ms = 400;
     config->reliable_timeout_ms = 120000;
 }
 
@@ -908,7 +908,7 @@ static void mo_end_to_end_up()
     {
         // loss: every fifth round drops everything one way
         pair.net->drop_to_server = ( round % 5 ) == 2;
-        // Randomize the 1/7 loss phase so it cannot lock to a fixed RTO.
+        // Randomize the 1/7 loss phase so it cannot lock to a fixed resend delay.
         loss_random ^= loss_random << 13;
         loss_random ^= loss_random >> 17;
         loss_random ^= loss_random << 5;
@@ -1283,7 +1283,7 @@ static void acks_only_from_transport_acked_packets()
     }
     check( delivered == 1 );                                                       // once, however often it arrives
     check( region->descriptors_free == region->queue - 2 );                        // still in flight: no ack, no release (this message and the connection's CONFIG, 10.3)
-    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );          // resent on its RTO
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );          // resent on its resend delay
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > 0 );
 
     // a delivered payload is not an ack, nor is any other event: the record
@@ -2964,7 +2964,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
     memcpy( server_config.server_public_key, world.server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, world.server_secret, sizeof( server_config.server_secret_key ) );
     server_config.transport = "loopback";
-    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     check( world.server != NULL );
     check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 2; i++ )
@@ -2974,7 +2974,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
         client_config.transport = "loopback";
         client_config.step_driven = true;
         client_config.time_callback = reconnect_clock;
-        world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
         check( world.clients[i] != NULL );
     }
 

@@ -131,6 +131,24 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
     return NULL;
 }
 
+// The next queue slot, or NULL after counting a drop at the fixed ceiling.
+// All queue storage is allocated at create; traffic never allocates.
+
+static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_endpoint_t * dst )
+{
+    if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
+    {
+        ++dst->dropped;
+        return NULL;
+    }
+    return &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
+}
+
+size_t rocketnet_loopback_queue_bytes( int packets )
+{
+    return sizeof( rocketnet_loopback_packet_t ) * (size_t) packets;
+}
+
 static void * loopback_create( void * context, rocketnet_address_t * bind )
 {
     if ( bind->type != ROCKETNET_ADDRESS_IPV4 && bind->type != ROCKETNET_ADDRESS_IPV6 )
@@ -187,7 +205,7 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
 
     rocketnet_loopback_endpoint_t * ep = &state.endpoints[slot];
     ep->packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( context,
-        sizeof( rocketnet_loopback_packet_t ) * ROCKETNET_LOOPBACK_QUEUE_PACKETS );
+        rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) );
     if ( !ep->packets )
         return NULL;
     ep->context = context;
@@ -234,12 +252,9 @@ static void loopback_send( void * driver, const rocketnet_address_t * to, const 
     rocketnet_loopback_endpoint_t * dst = loopback_find_destination( state, *to );
     if ( !dst )
         return;
-    if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
-    {
-        ++dst->dropped;
+    rocketnet_loopback_packet_t * packet = loopback_queue_tail( dst );
+    if ( !packet )
         return;
-    }
-    rocketnet_loopback_packet_t * packet = &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
     packet->bytes = bytes;
     packet->from = loopback_sender_address( sender->bind, *to );
     memcpy( packet->data, data, (size_t) bytes );
@@ -260,12 +275,9 @@ static void loopback_server_send_batch( void * driver, const rocketnet_platform_
         rocketnet_loopback_endpoint_t * dst = loopback_find_destination( state, *packet.to );
         if ( !dst )
             continue;
-        if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
-        {
-            ++dst->dropped;
+        rocketnet_loopback_packet_t * slot = loopback_queue_tail( dst );
+        if ( !slot )
             continue;
-        }
-        rocketnet_loopback_packet_t * slot = &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
         slot->bytes = packet.packet_bytes;
         slot->from = loopback_sender_address( sender->bind, *packet.to );
         memcpy( slot->data, packet.packet_data, (size_t) packet.packet_bytes );

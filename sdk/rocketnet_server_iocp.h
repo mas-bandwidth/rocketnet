@@ -90,6 +90,11 @@ int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
 // segmented send is refused.
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 
+// A test control: flags every later create ORs into its own (the
+// ROCKETNET_IOCP_DISABLE_* bits), so a functional case can run the whole server
+// transport on the per-datagram path. Zero, the default, changes nothing.
+void rocketnet_server_iocp_test_force_flags( int flags );
+
 #if defined(ROCKETNET_IOCP_TESTS)
 // Hold/release must be paired on the same thread. Do not call stop there while
 // holding: Windows CRITICAL_SECTION is recursive. A different thread must stop.

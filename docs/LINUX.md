@@ -130,12 +130,7 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 (`sdk/rocketnet_config.cpp:344-375`), for example
 `ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`
-(`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`). The process-wide
-spelling `ROCKETNET_<FIELD>` is refused aloud and not applied, naming its
-replacement (`sdk/rocketnet_config.cpp:548-562`); so are the old
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
-`ROCKETNET_CLIENT_DRIVER` (`sdk/rocketnet_config.cpp:564-565`,
-`BUILDING.md:332-334`).
+(`sdk/rocketnet.h:805`, `sdk/rocketnet_internal.h:480-481`).
 
 CI's transport matrix pins each Linux server transport against the portable
 client on four cases, `driver_env_pin_is_honoured` among them, which proves
@@ -227,8 +222,9 @@ stay in the completion queue for a later call and are counted
 The create line is
 `io_uring transport: <n> queue reuseport group on port <p>, 4096 entry ring, 4096 receive buffers per queue`
 (`sdk/rocketnet_server_uring_linux.cpp:782-783`); a kernel without
-`IORING_FEAT_NODROP` adds a warning that it drops completions on overflow
-(`sdk/rocketnet_server_uring_linux.cpp:745-746`).
+`IORING_FEAT_NODROP` is refused: `rocketnet_server_uring_create` logs an
+error, destroys what it built and returns NULL, since a ring that drops
+completions on overflow would lose receives and sends without a count.
 
 ## 6. xdp and the provisioning script
 

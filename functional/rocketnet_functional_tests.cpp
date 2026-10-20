@@ -948,11 +948,6 @@ void rocketnet_test_transport_wire_totals_concurrent_send_exact()
     // whole-server and per-client sent wire totals: a lost increment from a
     // non-atomic add fails these exact asserts even without tsan.
 
-    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
-    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
-    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_DRIVER" );
-    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_DRIVER" );
-
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
@@ -1034,9 +1029,6 @@ void rocketnet_test_transport_wire_totals_concurrent_send_exact()
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
-    rocketnet_test_env_restore( &client_guard );
-    rocketnet_test_env_restore( &server_guard );
-    rocketnet_test_env_restore( &process_guard );
 }
 
 void rocketnet_test_transport_start_finish_shape()
@@ -1593,13 +1585,21 @@ void rocketnet_test_transport_stats()
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     // two simulated seconds of traffic, one payload each way per frame. the
-    // send times are recorded so the published numbers can be recounted
+    // send times and cumulative wire-counter deltas are recorded so rates can be recounted
     // independently; two seconds ages the handshake's packets out of the
-    // window, so the window holds payload traffic alone.
+    // window. RN-1 t15 standalone acknowledgments are wire packets too;
+    // the rate must include them, independently of the payload count.
 
     const int num_traffic_frames = 120;
 
     double send_times[num_traffic_frames];
+    uint64_t client_sends[num_traffic_frames], server_sends[num_traffic_frames];
+    struct rocketnet_client_transport_stats_t client_stats;
+    struct rocketnet_server_transport_stats_t server_stats;
+    rocketnet_client_transport_stats( client, &client_stats );
+    rocketnet_server_transport_stats( server, &server_stats );
+    uint64_t client_sent = client_stats.packets_sent;
+    uint64_t server_sent = server_stats.packets_sent;
 
     uint8_t payload_data[100];
     memset( payload_data, 0x5A, sizeof(payload_data) );
@@ -1616,6 +1616,12 @@ void rocketnet_test_transport_stats()
         rocketnet_server_transport_send_packets( server );
 
         send_times[i] = game_time;
+        rocketnet_client_transport_stats( client, &client_stats );
+        rocketnet_server_transport_stats( server, &server_stats );
+        client_sends[i] = client_stats.packets_sent - client_sent;
+        server_sends[i] = server_stats.packets_sent - server_sent;
+        client_sent = client_stats.packets_sent;
+        server_sent = server_stats.packets_sent;
 
         uint8_t scratch[ROCKETNET_RECEIVE_CEILING];
         while ( rocketnet_client_transport_receive_packet( client, scratch, (int) sizeof(scratch) ) > 0 ) {}
@@ -1631,18 +1637,20 @@ void rocketnet_test_transport_stats()
     // the independent recount, under the published numbers' own rule: a
     // send contributes while its bucket is younger than one second
 
-    int expected_sends = 0;
+    uint64_t expected_client_sends = 0, expected_server_sends = 0;
     for ( int i = 0; i < num_traffic_frames; i++ )
     {
         if ( send_times[i] + 1.0 >= game_time )
-            expected_sends++;
+        {
+            expected_client_sends += client_sends[i];
+            expected_server_sends += server_sends[i];
+        }
     }
-    rocketnet_check( expected_sends > 0 );
+    rocketnet_check( expected_client_sends > 0 && expected_server_sends > 0 );
 
-    struct rocketnet_client_transport_stats_t client_stats;
     rocketnet_client_transport_stats( client, &client_stats );
 
-    rocketnet_check( client_stats.packets_sent_per_second == expected_sends );
+    rocketnet_check( client_stats.packets_sent_per_second == (int) expected_client_sends );
     rocketnet_check( client_stats.packets_received_per_second > 0 );
     rocketnet_check( client_stats.bandwidth_sent_kbps > 0 );
     rocketnet_check( client_stats.bandwidth_received_kbps > 0 );
@@ -1651,10 +1659,9 @@ void rocketnet_test_transport_stats()
     rocketnet_check( client_stats.jitter >= 0.0f );
     rocketnet_check( client_stats.packet_loss == 0.0f );
 
-    struct rocketnet_server_transport_stats_t server_stats;
     rocketnet_server_transport_stats( server, &server_stats );
 
-    rocketnet_check( server_stats.packets_sent_per_second == (uint64_t) expected_sends );
+    rocketnet_check( server_stats.packets_sent_per_second == expected_server_sends );
     rocketnet_check( server_stats.packets_received_per_second > 0 );
     rocketnet_check( server_stats.bandwidth_sent_kbps > 0.0f );
     rocketnet_check( server_stats.bandwidth_received_kbps > 0.0f );
@@ -2262,13 +2269,13 @@ void rocketnet_test_receive_drops_oversize_datagram()
 #define ROCKETNET_TEST_EXPECTED_PUMP "portable"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
-static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string, const char * expected_pump )
+static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string, const char * expected_pump, const char * requested_pump = NULL )
 {
     rocketnet_address_t bind_address;
     rocketnet_address_t local_address;
     rocketnet_address_parse( &bind_address, bind_string );
     rocketnet_address_parse( &local_address, local_string );
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 , requested_pump );
     rocketnet_check( socket );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), expected_pump ) == 0 );
     local_address.port = bind_address.port;
@@ -2372,24 +2379,9 @@ void rocketnet_test_platform_batch_pump()
 
 void rocketnet_test_platform_batch_pump_degraded()
 {
-    // ROCKETNET_PUMP=portable pins the degradation contract: the forced
-    // portable pump answers the same seam with the same behavior, so a
-    // darwin machine runs this test over the exact code path a runtime
-    // refusal would degrade to. on platforms whose pump is portable
-    // already, the override is a no-op and the exchange still holds.
-
-    setenv( "ROCKETNET_PUMP", "portable", 1 );
-
-    rocketnet_address_t bind_address;
-    rocketnet_address_parse( &bind_address, "127.0.0.1" );
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
-    rocketnet_check( socket );
-    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), "portable" ) == 0 );
-    rocketnet_platform_socket_destroy( socket );
-
-    rocketnet_test_pump_exchange( "127.0.0.1", "127.0.0.1", "portable" );
-
-    unsetenv( "ROCKETNET_PUMP" );
+    // The explicit portable request exercises the same seam and behavior as a
+    // runtime degradation without adding another environment spelling.
+    rocketnet_test_pump_exchange( "127.0.0.1", "127.0.0.1", "portable", "portable" );
 }
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -2404,11 +2396,11 @@ void rocketnet_test_platform_batch_pump_degraded()
 // also proves the msgx compaction memmove, since kept packets after a
 // mid-chunk skip must move down a slot.
 
-static void rocketnet_test_pump_chaff_exchange( void )
+static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NULL )
 {
     rocketnet_address_t bind_address;
     rocketnet_address_parse( &bind_address, "127.0.0.1" );
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 , requested_pump );
     rocketnet_check( socket );
 
     const char * pump_at_create = rocketnet_platform_socket_pump( socket );
@@ -2613,9 +2605,7 @@ void rocketnet_test_platform_pump_zero_length_chaff()
 
     rocketnet_test_pump_chaff_exchange();
 
-    setenv( "ROCKETNET_PUMP", "portable", 1 );
-    rocketnet_test_pump_chaff_exchange();
-    unsetenv( "ROCKETNET_PUMP" );
+    rocketnet_test_pump_chaff_exchange( "portable" );
 }
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -3461,7 +3451,7 @@ void rocketnet_test_public_client_server_queries()
     server_config.transport = "portable";
     const uint64_t memory_bytes = rocketnet_server_required_memory( &server_config );
     rocketnet_check( memory_bytes > 0 );
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -3479,7 +3469,7 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -3787,8 +3777,7 @@ void rocketnet_test_server_driver_pin_loopback()
     // no socket. both ends pin it here: auto never selects it, so a
     // server-only pin would leave the client on a socket path.
 
-    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
-    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
@@ -3903,7 +3892,6 @@ void rocketnet_test_server_driver_pin_loopback()
 
     rocketnet_test_env_restore( &client_guard );
     rocketnet_test_env_restore( &server_guard );
-    rocketnet_test_env_restore( &process_guard );
 }
 
 void rocketnet_test_driver_env_pins_loopback()
@@ -3912,8 +3900,7 @@ void rocketnet_test_driver_env_pins_loopback()
     // their default "auto" and the environment still selects loopback on
     // both ends. the process-wide spelling stays cleared.
 
-    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
-    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
     setenv( "ROCKETNET_SERVER_TRANSPORT", "loopback", 1 );
@@ -3963,7 +3950,6 @@ void rocketnet_test_driver_env_pins_loopback()
 
     rocketnet_test_env_restore( &client_guard );
     rocketnet_test_env_restore( &server_guard );
-    rocketnet_test_env_restore( &process_guard );
 }
 
 void driver_env_pin_is_honoured()
@@ -4913,43 +4899,6 @@ void rocketnet_test_server_driver_pin_msgx()
     rocketnet_test_driver_pin_exchange( "msgx", "msgx" );
 }
 
-void rocketnet_test_driver_pump_alias()
-{
-    if ( rocketnet_test_skip_for_driver_env_pin( "test_driver_pump_alias", "ROCKETNET_SERVER_TRANSPORT", NULL ) )
-        return;
-
-    // ROCKETNET_PUMP=portable keeps its exact pre-#106 meaning -- the
-    // darwin batch pump is off -- absorbed into the ladder as an msgx
-    // refusal, so the auto ladder lands on portable
-
-    struct rocketnet_test_env_guard_t driver_guard;
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
-
-    struct rocketnet_test_env_guard_t pump_guard;
-    rocketnet_test_env_save( &pump_guard, "ROCKETNET_PUMP" );
-    setenv( "ROCKETNET_PUMP", "portable", 1 );
-
-    struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config( &config );
-
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "portable" ) == 0 );
-    rocketnet_server_transport_stop( server );
-    rocketnet_server_transport_update( server, rocketnet_platform_time() );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    // and a pinned msgx under the same override is a refusal-exhausted
-    // ladder: the pin refuses loudly, it never falls
-
-    struct rocketnet_server_transport_config_t pinned_config;
-    rocketnet_server_transport_dev_config( &pinned_config );
-    snprintf( pinned_config.driver, sizeof(pinned_config.driver), "msgx" );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &pinned_config) == NULL );
-
-    rocketnet_test_env_restore( &pump_guard );
-    rocketnet_test_env_restore( &driver_guard );
-}
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
@@ -4964,7 +4913,7 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     // auto order, loudly, instead of bricking (#110 review, ruled inside
     // the #106 ignore rule). a typo is still a typo: loud parse failure,
     // no create. refusal-exhausted lists still fail loudly -- the xdp pin
-    // test and the pump-alias msgx pin prove that side.
+    // test proves that side.
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
@@ -7045,7 +6994,6 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_wire_dual_stac
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_send_overflow, "test_server_uring_send_overflow", "linux only: the io_uring driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_receive_rearms_after_no_buffers, "test_server_uring_receive_rearms_after_no_buffers", "linux only: the io_uring driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_msgx, "test_server_driver_pin_msgx", "mac only: the msgx driver is not built on this platform" )
-ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_driver_pump_alias", "mac only: the msgx pump is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_and_reads, "platform_wake_linux_wakes_and_reads", "linux only: the eventfd wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_handoff_round_trip, "client_io_linux_handoff_round_trip", "linux only: the portable client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
@@ -7952,8 +7900,7 @@ static void wire_totals_send_payloads( struct rocketnet_client_transport_t * cli
 
 void wire_totals_count_every_packet_and_byte()
 {
-    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
-    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
@@ -8013,13 +7960,11 @@ void wire_totals_count_every_packet_and_byte()
 
     rocketnet_test_env_restore( &client_guard );
     rocketnet_test_env_restore( &server_guard );
-    rocketnet_test_env_restore( &process_guard );
 }
 
 void wire_totals_reset_per_connection_not_per_server()
 {
-    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
-    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
@@ -8078,7 +8023,6 @@ void wire_totals_reset_per_connection_not_per_server()
 
     rocketnet_test_env_restore( &client_guard );
     rocketnet_test_env_restore( &server_guard );
-    rocketnet_test_env_restore( &process_guard );
 }
 
 // The wire totals count the peer's own IP header: an IPv4 peer adds 28 bytes
@@ -8089,8 +8033,7 @@ void wire_totals_reset_per_connection_not_per_server()
 static void wire_bytes_per_family_exchange( const char * public_address, const char * peer_address,
                                             uint64_t client_id, int ip_udp_header_bytes )
 {
-    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
-    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
@@ -8127,6 +8070,8 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     wire_totals_client( client, &client_before );
     wire_totals_server( server, &server_before );
 
+    const uint64_t client_ack_before = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED];
+    const uint64_t server_ack_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_ACK_RECEIVED];
     const int payload_count = 4;
     const int payload_bytes = 64;
     uint8_t payload[64];
@@ -8165,11 +8110,18 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     wire_totals_client( client, &client_after );
     wire_totals_server( server, &server_after );
 
+    // RN-1 t15: the four payloads elicit standalone acknowledgments. Their
+    // receive counters independently identify the extra wire packets. All
+    // sequences here are contiguous, so each ACK has the minimum block.
+    const uint64_t client_acks = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_ACK_RECEIVED] - server_ack_before;
+    const uint64_t server_acks = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED] - client_ack_before;
     const uint64_t headers = (uint64_t) payload_count * (uint64_t) ip_udp_header_bytes;
-    rocketnet_check( client_after.packets_sent - client_before.packets_sent == (uint64_t) payload_count );
-    rocketnet_check( client_after.packets_received - client_before.packets_received == (uint64_t) payload_count );
-    rocketnet_check( server_after.packets_sent - server_before.packets_sent == (uint64_t) payload_count );
-    rocketnet_check( server_after.packets_received - server_before.packets_received == (uint64_t) payload_count );
+    client_wire += client_acks * ( ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + ip_udp_header_bytes );
+    server_wire += server_acks * ( ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + ip_udp_header_bytes );
+    rocketnet_check( client_after.packets_sent - client_before.packets_sent == (uint64_t) payload_count + client_acks );
+    rocketnet_check( client_after.packets_received - client_before.packets_received == (uint64_t) payload_count + server_acks );
+    rocketnet_check( server_after.packets_sent - server_before.packets_sent == (uint64_t) payload_count + server_acks );
+    rocketnet_check( server_after.packets_received - server_before.packets_received == (uint64_t) payload_count + client_acks );
     rocketnet_check( client_after.bytes_sent - client_before.bytes_sent == client_wire + headers );
     rocketnet_check( server_after.bytes_received - server_before.bytes_received == client_wire + headers );
     rocketnet_check( server_after.bytes_sent - server_before.bytes_sent == server_wire + headers );
@@ -8182,7 +8134,6 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
 
     rocketnet_test_env_restore( &client_guard );
     rocketnet_test_env_restore( &server_guard );
-    rocketnet_test_env_restore( &process_guard );
 }
 
 void test_transport_wire_bytes_per_family()
@@ -8278,6 +8229,49 @@ extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
 extern void macos_client_timing_default_qos();
 extern void macos_client_timing_taskpolicy_background();
 extern void macos_client_timing_background_thread_qos();
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// a hard-killed client never stalls a Windows receive (functional/windows_connreset.cpp)
+extern void windows_connreset_hard_killed_client_portable_ipv4();
+extern void windows_connreset_hard_killed_client_portable_ipv6();
+extern void windows_connreset_hard_killed_client_iocp_ipv4();
+extern void windows_connreset_hard_killed_client_iocp_ipv6();
+extern void windows_connreset_hard_killed_client_iocp_plain_ipv4();
+extern void windows_connreset_hard_killed_client_iocp_plain_ipv6();
+extern void windows_connreset_hard_killed_client_rio_ipv4();
+extern void windows_connreset_hard_killed_client_rio_ipv6();
+extern void windows_connreset_send_to_closed_port_portable_ipv4();
+extern void windows_connreset_send_to_closed_port_portable_ipv6();
+extern void windows_connreset_send_to_closed_port_iocp_ipv4();
+extern void windows_connreset_send_to_closed_port_iocp_ipv6();
+extern void windows_connreset_send_to_closed_port_iocp_plain_ipv4();
+extern void windows_connreset_send_to_closed_port_iocp_plain_ipv6();
+extern void windows_connreset_send_to_closed_port_rio_ipv4();
+extern void windows_connreset_send_to_closed_port_rio_ipv6();
+extern void windows_client_connreset_server_gone_ipv4();
+extern void windows_client_connreset_server_gone_ipv6();
+extern void windows_connreset_child_client();
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_portable_ipv4, "windows_connreset_hard_killed_client_portable_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_portable_ipv6, "windows_connreset_hard_killed_client_portable_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_ipv4, "windows_connreset_hard_killed_client_iocp_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_ipv6, "windows_connreset_hard_killed_client_iocp_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_plain_ipv4, "windows_connreset_hard_killed_client_iocp_plain_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_plain_ipv6, "windows_connreset_hard_killed_client_iocp_plain_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_rio_ipv4, "windows_connreset_hard_killed_client_rio_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_hard_killed_client_rio_ipv6, "windows_connreset_hard_killed_client_rio_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_portable_ipv4, "windows_connreset_send_to_closed_port_portable_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_portable_ipv6, "windows_connreset_send_to_closed_port_portable_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_ipv4, "windows_connreset_send_to_closed_port_iocp_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_ipv6, "windows_connreset_send_to_closed_port_iocp_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_plain_ipv4, "windows_connreset_send_to_closed_port_iocp_plain_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_plain_ipv6, "windows_connreset_send_to_closed_port_iocp_plain_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_rio_ipv4, "windows_connreset_send_to_closed_port_rio_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_send_to_closed_port_rio_ipv6, "windows_connreset_send_to_closed_port_rio_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_client_connreset_server_gone_ipv4, "windows_client_connreset_server_gone_ipv4", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_client_connreset_server_gone_ipv6, "windows_client_connreset_server_gone_ipv6", "windows only: the Winsock connection-reset cases are not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_windows_connreset_child_client, "windows_connreset_child_client", "windows only: the Winsock connection-reset cases are not built on this platform" )
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // A destroyed client's receive thread always exits: destroy stores quit and
 // wakes the receive thread's wait explicitly before the join. These cases use
@@ -8398,7 +8392,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
     server_config.transport = "portable";
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -8414,7 +8408,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -8486,7 +8480,9 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    rocketnet_check( server && create_status == ROCKETNET_STATUS_OK );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -8510,7 +8506,9 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status );
+    rocketnet_check( client && create_status == ROCKETNET_STATUS_OK );
     rocketnet_check( client );
     const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, token );
     printf( "two address token: connect status %d\n", (int) connect_status );
@@ -8833,10 +8831,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },
-    { "test_driver_pump_alias", rocketnet_test_driver_pump_alias },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_functional_skip_server_driver_pin_msgx },
-    { "test_driver_pump_alias", rocketnet_functional_skip_driver_pump_alias },
 #endif
     { "test_driver_all_skipped_uses_auto", rocketnet_test_driver_all_skipped_uses_auto },
     { "test_config_env_aliases", rocketnet_test_config_env_aliases },
@@ -8877,6 +8873,47 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family },
     { "live_message_matrix_loopback", live_message_matrix_loopback },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "windows_connreset_hard_killed_client_portable_ipv4", windows_connreset_hard_killed_client_portable_ipv4 },
+    { "windows_connreset_hard_killed_client_portable_ipv6", windows_connreset_hard_killed_client_portable_ipv6 },
+    { "windows_connreset_hard_killed_client_iocp_ipv4", windows_connreset_hard_killed_client_iocp_ipv4 },
+    { "windows_connreset_hard_killed_client_iocp_ipv6", windows_connreset_hard_killed_client_iocp_ipv6 },
+    { "windows_connreset_hard_killed_client_iocp_plain_ipv4", windows_connreset_hard_killed_client_iocp_plain_ipv4 },
+    { "windows_connreset_hard_killed_client_iocp_plain_ipv6", windows_connreset_hard_killed_client_iocp_plain_ipv6 },
+    { "windows_connreset_hard_killed_client_rio_ipv4", windows_connreset_hard_killed_client_rio_ipv4 },
+    { "windows_connreset_hard_killed_client_rio_ipv6", windows_connreset_hard_killed_client_rio_ipv6 },
+    { "windows_connreset_send_to_closed_port_portable_ipv4", windows_connreset_send_to_closed_port_portable_ipv4 },
+    { "windows_connreset_send_to_closed_port_portable_ipv6", windows_connreset_send_to_closed_port_portable_ipv6 },
+    { "windows_connreset_send_to_closed_port_iocp_ipv4", windows_connreset_send_to_closed_port_iocp_ipv4 },
+    { "windows_connreset_send_to_closed_port_iocp_ipv6", windows_connreset_send_to_closed_port_iocp_ipv6 },
+    { "windows_connreset_send_to_closed_port_iocp_plain_ipv4", windows_connreset_send_to_closed_port_iocp_plain_ipv4 },
+    { "windows_connreset_send_to_closed_port_iocp_plain_ipv6", windows_connreset_send_to_closed_port_iocp_plain_ipv6 },
+    { "windows_connreset_send_to_closed_port_rio_ipv4", windows_connreset_send_to_closed_port_rio_ipv4 },
+    { "windows_connreset_send_to_closed_port_rio_ipv6", windows_connreset_send_to_closed_port_rio_ipv6 },
+    { "windows_client_connreset_server_gone_ipv4", windows_client_connreset_server_gone_ipv4 },
+    { "windows_client_connreset_server_gone_ipv6", windows_client_connreset_server_gone_ipv6 },
+    { "windows_connreset_child_client", windows_connreset_child_client },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "windows_connreset_hard_killed_client_portable_ipv4", rocketnet_functional_skip_windows_connreset_hard_killed_client_portable_ipv4 },
+    { "windows_connreset_hard_killed_client_portable_ipv6", rocketnet_functional_skip_windows_connreset_hard_killed_client_portable_ipv6 },
+    { "windows_connreset_hard_killed_client_iocp_ipv4", rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_ipv4 },
+    { "windows_connreset_hard_killed_client_iocp_ipv6", rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_ipv6 },
+    { "windows_connreset_hard_killed_client_iocp_plain_ipv4", rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_plain_ipv4 },
+    { "windows_connreset_hard_killed_client_iocp_plain_ipv6", rocketnet_functional_skip_windows_connreset_hard_killed_client_iocp_plain_ipv6 },
+    { "windows_connreset_hard_killed_client_rio_ipv4", rocketnet_functional_skip_windows_connreset_hard_killed_client_rio_ipv4 },
+    { "windows_connreset_hard_killed_client_rio_ipv6", rocketnet_functional_skip_windows_connreset_hard_killed_client_rio_ipv6 },
+    { "windows_connreset_send_to_closed_port_portable_ipv4", rocketnet_functional_skip_windows_connreset_send_to_closed_port_portable_ipv4 },
+    { "windows_connreset_send_to_closed_port_portable_ipv6", rocketnet_functional_skip_windows_connreset_send_to_closed_port_portable_ipv6 },
+    { "windows_connreset_send_to_closed_port_iocp_ipv4", rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_ipv4 },
+    { "windows_connreset_send_to_closed_port_iocp_ipv6", rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_ipv6 },
+    { "windows_connreset_send_to_closed_port_iocp_plain_ipv4", rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_plain_ipv4 },
+    { "windows_connreset_send_to_closed_port_iocp_plain_ipv6", rocketnet_functional_skip_windows_connreset_send_to_closed_port_iocp_plain_ipv6 },
+    { "windows_connreset_send_to_closed_port_rio_ipv4", rocketnet_functional_skip_windows_connreset_send_to_closed_port_rio_ipv4 },
+    { "windows_connreset_send_to_closed_port_rio_ipv6", rocketnet_functional_skip_windows_connreset_send_to_closed_port_rio_ipv6 },
+    { "windows_client_connreset_server_gone_ipv4", rocketnet_functional_skip_windows_client_connreset_server_gone_ipv4 },
+    { "windows_client_connreset_server_gone_ipv6", rocketnet_functional_skip_windows_client_connreset_server_gone_ipv6 },
+    { "windows_connreset_child_client", rocketnet_functional_skip_windows_connreset_child_client },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;

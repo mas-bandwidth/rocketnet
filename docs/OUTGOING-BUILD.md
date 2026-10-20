@@ -102,7 +102,7 @@ and stages the packet; `send_packets` flushes it with everything else.
   there, counted the same (a receipt-bearing one takes its LOSS), and still
   returns its serial. The settle refunds the difference between the admitted
   maximum and the sealed size.
-- **The per-update packet cap.** `max_packets_per_update` is one allowance
+- **The per-update packet cap.** `packets_per_update` is one allowance
   shared by queued and in-place packet attempts. `begin_update` resets it;
   another `send_packets` flush in the same update does not. Once the allowance
   is spent, a fitting in-place message takes the queued path (counted as a
@@ -113,7 +113,7 @@ and stages the packet; `send_packets` flushes it with everything else.
   at start (a reliable record waits for its first send, or a resend or block
   chunk is past its delay: the condition the write pass's reliable phase
   sends on), an in-place packet never takes the last slot of the allowance:
-  start takes the in-place path only when `written + 1 < max_packets_per_update`.
+  start takes the in-place path only when `written + 1 < packets_per_update`.
   The write pass runs its reliable phase first, so that reserved slot sends
   the due work in the same update. Without the reservation, `cap` in-place
   sends after a reliable send spend the allowance and the reliable record
@@ -124,7 +124,7 @@ and stages the packet; `send_packets` flushes it with everything else.
   same as one sent after a full write pass. The reservation keys on work
   being due, not on its being writable: when a full window or a waiting
   budget holds the reliable work, the kept packet goes to the unreliable
-  phase, and nothing is lost. At `max_packets_per_update` 1 with reliable
+  phase, and nothing is lost. At `packets_per_update` 1 with reliable
   work due every update, every fitting unreliable message takes the queued
   path; the write pass's reliable-first rule decides it from there, as it
   always did.

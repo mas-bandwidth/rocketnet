@@ -119,26 +119,26 @@ static void check_message_validate_status()
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
-    // rto_min above rto_max
+    // resend_delay_min above resend_delay_max
     rocketnet_message_default_config( &config );
-    config.rto_min_ms = 3000;
+    config.resend_delay_min_ms = 3000;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
-    // rto_initial outside the min/max clamp
+    // resend_delay_initial outside the min/max clamp
     rocketnet_message_default_config( &config );
-    config.rto_min_ms = 200;
-    config.rto_initial_ms = 150;
+    config.resend_delay_min_ms = 200;
+    config.resend_delay_initial_ms = 150;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // reliable_timeout too short for the resend budget
     rocketnet_message_default_config( &config );
-    config.rto_min_ms = 200;
-    config.rto_max_ms = 60000;
-    config.rto_initial_ms = 5000;
+    config.resend_delay_min_ms = 200;
+    config.resend_delay_max_ms = 60000;
+    config.resend_delay_initial_ms = 5000;
     config.reliable_timeout_ms = 10000;
     status = -1;
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );

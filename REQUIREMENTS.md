@@ -1,8 +1,7 @@
 # RocketNet Requirements
 
-The hard set, locked 2026-08-26. The requirements below are what a first
-customer needs. Everything here is a requirement, not a
-preference.
+The hard set, locked 2026-08-26. The requirements below define RocketNet's
+intended capabilities. Everything here is a requirement, not a preference.
 
 * Replacement for RakNet that isn't IO bound. On Linux this means AF_XDP plus
   non-root alternatives; on Windows completion ports plus whatever else gets
@@ -43,7 +42,7 @@ preference.
 
 * Super fast, reliable, maintained, bug free.
 
-* Flows, on the server, for the game's chunks (squares on a top-down map; players
+* Flows, on the server, for world chunks (squares on a top-down map; players
   subscribe to chunks near their player): create flow, destroy flow, client
   subscribe/unsubscribe on the server, and packets sent to a flow by id reach
   every subscriber. That covers the broadcast case.
@@ -51,8 +50,7 @@ preference.
 * Three packet disciplines, all byte buffers to the caller: reliable-ordered
   packets, unreliable packets, and most recent state only packets.
 
-* Player hosted servers are not excluded by the security model. Knowing
-  the customer, player-hosted servers will be wanted.
+* Player-hosted servers are supported by the security model.
 
 * Connection is netcode style: connect with connect tokens — but the tokens
   must not exclude player hosted servers by requiring a secret shared
@@ -95,10 +93,7 @@ preference.
   addressed by address and port; nothing in the library may assume it owns
   the machine. Transports declare their sharing model: socket transports
   run many servers per box, one port each. AF_XDP is a single server per
-  box design — that is a property of that transport, the end. A customer
-  who wants that changed is asking for paid customization work. (The customer is
-  being advised onto GameLift, which has no XDP, so the many-per-box case
-  there rides the socket transports anyway.)
+  box design — that is a property of that transport, the end.
 
 ## The shape this adds up to
 

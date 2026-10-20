@@ -10,7 +10,9 @@
     `<case> peak_rss_mb=<n> bound_mb=<b>`, and a case over the bound fails the
     suite (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment
     variable; a sanitizer build prints the peaks and does not enforce the bound
-    unless the environment variable sets one). strict_names keeps every line inside the
+    unless the environment variable sets one). A case whose subject is a
+    full-capacity server declares its own bound with SUITE_CASE_RSS_BOUND,
+    derived from the SDK's memory plan for the configuration it uses. strict_names keeps every line inside the
     names-only shape tools/check_test_environment.py accepts, because that
     checker merges stderr into stdout and is not ours to change.
 */
@@ -53,8 +55,7 @@ extern char **environ;
 
 // The largest peak resident set one case process may reach, in MiB: the larger
 // of 256 and 1.5 times the largest case measured on a Linux Release build
-// (465 MiB, test_server_driver_pin_gso, 2026-10-19), so 698. A documented
-// per-case memory-plan budget can be supplied for a deliberately larger fixture.
+// (465 MiB, test_server_driver_pin_gso, 2026-10-19), so 698; never over 1024.
 // A case over it fails the suite. The environment variable of the same name
 // overrides it with a positive value.
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
@@ -83,7 +84,6 @@ struct suite_result
     bool failed;
     std::string detail;
     long peak_rss_mb; // -1: not measured
-    long rss_bound_mb = -1; // effective per-case bound, or not yet checked
 };
 
 // The bound in MiB, or 0 when it is not enforced (a sanitizer build with no
@@ -103,22 +103,78 @@ inline long suite_max_case_rss_mb()
 #endif
 }
 
-// Explicit environment overrides and sanitizer policy still take precedence.
-// A suite may supply a documented budget for a deliberately large fixture.
-inline long suite_case_rss_mb( const char * name, long ( *case_bound )( const char * ) )
+// A case whose subject is a full-capacity server allocates its designed
+// per-client memory up front, so its footprint is set by the SDK's memory
+// plan, not by the suite-wide bound. Such a case declares its bound beside
+// itself with SUITE_CASE_RSS_BOUND( name, function ): function returns the
+// bound in MiB, computed from the memory plan for the configuration the case
+// uses plus a margin the case states (suite_rss_bound_mb). A static
+// registrar adds it to a list before main runs, so the parent reads it by
+// case name. Every other case keeps ROCKETNET_TEST_MAX_CASE_RSS_MB.
+
+struct suite_case_rss_bound_t
 {
-    const long fallback = suite_max_case_rss_mb();
-    const char * override = std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" );
-    if ( fallback <= 0 || ( override && std::atol( override ) > 0 ) || !case_bound )
-        return fallback;
-    const long specific = case_bound( name );
-    return specific > 0 ? specific : fallback;
+    const char * name;
+    long ( *bound_mb )();
+    suite_case_rss_bound_t * next;
+};
+
+inline suite_case_rss_bound_t ** suite_case_rss_bound_head()
+{
+    static suite_case_rss_bound_t * head = NULL;
+    return &head;
+}
+
+struct suite_case_rss_bound_registrar_t
+{
+    suite_case_rss_bound_t entry;
+    suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() )
+    {
+        entry.name = name;
+        entry.bound_mb = bound_mb;
+        entry.next = *suite_case_rss_bound_head();
+        *suite_case_rss_bound_head() = &entry;
+    }
+};
+
+#define SUITE_CASE_RSS_BOUND_JOIN_( a, b ) a##b
+#define SUITE_CASE_RSS_BOUND_JOIN( a, b ) SUITE_CASE_RSS_BOUND_JOIN_( a, b )
+#define SUITE_CASE_RSS_BOUND( name, function ) \
+    static suite_case_rss_bound_registrar_t SUITE_CASE_RSS_BOUND_JOIN( suite_case_rss_bound_, __LINE__ )( #name, function )
+
+// A planned byte count as a bound in MiB: the bytes rounded up to whole MiB,
+// plus the case's stated margin for the process itself (executable, runtime
+// and stacks), which the plan does not count. 0 when the plan refused.
+inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
+{
+    if ( planned_bytes == 0 )
+        return 0;
+    const uint64_t mib = 1024 * 1024;
+    return (long) ( ( planned_bytes + mib - 1 ) / mib ) + margin_mb;
+}
+
+// The bound for one case: the environment override when set, else none in a
+// sanitizer build, else the bound the case declares, else the suite-wide one.
+// A declared bound of 0 (a refused plan) keeps the suite-wide bound.
+inline long suite_case_rss_mb( const std::string & name )
+{
+    const long bound = suite_max_case_rss_mb();
+    if ( bound <= 0 || std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+        return bound;
+    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    {
+        if ( name == entry->name )
+        {
+            const long declared = entry->bound_mb();
+            return declared > 0 ? declared : bound;
+        }
+    }
+    return bound;
 }
 
 // Fails a finished case whose peak is over the bound, naming both.
 inline void suite_check_rss( suite_result & result, long bound_mb )
 {
-    result.rss_bound_mb = bound_mb;
     if ( result.failed || bound_mb <= 0 || result.peak_rss_mb <= bound_mb )
         return;
     char text[96];
@@ -242,17 +298,16 @@ inline void suite_print_summary( const std::vector<suite_result> & results, bool
         printf( "peak rss, largest first:\n" );
     for ( size_t i = 0; i < by_rss.size(); i++ )
     {
-        const long bound_mb = by_rss[i].rss_bound_mb >= 0 ? by_rss[i].rss_bound_mb : suite_max_case_rss_mb();
         if ( by_rss[i].peak_rss_mb < 0 )
             continue;
         if ( strict_names )
         {
             if ( i >= 10 )
                 break;
-            printf( "test_timing_rss_%02d [SKIPPED %s peak_rss_mb=%ld bound_mb=%ld]\n", (int) i + 1, by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, bound_mb );
+            printf( "test_timing_rss_%02d [SKIPPED %s peak_rss_mb=%ld bound_mb=%ld]\n", (int) i + 1, by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, suite_case_rss_mb( by_rss[i].name ) );
         }
         else
-            printf( "%s peak_rss_mb=%ld bound_mb=%ld\n", by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, bound_mb );
+            printf( "%s peak_rss_mb=%ld bound_mb=%ld\n", by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, suite_case_rss_mb( by_rss[i].name ) );
     }
     int warnings = 0;
     int fails = 0;
@@ -410,8 +465,7 @@ inline int suite_main( int argc, char ** argv,
     const suite_exec * execs, int nexecs,
     const char ** skip_lines, int nskips,
     bool strict_names,
-    int ( *group_of )( const char * name ) = NULL,
-    long ( *case_bound )( const char * name ) = NULL )
+    int ( *group_of )( const char * name ) = NULL )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -673,7 +727,7 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( buf, sizeof( buf ), " signal %d", WIFSIGNALED( status ) ? WTERMSIG( status ) : 0 );
                 result.detail = running[i].name + buf;
             }
-            suite_check_rss( result, suite_case_rss_mb( result.name.c_str(), case_bound ) );
+            suite_check_rss( result, suite_case_rss_mb( result.name ) );
             if ( running[i].out_fd >= 0 )
             {
                 suite_drain( running[i].out_fd, running[i].output );
@@ -704,8 +758,7 @@ inline int suite_main( int argc, char ** argv,
     const suite_exec * execs, int nexecs,
     const char ** skip_lines, int nskips,
     bool strict_names,
-    int ( *group_of )( const char * name ) = NULL,
-    long ( *case_bound )( const char * name ) = NULL )
+    int ( *group_of )( const char * name ) = NULL )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -890,7 +943,7 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( buf, sizeof( buf ), " exit %lu", (unsigned long) code );
                 result.detail = running[i].name + buf;
             }
-            suite_check_rss( result, suite_case_rss_mb( result.name.c_str(), case_bound ) );
+            suite_check_rss( result, suite_case_rss_mb( result.name ) );
             if ( result.failed )
                 failures++;
             results.push_back( result );

@@ -156,34 +156,18 @@ pauses `msgx` and runs `portable` rather than failing after create. Pinning
 queued datagram read before the caller does
 (`rocketnet_platform_socket_create_with_pump`).
 
-**`ROCKETNET_PUMP=portable`** is the older override, kept with its meaning:
-the batch pump is off. Under it `auto` lands on `portable`, logging
-`msgx pump refused: ROCKETNET_PUMP=portable`, and a pinned `msgx` refuses
-(`rocketnet_platform_socket_create_with_pump`). The per-endpoint transport
-variables are its successors.
-
-```sh
-./bin/example_transports
-ROCKETNET_PUMP=portable ./bin/example_transports
-```
-
-The first prints `auto chose msgx`; the second logs the refusal above and
-`server transport ladder granted portable after refusals: msgx`
-(`examples/transports.c`).
+`./bin/example_transports` prints the transport chosen by the automatic ladder
+and verifies an explicit portable pin.
 
 Every other config field has an overlay named
 `ROCKETNET_<ENDPOINT>_<FIELD>` with `<ENDPOINT>` `CLIENT` or `SERVER`, built by
 `rocketnet_config_env_var_name_for` (`sdk/rocketnet_config.cpp`); the comment
-beside each field in `sdk/rocketnet.h` names its variable. The legacy names
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
-`ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied
-(`sdk/rocketnet_config.cpp`).
+beside each field in `sdk/rocketnet.h` names its variable.
 
-The test suites clear `ROCKETNET_PUMP` and every config overlay before they
+The test suites clear every config overlay before they
 run, and keep only `ROCKETNET_SERVER_TRANSPORT` and
 `ROCKETNET_CLIENT_TRANSPORT` (`sdk/rocketnet_tests.cpp`,
-`rocketnet_test_environment_t`). Under a suite, `ROCKETNET_PUMP` has no effect;
-use an example program, or your game, to see it.
+`rocketnet_test_environment_t`).
 
 CI pins every macOS pair on IPv4, IPv6 and dual stack: `portable/portable`,
 `portable/msgx`, `msgx/portable`, `msgx/msgx` and `loopback/loopback`, each

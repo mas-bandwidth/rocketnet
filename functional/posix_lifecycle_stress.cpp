@@ -240,15 +240,7 @@ static posix_resource_counts_t posix_settled_counts( const posix_resource_counts
     return current;
 }
 
-// The cells the card names: every server cell (portable, msgx, msgx forced
-// onto the portable pump) against every client cell (portable, msgx). The
-// forced cell requests msgx first and lets ROCKETNET_PUMP=portable refuse that
-// rung, so the ladder grants portable; the grant is checked, not assumed.
-// ROCKETNET_PUMP=portable turns the msgx pump off for every create in the
-// process, client and server alike (rocketnet_platform_socket_create_with_pump
-// in sdk/rocketnet_platform.cpp refuses a required msgx while it is set), so
-// posix_server_create sets it around the server create only and the client
-// cell keeps its own pump.
+// Each cell pins its server and client transport through the canonical config fields.
 struct posix_cell_t
 {
     const char * name;
@@ -256,7 +248,6 @@ struct posix_cell_t
     const char * server_granted;
     const char * client_driver;
     const char * client_granted;
-    const char * pump;
     bool xdp;
 };
 
@@ -264,17 +255,15 @@ static const posix_cell_t posix_cells[] =
 {
 #if defined(__linux__)
     // the Linux server cells, each against the portable client
-    { "server portable, client portable", "portable", "portable", "portable", "portable", NULL, false },
-    { "server gso, client portable",      "gso",      "gso",      "portable", "portable", NULL, false },
-    { "server io_uring, client portable", "io_uring", "io_uring", "portable", "portable", NULL, false },
-    { "server xdp, client portable",      "xdp",      "xdp",      "portable", "portable", NULL, true },
+    { "server portable, client portable", "portable", "portable", "portable", "portable", false },
+    { "server gso, client portable",      "gso",      "gso",      "portable", "portable", false },
+    { "server io_uring, client portable", "io_uring", "io_uring", "portable", "portable", false },
+    { "server xdp, client portable",      "xdp",      "xdp",      "portable", "portable", true },
 #else
-    { "server portable, client portable", "portable",      "portable", "portable", "portable", NULL },
+    { "server portable, client portable", "portable",      "portable", "portable", "portable" },
     { "server portable, client msgx",     "portable",      "portable", "msgx",     "msgx",     NULL },
-    { "server msgx, client portable",     "msgx",          "msgx",     "portable", "portable", NULL },
+    { "server msgx, client portable",     "msgx",          "msgx",     "portable", "portable" },
     { "server msgx, client msgx",         "msgx",          "msgx",     "msgx",     "msgx",     NULL },
-    { "server msgx forced portable, client portable", "msgx,portable", "portable", "portable", "portable", "portable" },
-    { "server msgx forced portable, client msgx",     "msgx,portable", "portable", "msgx",     "msgx",     "portable" },
 #endif
 };
 
@@ -517,22 +506,18 @@ static void posix_env_restore( const posix_env_guard_t * guard, const char * nam
         unsetenv( name );
 }
 
-static void posix_cell_begin( const posix_cell_t * cell, posix_env_guard_t * server_guard, posix_env_guard_t * client_guard,
-                             posix_env_guard_t * pump_guard )
+static void posix_cell_begin( const posix_cell_t * cell, posix_env_guard_t * server_guard, posix_env_guard_t * client_guard )
 {
     posix_env_clear( server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     posix_env_clear( client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
-    posix_env_clear( pump_guard, "ROCKETNET_PUMP" );
 #if defined(__linux__) && ROCKETNET_XDP
     if ( cell->xdp )
         posix_xdp_setup();
 #endif
 }
 
-static void posix_cell_end( const posix_env_guard_t * server_guard, const posix_env_guard_t * client_guard,
-                            const posix_env_guard_t * pump_guard )
+static void posix_cell_end( const posix_env_guard_t * server_guard, const posix_env_guard_t * client_guard )
 {
-    posix_env_restore( pump_guard, "ROCKETNET_PUMP" );
     posix_env_restore( client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
     posix_env_restore( server_guard, "ROCKETNET_SERVER_TRANSPORT" );
 }
@@ -550,11 +535,7 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     }
     snprintf( config.driver, sizeof( config.driver ), "%s", cell->server_driver );
     int status = ROCKETNET_STATUS_OK;
-    if ( cell->pump )
-        posix_check( setenv( "ROCKETNET_PUMP", cell->pump, 1 ) == 0 );
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, rocketnet_platform_time(), &status );
-    if ( cell->pump )
-        posix_check( unsetenv( "ROCKETNET_PUMP" ) == 0 );
     if ( !server )
         printf( "server create [%s] at %s failed: %s\n", cell->name, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
     posix_check( server != NULL );
@@ -737,11 +718,16 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
     return false;
 }
 
-static bool posix_wait_server_empty( rocketnet_server_transport_t * server, double seconds )
+static bool posix_wait_server_empty( rocketnet_server_transport_t * server, rocketnet_client_transport_t * client,
+                                     posix_client_clock_t * clock, double seconds )
 {
     const double deadline = rocketnet_platform_time() + seconds;
     while ( rocketnet_platform_time() < deadline )
     {
+        // Disconnect may defer its burst while the I/O thread owns the other
+        // ring. Keep updating the client to retry that hand-off, as specified
+        // by docs/CLIENT-IO.md, without advancing either clock artificially.
+        rocketnet_client_transport_update( client, posix_client_clock_now( clock ) );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
@@ -779,8 +765,8 @@ void rocketnet_test_posix_init_term_1000()
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
             continue;
-        posix_env_guard_t server_guard, client_guard, pump_guard;
-        posix_cell_begin( cell, &server_guard, &client_guard, &pump_guard );
+        posix_env_guard_t server_guard, client_guard;
+        posix_cell_begin( cell, &server_guard, &client_guard );
 
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
@@ -793,7 +779,7 @@ void rocketnet_test_posix_init_term_1000()
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
-        posix_cell_end( &server_guard, &client_guard, &pump_guard );
+        posix_cell_end( &server_guard, &client_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
     }
 }
@@ -808,8 +794,8 @@ void rocketnet_test_posix_server_create_destroy_1000()
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
             continue;
-        posix_env_guard_t server_guard, client_guard, pump_guard;
-        posix_cell_begin( cell, &server_guard, &client_guard, &pump_guard );
+        posix_env_guard_t server_guard, client_guard;
+        posix_cell_begin( cell, &server_guard, &client_guard );
 
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
@@ -848,7 +834,7 @@ void rocketnet_test_posix_server_create_destroy_1000()
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
-        posix_cell_end( &server_guard, &client_guard, &pump_guard );
+        posix_cell_end( &server_guard, &client_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
     }
 }
@@ -863,8 +849,8 @@ void rocketnet_test_posix_client_create_destroy_1000()
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
             continue;
-        posix_env_guard_t server_guard, client_guard, pump_guard;
-        posix_cell_begin( cell, &server_guard, &client_guard, &pump_guard );
+        posix_env_guard_t server_guard, client_guard;
+        posix_cell_begin( cell, &server_guard, &client_guard );
 
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
@@ -878,7 +864,7 @@ void rocketnet_test_posix_client_create_destroy_1000()
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
-        posix_cell_end( &server_guard, &client_guard, &pump_guard );
+        posix_cell_end( &server_guard, &client_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
     }
 }
@@ -964,8 +950,8 @@ void rocketnet_test_posix_server_restart_same_port_100()
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
             continue;
-        posix_env_guard_t server_guard, client_guard, pump_guard;
-        posix_cell_begin( cell, &server_guard, &client_guard, &pump_guard );
+        posix_env_guard_t server_guard, client_guard;
+        posix_cell_begin( cell, &server_guard, &client_guard );
 
         const posix_resource_counts_t before = posix_stable_counts();
 
@@ -1000,7 +986,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
-        posix_cell_end( &server_guard, &client_guard, &pump_guard );
+        posix_cell_end( &server_guard, &client_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
     }
 }
@@ -1015,8 +1001,8 @@ void rocketnet_test_posix_connect_disconnect_1000()
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
             continue;
-        posix_env_guard_t server_guard, client_guard, pump_guard;
-        posix_cell_begin( cell, &server_guard, &client_guard, &pump_guard );
+        posix_env_guard_t server_guard, client_guard;
+        posix_cell_begin( cell, &server_guard, &client_guard );
 
         const posix_resource_counts_t before = posix_stable_counts();
 
@@ -1037,7 +1023,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
                 printf( "%s [%s]: connect stalled at cycle %d\n", case_name, cell->name, i );
             posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_client_transport_disconnect( client );
-            posix_check( posix_wait_server_empty( server, 5.0 ) );
+            posix_check( posix_wait_server_empty( server, client, &clock, 5.0 ) );
             rocketnet_client_transport_destroy( client );
         }
         const double seconds = posix_now_seconds() - start;
@@ -1046,7 +1032,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
         rocketnet_server_transport_destroy( server );
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
-        posix_cell_end( &server_guard, &client_guard, &pump_guard );
+        posix_cell_end( &server_guard, &client_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
     }
 }
@@ -1077,8 +1063,8 @@ void rocketnet_test_posix_destroy_under_traffic_100()
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
             continue;
-        posix_env_guard_t server_guard, client_guard, pump_guard;
-        posix_cell_begin( cell, &server_guard, &client_guard, &pump_guard );
+        posix_env_guard_t server_guard, client_guard;
+        posix_cell_begin( cell, &server_guard, &client_guard );
 
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
@@ -1129,7 +1115,7 @@ void rocketnet_test_posix_destroy_under_traffic_100()
         const double seconds = posix_now_seconds() - start;
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
-        posix_cell_end( &server_guard, &client_guard, &pump_guard );
+        posix_cell_end( &server_guard, &client_guard );
         posix_case_result( case_name, cell, &before, &after, seconds );
     }
 }

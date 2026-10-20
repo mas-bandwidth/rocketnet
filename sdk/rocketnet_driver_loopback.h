@@ -7,24 +7,26 @@
 // declarations below are for the unit suite only; none of this file is a
 // public C export.
 //
-// The process-wide table is ROCKETNET_LOOPBACK_MAX_ENDPOINTS records of 72
-// bytes each (72,072 bytes) under one mutex. Each live endpoint allocates its
-// queue at create, ROCKETNET_LOOPBACK_QUEUE_PACKETS x
-// sizeof( rocketnet_loopback_packet_t ) = 1,531,904 bytes, so a full table of
-// live endpoints is about 1,533,435,904 bytes. The cost is paid only by a
-// process that instantiates the loopback transport, which is tests and
-// examples, never a game on auto. Lookups scan the table linearly under the
-// mutex.
+// The process-wide endpoint table is guarded by one mutex. Each live endpoint
+// allocates its full ROCKETNET_LOOPBACK_QUEUE_PACKETS queue at create and frees
+// it at destroy. Send and receive never allocate or grow storage. A datagram
+// arriving at the queue ceiling is dropped and counted; queued datagrams keep
+// their arrival order. Production local play must budget this capacity for
+// each live endpoint. Lookups scan the table linearly under the mutex.
 
 #include "rocketnet.h"
 #include "rocketnet_constants.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 enum
 {
     ROCKETNET_LOOPBACK_QUEUE_PACKETS = 2048
 };
+
+ROCKETNET_STATIC_ASSERT( ( ROCKETNET_LOOPBACK_QUEUE_PACKETS & ( ROCKETNET_LOOPBACK_QUEUE_PACKETS - 1 ) ) == 0,
+                         "loopback queue capacity is a power of two for free-running head and tail indices" );
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
                          "receive budget twice send: loopback queue holds at least twice the send batch" );
@@ -35,3 +37,7 @@ uint64_t rocketnet_loopback_endpoint_dropped( void * instance );
 
 // The number of live endpoints in the process-wide table.
 int rocketnet_loopback_endpoints_live();
+
+// The bytes a queue of this many datagrams allocates, before the allocator
+// header rocketnet_malloc adds.
+size_t rocketnet_loopback_queue_bytes( int packets );

@@ -37,7 +37,9 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
     config.transport = "portable";   // the client side is portable; the server may be any driver
     if ( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         return 0;
-    client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -109,7 +111,9 @@ static int create_and_prove( const char * label, const char * transport )
     rocketnet_server_dev_config( &config );
     config.max_clients = 2;
     config.transport = transport;
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_2 );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -147,7 +151,9 @@ int main( void )
     config.max_clients = 2;
     config.transport = "not-a-transport";
     {
-        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+        enum rocketnet_status_t create_status_3 = ROCKETNET_STATUS_OK;
+        struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_3 );
+        if ( !refused ) printf( "create refused: %s\n", rocketnet_status_name( create_status_3 ) );
         const int started = refused ? (int) rocketnet_server_start( refused ) : -1;
         if ( refused )
             rocketnet_server_destroy( refused );
