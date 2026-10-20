@@ -11,7 +11,7 @@
 # refuses by name when it is not, and the library's own acts stay per-socket
 # (build+load of its BPF program, attach, AF_XDP bind, memlock rlimit).
 # Everything that changes the MACHINE lives here, run deliberately by the
-# operator. The setup was hand-run once for the game; no game that
+# operator. The setup was hand-run once; no application that
 # uses rocketnet with XDP reconstructs it -- this script IS the setup.
 # Idempotent: run it twice and the second run changes nothing.
 #

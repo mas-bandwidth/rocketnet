@@ -54,7 +54,7 @@ static rocketnet_server_t * server_disconnected_server_create( const server_disc
     memcpy( config.server_public_key, identity->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, identity->server_secret, sizeof( config.server_secret_key ) );
     config.transport = "loopback";
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0 );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, NULL );
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     return server;
@@ -67,7 +67,7 @@ static rocketnet_client_t * server_disconnected_client_create()
     config.transport = "loopback";
     config.step_driven = true;
     config.time_callback = server_disconnected_clock;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0, NULL );
     check( client != NULL );
     return client;
 }

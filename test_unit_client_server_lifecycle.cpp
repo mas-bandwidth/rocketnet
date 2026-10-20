@@ -89,7 +89,7 @@ static void lifecycle_world_create( lifecycle_world_t * world, int max_clients, 
     lifecycle_identity( &world->identity );
     rocketnet_server_config_t server_config;
     lifecycle_server_config( &server_config, &world->identity, max_clients );
-    world->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    world->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     check( world->server != NULL );
     check( rocketnet_server_running( world->server ) == 0 );
     check( rocketnet_server_start( world->server ) == ROCKETNET_STATUS_OK );
@@ -99,7 +99,7 @@ static void lifecycle_world_create( lifecycle_world_t * world, int max_clients, 
     {
         rocketnet_client_config_t client_config;
         lifecycle_client_config( &client_config );
-        world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
         check( world->clients[i] != NULL );
         check( rocketnet_client_state( world->clients[i] ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     }
@@ -250,7 +250,7 @@ static void client_destroy_then_create_and_connect()
 
     rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
-    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     check( world.clients[0] != NULL );
     lifecycle_connect( &world, 0, 0x1102 );
     lifecycle_exchange( &world, 0, 0xC2, 2 );
@@ -849,7 +849,7 @@ static void server_client_index_round_trips_as_uint64()
 }
 REGISTER_UNIT_TEST( server_client_index_round_trips_as_uint64 );
 
-// max_packets_per_update takes 1 .. 1024 and defaults to 256, client and
+// packets_per_update takes 1 .. 1024 and defaults to 256, client and
 // server, through the struct and through the environment.
 #if defined(_WIN32)
 static int lifecycle_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
@@ -859,7 +859,7 @@ static int lifecycle_setenv( const char * name, const char * value ) { return se
 static int lifecycle_unsetenv( const char * name ) { return unsetenv( name ); }
 #endif
 
-static void config_max_packets_per_update_range()
+static void config_packets_per_update_range()
 {
     rocketnet_set_quiet( 1 );
     lifecycle_identity_t identity;
@@ -867,54 +867,100 @@ static void config_max_packets_per_update_range()
 
     rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
-    check( client_config.max_packets_per_update == 256 );
+    check( client_config.packets_per_update == 256 );
     rocketnet_server_config_t server_config;
     lifecycle_server_config( &server_config, &identity, 1 );
-    check( server_config.max_packets_per_update == 256 );
+    check( server_config.packets_per_update == 256 );
 
     // the struct
-    client_config.max_packets_per_update = 1024;
+    client_config.packets_per_update = 1024;
     check( rocketnet_client_validate_config( &client_config ) == ROCKETNET_STATUS_OK );
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     check( client != NULL );
     rocketnet_client_destroy( client );
-    client_config.max_packets_per_update = 1025;
+    client_config.packets_per_update = 1025;
     check( rocketnet_client_validate_config( &client_config ) != ROCKETNET_STATUS_OK );
-    check( rocketnet_client_create( NULL, &client_config, NULL, 0 ) == NULL );
-    client_config.max_packets_per_update = 0;
+    check( rocketnet_client_create( NULL, &client_config, NULL, 0, NULL ) == NULL );
+    client_config.packets_per_update = 0;
     check( rocketnet_client_validate_config( &client_config ) != ROCKETNET_STATUS_OK );
 
-    server_config.max_packets_per_update = 1024;
+    server_config.packets_per_update = 1024;
     check( rocketnet_server_validate_config( &server_config ) == ROCKETNET_STATUS_OK );
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     check( server != NULL );
     rocketnet_server_destroy( server );
-    server_config.max_packets_per_update = 1025;
+    server_config.packets_per_update = 1025;
     check( rocketnet_server_validate_config( &server_config ) != ROCKETNET_STATUS_OK );
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 ) == NULL );
-    server_config.max_packets_per_update = 0;
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL ) == NULL );
+    server_config.packets_per_update = 0;
     check( rocketnet_server_validate_config( &server_config ) != ROCKETNET_STATUS_OK );
 
     // the environment
     rocketnet_client_default_config( &client_config );
     lifecycle_server_config( &server_config, &identity, 1 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE", "1024" ) == 0 );
-    client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    // Old public spellings are not aliases. Values outside the valid range
+    // make accidental reads visible: both creates must ignore these names.
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_MAX_PACKETS_" "PER_UPDATE", "1025" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_" "INITIAL_MS", "60001" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_" "MIN_MS", "-1" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_" "MAX_MS", "60001" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_MAX_PACKETS_" "PER_UPDATE", "1025" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_" "INITIAL_MS", "60001" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_" "MIN_MS", "-1" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_" "MAX_MS", "60001" ) == 0 );
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
+    check( client != NULL );
+    if ( client ) rocketnet_client_destroy( client );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
+    check( server != NULL );
+    if ( server ) rocketnet_server_destroy( server );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MAX_PACKETS_" "PER_UPDATE" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RTO_" "INITIAL_MS" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RTO_" "MIN_MS" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RTO_" "MAX_MS" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MAX_PACKETS_" "PER_UPDATE" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RTO_" "INITIAL_MS" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RTO_" "MIN_MS" ) == 0 );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RTO_" "MAX_MS" ) == 0 );
+
+    // The new resend-delay names are read for both endpoint configs.
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
+    check( rocketnet_client_create( NULL, &client_config, NULL, 0, NULL ) == NULL );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
+    check( rocketnet_client_create( NULL, &client_config, NULL, 0, NULL ) == NULL );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS", "9" ) == 0 );
+    check( rocketnet_client_create( NULL, &client_config, NULL, 0, NULL ) == NULL );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS" ) == 0 );
+
+    check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL ) == NULL );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL ) == NULL );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RESEND_DELAY_MIN_MS" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_RESEND_DELAY_MAX_MS", "9" ) == 0 );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL ) == NULL );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RESEND_DELAY_MAX_MS" ) == 0 );
+
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE", "1024" ) == 0 );
+    client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     check( client != NULL );
     rocketnet_client_destroy( client );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE", "1025" ) == 0 );
-    check( rocketnet_client_create( NULL, &client_config, NULL, 0 ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE", "1025" ) == 0 );
+    check( rocketnet_client_create( NULL, &client_config, NULL, 0, NULL ) == NULL );
+    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE" ) == 0 );
 
-    check( lifecycle_setenv( "ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE", "1024" ) == 0 );
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE", "1024" ) == 0 );
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     check( server != NULL );
     rocketnet_server_destroy( server );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE", "1025" ) == 0 );
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE" ) == 0 );
+    check( lifecycle_setenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE", "1025" ) == 0 );
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL ) == NULL );
+    check( lifecycle_unsetenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE" ) == 0 );
 }
-REGISTER_UNIT_TEST( config_max_packets_per_update_range );
+REGISTER_UNIT_TEST( config_packets_per_update_range );
 
 // A connection the server ends leaves the client DISCONNECTED with its
 // connection object still held; connect straight after (no disconnect call)
@@ -958,12 +1004,12 @@ static void client_disconnect_reason_kept_until_next_connected()
     lifecycle_identity( &world.identity );
     rocketnet_server_config_t server_config;
     lifecycle_server_config( &server_config, &world.identity, 1 );     // 32 channels
-    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     check( world.server && rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
     client_config.num_channels = 4;
-    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     world.num_clients = 1;
     rocketnet_client_t * client = world.clients[0];
     check( client != NULL );
@@ -983,7 +1029,7 @@ static void client_disconnect_reason_kept_until_next_connected()
     // a matching server: during the handshake the old reason still reads
     rocketnet_server_destroy( world.server );
     server_config.num_channels = 4;
-    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     check( world.server && rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     lifecycle_token( rocketnet_server_port( world.server ), &world.identity, 0x1D02, 300, token );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
@@ -1022,7 +1068,7 @@ REGISTER_UNIT_TEST( client_connect_token_expired );
 
 // One update sends more packets than one builder call tracks
 // (ROCKETNET_PACKET_BUILDER_MAX_PACKETS, 16): the per-update limit is the
-// config's max_packets_per_update.
+// config's packets_per_update.
 static void client_one_update_sends_more_than_sixteen_packets()
 {
     lifecycle_world_t world;
@@ -1030,7 +1076,7 @@ static void client_one_update_sends_more_than_sixteen_packets()
     rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
     client_config.send_kbps = 0;                    // no budget: the packet limit alone bounds the update
-    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     world.num_clients = 1;
     check( world.clients[0] != NULL );
     lifecycle_connect( &world, 0, 0x1F01 );

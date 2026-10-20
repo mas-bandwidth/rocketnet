@@ -794,21 +794,22 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
   → frames; on exhaustion stop and retain `packet_start_index` (`:2287-2298`). Retire the
   generation when every packet is copied (`:2318-2321`). TX reserve is all-or-zero; zero
   keeps the batch (`:2334-2355`).
-- Main thread: `send_packets` publishes a non-empty filling generation and acquires the
-  next (`:1883-1897`). A fill thread may acquire on the slow path when both are queued
-  (`:1766-1775`). The handoff's reopen (`send_handoff.h:45`) returns the newest queued
-  generation and never the front; `tla/SendHandoff.tla` checks the reopen rules. The
-  socket's acquire helper (`:2348-2374`) calls acquire first and, when every generation
-  is queued, reopen, marking the reopened generation's finish_base at the count it
-  already published; a finish or abort below that base is refused (`:2310`, `:2340`).
+- Main thread: `send_packets` publishes a non-empty filling generation when a replacement
+  is free, else retains it as the producer generation, and acquires the next
+  (`rocketnet_server_socket_send_packets`, `rocketnet_send_handoff_t::publish`). The
+  handoff's defensive reopen returns the newest queued generation, never the front, if
+  a preexisting fully queued state reaches the socket acquire helper. It marks the
+  reopened generation's finish base at the count already published, so a finish or abort
+  below that base is refused. `tla/SendHandoff.tla` checks those recovery rules.
 
 **Rules.**
 - `INV FrameConservation`: every UMEM frame has exactly one owner at every step
   (comment `:2159-2170`; `pending_frames.h:6-7`).
 - `INV ReleaseConsumedOnly`: the RX release covers exactly the consumed descriptors.
-- `INV HandoffNoOverwrite`: when every generation is queued, acquire returns -1 and
-  reopen returns the newest queued generation, never the front; a queued generation is
-  never overwritten or duplicated (`send_handoff.h:22-49`, `tla/SendHandoff.tla`).
+- `INV HandoffNoOverwrite`: no publish or acquire overwrites a queued generation;
+  `rocketnet_send_handoff_t::publish` keeps the producer generation when no
+  replacement is free. `RNDriverSendStaging.Publish` models the retention but has no
+  buffer identities; `check_send_handoff` in `test_lifecycle.cpp` checks no-overwrite.
 - `INV ReopenedPrivate`: the generation reopen hands back is no longer queued and is
   never the one in flight (`send_handoff.h:45`, `tla/SendHandoff.tla`).
 - `INV FrontNeverReopened`: reopen takes the newest queued generation, never the front
@@ -1206,3 +1207,18 @@ in their sections.
   - F2, F3 and F4 are gaps against the standard.
   - F5 to F8 are questions for the maintainer.
   - F9 to F11 are observations.
+
+## XDP send generation ownership
+
+`RNDriverSendStaging` models `rocketnet_send_handoff_t::publish`,
+`rocketnet_server_socket_send_packets` and the transport retry in
+`rocketnet_server_transport_send_packets`. `Publish` retains the final
+producer generation while `WorkerRetire` frees the queued generation;
+`XdpStart` remains possible when packet-slot capacity exists. `NoRefusedSend`
+forbids generation-exhaustion refusal, `RetryFlushPublishes` checks a flush
+retries retained work without a new commit, and
+`XdpStagedEventuallyPublished` requires eventual publication under fair
+publication and retirement. `MCRNDriverSendStagingBrokenRefusesSend.cfg`
+restores two queued generations and violates `NoRefusedSend` at depth 6;
+The existing transport model separately retains packet-capacity drops.
+See `tla/README-RNDriverSendStaging.md` for the hand-checked trace.

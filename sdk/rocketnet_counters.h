@@ -672,11 +672,11 @@
     /* Layer 3 sent-packet map and resend FIFO (docs/CHANNELS.md 6.4, 15.1): */ \
     /* a sent-packet ring entry evicted to make room for a new packet (its */ \
     /* referenced numbers stay in the resend FIFO), and a reliable record */ \
-    /* resent on the RTO. appended: indices are the contract. */ \
+    /* resent on the resend delay. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED: Counts sent-packet map entries evicted while their message numbers remain queued for resend. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_SENT_MAP_EVICTED, REFUSAL, NONE ) \
-    /* PATH_LOSS: a reliable record resent on the RTO. */ \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_RESENT: Counts reliable records resent after their retransmission timeout. Unit: occurrences. Class: path_loss; family: none. */ \
+    /* PATH_LOSS: a reliable record resent on the resend delay. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_RESENT: Counts reliable records resent after their resend delay. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_RESENT, PATH_LOSS, NONE ) \
     \
     /* a connection's message memory (its region, docs/CHANNELS.md 4) was */ \
@@ -850,7 +850,7 @@
     /* its one copy into the frame at send_packets: the transport gave no */ \
     /* frame (a full send ring), unreliable messages already waited in the */ \
     /* connection's queue, the send budget could not pay it at start, or */ \
-    /* the update's max_packets_per_update was spent (in-place and queued */ \
+    /* the update's packets_per_update was spent (in-place and queued */ \
     /* packets count against it together), one packet of it being kept for */ \
     /* the write pass while reliable work is due. The queued path then */ \
     /* sends it, or drops it over budget and counts */ \
@@ -922,7 +922,15 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION: Counts reliable records refused because their receive descriptor slot is occupied by another number. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_SLOT_COLLISION, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING: Counts reliable ordered records refused because another record with the same channel and ordering index is already held. Unit: occurrences. Class: refusal; family: none. */ \
-    X( MESSAGE_DUPLICATE_ORDERING, REFUSAL, NONE )
+    X( MESSAGE_DUPLICATE_ORDERING, REFUSAL, NONE ) \
+    \
+    /* The kernel prefilter's DROPPED_NO_SOCKET (sdk/rocketnet_wire.h): a */ \
+    /* packet that passed every prefilter check but whose receive queue */ \
+    /* has no AF_XDP socket in the XSKMAP, so bpf_redirect_map refused it */ \
+    /* and the XDP program dropped it. REFUSAL. appended: indices are the */ \
+    /* contract. */ \
+    /** @brief ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET: Counts packets that passed the kernel prefilter but were dropped because their receive queue had no AF_XDP socket in the redirect map. Unit: occurrences. Class: refusal; family: none. */ \
+    X( XDP_KERNEL_DROPPED_NO_SOCKET, REFUSAL, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

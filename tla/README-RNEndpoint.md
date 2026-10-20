@@ -58,9 +58,9 @@ An end in error does nothing more: the object disconnects it (section 11).
   set standing for `R` and the bitset, duplicates dropped, ordered messages
   held on their channel. The 24-bit wire number, `U'` inside blocks and the
   descriptor slots are not restated.
-- **The RTO** is abstract, as in `RNWindow`: an unacked record inside the
-  window may be resent at any step. `RtoAboveRtt = TRUE` (the liveness cases)
-  narrows this to the real ordering of the RTO above the RTT: a record is due
+- **The resend delay** is abstract, as in `RNWindow`: an unacked record inside the
+  window may be resent at any step. `ResendDelayAboveRtt = TRUE` (the liveness cases)
+  narrows this to the real ordering of the resend delay above the RTT: a record is due
   again only once no copy of it is in flight and no ack of it is pending or in
   flight back. The timing that makes this so is `RNResendTiming`'s.
 - **The reliable timeout.** Under `TimeoutAnyTime = TRUE` (the safety cases)
@@ -132,8 +132,8 @@ witness run Link capacity 1; the two CONFIG witnesses run capacity 2.
 
 | Case | Spec and terrain | Expected |
 |---|---|---|
-| `MCRNEndpoint.cfg` | `Spec`, N = 3, capacity 1, `"arbitrary"` in-order loss both ways, failed sends, ack silence, timeouts at any time, abstract RTO; constraints `MCOneTimeout` and `MCOneWay` | pass |
-| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, capacity 1, `"first"` loss both ways, `RtoAboveRtt` | pass |
+| `MCRNEndpoint.cfg` | `Spec`, N = 3, capacity 1, `"arbitrary"` in-order loss both ways, failed sends, ack silence, timeouts at any time, abstract resend delay; constraints `MCOneTimeout` and `MCOneWay` | pass |
+| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, capacity 1, `"first"` loss both ways, `ResendDelayAboveRtt` | pass |
 | `MCRNEndpointBrokenConfigUnreliable.cfg` | as Live with `ConfigReliable = FALSE`, capacity 2 | temporal `ConfigVerifiedDespiteFirstLoss` |
 | `MCRNEndpointBrokenConfigNotCompared.cfg` | as the safety case with `ConfigCompared = FALSE`, capacity 2, no constraints | invariant `MismatchErrorsBothEnds` |
 | `MCRNEndpointTwoWay.cfg` | `Spec`, N = 2, capacity 1, both ends sending, the safety terrain; constraint `MCOneTimeout` only (bench) | pass |

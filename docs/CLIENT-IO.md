@@ -146,6 +146,25 @@ hand-off attempt every frame (it retries any deferred slots, and hands off
 its own packet when it committed one), and `disconnect` ends with one. Both
 run on the main thread with fills joined.
 
+**A ring's destination.** Each ring carries its destination (`io->to`,
+`sdk/rocketnet_client_io.h:100`). The first hand-off attempt that finds
+committed slots in the Filling ring binds that ring's destination to the
+address it is passed and marks it bound (`io->to_held`,
+`sdk/rocketnet_client_io.h:309-313`); a deferred attempt leaves it bound, and
+a later attempt for the same ring does not overwrite it. A ring that is handed
+off is unbound for its next fill (`sdk/rocketnet_client_io.h:315-316`). So
+deferred slots leave for the address they were committed with. `disconnect`
+saves the server address (`sdk/rocketnet_client_transport.cpp:2002`), resets
+the protocol, which zeroes it (`sdk/rocketnet_client_transport.cpp:2008`),
+and hands its burst off with the saved address
+(`sdk/rocketnet_client_transport.cpp:2024`); when that attempt is deferred,
+the next one, from `update` or from `destroy`
+(`sdk/rocketnet_client_transport.cpp:1086`), passes the zeroed
+`protocol.server_address`, and the burst still goes to the server
+(`SentToCommitted`; the reversed witness
+`MCRNClientIoBrokenDestinationOverwrite.cfg` restores the overwrite on every
+attempt).
+
 **The wake.** The I/O thread waits on "socket readable or woken", with no
 timeout while running (a bounded timeout only as a guard, never a cadence).
 While its receive buffer is full (`ROCKETNET_NUM_CLIENT_PACKETS`
@@ -607,11 +626,11 @@ with `timeEndPeriod( 1 )` at `rocketnet_term` (`rocketnet_platform_init` and
 `rocketnet_platform_term` in `sdk/rocketnet_platform.cpp`). A step-driven client
 (`step_driven` or `step_in_update`) creates no thread and makes no call.
 
-The game's own threads are the game's: the library sets nothing on the main
-thread or on any thread it does not create. The game that carried flow also raises
-its main thread (`SCHED_RR` at `sched_get_priority_max` on Linux,
-`THREAD_PRIORITY_TIME_CRITICAL` on Windows) and pins its server task workers at
-`SCHED_FIFO`; those settings belong to the game, and the library does not copy
+The caller's threads remain under its control: the library sets nothing on the
+main thread or on any thread it does not create. An application may raise its
+main thread (`SCHED_RR` at `sched_get_priority_max` on Linux,
+`THREAD_PRIORITY_TIME_CRITICAL` on Windows) and can pin its server task workers at
+`SCHED_FIFO`; those settings belong to the application, and the library does not copy
 them.
 
 `rocketnet_set_thread_priority( false )` turns every one of these calls off,
@@ -687,31 +706,32 @@ is `waitReadable`. `MCRNClientIo.cfg` checks `TypeOK`, `NoReuseBeforeSent`,
 never blocks on the I/O thread), `FullWaitsOnWake` (a blocked I/O thread with
 a full buffer waits on the wake alone) and `NoReceiveStall` (while the
 transport runs and destroy has not begun, datagrams in the I/O thread's
-buffer always have a next step toward update), and under weak fairness of the I/O thread, the join, a game
-thread's finish of its packet, the reopen, the hand-off and update's two
-receive steps `HandedOffEventuallySent`, `CommittedEventuallyHandedOff` (a
-committed slot, deferred or not, is eventually handed to the I/O thread, or
-dropped by destroy at the deadline and counted), `StopEventuallyJoins`,
+buffer always have a next step toward update), `SentToCommitted` (every slot
+sent by a ring goes to the destination it was committed with). Under weak
+fairness of the I/O thread, the join, a game thread's finish of its packet,
+the reopen, the hand-off and update's two receive steps, the model checks
+`HandedOffEventuallySent`, `CommittedEventuallyHandedOff` (a committed slot,
+deferred or not, is eventually handed to the I/O thread, or dropped by
+destroy at the deadline and counted), `StopEventuallyJoins`,
 `FilledEventuallyExposed` (a buffer of received datagrams is eventually
 exposed), `ArrivedEventuallyDelivered` (every datagram that arrives reaches
 update) and `DestroyCompletes` (once destroy has begun it reaches Stop, Join
 and Free). Destroy's last hand-off waits in `DestroyWait`; the transport clock
 is `now`, capped at `Deadline`, and `Timeout` at the deadline drops the
 committed slots of the Filling ring into `dropped` and continues to Stop,
-Join and Free (`DroppedAtDeadline`). `IoStall` is the stalled ring the
-deadline exists for: the other ring's in-flight send never completes, so the
-ring stays `Sending` (the state the wait loads) while the thread itself stays
-live and can still reach `IoExit`; `HandedOffEventuallySent` becomes "Sent or
-stalled". The deadline bounds the wait, not the join: a driver call blocked
-inside `send` never reaches the thread's stop check, so the threaded join
-stays unbounded in that case. The five reversed witnesses,
+Join and Free (`DroppedAtDeadline`). `IoStall` is the stalled ring the deadline
+exists for: the other ring's in-flight send never completes, so the ring stays
+`Sending` (the state the wait loads) while the thread itself stays live and can
+still reach `IoExit`; `HandedOffEventuallySent` becomes "Sent or stalled". The
+deadline bounds the wait, not the join: a driver call blocked inside `send`
+never reaches the thread's stop check, so the threaded join stays unbounded in
+that case. The reversed witnesses include
 `MCRNClientIoBrokenReuseBeforeSent.cfg`,
 `MCRNClientIoBrokenSwapWhileReading.cfg`,
 `MCRNClientIoBrokenReceiveStall.cfg`,
-`MCRNClientIoBrokenHandOffWaits.cfg` and
-`MCRNClientIoBrokenFullWaitReadable.cfg`, each violate exactly their declared
-invariant; `MCRNClientIoBrokenDestroyWaitsForever.cfg` keeps every progress
-assumption, including `DestroyWaitDone`, and only removes the deadline action
-from the next-state relation (`NextNoDeadline`/`SpecNoDeadline`). With the
-other ring stalled the wait has no exit and `DestroyCompletes` falls, the
-reversed witness of the deadline.
+`MCRNClientIoBrokenHandOffWaits.cfg`,
+`MCRNClientIoBrokenFullWaitReadable.cfg`,
+`MCRNClientIoBrokenDestroyWaitsForever.cfg` (which removes only the deadline
+action from `NextNoDeadline`/`SpecNoDeadline` while retaining the progress
+assumptions), and `MCRNClientIoBrokenDestinationOverwrite.cfg`; each violates
+its declared invariant or liveness property.

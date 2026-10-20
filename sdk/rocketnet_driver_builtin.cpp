@@ -228,7 +228,7 @@ extern const rocketnet_driver_backend_t rocketnet_io_uring_driver = { &io_uring_
 
 static void * xdp_create( void * context, const rocketnet_server_driver_config_t * config, rocketnet_address_t * )
 {
-    const int queues = config->transport->num_xdp_queues > 0 ? config->transport->num_xdp_queues : 7;
+    const int queues = config->transport->num_xdp_queues > 0 ? config->transport->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;
     const int cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1;
     // The backend retains its existing verify-and-bind preflight and commit
     // barrier. Registration never bypasses either or provisions the machine.
@@ -369,19 +369,19 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     else if (strcmp(driver, "gso") == 0)
     {
-        const int queues = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_GSO_DEFAULT_QUEUES;
+        const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_GSO_DEFAULT_QUEUES;
         plan.driver_bytes = rocketnet_server_gso_allocation_bytes(queues);
         plan.worker_threads = queues; plan.sockets = queues;
     }
     else if (strcmp(driver, "io_uring") == 0)
     {
-        const int queues = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
+        const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
         plan.driver_bytes = rocketnet_server_uring_allocation_bytes(queues);
         plan.worker_threads = 0; plan.sockets = queues;
     }
     else if (strcmp(driver, "xdp") == 0)
     {
-        const int queues = config->num_xdp_queues ? config->num_xdp_queues : 7;
+        const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;
         plan.driver_bytes = rocketnet_server_xdp_allocation_bytes(queues);
         plan.umem_bytes = rocketnet_xdp_umem_bytes(queues);
         plan.worker_threads = queues; plan.sockets = queues;
@@ -390,7 +390,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if (strcmp(driver, "iocp") == 0)
     {
-        const int workers = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
+        const int workers = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
         plan.driver_bytes = rocketnet_server_iocp_allocation_bytes(workers);
         plan.worker_threads = workers; plan.sockets = 1;
     }

@@ -10,14 +10,18 @@
 (* MCRNClientIoBrokenReceiveStall.cfg,                                    *)
 (* MCRNClientIoBrokenHandOffWaits.cfg and                                 *)
 (* MCRNClientIoBrokenFullWaitReadable.cfg each restore one defect and     *)
-(* must fail.  MCRNClientIoBrokenDestroyWaitsForever.cfg uses the same    *)
-(* instance and restores the wait without a guaranteed deadline; a        *)
-(* stalled send leaves it waiting forever and it must fail                *)
-(* DestroyCompletes.                                                      *)
+(* must fail.  MCRNClientIoBrokenDestroyWaitsForever.cfg removes the      *)
+(* guaranteed deadline and must fail DestroyCompletes.                    *)
+(* MCRNClientIoBrokenDestinationOverwrite.cfg restores destination        *)
+(* overwrite and must fail SentToCommitted.                                *)
 (* MCRNClientIoStepDriven.cfg is the step-driven mode with every rule on, *)
 (* and MCRNClientIoBrokenStepStartsThread.cfg its witness.                *)
 (* README-RNClientIo.md gives the traces TLC printed and the            *)
 (* check against the design by hand.                                      *)
 (***************************************************************************)
 EXTENDS RNClientIo
+
+\* the unconditional io->to[io->rings.fill] = *to restored, for
+\* MCRNClientIoBrokenDestinationOverwrite.cfg (DestinationOverwrite <- DestinationOverwriteOn)
+DestinationOverwriteOn == TRUE
 =============================================================================

@@ -36,6 +36,7 @@ static const int prefilter_kernel_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_REPLAYED,
     ROCKETNET_COUNTER_XDP_KERNEL_PASSED_FRAGMENT,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT,
+    ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET,
 };
 
 static void prefilter_counters_map_each_kernel_counter()
@@ -68,7 +69,7 @@ static void prefilter_counters_are_assigned_not_added()
 
     const uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     {
-        5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+        5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
     };
     rocketnet_counters_apply_prefilter( &counters, prefilter );
     rocketnet_counters_apply_prefilter( &counters, prefilter );
@@ -77,7 +78,7 @@ static void prefilter_counters_are_assigned_not_added()
 
     const uint64_t smaller[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     {
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     };
     rocketnet_counters_apply_prefilter( &counters, smaller );
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
