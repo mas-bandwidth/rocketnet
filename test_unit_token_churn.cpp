@@ -251,6 +251,9 @@ REGISTER_UNIT_TEST( server_admits_sequential_fresh_tokens_past_twice_max_clients
 // -- the replay passes the history and the open, and the client-id check
 // refuses it: never a second seat.
 
+// The four clients are static: an unoptimised MSVC build stacks them all at
+// once, past the default 1 MB stack. tc_client_init resets each in full.
+
 static void server_refuses_a_token_connected_now()
 {
     static struct tc_server_t t;
@@ -259,7 +262,7 @@ static void server_refuses_a_token_connected_now()
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     tc_mint_token( token_data, 0x4000ULL );
 
-    struct tc_client_t a;
+    static struct tc_client_t a;
     tc_client_init( &a, "198.51.100.20:56789" );
     check( rocketnet_client_protocol_connect( &a.client, token_data, t.time, TC_NOW ) );
     check( tc_drive( &t, &a, TC_NOW ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -267,7 +270,7 @@ static void server_refuses_a_token_connected_now()
     // the same token from a second address while the history binds it: no
     // verify, no open, no seat
     {
-        struct tc_client_t b;
+        static struct tc_client_t b;
         tc_client_init( &b, "198.51.100.22:56789" );
         check( rocketnet_client_protocol_connect( &b.client, token_data, t.time, TC_NOW ) );
         const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally;
@@ -280,7 +283,7 @@ static void server_refuses_a_token_connected_now()
     }
 
     // a second client's binding flushes the history's one entry
-    struct tc_client_t c;
+    static struct tc_client_t c;
     tc_client_init( &c, "198.51.100.21:56789" );
     uint8_t other_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     tc_mint_token( other_token, 0x4001ULL );
@@ -290,7 +293,7 @@ static void server_refuses_a_token_connected_now()
     // the same token from a third address now passes the history and the
     // open, and the client id it carries is connected: refused, never seated
     {
-        struct tc_client_t d;
+        static struct tc_client_t d;
         tc_client_init( &d, "198.51.100.23:56789" );
         check( rocketnet_client_protocol_connect( &d.client, token_data, t.time, TC_NOW ) );
         const uint64_t used_before = t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED];
@@ -302,7 +305,6 @@ static void server_refuses_a_token_connected_now()
     }
 
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] == 0 );      // retired with the set
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED] == 0 );     // retired with the set
 
     tc_client_destroy( &c );
     tc_client_destroy( &a );

@@ -2,7 +2,7 @@
 
 The public transport API in `rocketnet.h` is independent of the backend.
 Native drivers implement `rocketnet_driver.h`; they do not add binding or
-wire-format rules.
+wire-format rules. For Linux driver selection, pinning, host requirements (`xdp`, `gso`, `io_uring`, `portable`) and host verification, see [docs/LINUX.md](docs/LINUX.md).
 
 `rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
 bound-port discovery property, backend record, platform mask, and server/client
@@ -108,6 +108,27 @@ tentative bind address cannot constrain the next candidate. A discovering
 factory reports its actual port on success. Existing XDP preflight and the
 commit barrier remain in its adapter/backend.
 
+A factory reports why it failed through `config->status`
+(`rocketnet_server_driver_config_t.status` and
+`rocketnet_client_driver_config_t.status`, sdk/rocketnet_driver.h:52 and :115),
+one form for every driver. `rocketnet_server_driver_open` and
+`rocketnet_client_driver_open` write `ROCKETNET_STATUS_OUT_OF_MEMORY` there
+when the create returned NULL after an allocation on the calling thread was
+refused (sdk/rocketnet_driver.cpp:126, :148 and :182, reading the per-thread
+count kept at sdk/rocketnet.cpp:369); any other NULL leaves it OK and is a
+refusal. The count rises on every `rocketnet_malloc` refusal
+(sdk/rocketnet.cpp:461 and :475) and on the two page buffers a driver
+allocates outside it, the xdp umem (sdk/rocketnet_server_socket_linux.cpp:1720)
+and the rio region (sdk/rocketnet_server_rio_windows.cpp:508), through
+`rocketnet_allocation_refused` (sdk/rocketnet.cpp:378). So every built-in
+driver (portable, msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it
+through the open. The transport ladder falls to the next
+candidate on a refusal, and on OUT_OF_MEMORY it stops:
+`rocketnet_server_transport_create_ex` (sdk/rocketnet_server_transport.cpp:1299)
+and `rocketnet_client_transport_create_ex`
+(sdk/rocketnet_client_transport.cpp:882) destroy what they built and return
+NULL with `ROCKETNET_STATUS_OUT_OF_MEMORY`.
+
 Server stop is an idempotent stop/poll callback: false means work remains; true
 allows the transport to report stopped. It must not wait for outstanding I/O
 inside update. Destroy handles partial setup and a created instance that never
@@ -120,6 +141,30 @@ receive thread and buffers remain shared infrastructure. Receive can run
 concurrently with sends; both calls borrow their buffers synchronously. Destroy
 runs after that thread has joined and must release any additional backend-owned
 work. Client fast-path I/O is not required by this interface.
+
+## Server network threads and their priority
+
+The library sets the server thread priority on each network thread a server
+driver creates, from the creating thread right after the create
+(`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp:1434`, `:3142`
+and `:3573`):
+`SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
+`THREAD_PRIORITY_TIME_CRITICAL` on Windows. These are the flow library's
+settings (`flow_platform.cpp`), unchanged.
+
+| Driver | Threads it creates | What the library sets |
+|---|---|---|
+| GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
+| XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
+| IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
+| io_uring, RIO, portable socket | none | nothing |
+
+`rocketnet_set_thread_priority( false )` turns the priority calls off for
+threads created after it; the XDP thread's pin to its queue's cpu always runs.
+A refused call is counted by `rocketnet_get_thread_priority_refusals` and
+logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the driver starts
+either way. The server task workers of a game and its main thread are the
+game's to set; the library sets nothing on them.
 
 ## Adding a backend without editing the transport
 
@@ -199,28 +244,67 @@ The send staging, the two receive banks and destroy are modelled in
 
 ## The XDP receive filter
 
-The AF_XDP transport (`xdp`) serves IPv4. IPv6 runs on the other server
-transports: `gso`, `io_uring` and `portable`.
+`server_xdp/server_xdp.c` accepts both address families. IPv4 is parsed as
+before (a 20-byte header, UDP). IPv6 is parsed as the fixed 40-byte header with
+UDP directly behind it. Both families then run one shared function: the
+destination port and address against the config map, the wire size bounds, the
+filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the redirect
+into the XSKMAP for the receive queue. The counters are the same for both
+families. The IPv6 destination is `public_address_ipv6` in
+`rocketnet_server_xdp_config_t`; all zero accepts any destination, as a zero
+`public_address` does for IPv4.
 
-`server_xdp/server_xdp.c` parses IPv4 (a 20-byte header, UDP) and checks the
-destination port and address against the config map, the wire size bounds,
-the filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the
-redirect into the XSKMAP for the receive queue. Every frame that is not IPv4
-passes to the kernel stack: an IPv6 frame is never redirected and never
-dropped, so the kernel sees IPv6 untouched. An IPv6 frame whose next header is
-an extension header (hop-by-hop 0, routing 43, fragment 44, destination
-options 60, AH 51 or ESP 50) is counted as it passes, in
-`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`; every other IPv6 frame
-passes uncounted. `public_address_ipv6` in `rocketnet_server_xdp_config_t` is
-not read.
+RocketNet assumes a 1500-byte MTU path and never sends a datagram the network
+must fragment, so an IP fragment addressed to the server is hostile or
+misconfigured. The first fragment of a datagram to the server's port (the one
+that carries the UDP header: IPv4 with more-fragments set and offset 0, ihl 5,
+protocol UDP; IPv6 whose next header is the fragment header (44) at offset 0
+with more-fragments set and UDP behind it), whose UDP header is in the frame
+and names the configured port and address, is dropped and increments
+`ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT` (surfaced as
+`XDP_KERNEL_DROPPED_FIRST_FRAGMENT`). Every other fragment passes to the kernel
+stack for reassembly and increments
+`ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT` (surfaced as
+`XDP_KERNEL_PASSED_FRAGMENT`): non-first fragments to any port, and first
+fragments to another port or address, to an unconfigured program, or whose
+UDP header is not inside the frame. Why this is enough: without its first
+fragment the kernel can never reassemble the datagram, so the rest wait in
+the reassembly queue and are dropped cheaply at its reassembly timeout, and
+other services' fragmented traffic is untouched. Both checks run before the
+size, epoch, filter and replay checks for both families, so a fragment is never
+counted as any other drop. An IPv6 frame
+whose next header is any other extension header (hop-by-hop 0, routing 43,
+destination options 60, AH 51 or ESP 50) passes to the kernel stack through
+one named branch and increments
+`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`. The program never walks
+an extension chain and never drops one. Every other non-UDP next header,
+ICMPv6 (neighbor discovery) above all, passes uncounted, as non-UDP IPv4
+does.
 
-The AF_XDP receive loop reads a frame at the fixed IPv4 offsets only after
-`rocketnet_xdp_frame_receive_ipv4` (`sdk/rocketnet_xdp_frame.h`) finds the
-IPv4 ethertype. A frame with any other ethertype is dropped and counted, never
-parsed. A server create with an IPv6 public address takes `xdp` out of its
-transport list: `auto` falls to the next transport, and a list that names only
-`xdp` is refused with `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST` and one error
-line that names the transports that serve IPv6.
+The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves the
+family of its public address, IPv4 or IPv6, and the ladder offers `xdp` for
+either. The receive loop dispatches each frame on its ethertype through
+`rocketnet_xdp_frame_receive` (`sdk/rocketnet_xdp_frame.h`): IPv4 at its
+offsets, IPv6 at the 40-byte fixed header, and the from-address carries the
+family it read. A frame it does not take is dropped and counted by reason:
+another ethertype (`not_ip`), an IPv6 extension header (`ipv6_extension`,
+never parsed at the UDP offsets), the family the server does not serve
+(`other_family`), or a frame the parse refuses or too short for any server
+packet (`malformed`). The flush builds each reply with the server's own
+address as the source, and an IPv6 reply carries the UDP checksum computed in
+software. Create and the pre-flight find the interface carrying the address
+over `AF_INET` or `AF_INET6` and refuse an IPv6 link-local address (fe80::/10)
+by name. The IPv6 gateway MAC comes from `ip -6 route show default dev <if>`
+and `ip -6 neigh show dev <if>`, the twin of the IPv4 discovery;
+`ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides either.
+
+Dual stack: one server owns one public address, so one family. The config map
+holds the server's address in its family's slot and that family's loopback
+address in the other slot (zero would accept any destination), so the program
+redirects only the server's family and passes the other to the kernel. One
+interface takes one XDP program, so a machine that serves both families on
+one interface runs `xdp` for one family and another transport (`gso`,
+`io_uring` or `portable`) for the other.
 
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
@@ -243,7 +327,12 @@ CAP_NET_ADMIN; `-v` prints the verifier's last log line. One case,
 runs the example server and client across it, so it skips outside a
 virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
 verifies, and with room for the server's UMEM and queues (the default guest
-memory runs out and the server is killed):
+memory runs out and the server is killed). The case starts the server with
+`--max-clients 4`, so its message object is sized for the one client it
+connects rather than the example's default 1000 (test_xdp_filter.cpp:1280,
+server.c:872), and it gives the server and client a pipe it holds open as
+stdin, because the server stops when its stdin reaches end of file
+(server.c:150-165) and a guest run without a terminal starts there:
 
 ```sh
 vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
@@ -285,10 +374,10 @@ counter). Each row checks its verdict, its counter, and that every other
 counter stayed at zero. Each frame is copied into a heap allocation of
 exactly its length, so the sanitizer legs catch a read past `data_end`.
 
-The host tier covers the address and port match, the size bounds, the epoch
-and filter value, every type at every size against the STANDARD.md size
-table, the redirect decision per receive queue, and, for every IPv6 frame,
-the pass to the kernel stack with the extension and fragment counts. It also covers the `config == NULL`
+The host tier covers both address families, the address and port match, the
+size bounds, the epoch and filter value, every type at every size against the
+STANDARD.md size table, the IPv6 extension and fragment passes, and the
+redirect decision per receive queue. It also covers the `config == NULL`
 branch, which the kernel's one-entry array never reaches. Only the kernel
 tier (`test_xdp_filter`) shows what the verifier accepts, the real helpers'
 behaviour, and the real per-CPU and XSKMAP maps. The host target is built for

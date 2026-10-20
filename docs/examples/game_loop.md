@@ -12,8 +12,8 @@ budget, the server's tick, and message latency in frames.
    what arrived; (2) `*_receive` and `*_release` every message; (3) simulate;
    (4) queue this frame's messages with `*_start` and `*_finish`; (5)
    `*_send_packets` last, so this frame's messages leave this frame.
-3. Each client sends its position every frame (`ROCKETNET_UNRELIABLE_SEQUENCED`,
-   channel 0) and an event twice a second (`ROCKETNET_RELIABLE_ORDERED`, channel
+3. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
+   channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
    1); the server sends each client a snapshot every frame. Each message
    carries the frame it was queued in, and the receiver counts frames since.
 
@@ -23,7 +23,7 @@ holds `ROCKETNET_LOOPBACK_MAX_ENDPOINTS` endpoints, one server and up to
 all are connected. The header at this base still names the message calls
 start, finish, receive, release and send_packets; the lifecycle rename makes
 them `*_start_message`, `*_finish_message`, `*_receive_message`,
-`*_release_message` and `*_send_messages`.
+`*_release_message` and `*_send_packets`.
 
 ## Run it
 

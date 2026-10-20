@@ -9,7 +9,7 @@ that no workflow runs is unsupported, even if the code happens to build there.
 The table below is the whole claim. Each row names the workflow file and the
 runner label that prove it. `tools/check_platform_policy.py` reads the table
 and refuses a supported or nightly row whose label is not in the workflow it
-names.
+names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kernel/provisioning requirements, and host verification guide.
 
 ## The table
 
@@ -17,22 +17,34 @@ names.
 | --- | --- | --- | --- | --- | --- | --- |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | ubuntu-24.04 |
-| macOS 15 | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macos-15 |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | supported | .github/workflows/ci.yml | windows-2025 |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
-| Ubuntu 24.04 (Linux, hosted) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | ubuntu-24.04 |
+| Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
-| macOS latest | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macos-latest |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
-| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
+| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | self-hosted, Windows, X64, rocketnet-windows |
+| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
+| Windows 11 (self-hosted fleet) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Linux | arm64 | none | none | unsupported | - | - |
-| Windows | arm64 | none | none | unsupported | - | - |
-| macOS | x86_64 | none | none | unsupported | - | - |
+| Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - |
+| [macOS](MACOS.md) | x86_64 | none | none | unsupported | - | - |
 
-The drivers column names the backends the row actually exercises or proves in
-CI. The registry (`rocketnet_drivers.inc`) also lists portable on every
-platform, gso and xdp on Linux, msgx on macOS and iocp on Windows. A driver
-that the row does not name is not part of that row's claim.
+clang-cl x64 is built and tested nightly: the `windows-toolchains` job in
+`nightly.yml` builds the static and shared libraries, `test.exe` and
+`functional.exe` with the LLVM toolset, runs both suites, and runs the DLL
+consumer, package and export checks against that build. Windows arm64 is
+build-checked and untested: the same job cross-builds the static and shared
+libraries with MSVC for ARM64, checks that `rocketnet.dll` is an ARM64 image
+and checks its exports. Nothing runs on arm64, so its row stays unsupported.
+
+The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
+and verifying on a Mac. The drivers column names the backends the row actually
+exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
+portable on every platform, gso and xdp on Linux, msgx on macOS and iocp and rio
+on Windows. A driver that the row does not name is not part of that row's claim.
 
 ## Policy rules
 
@@ -102,11 +114,24 @@ new support claim:
   self-hosted `[self-hosted, Linux, X64, fleet]` runners. They are analysis
   and leak gates on the supported Linux x86_64 platform.
 - `nightly-soak.yml` runs its soak job on `ubuntu-latest` with the
-  `self-hosted, Linux, X64, fleet` label, on hosted `macos-latest`, and on
-  hosted `windows-2025`, and its sanitized-soak job on hosted `ubuntu-24.04`.
-- `ci.yml`'s `platform-selftests` job runs on hosted `ubuntu-24.04` and
-  `macos-15`.
-- `fuzz-nightly.yml` runs on hosted `ubuntu-24.04`.
+  `self-hosted, Linux, X64, fleet` label, its soak job on the
+  `self-hosted, macOS, ARM64, rocketnet-macos` label, its soak-windows job on
+  the `self-hosted, Windows, X64, rocketnet-windows` label, and its
+  sanitized-soak job on the `self-hosted, Linux, X64, fleet` label.
+- `nightly-frame-budget.yml` has its Linux leg on
+  `self-hosted, Linux, X64, rocketnet-quiet`, macOS leg on
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
+  `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
+- `nightly-examples.yml` has its Linux leg on
+  `self-hosted, Linux, X64, fleet`, macOS leg on
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
+  `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
+- `nightly.yml`'s `windows-driver-extension` job (hosted `windows-2025`) is
+  disabled (`if: false`, no Windows fleet runner registered).
+- `ci.yml`'s `platform-selftests` job runs on the
+  `self-hosted, Linux, X64, fleet` and
+  `self-hosted, macOS, ARM64, rocketnet-macos` labels.
+- `fuzz-nightly.yml` runs on the `self-hosted, Linux, X64, fleet` label.
 
 ## Checking the table
 

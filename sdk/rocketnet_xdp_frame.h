@@ -185,6 +185,10 @@ static inline int rocketnet_xdp_frame_build(
     rocketnet_xdp_frame_write_be16( f + payload_index - 4, (uint16_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ) );
     if ( ipv6 )
     {
+        // the checksum sums the UDP header with its checksum field zero: a
+        // reused frame still holds the previous datagram's checksum there
+        f[payload_index - 2] = 0;
+        f[payload_index - 1] = 0;
         uint16_t udp_check = rocketnet_xdp_frame_ipv6_udp_checksum(
             f + 22, f + 38, ROCKETNET_UDP_HEADER_BYTES + payload_bytes,
             f + payload_index - 8, payload_bytes );
@@ -200,8 +204,15 @@ static inline int rocketnet_xdp_frame_build(
 }
 
 // PARSE: reads ethernet + IP + UDP. Returns false for anything unrecognized,
-// extension headers included. Fills the source address and a pointer/length
+// extension headers included; an IPv6 header with any traffic class and flow
+// label is read. Fills the source address and a pointer/length
 // into the payload bytes (inside frame).
+// Length guards: the up-front check proves the frame holds at least the IPv4
+// minimum (ethernet + IPv4 + UDP), enough to name the ethertype at bytes
+// 12-13 and the version at byte 14; each family branch then proves the frame
+// holds that family's own ethernet + IP + UDP header before it reads any byte
+// past the ethernet header, so a truncated IPv6 frame is refused before its
+// source address or UDP port is read.
 
 static inline bool rocketnet_xdp_frame_parse(
     const void * frame, size_t frame_bytes,
@@ -229,6 +240,8 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( f[23] != ROCKETNET_UDP_PROTOCOL )
             return false;
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+        if ( frame_bytes < (size_t) header_bytes )
+            return false;
         out_from->type = ROCKETNET_ADDRESS_IPV4;
         out_from->data.ipv4[0] = f[26];
         out_from->data.ipv4[1] = f[27];
@@ -238,11 +251,15 @@ static inline bool rocketnet_xdp_frame_parse(
     }
     else if ( ethertype == ROCKETNET_ETHERTYPE_IPV6 )
     {
-        if ( f[14] != ROCKETNET_IPV6_VERSION || f[15] != 0 || f[16] != 0 || f[17] != 0 )
+        // the version nibble only: the traffic class and the 20-bit flow
+        // label carry any value (a Linux sender sets a flow label by default)
+        if ( ( f[14] & 0xF0 ) != ROCKETNET_IPV6_VERSION )
             return false;
         if ( f[20] != ROCKETNET_UDP_PROTOCOL )
             return false;
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+        if ( frame_bytes < (size_t) header_bytes )
+            return false;
         out_from->type = ROCKETNET_ADDRESS_IPV6;
         for ( int i = 0; i < 8; ++i )
             out_from->data.ipv6[i] = ( (uint16_t) f[22 + 2 * i] << 8 ) | f[23 + 2 * i];
@@ -261,26 +278,101 @@ static inline bool rocketnet_xdp_frame_parse(
     return true;
 }
 
-// RECEIVE CHECK: the AF_XDP transport serves IPv4, and its receive loop
-// reads a frame at the fixed IPv4 offsets. A frame is taken only when its
-// ethertype is IPv4 and it holds the Ethernet, IPv4 and UDP headers and the
-// smallest server-inbound packet. A frame whose ethertype is not IPv4 (IPv6
-// above all) is dropped and counted in *dropped_not_ipv4, never parsed; an
-// IPv4 frame too short to hold a packet is dropped uncounted.
+// RECEIVE: the AF_XDP receive loop's per-frame dispatch, for a server that
+// serves address_type (ROCKETNET_ADDRESS_IPV4 or ROCKETNET_ADDRESS_IPV6). It
+// dispatches on the ethertype: IPv4 at its offsets, IPv6 at the 40-byte fixed
+// header, through the parse above, and the from-address carries the family
+// it read. A frame is taken only when it holds the smallest server-inbound
+// packet. Every frame it does not take is dropped and counted by name:
+//
+//   not_ip          the ethertype is neither IPv4 nor IPv6, or the frame is
+//                   too short to name one
+//   ipv6_extension  an IPv6 frame whose next header is an extension header
+//                   (hop-by-hop, routing, fragment, destination options, AH,
+//                   ESP): never parsed at the UDP offsets
+//   other_family    a frame of the family this server does not serve
+//   malformed       an IPv4 or IPv6 frame the parse refuses (IPv4 options, a
+//                   next header that is not UDP) or one too short for the
+//                   smallest server packet
+//
+// The caller serialises writes to drops.
 
-static inline bool rocketnet_xdp_frame_receive_ipv4( const void * frame, size_t frame_bytes, uint64_t * dropped_not_ipv4 )
+struct rocketnet_xdp_receive_drops_t
+{
+    uint64_t not_ip;
+    uint64_t ipv6_extension;
+    uint64_t other_family;
+    uint64_t malformed;
+};
+
+static inline bool rocketnet_xdp_frame_ipv6_is_extension( uint8_t next_header )
+{
+    return next_header == 0  ||     // hop-by-hop options
+           next_header == 43 ||     // routing
+           next_header == 44 ||     // fragment
+           next_header == 60 ||     // destination options
+           next_header == 51 ||     // AH
+           next_header == 50;       // ESP
+}
+
+static inline bool rocketnet_xdp_frame_receive(
+    const void * frame, size_t frame_bytes, int address_type,
+    rocketnet_address_t * out_from,
+    const uint8_t ** out_payload, int * out_payload_length,
+    struct rocketnet_xdp_receive_drops_t * drops )
 {
     const uint8_t * f = (const uint8_t*) frame;
 
-    if ( !frame || frame_bytes < (size_t) ROCKETNET_ETHERNET_HEADER_BYTES ||
-         ( ( (uint16_t) f[12] << 8 ) | f[13] ) != ROCKETNET_ETHERTYPE_IP )
+    if ( !frame || !out_from || !out_payload || !out_payload_length || !drops )
+        return false;
+
+    if ( frame_bytes < (size_t) ROCKETNET_ETHERNET_HEADER_BYTES )
     {
-        if ( dropped_not_ipv4 )
-            ( *dropped_not_ipv4 )++;
+        drops->not_ip++;
         return false;
     }
 
-    return frame_bytes >= (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    const uint16_t ethertype = ( (uint16_t) f[12] << 8 ) | f[13];
+
+    int family;
+    if ( ethertype == ROCKETNET_ETHERTYPE_IP )
+    {
+        family = ROCKETNET_ADDRESS_IPV4;
+    }
+    else if ( ethertype == ROCKETNET_ETHERTYPE_IPV6 )
+    {
+        family = ROCKETNET_ADDRESS_IPV6;
+        if ( frame_bytes >= (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES ) && rocketnet_xdp_frame_ipv6_is_extension( f[20] ) )
+        {
+            drops->ipv6_extension++;
+            return false;
+        }
+    }
+    else
+    {
+        drops->not_ip++;
+        return false;
+    }
+
+    if ( family != address_type )
+    {
+        drops->other_family++;
+        return false;
+    }
+
+    rocketnet_address_t from;
+    const uint8_t * payload = NULL;
+    int payload_bytes = 0;
+    if ( !rocketnet_xdp_frame_parse( frame, frame_bytes, &from, &payload, &payload_bytes ) || payload_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+    {
+        drops->malformed++;
+        return false;
+    }
+
+    *out_from = from;
+    *out_payload = payload;
+    *out_payload_length = payload_bytes;
+    return true;
 }
 
 // REPLY MAC: the destination MAC address of a reply frame. A peer is learned

@@ -274,9 +274,9 @@ void public_connect_token_null_or_short_buffer_refused()
     public_token_fill_user_data( user_data );
 
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     public_token_expected_null_asserts = 0;
-    rocketnet_assert_function( public_token_expected_null_assert );
+    rocketnet_set_assert_callback( public_token_expected_null_assert );
 #endif
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
                                                                     public_token_protocol_id, public_token_addresses, 2,
@@ -285,7 +285,7 @@ void public_connect_token_null_or_short_buffer_refused()
                                                                     user_data, NULL,
                                                                     ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 #if ROCKETNET_ASSERTS
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
     rocketnet_unit_check( public_token_expected_null_asserts == 1 );
 #endif
 
@@ -301,9 +301,9 @@ void public_connect_token_null_or_short_buffer_refused()
         rocketnet_unit_check( token[i] == 0xa5 );
 
 #if ROCKETNET_ASSERTS
-    saved_assert = rocketnet_assert_function_pointer;
+    saved_assert = rn_assert_function;
     public_token_expected_null_asserts = 0;
-    rocketnet_assert_function( public_token_expected_null_assert );
+    rocketnet_set_assert_callback( public_token_expected_null_assert );
 #endif
     rocketnet_unit_check( rocketnet_write_production_connect_token( NULL, server_public_key,
                                                                     public_token_protocol_id, public_token_one_address, 1,
@@ -312,7 +312,7 @@ void public_connect_token_null_or_short_buffer_refused()
                                                                     user_data, token,
                                                                     sizeof(token) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 #if ROCKETNET_ASSERTS
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
     rocketnet_unit_check( public_token_expected_null_asserts == 1 );
 #endif
 

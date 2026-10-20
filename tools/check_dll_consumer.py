@@ -54,6 +54,7 @@ def search_directories(build, config):
         build,
         build / config,
         build / "bin",
+        build / "bin" / config,
         build / config / "bin",
         ROOT / "bin",
         ROOT / "bin" / config,

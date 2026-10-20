@@ -229,8 +229,7 @@ static void rocketnet_decide_replay( struct rocketnet_server_protocol_t * server
 
     d->accept = 0;
     if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] ||
-         counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] ||
-         counters->values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED] )
+         counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] )
         strcpy( d->reason, "replay" );
     else
         strcpy( d->reason, "refused" );
@@ -828,7 +827,7 @@ int main( int argc, const char ** argv )
     if ( argc > 1 )
         cases_path = argv[1];
 
-    rocketnet_quiet( true );
+    rocketnet_set_quiet( true );
 
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
     netcode_log_level( NETCODE_LOG_LEVEL_DEBUG );

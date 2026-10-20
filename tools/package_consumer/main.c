@@ -35,21 +35,19 @@ int main(void)
     CHECK(rocketnet_abi_field_offset("rocketnet_client_config_t", "state_change_callback") == offsetof(struct rocketnet_client_config_t, state_change_callback));
     CHECK(rocketnet_abi_field_size("rocketnet_server_config_t", "transport") == sizeof(const char *));
     CHECK(rocketnet_abi_field_count("rocketnet_receipt_t") == 2);
-    CHECK(rocketnet_assert_function_pointer != NULL);
     const uint64_t misuse_before = rocketnet_api_misuse_count();
     /* Deliberate NULL queries retain their counted Debug assertion contract. */
-    rocketnet_assert_function(count_null_assertion);
+    rocketnet_set_assert_callback(count_null_assertion);
     CHECK(rocketnet_abi_type_size(NULL) == SIZE_MAX);
     CHECK(rocketnet_abi_field_count("missing") == -1);
     CHECK(rocketnet_abi_field_offset("rocketnet_receipt_t", "missing") == SIZE_MAX);
     CHECK(rocketnet_abi_field_size("missing", NULL) == SIZE_MAX);
-    rocketnet_assert_function(NULL);
+    rocketnet_set_assert_callback(NULL);
     CHECK(rocketnet_api_misuse_count() == misuse_before + 2);
     CHECK(expected_null_assertions == EXPECTED_NULL_ASSERTIONS);
-    CHECK(rocketnet_assert_function_pointer != NULL);
     CHECK(rocketnet_client_state_name(ROCKETNET_CLIENT_STATE_CONNECTED) != NULL);
-    CHECK(rocketnet_init(NULL));
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_ERROR);
+    CHECK(rocketnet_init(NULL) == ROCKETNET_STATUS_OK);
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_ERROR);
     struct rocketnet_server_config_t config;
     /* Public TEST VECTORS, never production credentials. This consumer only
        creates and destroys a loopback server; it sends no authenticated traffic.
@@ -80,8 +78,13 @@ int main(void)
     config.protocol_id = 1;
     config.max_clients = 1;
     config.transport = "portable";
-    CHECK(rocketnet_server_validate_config(&config));
+    CHECK(rocketnet_server_validate_config(&config) == ROCKETNET_STATUS_OK);
     struct rocketnet_server_t * server = rocketnet_server_create(NULL, "127.0.0.1:0", &config, NULL, 0);
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK(server != NULL);
     CHECK(strcmp(rocketnet_server_transport_name(server), "portable") == 0);
     CHECK(rocketnet_server_port(server) != 0);

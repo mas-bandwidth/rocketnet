@@ -3,6 +3,15 @@ project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
+# clang-cl does not map #pragma warning(disable:4996) (rocketnet_platform.h,
+# rocketnet.cpp) to its own deprecation warning, so the CRT deprecations that
+# MSVC silences there are silenced here for clang-cl alone. The vendored
+# sodium amalgamation keeps helpers its configuration does not call; clang-cl
+# reports them where MSVC at /W3 does not.
+if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    add_compile_options(-Wno-deprecated-declarations)
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c" PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
+endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)
@@ -64,6 +73,15 @@ include(cmake/RocketNetDependencies.cmake)
 
 if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
     set(ROCKETNET_SODIUM_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c")
+    # the vendor has no configure step, so sodium_memzero (sodium/sodium.c:176)
+    # falls to its volatile byte loop unless a HAVE_ macro names the platform
+    # wipe; glibc and musl have explicit_bzero, the wipe libsodium's own
+    # configure picks there. The byte loop spends ~125 ms on the 56 MB server
+    # transport that rocketnet_server_transport_destroy wipes through
+    # rocketnet_clear_and_free (sdk/rocketnet.cpp:488).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_EXPLICIT_BZERO=1)
+    endif()
 endif()
 function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
@@ -170,8 +188,24 @@ add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # for native development-mode loopback and ABI checks. Never
 # installed; the production shared library must not carry the minting symbol.
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+# The test hook library: the same source with the unit suite's seams compiled
+# in (the filter epoch window's MAC tally, the message layer's payload copy
+# count, and the public link simulator's development switch). Only the unit
+# suite links it, so the installed rocketnet library carries no test hook.
+set(rocketnet_test_hook_targets)
+if(ROCKETNET_BUILD_TESTS)
+    add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
+    set(rocketnet_test_hook_targets rocketnet_test_hooks)
+endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
 add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
+
+# The send-failure seam drives the send error arms from the functional suite.
+# It is compiled into the development libraries only, never a production
+# archive or a shared library, so no shipped symbol carries it.
+target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
 
 # The soname follows SDK layout/calling compatibility, independently of wire version.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_ABI_LINE REGEX "^#define ROCKETNET_ABI_VERSION [0-9]+$")
@@ -218,7 +252,7 @@ endforeach()
 
 target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
 target_compile_definitions(rocketnet_shared_dev PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
-foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev)
+foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${rocketnet_test_hook_targets})
     add_dependencies(${target} rocketnet_xdp_header)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
@@ -295,24 +329,30 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)
     set_target_properties(rocketnet_sodium_oracle PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
     add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
-    target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
+    target_link_libraries(rocketnet_test_support PUBLIC rocketnet_test_hooks)
     rocketnet_use_sodium(rocketnet_test_support)
-    # The filter epoch window's MAC tally (test_unit_filter_epochs.cpp) exists
-    # only for the unit suite.
-    target_compile_definitions(rocketnet PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
-    # The message layer's payload copy count (test_unit_unreliable_in_place.cpp)
-    # exists only for the unit suite, like the filter epoch tally above.
-    target_compile_definitions(rocketnet PRIVATE ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
+    # The filter epoch window's MAC tally (test_unit_filter_epochs.cpp) and the
+    # message layer's payload copy count (test_unit_unreliable_in_place.cpp)
+    # exist only for the unit suite: the test binary sees the declarations, and
+    # the definitions live in rocketnet_test_hooks, never in rocketnet.
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
-    add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
+    # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
+    # into the suite, so its object goes first on the link line. lld-link loads
+    # an archive member as soon as an earlier object references one of its
+    # symbols, and the library's copy of the transport would then define every
+    # transport symbol a second time; link.exe searches archives only after
+    # every object, so it links in either order.
+    set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
+    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
-        # the library in test builds, matching the filter-epoch seam above, so
-        # the production shared libraries never carry it.
-        target_compile_definitions(rocketnet PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
+        # the test hook library only, matching the filter-epoch seam above, so
+        # neither the installed static library nor the shared libraries carry it.
+        target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
         target_compile_definitions(test PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
     endif()
     # The counter audit (test_unit_counter_classes.cpp) reads source files: the
@@ -332,6 +372,11 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
         "ROCKETNET_COUNTER_TEST_SOURCES=\"${ROCKETNET_COUNTER_TEST_SOURCES_LIST}\""
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
+    # The message-vs-packet source scan (test_unit_client_server_say_messages.cpp)
+    # reads sdk client/server files through ROCKETNET_SOURCE_DIR, the same way
+    # the counter audit does.
+    set_property( SOURCE test_unit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     # The promotion case exercises the WIDE channel header (an index of 256 or
@@ -477,11 +522,13 @@ if(ROCKETNET_BUILD_TESTS)
         target_link_libraries(test_msgx PRIVATE rocketnet)
     endif()
     if(WIN32)
-        # Isolate the test-instrumented driver: never link another copy from
-        # the production archive. Only its ordinary runtime dependencies enter.
-        add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp
+        # Isolate the test-instrumented drivers: never link another copy from
+        # the production archive. Only their ordinary runtime dependencies
+        # enter. The IOCP and RIO fault seams (ROCKETNET_IOCP_TESTS,
+        # ROCKETNET_RIO_TESTS) compile only here, never into a library.
+        add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp sdk/rocketnet_server_rio_windows.cpp
             sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
-        target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS
+        target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS ROCKETNET_RIO_TESTS
             $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
         target_include_directories(test_iocp PRIVATE sdk)
         target_compile_features(test_iocp PRIVATE cxx_std_11)
@@ -494,11 +541,16 @@ if(ROCKETNET_BUILD_TESTS)
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
         functional/server_receive_backlog.cpp
+        functional/thread_priority_timing.cpp
+        functional/macos_client_timing.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
+        functional/posix_lifecycle_stress.cpp
+        functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
+    target_compile_definitions(functional PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
     target_compile_features(functional PRIVATE cxx_std_11)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_dependencies(functional test_xdp test_serialize test_transport_control)
@@ -514,8 +566,8 @@ if(ROCKETNET_BUILD_TESTS)
     target_compile_features(rocketnet_abi_mismatch PRIVATE cxx_std_11)
     set_target_properties(rocketnet_abi_mismatch PROPERTIES
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
-    add_library(rocketnet_abi_legacy SHARED EXCLUDE_FROM_ALL tools/abi_legacy.cpp)
-    target_compile_definitions(rocketnet_abi_legacy PRIVATE ROCKETNET_SHARED ROCKETNET_BUILDING_DLL)
+    add_library(rocketnet_abi_pre_introspection SHARED EXCLUDE_FROM_ALL tools/abi_pre_introspection.cpp)
+    target_compile_definitions(rocketnet_abi_pre_introspection PRIVATE ROCKETNET_SHARED ROCKETNET_BUILDING_DLL)
 endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)

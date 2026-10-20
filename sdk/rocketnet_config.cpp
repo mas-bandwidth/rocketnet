@@ -111,7 +111,7 @@ static const struct rocketnet_config_field_t rocketnet_message_config_field_tabl
 // structs must have the same size, so the header and the tables cannot drift.
 
 #define ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64( name, def, flags )                                           \
-    void (*state_change_callback)( void * context, int previous_state, int current_state );                 \
+    void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );                 \
     double (*time_callback)( void * context );                                                              \
     uint64_t name;
 
@@ -120,6 +120,7 @@ struct rocketnet_client_transport_config_table_t
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     uint64_t step_driven;
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V3( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
 
 #undef ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64
@@ -500,12 +501,12 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     return true;
 }
 
-// "transport, never driver, no alias" (Glenn, 2026-10-18). the table row
+// the environment names the transport, never the driver, with no alias. the table row
 // "driver" is read only as ROCKETNET_<ENDPOINT>_TRANSPORT. the old driver
 // spellings, process-wide ROCKETNET_DRIVER and per-endpoint
 // ROCKETNET_<ENDPOINT>_DRIVER, are refused aloud, naming the variable to use
 // now, and their values are never applied. (the process-wide
-// ROCKETNET_TRANSPORT is refused by the general legacy rule in
+// ROCKETNET_TRANSPORT is refused by the general process-wide rule in
 // rocketnet_config_apply_env.)
 
 static void rocketnet_config_refuse_driver_names( const char * transport_name, const char * env_name )
@@ -550,16 +551,16 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         // exports ROCKETNET_<FIELD> is never silently ignored -- their value
         // is NOT applied, and the error tells them the name to use now.
 
-        char legacy_name[128];
-        if ( !rocketnet_config_env_var_name( field->name, legacy_name, sizeof(legacy_name) ) )
+        char process_wide_name[128];
+        if ( !rocketnet_config_env_var_name( field->name, process_wide_name, sizeof(process_wide_name) ) )
         {
             rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field->name );
             return false;
         }
 
-        const char * legacy_value = rocketnet_platform_getenv( legacy_name );
-        if ( legacy_value && legacy_value[0] != '\0' )
-            rocketnet_error( "%s config ignores the process-wide %s: use the per-endpoint %s instead", transport_name, legacy_name, env_name );
+        const char * process_wide_value = rocketnet_platform_getenv( process_wide_name );
+        if ( process_wide_value && process_wide_value[0] != '\0' )
+            rocketnet_error( "%s config ignores the process-wide %s: use the per-endpoint %s instead", transport_name, process_wide_name, env_name );
 
         if ( strcmp( field->name, "driver" ) == 0 )
             rocketnet_config_refuse_driver_names( transport_name, env_name );
@@ -760,7 +761,9 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
         "simulated_loss_percent",
         "simulated_latency_ms",
         "simulated_jitter_ms",
-        "simulated_duplicate_percent"
+        "simulated_duplicate_percent",
+        "simulated_drop_every_nth",
+        "simulated_reverse_window"
     };
 
     for ( int i = 0; i < num_fields; i++ )
@@ -947,24 +950,4 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
     }
 
     return true;
-}
-
-int rocketnet_driver_ladder_drop_ipv4_only( struct rocketnet_driver_ladder_t * ladder, int address_type )
-{
-    rocketnet_assert( ladder );
-
-    if ( address_type != ROCKETNET_ADDRESS_IPV6 )
-        return 0;
-
-    int kept = 0;
-    int dropped = 0;
-    for ( int i = 0; i < ladder->num_candidates; i++ )
-    {
-        if ( ladder->candidates[i] == ROCKETNET_DRIVER_XDP )
-            dropped++;
-        else
-            ladder->candidates[kept++] = ladder->candidates[i];
-    }
-    ladder->num_candidates = kept;
-    return dropped;
 }

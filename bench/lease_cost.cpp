@@ -91,9 +91,9 @@ int main(int argc, char ** argv)
     const int payload_bytes = atoi(argv[3]), threads = atoi(argv[4]), batches = atoi(argv[5]);
     const bool plant = argc > 6 && strcmp(argv[6], "plant") == 0;
     CHECK(payload_bytes > 0 && payload_bytes <= 4096 && (threads == 1 || threads == 4) && batches > 0);
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    rocketnet_allocator(allocate, release);
-    CHECK(rocketnet_init( NULL ));
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_set_allocator(allocate, release);
+    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
@@ -106,7 +106,7 @@ int main(int argc, char ** argv)
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token));
+    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     client_config.max_payload_bytes = 4096;

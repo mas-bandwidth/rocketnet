@@ -580,11 +580,11 @@ static void counting_free( void * context, void * p )
     free( p );
 }
 
-static void no_allocation_after_create()
+static void send_budget_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_allocator( counting_malloc, counting_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( counting_malloc, counting_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_send_budget_t budgets[4];
     check( rocketnet_send_budget_init( &budgets[0], ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 ) );
@@ -622,7 +622,7 @@ static void no_allocation_after_create()
     check( g_alloc_calls == after_create );
 
     rocketnet_term();
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +672,6 @@ REGISTER_UNIT_TEST( reliable_waits_unreliable_drops );
 REGISTER_UNIT_TEST( class_order_retransmit_first );
 REGISTER_UNIT_TEST( runtime_change_takes_effect_next_window );
 REGISTER_UNIT_TEST( wire_bytes_match_the_transport );
-REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( send_budget_no_allocation_after_create );
 REGISTER_UNIT_TEST( wire_bytes_refuses_int_max );
 REGISTER_UNIT_TEST( wire_bytes_boundaries );

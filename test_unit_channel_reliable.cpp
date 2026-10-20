@@ -283,8 +283,8 @@ static void reliable_counted_free( void * context, void * memory )
 static void reliable_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_allocator( reliable_counted_malloc, reliable_counted_free ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( reliable_counted_malloc, reliable_counted_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -306,20 +306,11 @@ static void reliable_no_allocation_after_create()
     rn_arena_destroy( sender.arena );
     rn_arena_destroy( receiver.arena );
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( reliable_no_allocation_after_create );
-
-// Other unit files also register the general name. The distinct registration
-// above guarantees this code-2 path runs whichever alias the registry selects.
-static void no_allocation_after_create()
-{
-    reliable_no_allocation_after_create();
-}
-
-REGISTER_UNIT_TEST( no_allocation_after_create );
 
 // A control record frees its number's descriptor and is never an application
 // view (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp).
@@ -348,7 +339,7 @@ static void reliable_control_record_frees_its_number()
     check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_CONTROL );
     check( node.region->receive_descriptors[slot].live == 0 );
     check( node.ordered.channels.deliveries == 0 );
-    check( node.ordered.channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     rn_arena_destroy( node.arena );
 }
@@ -382,7 +373,7 @@ static void reliable_record_on_a_disabled_mask_is_refused()
     check( rn_channels_dispatch( &ch, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED] == before + 1 );
     check( ch.deliveries == 0 );
-    check( ch.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( ch.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
     rn_arena_destroy( node.arena );
 }
@@ -412,7 +403,7 @@ static void reliable_record_without_a_live_number_is_refused()
     rn_delivery_t delivery;
     check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == before + 1 );
-    check( node.ordered.channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
     check( node.ordered.channels.deliveries == 0 );
 
     rn_arena_destroy( node.arena );
