@@ -763,7 +763,7 @@ The 24-bit number is reconstructed against `R` by half range: `n = R + δ`,
 with δ the signed 24-bit difference. Then:
 
 - `n < R`, or the bit for `n` is already set: a duplicate. It is dropped and
-  counted (`MESSAGE_DUPLICATE`). This is normal after a resend.
+  counted (`MESSAGE_DUPLICATE`; it counts message numbers, so a k-chunk duplicate counts k). This is normal after a resend.
 - `n >= R + W`: violation `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
 - The descriptor at `n % W` is live and names a different number: violation
   `MESSAGE_SLOT_COLLISION`.
@@ -856,7 +856,7 @@ it, if it is reliable and not a duplicate. Then `rn_channels_dispatch`
 | Code | Action |
 |---|---|
 | 0 | Deliver now: a pointer into the batch, from the unreliable budget. |
-| 1 | If `o == ordered_read` and `s >= watermark`, deliver now. If `o > ordered_read`, hold it as the channel's newest sequenced message (7.3). Otherwise drop it as stale (`MESSAGE_SEQUENCED_STALE`). |
+| 1 | If `o == ordered_read` and `s >= watermark`, deliver now. If `o > ordered_read`, hold it as the channel's newest sequenced message (7.3). Otherwise drop it as stale (`MESSAGE_SEQUENCED_STALE`, counting messages with ordering behind or sequence behind the watermark). |
 | 2 | Deliver now (unordered). |
 | 3 | If `o == ordered_read`, deliver now, then **drain** (below). If `o > ordered_read`, copy into the ring at its offset, insert `(channel, o)` into the held index, and keep the descriptor live. If `o < ordered_read`, it is a violation (`MESSAGE_ORDERING_BEHIND`), because a reliable ordered record can only be behind if it is a duplicate, and layer 3 already caught those. |
 | 4 | Same as code 1, except the held copy lives in the ring at its offset. |
@@ -942,7 +942,7 @@ base types only by a flag on that descriptor:
 
 Receipts go into the connection's receipt ring of `Rq` entries and then into
 the object's per-update receipt list. When the ring is full, the oldest
-receipt is dropped and counted (`MESSAGE_RECEIPT_RING_FULL`). An ACKED receipt
+receipt is dropped and counted (`MESSAGE_RECEIPT_RING_FULL`; the ring drops the oldest receipt rather than refusing sends). An ACKED receipt
 means the peer's transport opened the packet, which is RakNet's meaning too.
 It does not mean the application read the message (I12). Sequenced types have
 no receipt variants (study §2).
@@ -1384,10 +1384,11 @@ header; the internal transport and message layers are in
   direction's budget (not recommended, because without one there is no
   defined behaviour when a sender outruns its path or its peer), and
   `set_send_kbps` follows the same rule at runtime. A reused slot starts at
-  the server's configured value. `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` and
-  `ROCKETNET_MESSAGE_SERVER_SEND_KBPS` override the field and the create
-  argument at create (default < struct < environment), each override logged
-  with the value it displaces.
+  the server's configured value. The message object reads no environment
+  (sdk/rocketnet_message_server.cpp:146); the public
+  creates read the budget from `ROCKETNET_CLIENT_SEND_KBPS` and
+  `ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` (sdk/rocketnet_api.cpp:135
+  and :173) and pass it as the create argument.
 - **Time.** Create takes no time. The object's clock is the game's time from
   the first update on. The client's transport is seeded at 0.0 at create and
   is handed the time since the first update, so its connect timers and the
