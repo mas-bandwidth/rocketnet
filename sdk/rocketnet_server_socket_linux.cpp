@@ -77,8 +77,8 @@ struct rocketnet_server_socket_send_buffer_t
 
     // finish and abort refuse a packet index below this: 0 for a generation
     // acquired empty, the packet count already published for a generation
-    // reopened by rocketnet_send_handoff_t::reopen, so a pointer from before
-    // that publish never rewrites a published packet
+    // reopened by rocketnet_send_handoff_t::reopen (rocketnet_send_handoff.h),
+    // so a pointer from before that publish never rewrites a published packet
     int finish_base;
 
     uint8_t padding_1[4096];

@@ -5,7 +5,10 @@
 // Driver-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
 // before publish; the worker retires only after copying its final packet.
-// A full queue refuses new storage without overwriting either queued buffer.
+// A full queue never overwrites a queued buffer: acquire returns -1, and
+// reopen hands back the newest queued buffer unreset (never the front), whose
+// packets stay, sent ahead of the ones staged into it next
+// (rocketnet_server_socket_acquire_send_buffer, rocketnet_server_socket_linux.cpp).
 template<int NumBuffers> struct rocketnet_send_handoff_t
 {
     bool free[NumBuffers];
