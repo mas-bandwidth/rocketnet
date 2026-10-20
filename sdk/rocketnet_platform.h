@@ -459,6 +459,18 @@ int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t *
  */
 const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
+#if ROCKETNET_DEVELOPMENT
+// Test seams, compiled only into the development library (DRIVERS.md, ICMP
+// errors). inject_receive_errno makes the next recvmsg or recvmsg_x on any
+// socket return -1 with that errno instead of reading, leaving the queue
+// untouched; it is defined where the darwin pumps are. The server transport's
+// platform socket is its portable or msgx driver's socket, NULL for any
+// other driver.
+void rocketnet_platform_inject_receive_errno_for_testing( int error );
+struct rocketnet_server_transport_t;
+struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport );
+#endif // #if ROCKETNET_DEVELOPMENT
+
 #ifdef __cplusplus
 }
 #endif

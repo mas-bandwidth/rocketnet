@@ -52,7 +52,9 @@ static int run_show_default_and_struct( void )
     server = NULL;
     result = 0;
 cleanup:
-    rocketnet_server_destroy( server );
+    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    if ( server )
+        rocketnet_server_destroy( server );
     return result;
 }
 
@@ -79,7 +81,9 @@ static int run_show_env_wins( void )
     server = NULL;
     result = 0;
 cleanup:
-    rocketnet_server_destroy( server );
+    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    if ( server )
+        rocketnet_server_destroy( server );
     return result;
 }
 
@@ -102,7 +106,9 @@ static int run_show_bad_refused( void )
 
     result = 0;
 cleanup:
-    rocketnet_server_destroy( server );
+    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    if ( server )
+        rocketnet_server_destroy( server );
     return result;
 }
 

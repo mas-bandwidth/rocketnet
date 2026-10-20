@@ -172,8 +172,11 @@ int main( void )
     result = 0;
 
 cleanup:
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
+    // destroy on NULL is a counted misuse that asserts in a debug build (rocketnet_api_null_guard)
+    if ( client )
+        rocketnet_client_destroy( client );
+    if ( server )
+        rocketnet_server_destroy( server );
     rocketnet_term();
     // destroy ends a live connection and logs it, so PASS is printed after
     // the cleanup to stay the last line

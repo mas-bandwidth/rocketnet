@@ -28,7 +28,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 
 #define check rocketnet_unit_check
 
@@ -209,7 +208,7 @@ static void token_time_game_clock_off_reads_the_wall_clock()
 
     struct token_time_game_server_t t;
     token_time_game_server_setup( &t );
-    check( token_time_game_server_request( &t, 1000, 1010, (uint64_t) time( NULL ) ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( token_time_game_server_request( &t, 1000, 1010, GAME_CLOCK_EPOCH + 2000000000ULL ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
     token_time_game_server_teardown( &t );
 

@@ -15,6 +15,10 @@
 #include <sodium.h>
 #include <string.h>
 
+void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signed_connect_data_t * signed_fields,
+                                                    bool ipv6_available,
+                                                    struct rocketnet_address_t * address );
+
 const char * rocketnet_client_transport_state_name( int state )
 {
     switch ( state )
@@ -114,6 +118,41 @@ static void rocketnet_client_rtt_sample( struct rocketnet_client_protocol_t * cl
         client->rtt_estimate = sample;
 }
 
+// the server address an accepted token selects for the attempt: the IPv6
+// address when the token flags one and the host can open an IPv6 socket, else
+// the IPv4 address when the token flags one, else the IPv6 address (which the
+// transport refuses on a host with no IPv6). A pure function of its
+// arguments (tla/ServerConnection.tla PickFamily).
+
+void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signed_connect_data_t * signed_fields,
+                                                    bool ipv6_available,
+                                                    struct rocketnet_address_t * address )
+{
+    rocketnet_assert( signed_fields );
+    rocketnet_assert( address );
+
+    const uint8_t flags = signed_fields->address_flags;
+    const bool use_ipv6 = ( flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0 &&
+                          ( ipv6_available || ( flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) == 0 );
+
+    memset( address, 0, sizeof(*address) );
+    if ( use_ipv6 )
+    {
+        address->type = ROCKETNET_ADDRESS_IPV6;
+        const uint8_t * p = signed_fields->ipv6_address;
+        for ( int i = 0; i < 8; i++ )
+            address->data.ipv6[i] = rocketnet_read_uint16( &p );
+        address->port = rocketnet_read_uint16( &p );
+    }
+    else
+    {
+        address->type = ROCKETNET_ADDRESS_IPV4;
+        const uint8_t * p = signed_fields->ipv4_address;
+        rocketnet_read_bytes( &p, address->data.ipv4, 4 );
+        address->port = rocketnet_read_uint16( &p );
+    }
+}
+
 // tla/ClientConnection.tla AppConnect
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
@@ -152,25 +191,11 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
         return 0;
     }
 
-    // the server address: IPv6 preferred when both families are present.
-    // reachability belongs to the socket layer, which may override the pick.
+    // the server address, IPv6 preferred when both families are present.
+    // the transport selects again with the host's IPv6 capability before it
+    // binds (rocketnet_client_transport_create_internal).
 
-    memset( &client->server_address, 0, sizeof(client->server_address) );
-    if ( flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
-    {
-        client->server_address.type = ROCKETNET_ADDRESS_IPV6;
-        const uint8_t * p = client->signed_fields.ipv6_address;
-        for ( int i = 0; i < 8; i++ )
-            client->server_address.data.ipv6[i] = rocketnet_read_uint16( &p );
-        client->server_address.port = rocketnet_read_uint16( &p );
-    }
-    else
-    {
-        client->server_address.type = ROCKETNET_ADDRESS_IPV4;
-        const uint8_t * p = client->signed_fields.ipv4_address;
-        rocketnet_read_bytes( &p, client->server_address.data.ipv4, 4 );
-        client->server_address.port = rocketnet_read_uint16( &p );
-    }
+    rocketnet_client_protocol_pick_server_address( &client->signed_fields, true, &client->server_address );
 
     // one salt and one ephemeral keypair per attempt, sequences at one and
     // never reset within it
@@ -286,12 +311,8 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         return;
 
-    // one sending rule: the scheduled rate, nothing sent because a packet
-    // arrived, no immediate-send case for any transition. the standalone
-    // ack alone rides outside the rate: when the ack debt reaches the
-    // threshold between scheduled sends, a type 8 goes out now -- that is
-    // what keeps notification latency flat when inbound outruns outbound,
-    // and it never ping-pongs because a received type 8 adds no debt.
+    // An owed ack goes out on this update, outside the scheduled send rate.
+    // Type 8 does not add debt, so the ack cannot ping-pong.
 
     if ( current_time - client->last_send_time < 1.0 / client->send_rate )
     {
@@ -302,7 +323,6 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
                                                                NULL, 0, current_time, out_packet );
             if ( bytes > 0 )
             {
-                client->last_send_time = current_time;
                 *out_packet_bytes = bytes;
                 rocketnet_spam( "client sent standalone ack" );
             }

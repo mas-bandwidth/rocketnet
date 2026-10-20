@@ -210,7 +210,7 @@ uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config
 // link's transport destroyed, on a refused argument.
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
-                                                       int32_t default_kbps, double time );
+                                                       int32_t default_kbps, double time, bool reserve_unlimited = false );
 
 void rn_message_object_destroy( struct rn_message_object_t * object );
 
