@@ -3833,8 +3833,14 @@ void rocketnet_test_replay_long_skip_clears_whole_window()
     memset( &replay, 0, sizeof(replay) );
 
     const uint64_t window_bits = ROCKETNET_REPLAY_WINDOW_BITS;
+    const int window_words = (int) ( ROCKETNET_REPLAY_WINDOW_BITS / 64 );
     for ( uint64_t sequence = 1; sequence <= window_bits; sequence++ )
         rocketnet_replay_advance( &replay, sequence );
+
+    // every bit of the ring is set before the skip, so the clear below cannot
+    // pass by the ring never having held anything
+    for ( int w = 0; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == ~(uint64_t) 0 );
 
     rocketnet_replay_advance( &replay, 3 * window_bits );
     for ( uint64_t sequence = 2 * window_bits + 1; sequence < 3 * window_bits; sequence++ )
@@ -3842,7 +3848,6 @@ void rocketnet_test_replay_long_skip_clears_whole_window()
 
     // the full-window skip clears every word of the ring; the newest
     // sequence's own bit is the only survivor
-    const int window_words = (int) ( ROCKETNET_REPLAY_WINDOW_BITS / 64 );
     rocketnet_check( replay.window[0] == (uint64_t) 1 );
     for ( int w = 1; w < window_words; w++ )
         rocketnet_check( replay.window[w] == 0 );
