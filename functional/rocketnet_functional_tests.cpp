@@ -4664,9 +4664,7 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-        char real_port_address[64];
-        rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
-        server = rocketnet_server_transport_create( NULL, real_port_address, &config);
+        server = rocketnet_test_server_transport_create_on_free_port( &config );
 
         rocketnet_set_log_level( saved_level );
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
@@ -4802,7 +4800,7 @@ void rocketnet_test_server_driver_pin_xdp()
         rocketnet_server_transport_dev_config( &config );
         snprintf( config.driver, sizeof(config.driver), "xdp" );
 
-        rocketnet_check( rocketnet_server_transport_create( NULL, real_port_address, &config) == NULL );
+        rocketnet_check( rocketnet_test_server_transport_create_on_free_port( &config ) == NULL );
     }
 
     rocketnet_test_env_restore( &driver_guard );
@@ -5627,6 +5625,14 @@ static bool rocketnet_test_server_uring_skipped( const char * test_name )
     return true;
 }
 
+#if defined( __GNUC__ ) || defined( __clang__ )
+__attribute__((noinline))
+#endif
+static struct rocketnet_server_uring_t * rocketnet_test_server_uring_create_stalled( rocketnet_address_t * address )
+{
+    return rocketnet_server_uring_create( NULL, address, 2 );
+}
+
 void rocketnet_test_server_uring_probe()
 {
     if ( rocketnet_test_server_uring_skipped( "test_server_uring_probe" ) )
@@ -5682,7 +5688,7 @@ void rocketnet_test_server_uring_probe()
 
     rocketnet_address_t stall_address;
     rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
-    struct rocketnet_server_uring_t * stalled = rocketnet_server_uring_create( NULL, &stall_address, 2 );
+    struct rocketnet_server_uring_t * stalled = rocketnet_test_server_uring_create_stalled( &stall_address );
     rocketnet_check( stalled );
     const uint16_t stall_port = stall_address.port;
 
@@ -5817,7 +5823,10 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
 
     rocketnet_server_uring_send_packets( uring );
 
-    // send_packets reaps every send of its own before it returns
+    // send_packets reaps within its fixed completion budget
+    // (ROCKETNET_URING_SEND_BUDGET) and returns even if sends remain, deferred
+    // to a later call and counted SEND_DEFERRED; this batch is small enough
+    // that every send completes before the call returns
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
@@ -7002,6 +7011,47 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_receive_thread_quit_wake_ends_a_long_wait, "client_receive_thread_quit_wake_ends_a_long_wait", "posix only: the windows receive thread sleeps and its quit wake is a no-op" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_receive_thread_quit_wake_before_wait_returns, "client_receive_thread_quit_wake_before_wait_returns", "posix only: the windows receive thread sleeps and its quit wake is a no-op" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000_portable, "posix_init_term_1000_portable", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000_gso, "posix_init_term_1000_gso", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000_io_uring, "posix_init_term_1000_io_uring", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000_xdp, "posix_init_term_1000_xdp", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_create_destroy_1000_portable, "posix_server_create_destroy_1000_portable", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_create_destroy_1000_gso, "posix_server_create_destroy_1000_gso", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_create_destroy_1000_io_uring, "posix_server_create_destroy_1000_io_uring", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_create_destroy_1000_xdp, "posix_server_create_destroy_1000_xdp", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_create_destroy_1000_portable, "posix_client_create_destroy_1000_portable", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_create_destroy_1000_gso, "posix_client_create_destroy_1000_gso", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_create_destroy_1000_io_uring, "posix_client_create_destroy_1000_io_uring", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_create_destroy_1000_xdp, "posix_client_create_destroy_1000_xdp", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_restart_same_port_100_portable, "posix_server_restart_same_port_100_portable", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_restart_same_port_100_gso, "posix_server_restart_same_port_100_gso", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_restart_same_port_100_io_uring, "posix_server_restart_same_port_100_io_uring", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_restart_same_port_100_xdp, "posix_server_restart_same_port_100_xdp", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_connect_disconnect_1000_portable, "posix_connect_disconnect_1000_portable", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_connect_disconnect_1000_gso, "posix_connect_disconnect_1000_gso", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_connect_disconnect_1000_io_uring, "posix_connect_disconnect_1000_io_uring", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_connect_disconnect_1000_xdp, "posix_connect_disconnect_1000_xdp", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100_portable, "posix_destroy_under_traffic_100_portable", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100_gso, "posix_destroy_under_traffic_100_gso", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100_io_uring, "posix_destroy_under_traffic_100_io_uring", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100_xdp, "posix_destroy_under_traffic_100_xdp", "linux only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_init_term_1000, "posix_init_term_1000", "mac only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_create_destroy_1000, "posix_server_create_destroy_1000", "mac only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_create_destroy_1000, "posix_client_create_destroy_1000", "mac only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_restart_same_port_100, "posix_server_restart_same_port_100", "mac only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_connect_disconnect_1000, "posix_connect_disconnect_1000", "mac only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_destroy_under_traffic_100, "posix_destroy_under_traffic_100", "mac only: the posix lifecycle stress cell is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_server_receive_weather, "test_posix_server_receive_weather", "on windows: the posix socket-error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_client_receive_weather, "test_posix_client_receive_weather", "on windows: the posix socket-error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_platform_send_seam, "test_posix_platform_send_seam", "on windows: the posix socket-error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_transport_send_seam, "test_posix_transport_send_seam", "on windows: the posix socket-error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_posix_send_burst, "test_posix_send_burst", "on windows: the posix socket-error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_gso_sendmmsg_errors, "test_linux_gso_sendmmsg_errors", "linux only: the gso/uring/xdp error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_gso_recvmmsg_errors, "test_linux_gso_recvmmsg_errors", "linux only: the gso/uring/xdp error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_uring_receive_cqe_errors, "test_linux_uring_receive_cqe_errors", "linux only: the gso/uring/xdp error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_uring_send_cqe_errors, "test_linux_uring_send_cqe_errors", "linux only: the gso/uring/xdp error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_xdp_receive_weather_ipv4, "test_linux_xdp_receive_weather_ipv4", "linux only: the gso/uring/xdp error injector is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_linux_xdp_receive_weather_ipv6, "test_linux_xdp_receive_weather_ipv6", "linux only: the gso/uring/xdp error injector is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -7475,8 +7525,24 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         to_client[i] = (uint8_t) ( i * 11 + 3 );
     }
 
+    // a send the server refuses for want of staging is counted in
+    // ROCKETNET_COUNTER_SEND_RING_FULL and never reaches the wire: the xdp
+    // driver has ROCKETNET_XDP_NUM_BUFFERS staging generations
+    // (sdk/rocketnet_constants.h:49), each flush publishes one
+    // (sdk/rocketnet_server_socket_linux.cpp:2249), and while its send
+    // thread has retired neither, a start is refused
+    // (sdk/rocketnet_server_socket_linux.cpp:2118) and counted
+    // (sdk/rocketnet_server_transport.cpp:2153). This loop flushes every
+    // iteration, so a send thread that falls two flushes behind refuses the
+    // next send. A send counts as taken when the counter did not move, and
+    // a refused send is sent again, so a send dropped without a count fails
+    // the client check below. ring_full_during also counts frames that the
+    // server update refused.
+
+    const struct rocketnet_counters_t * send_counters = rocketnet_server_transport_counters( server );
+    const uint64_t ring_full_before = rocketnet_counter_value( send_counters, ROCKETNET_COUNTER_SEND_RING_FULL );
     const int count = ROCKETNET_XDP_VETH_COUNT;
-    int server_received = 0, client_received = 0, sent_to_server = 0, sent_to_client = 0;
+    int server_received = 0, client_received = 0, sent_to_server = 0, sent_to_client = 0, refused_to_client = 0;
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 )
     {
@@ -7487,8 +7553,12 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         }
         if ( sent_to_client < count )
         {
+            const uint64_t ring_full = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL );
             rocketnet_server_transport_send_packet( server, 0, to_client, ROCKETNET_MAX_PAYLOAD_BYTES );
-            sent_to_client++;
+            if ( rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL ) == ring_full )
+                sent_to_client++;
+            else
+                refused_to_client++;
         }
         rocketnet_server_transport_send_packets( server );
 
@@ -7519,7 +7589,8 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
             break;
         rocketnet_platform_sleep( 0.001 );
     }
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server opened %d of %d, client opened %d of %d", case_name, server_received, count, client_received, count );
+    const uint64_t ring_full_during = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL ) - ring_full_before;
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server opened %d of %d, client opened %d of %d, server sends refused for staging %d (send ring full counted %llu)", case_name, server_received, count, client_received, count, refused_to_client, (unsigned long long) ring_full_during );
     rocketnet_check( server_received == count );
     rocketnet_check( client_received == count );
 
@@ -8419,13 +8490,46 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "posix_destroy_under_traffic_100_gso", rocketnet_test_posix_destroy_under_traffic_100_gso },
     { "posix_destroy_under_traffic_100_io_uring", rocketnet_test_posix_destroy_under_traffic_100_io_uring },
     { "posix_destroy_under_traffic_100_xdp", rocketnet_test_posix_destroy_under_traffic_100_xdp },
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "posix_init_term_1000_portable", rocketnet_functional_skip_posix_init_term_1000_portable },
+    { "posix_init_term_1000_gso", rocketnet_functional_skip_posix_init_term_1000_gso },
+    { "posix_init_term_1000_io_uring", rocketnet_functional_skip_posix_init_term_1000_io_uring },
+    { "posix_init_term_1000_xdp", rocketnet_functional_skip_posix_init_term_1000_xdp },
+    { "posix_server_create_destroy_1000_portable", rocketnet_functional_skip_posix_server_create_destroy_1000_portable },
+    { "posix_server_create_destroy_1000_gso", rocketnet_functional_skip_posix_server_create_destroy_1000_gso },
+    { "posix_server_create_destroy_1000_io_uring", rocketnet_functional_skip_posix_server_create_destroy_1000_io_uring },
+    { "posix_server_create_destroy_1000_xdp", rocketnet_functional_skip_posix_server_create_destroy_1000_xdp },
+    { "posix_client_create_destroy_1000_portable", rocketnet_functional_skip_posix_client_create_destroy_1000_portable },
+    { "posix_client_create_destroy_1000_gso", rocketnet_functional_skip_posix_client_create_destroy_1000_gso },
+    { "posix_client_create_destroy_1000_io_uring", rocketnet_functional_skip_posix_client_create_destroy_1000_io_uring },
+    { "posix_client_create_destroy_1000_xdp", rocketnet_functional_skip_posix_client_create_destroy_1000_xdp },
+    { "posix_server_restart_same_port_100_portable", rocketnet_functional_skip_posix_server_restart_same_port_100_portable },
+    { "posix_server_restart_same_port_100_gso", rocketnet_functional_skip_posix_server_restart_same_port_100_gso },
+    { "posix_server_restart_same_port_100_io_uring", rocketnet_functional_skip_posix_server_restart_same_port_100_io_uring },
+    { "posix_server_restart_same_port_100_xdp", rocketnet_functional_skip_posix_server_restart_same_port_100_xdp },
+    { "posix_connect_disconnect_1000_portable", rocketnet_functional_skip_posix_connect_disconnect_1000_portable },
+    { "posix_connect_disconnect_1000_gso", rocketnet_functional_skip_posix_connect_disconnect_1000_gso },
+    { "posix_connect_disconnect_1000_io_uring", rocketnet_functional_skip_posix_connect_disconnect_1000_io_uring },
+    { "posix_connect_disconnect_1000_xdp", rocketnet_functional_skip_posix_connect_disconnect_1000_xdp },
+    { "posix_destroy_under_traffic_100_portable", rocketnet_functional_skip_posix_destroy_under_traffic_100_portable },
+    { "posix_destroy_under_traffic_100_gso", rocketnet_functional_skip_posix_destroy_under_traffic_100_gso },
+    { "posix_destroy_under_traffic_100_io_uring", rocketnet_functional_skip_posix_destroy_under_traffic_100_io_uring },
+    { "posix_destroy_under_traffic_100_xdp", rocketnet_functional_skip_posix_destroy_under_traffic_100_xdp },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "posix_init_term_1000", rocketnet_test_posix_init_term_1000 },
     { "posix_server_create_destroy_1000", rocketnet_test_posix_server_create_destroy_1000 },
     { "posix_client_create_destroy_1000", rocketnet_test_posix_client_create_destroy_1000 },
     { "posix_server_restart_same_port_100", rocketnet_test_posix_server_restart_same_port_100 },
     { "posix_connect_disconnect_1000", rocketnet_test_posix_connect_disconnect_1000 },
     { "posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100 },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "posix_init_term_1000", rocketnet_functional_skip_posix_init_term_1000 },
+    { "posix_server_create_destroy_1000", rocketnet_functional_skip_posix_server_create_destroy_1000 },
+    { "posix_client_create_destroy_1000", rocketnet_functional_skip_posix_client_create_destroy_1000 },
+    { "posix_server_restart_same_port_100", rocketnet_functional_skip_posix_server_restart_same_port_100 },
+    { "posix_connect_disconnect_1000", rocketnet_functional_skip_posix_connect_disconnect_1000 },
+    { "posix_destroy_under_traffic_100", rocketnet_functional_skip_posix_destroy_under_traffic_100 },
 #endif
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
     { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn },
@@ -8482,13 +8586,19 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "client_io_windows_handoff_round_trip", rocketnet_functional_skip_client_io_windows_handoff_round_trip },
 #endif
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
     { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather },
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather },
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam },
     { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam },
     { "test_posix_send_burst", rocketnet_test_posix_send_burst },
+#else // #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    { "test_posix_server_receive_weather", rocketnet_functional_skip_posix_server_receive_weather },
+    { "test_posix_client_receive_weather", rocketnet_functional_skip_posix_client_receive_weather },
+    { "test_posix_platform_send_seam", rocketnet_functional_skip_posix_platform_send_seam },
+    { "test_posix_transport_send_seam", rocketnet_functional_skip_posix_transport_send_seam },
+    { "test_posix_send_burst", rocketnet_functional_skip_posix_send_burst },
+#endif
 #if defined(__linux__)
     { "test_linux_gso_sendmmsg_errors", rocketnet_test_linux_gso_sendmmsg_errors },
     { "test_linux_gso_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors },
@@ -8496,8 +8606,15 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_linux_uring_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors },
     { "test_linux_xdp_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4 },
     { "test_linux_xdp_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6 },
+#else // #if defined(__linux__)
+    { "test_linux_gso_sendmmsg_errors", rocketnet_functional_skip_linux_gso_sendmmsg_errors },
+    { "test_linux_gso_recvmmsg_errors", rocketnet_functional_skip_linux_gso_recvmmsg_errors },
+    { "test_linux_uring_receive_cqe_errors", rocketnet_functional_skip_linux_uring_receive_cqe_errors },
+    { "test_linux_uring_send_cqe_errors", rocketnet_functional_skip_linux_uring_send_cqe_errors },
+    { "test_linux_xdp_receive_weather_ipv4", rocketnet_functional_skip_linux_xdp_receive_weather_ipv4 },
+    { "test_linux_xdp_receive_weather_ipv6", rocketnet_functional_skip_linux_xdp_receive_weather_ipv6 },
 #endif
-#endif
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

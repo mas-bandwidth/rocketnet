@@ -143,53 +143,6 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 //                     create and destroy
 // ---------------------------------------------------------------
 
-// DEFAULT < STRUCT < ENV for the R6 send budget (docs/CHANNELS.md 11.5;
-// tla/RNSendBudget.tla SetKbps): the direction's field is read from
-// ROCKETNET_MESSAGE_CLIENT_SEND_KBPS or ROCKETNET_MESSAGE_SERVER_SEND_KBPS over
-// the value create resolved, through the config table's own overlay, which
-// logs the override loudly with the value it displaced and refuses a value
-// that does not parse. Only the two budget fields are read here: the rest of
-// the message config sizes the caller's memory, and its WIRE fields must
-// match the peer's. false on a value that does not parse.
-
-bool rn_message_object_send_kbps_env_valid( int is_server )
-{
-    const char * name = is_server ? "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" : "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS";
-    const char * value = rocketnet_platform_getenv( name );
-    if ( !value || value[0] == '\0' )
-        return true;
-    int parsed = 0;
-    if ( !rocketnet_config_parse_int_value( value, &parsed ) || parsed > ROCKETNET_SEND_BUDGET_MAX_KBPS )
-    {
-        rocketnet_error( "message config refuses %s=\"%s\": an integer of at most %d kbps (0 or lower uncaps)", name, value, ROCKETNET_SEND_BUDGET_MAX_KBPS );
-        return false;
-    }
-    return true;
-}
-
-static bool rn_message_object_send_kbps_from_env( int is_server, int32_t * kbps )
-{
-    const char * name = is_server ? "server_send_kbps" : "client_send_kbps";
-    int num_fields = 0;
-    const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
-    for ( int i = 0; i < num_fields; i++ )
-    {
-        if ( strcmp( fields[i].name, name ) != 0 )
-            continue;
-        rocketnet_message_config_t scratch;
-        memset( &scratch, 0, sizeof( scratch ) );
-        if ( is_server )
-            scratch.server_send_kbps = (int) *kbps;
-        else
-            scratch.client_send_kbps = (int) *kbps;
-        if ( !rocketnet_config_apply_env( "message", &scratch, &fields[i], 1 ) )
-            return false;
-        *kbps = (int32_t) ( is_server ? scratch.server_send_kbps : scratch.client_send_kbps );
-        return true;
-    }
-    return true;
-}
-
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
                                                        int32_t default_kbps, double time )
@@ -204,15 +157,16 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     // R6 (docs/CHANNELS.md 11.5): a create argument of 0 takes the message
     // config's field; a positive value overrides it for this create; 0 or
     // lower in the config field itself disables that direction's budget.
+    // The environment is not read here: the public creates resolve the
+    // budget from ROCKETNET_CLIENT_SEND_KBPS or
+    // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS (sdk/rocketnet_api.cpp:135
+    // and :173) and pass it as default_kbps.
     if ( default_kbps == 0 )
         default_kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
 
-    // an operator's environment overrides both, loudly
-    const bool env_valid = rn_message_object_send_kbps_from_env( is_server, &default_kbps );
-
     rn_message_object_layout_t layout;
     const bool laid_out = link && rn_message_object_layout( config, num_connections, &layout );
-    const bool budget_valid = env_valid && ( default_kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) default_kbps ) ) && rocketnet_send_budget_time_valid( time );
+    const bool budget_valid = ( default_kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) default_kbps ) ) && rocketnet_send_budget_time_valid( time );
     const bool memory_valid = !memory || ( laid_out && memory_bytes >= layout.total && ( (uintptr_t) memory % ROCKETNET_ALLOCATION_ALIGNMENT ) == 0 );
 
     if ( !laid_out || !budget_valid || !memory_valid )
@@ -255,6 +209,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
     object->pending_connection = -1;
+    object->send_next_connection = 0;
     object->block = block;
     object->owns_block = owns_block ? 1 : 0;
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
@@ -445,15 +400,17 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
     rn_message_object_close_in_place( object );
 
-    if ( time != time || time < object->time )
-        time = object->time;
+    bool time_clamped = false;
+    time = rocketnet_clamp_update_time( object->time, time, &time_clamped );
+    if ( time_clamped && !object->clock_started )
+        return result;
     object->time = time;
 
-    // the transport's clock: a client transport seeded at 0.0 at create starts
-    // counting at this first update, so its connect timers and token lifetime
-    // run from the first update the game makes, whatever its clock reads then.
-    // The object's own clock (budgets, resends, timeouts) is the game's time.
-    if ( !object->clock_started )
+    // rn_message_object_update leaves both clocks untouched on a rejected
+    // first sample. The client transport starts its clock at the
+    // first valid update, so connect timers and token lifetime start there; the
+    // object's own clock (budgets, resends, timeouts) reads game time.
+    if ( !object->clock_started && !time_clamped )
     {
         object->clock_started = 1;
         object->clock_origin = object->link.clock_from_first_update ? time : 0.0;
@@ -643,6 +600,14 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     if ( unreliable && object->link.start_packet )
     {
         int header = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
+        // Reserve a complete round for the rotating pass, including this
+        // connection's reliable work. In-place writes may use surplus slots,
+        // but application call order cannot consume another client's turn.
+        const int send_connections = object->link.send_connected_count ?
+            object->link.send_connected_count( object->link.transport ) : object->num_connections;
+        if ( header >= 0 && object->link.send_capacity_available &&
+             object->link.send_capacity_available( object->link.transport ) <= send_connections )
+            header = RN_ENDPOINT_IN_PLACE_QUEUED;
         if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
             header = RN_ENDPOINT_IN_PLACE_QUEUED;               // the bucket cannot pay it now: the write pass decides
         if ( header >= 0 )
@@ -788,7 +753,7 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 // writes it in place (THE COPIES (a)), and the object finishes it and tells the
 // endpoint whether it left, under the transport's packet id (RNSlots Send).
 
-static void rn_message_connection_write( rn_message_object_t * object, int index )
+static bool rn_message_connection_write( rn_message_object_t * object, int index )
 {
     rn_message_connection_t * connection = &object->connections[index];
     rn_message_link_t * link = &object->link;
@@ -798,7 +763,7 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
     {
         const int request = rn_endpoint_next_packet_bytes( connection, now );
         if ( request == 0 )
-            break;
+            return false;
 
         rocketnet_packet_context_t context;
         uint8_t * frame = link->start_packet( link->transport, index, request, &context );
@@ -820,24 +785,46 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
             rn_endpoint_packet_sent( connection, context.packet_id, wire_bytes, now );
         else
             rn_endpoint_packet_failed( connection, context.packet_id, now );
+        return true;
     }
 }
 
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     rn_message_object_close_in_place( object );
-    for ( int i = 0; i < object->num_connections; i++ )
+
+    // RNSlots Send, fair rotation: start at the first connection not yet
+    // offered a frame, and stop when the transport's send capacity for this
+    // update is spent. The cursor names the next unserved connection, so a
+    // cap below the client count serves every client in turn rather than
+    // forever serving the low indices. A connection that finds no capacity
+    // leaves its queued sends for the next update; reliability keeps them
+    // due, so nothing is lost.
+    const int num_connections = object->num_connections;
+    const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
+    bool progress;
+    do
     {
-        rn_message_connection_t * connection = &object->connections[i];
-        if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
-            continue;
-        // the client transport accepts sends only while CONNECTED (11.3):
-        // until then the queue holds only the CONFIG control record, which
-        // waits unnumbered; application sends were dropped at start
-        if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
-            continue;
-        rn_message_connection_write( object, i );
-    }
+        progress = false;
+        for ( int offset = 0; offset < num_connections; offset++ )
+        {
+            const int i = ( start + offset ) % num_connections;
+            rn_message_connection_t * connection = &object->connections[i];
+            if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+                continue;
+            // The client's CONFIG waits unnumbered until the transport connects.
+            if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
+                continue;
+            if ( object->link.send_capacity_available &&
+                 object->link.send_capacity_available( object->link.transport ) <= 0 )
+                goto flush;
+            // One frame per connection per round, including when the per-client
+            // allowance is larger than one. A busy client cannot take K turns.
+            progress |= rn_message_connection_write( object, i );
+            object->send_next_connection = ( i + 1 ) % num_connections;
+        }
+    } while ( progress );
+flush:
     object->link.send_packets( object->link.transport );
 }
 
@@ -966,6 +953,16 @@ static void rn_server_link_send_packets( void * transport )
     rocketnet_server_transport_send_packets( (rocketnet_server_transport_t *) transport );
 }
 
+static int rn_server_link_send_connected_count( void * transport )
+{
+    return rocketnet_server_transport_num_connected_clients( (rocketnet_server_transport_t *) transport );
+}
+
+static int rn_server_link_send_capacity_available( void * transport )
+{
+    return rocketnet_server_transport_send_capacity_available( (const rocketnet_server_transport_t *) transport );
+}
+
 // P9a: the transport's id of the connection in the slot, 0 while it is free;
 // a reconnect into the slot has a new id even with the same client id and
 // inside one update, so Observe resets the slot for it
@@ -1019,6 +1016,8 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->finish_packet = rn_server_link_finish_packet;
     link->abort_packet = rn_server_link_abort_packet;
     link->send_packets = rn_server_link_send_packets;
+    link->send_capacity_available = rn_server_link_send_capacity_available;
+    link->send_connected_count = rn_server_link_send_connected_count;
     link->connection = rn_server_link_connection;
     link->disconnect = rn_server_link_disconnect;
     link->state = rn_server_link_state;
@@ -1091,7 +1090,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * c
     const int max_clients = rn_message_server_max_clients( transport_config );
 
     // refuse before the transport opens a socket
-    if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) || !rn_message_object_send_kbps_env_valid( 1 ) )
+    if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
     {
         rocketnet_error( "message server create refused: message config, client count or send budget" );
         *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;

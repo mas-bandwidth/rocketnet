@@ -375,17 +375,20 @@ timers are what a napped or background-policy process stretches (the measured
 numbers below).
 
 **What the library sets.** `rocketnet_platform_thread_create`
-(`sdk/rocketnet_platform.cpp:2730`) starts each thread through
-`thread_function_shim`, which calls `pthread_set_qos_class_self_np` with
-`QOS_CLASS_USER_INTERACTIVE` on macOS and iOS before the thread's loop runs
-(`sdk/rocketnet_platform.cpp:2715`), whatever class the creating thread has.
-That class request is the only scheduling change the library makes on its
-I/O threads: it sets no Mach thread policy on them. The frame-sync path's
-`THREAD_TIME_CONSTRAINT_POLICY` request (`sdk/rocketnet_frame_sync.cpp:180`)
-is on the frame-sync waiting thread, not on the I/O threads. The repeated
-runs below show why the class request is not a protection: under a background
-task policy macOS throttles the whole process and does not honour a thread's
-request for a higher class.
+(`sdk/rocketnet_platform.cpp`) starts each thread through
+`thread_function_shim`, which calls the thread function and sets nothing: the
+library requests no QoS class on macOS or iOS. The one scheduling call on the
+client network thread is the `pthread_setschedparam` `SCHED_RR` call under
+Thread priority below, made by the creating thread, and none at all with
+`rocketnet_set_thread_priority( false )`. The library sets no Mach thread
+policy on its threads. The frame-sync path's `THREAD_TIME_CONSTRAINT_POLICY`
+request (`rocketnet_frame_sync_elevate_priority`,
+`sdk/rocketnet_frame_sync.cpp`) is on the frame-sync waiting thread, not on
+the I/O threads, and is skipped when the switch is off. The `head` rows below
+measure an earlier build that requested `QOS_CLASS_USER_INTERACTIVE` on its
+threads; the repeated runs show why such a request is not a protection: under
+a background task policy macOS throttles the whole process and does not honour
+a thread's request for a higher class.
 
 **What the game must do itself.** Setting a thread class is not enough for a
 game whose whole process is napped. While connected, the game holds an
@@ -586,8 +589,8 @@ exit 2. Needs: rocketnet-client-io-transport.
 The client's network thread, the I/O thread or the legacy receive thread,
 takes the client thread priority from the thread that creates the client,
 right after the create (`rocketnet_client_transport_create`,
-`sdk/rocketnet_client_transport.cpp:1048`; `rocketnet_platform_client_thread_priority`,
-`sdk/rocketnet_platform.cpp:1427`, `:3135` and `:3566`). The settings are the flow library's (`flow_platform.cpp`),
+`sdk/rocketnet_client_transport.cpp`; `rocketnet_platform_client_thread_priority`
+in `sdk/rocketnet_platform.cpp`, one per platform). The settings are the flow library's (`flow_platform.cpp`),
 unchanged:
 
 | Platform | Call on the client network thread |
@@ -598,8 +601,8 @@ unchanged:
 
 On Windows the library also requests a 1 ms timer period,
 `timeBeginPeriod( 1 )`, at `rocketnet_init` before the timer query, and ends it
-with `timeEndPeriod( 1 )` at `rocketnet_term` (`sdk/rocketnet_platform.cpp:3449`
-and `:3433`, from `rocketnet_platform_term` at `:3480`). A step-driven client
+with `timeEndPeriod( 1 )` at `rocketnet_term` (`rocketnet_platform_init` and
+`rocketnet_platform_term` in `sdk/rocketnet_platform.cpp`). A step-driven client
 (`step_driven` or `step_in_update`) creates no thread and makes no call.
 
 The game's own threads are the game's: the library sets nothing on the main
@@ -610,7 +613,9 @@ its main thread (`SCHED_RR` at `sched_get_priority_max` on Linux,
 them.
 
 `rocketnet_set_thread_priority( false )` turns every one of these calls off,
-process-wide. Set it before `rocketnet_init` to skip the timer period too.
+process-wide, and the frame-sync priority call with them
+(`rocketnet_frame_sync_elevate_priority` returns before it when
+`rocketnet_platform_thread_priority_enabled` is false). Set it before `rocketnet_init` to skip the timer period too.
 Threads created after a change follow the new value; a thread already running
 keeps what it got. A game that sets its own thread priorities turns it off.
 `rocketnet_get_thread_priority` reads the switch.
