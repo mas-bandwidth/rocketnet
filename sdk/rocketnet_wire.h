@@ -215,7 +215,11 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 // next header is an extension header (hop-by-hop, routing, fragment,
 // destination options, AH, ESP): the program never walks that chain, so it
 // cannot say whether such a frame was for this server, and it counts them on
-// any port.
+// any port. PASSED_FRAGMENT counts the IP fragments the program hands to the
+// kernel stack for reassembly: IPv4 with more-fragments set or a nonzero
+// fragment offset, and IPv6 whose next header is the fragment header. The
+// check runs before the size, epoch and filter checks, on any port, so a
+// fragment never counts as a drop.
 
 #define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                 0
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL          1
@@ -225,7 +229,8 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH        5
 #define ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION      6
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED           7
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       8
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT            8
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       9
 
 struct rocketnet_server_xdp_stats_t
 {

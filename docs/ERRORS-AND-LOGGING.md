@@ -73,15 +73,15 @@ Status codes follow the same numbering discipline as `ROCKETNET_MESSAGE_VIOLATIO
 (`sdk/rocketnet_counters.h:37-350`):
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is a positive integer in `1 .. ROCKETNET_NUM_STATUS_CODES - 1`.
+2. Every failure code is a positive integer in `1 .. ROCKETNET_STATUS_COUNT - 1`.
 3. **Append-only stability law**: Once a code is published in a release, its
    integer value and meaning are permanent. New codes append immediately before
-   `ROCKETNET_NUM_STATUS_CODES`. Deprecated codes remain reserved in the enum
+   `ROCKETNET_STATUS_COUNT`. Deprecated codes remain reserved in the enum
    and in `rocketnet_status_name` and are never renumbered or reassigned.
 4. Runtime introspection mirrors counters (`sdk/rocketnet.h:1218-1221`):
-   - `int rocketnet_num_status_codes(void)` returns `ROCKETNET_NUM_STATUS_CODES`.
+   - `int rocketnet_num_status_codes(void)` returns `ROCKETNET_STATUS_COUNT`.
    - `const char * rocketnet_status_name(enum rocketnet_status_t status)` returns a static ASCII
-     identifier (for example, `"INVALID_CONNECT_TOKEN"`) for `0 <= status < ROCKETNET_NUM_STATUS_CODES`,
+     identifier (for example, `"INVALID_CONNECT_TOKEN"`) for `0 <= status < ROCKETNET_STATUS_COUNT`,
      and `"unknown"` (never `NULL`, without asserting) for any other value.
 
 ```c
@@ -119,7 +119,7 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
     ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,
 
-    ROCKETNET_NUM_STATUS_CODES                          = 23
+    ROCKETNET_STATUS_COUNT                              = 23
 };
 ```
 
@@ -155,9 +155,11 @@ Every log line is formatted once into a 1024-byte stack buffer and handed to
 the installed callback, or to the default sink (stdout) when none is
 installed. The level is `enum rocketnet_log_level_t`, set with
 `rocketnet_set_log_level` and read with `rocketnet_get_log_level`;
-`rocketnet_log_level_name` names a level, and `"unknown"` for a value outside
-the enum. `log_quiet` and `log_level` are relaxed atomics read before any
-formatting.
+`rocketnet_log_level_name` names a level by its enum (`"none"`, `"error"`,
+`"warn"`, `"info"`, `"debug"`, `"spam"`), and `"unknown"` for a value outside
+the enum. `rocketnet_set_quiet( true )` suppresses every line and
+`rocketnet_set_quiet( false )` resumes them, without changing the level.
+`log_quiet` and `log_level` are relaxed atomics read before any formatting.
 
 ### 3.2 Callback Signature and Contract
 
@@ -295,7 +297,7 @@ SDK (`sdk/rocketnet_layers.h`).
 | :--- | :--- | :--- | :--- | :--- |
 | **Layer 1** | Counter Table & C API | `sdk/rocketnet_counters.h`, `sdk/rocketnet_counters.cpp`, `sdk/rocketnet_server_protocol.h`, `sdk/rocketnet_server_protocol.cpp`, `sdk/rocketnet.h`, `tools/exports.txt` | Single `ROCKETNET_COUNTERS_TABLE` generates the C enum and `rocketnet_counter_name`; `handshakes_processed_this_update` moves to `rocketnet_server_protocol_t`; `rocketnet_counter_name` never asserts on out-of-range indices; `rocketnet_counter_value` copies bounded prefixes. | `test_unit_counters.cpp` in `./bin/test` (bijective `0 .. rocketnet_num_counters() - 1` names, out-of-range bounds, counter value checks, `sizeof(rocketnet_counters_t)`). |
 | **Layer 2** | Preformatted Log Callback | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `tools/exports.txt` | `log_quiet` and `log_level` use atomic loads before `vsnprintf`; `rocketnet_set_log_callback(cb, ctx)` delivers `(ctx, level, message, length)` with `message[length] == '\0'` and `length <= 1023` in one `vsnprintf` pass; the default sink formats nothing a second time; it is the one sink. | `test_unit_logging.cpp` in `./bin/test` (level filtering before format, `log_quiet`, `context` forwarding, exact `length` and NUL termination at `0`, `1023`, `1024`, `2048`, sink switching, multi-thread logging). |
-| **Layer 3** | Status Enum & Plumbing | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `sdk/rocketnet_config.h`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_client_protocol.h`, `sdk/rocketnet_client_protocol.cpp`, `tools/exports.txt` | `enum rocketnet_status_t` (`0 .. ROCKETNET_NUM_STATUS_CODES - 1`), `rocketnet_status_name`, and `rocketnet_num_status_codes` are defined; internal config, ladder, and token helpers accept `int * status` and log at `ROCKETNET_LOG_LEVEL_ERROR` on every refusal. | `test_unit_status.cpp` in `./bin/test` verifying every status string, out-of-range `rocketnet_status_name` queries, and exact status codes from config, transport ladder, and connect-token validation. |
+| **Layer 3** | Status Enum & Plumbing | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `sdk/rocketnet_config.h`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_client_protocol.h`, `sdk/rocketnet_client_protocol.cpp`, `tools/exports.txt` | `enum rocketnet_status_t` (`0 .. ROCKETNET_STATUS_COUNT - 1`), `rocketnet_status_name`, and `rocketnet_num_status_codes` are defined; internal config, ladder, and token helpers accept `int * status` and log at `ROCKETNET_LOG_LEVEL_ERROR` on every refusal. | `test_unit_status.cpp` in `./bin/test` verifying every status string, out-of-range `rocketnet_status_name` queries, and exact status codes from config, transport ladder, and connect-token validation. |
 | **Layer 4** | Public `*_create_ex` Entry Points | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `the internal client transport`, `the internal server transport`, `sdk/rocketnet_frame_sync.cpp`, `tools/exports.txt` | `rocketnet_init_ex`, `rocketnet_term_ex`, `rocketnet_allocator_ex`, `rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_frame_sync_create_ex`, and `rocketnet_client_validate_config` report exact `rocketnet_status_t` codes on all branches (C1–C11, S1–S14, F1–F3); the public init, term and allocator calls return the same codes. | `test_lifecycle.cpp` and `test_unit_status.cpp` exercising every failure branch, including a fault-injecting allocator (`rocketnet_allocator_ex`) failing at each sequential allocation site to prove `ROCKETNET_STATUS_OUT_OF_MEMORY` and zero leaks at `rocketnet_term_ex`. |
 
 ---

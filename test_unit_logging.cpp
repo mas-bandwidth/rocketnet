@@ -126,10 +126,10 @@ static void log_callback_filters_before_formatting()
     check( g_last_level == ROCKETNET_LOG_LEVEL_ERROR );
     check( strcmp( g_msg, "shows visible-token" ) == 0 );
 
-    rocketnet_quiet( true );
+    rocketnet_set_quiet( true );
     rocketnet_error( "quiet-hidden %s", visible );
     check( g_count == 1 );
-    rocketnet_quiet( false );
+    rocketnet_set_quiet( false );
     rocketnet_error( "after-quiet %s", visible );
     check( g_count == 2 );
     check( g_msglen > 0 );
