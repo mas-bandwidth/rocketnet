@@ -149,7 +149,7 @@ static const char * const k_windows_server_transports[3] = { "portable", "iocp",
 static struct rocketnet_server_t * windows_start_server( const char * address, const char * transport, int max_clients )
 {
     struct rocketnet_server_config_t config;
-    rocketnet_server_dev_config( &config );
+    rocketnet_check( rocketnet_server_dev_config( &config ) == ROCKETNET_STATUS_OK );
     config.max_clients = max_clients;
     config.transport = transport;
 
@@ -166,7 +166,7 @@ static struct rocketnet_server_t * windows_start_server( const char * address, c
 static struct rocketnet_client_t * windows_create_client()
 {
     struct rocketnet_client_config_t config;
-    rocketnet_client_default_config( &config );
+    rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL, 0 );
     rocketnet_check( client != NULL );
     return client;
@@ -176,15 +176,15 @@ static void windows_connect_client_to_server( struct rocketnet_client_t * client
                                               const char * server_address, uint64_t client_id, int expected_connected )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, client_id, (uint64_t) time( NULL ), token ) );
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, client_id, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
 
     const double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
     {
         const double now = rocketnet_platform_time();
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
-        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
@@ -209,12 +209,12 @@ static void windows_exchange_one_reliable_message( struct rocketnet_client_t * c
     memcpy( to_client, "s2c:", 4 );
     memcpy( to_client + 4, &tag, 4 );
 
-    uint8_t * client_out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, 8 );
+    uint8_t * client_out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
     rocketnet_check( client_out != NULL );
     memcpy( client_out, to_server, 8 );
     rocketnet_check( rocketnet_client_finish_message( client, 8 ) != 0 );
 
-    uint8_t * server_out = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABLE_ORDERED, 8 );
+    uint8_t * server_out = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
     rocketnet_check( server_out != NULL );
     memcpy( server_out, to_client, 8 );
     rocketnet_check( rocketnet_server_finish_message( server, slot, 8 ) != 0 );
@@ -227,8 +227,8 @@ static void windows_exchange_one_reliable_message( struct rocketnet_client_t * c
         const double now = rocketnet_platform_time();
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
-        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
-        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
 
         if ( !server_got )
         {
@@ -292,7 +292,7 @@ void windows_init_term_cycles()
     // The suite runner calls rocketnet_init(NULL) before invoking the case.
     // Terminate that outer session first so the 1000-cycle loop exercises real
     // rocketnet_init and rocketnet_term transitions from the uninitialized state.
-    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
 
     WSADATA wsa_data;
     memset( &wsa_data, 0, sizeof( wsa_data ) );
@@ -317,15 +317,15 @@ void windows_init_term_cycles()
     rocketnet_check( setsockopt( caller_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *) &timeout_ms, sizeof( timeout_ms ) ) == 0 );
 
     // One warm-up cycle so any one-time library init is settled before the baseline.
-    rocketnet_check( rocketnet_init( NULL ) );
-    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
 
     const windows_process_counts_t before = windows_record_counts();
 
     for ( int i = 0; i < 1000; i++ )
     {
-        rocketnet_check( rocketnet_init( NULL ) );
-        rocketnet_term();
+        rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     }
 
     const windows_process_counts_t after = windows_record_counts();
@@ -351,7 +351,7 @@ void windows_init_term_cycles()
     rocketnet_check( WSAGetLastError() == WSANOTINITIALISED );
 
     // Restore rocketnet_init for the suite runner's post-test rocketnet_term().
-    rocketnet_check( rocketnet_init( NULL ) );
+    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 // 2. windows_server_create_destroy_cycles
@@ -370,7 +370,7 @@ void windows_server_create_destroy_cycles()
         for ( int i = 0; i < 200; i++ )
         {
             struct rocketnet_server_t * server = windows_start_server( "127.0.0.1:0", transport, 4 );
-            rocketnet_check( rocketnet_server_update( server, rocketnet_platform_time() ) == ROCKETNET_MESSAGE_OK );
+            rocketnet_check( rocketnet_server_update( server, rocketnet_platform_time() ) == ROCKETNET_UPDATE_OK );
             rocketnet_server_destroy( server );
         }
 
@@ -380,7 +380,7 @@ void windows_server_create_destroy_cycles()
         for ( int i = 0; i < 200; i++ )
         {
             struct rocketnet_server_t * server = windows_start_server( "127.0.0.1:0", transport, 4 );
-            rocketnet_check( rocketnet_server_update( server, rocketnet_platform_time() ) == ROCKETNET_MESSAGE_OK );
+            rocketnet_check( rocketnet_server_update( server, rocketnet_platform_time() ) == ROCKETNET_UPDATE_OK );
             rocketnet_server_destroy( server );
         }
 
@@ -476,7 +476,7 @@ void windows_client_connect_disconnect_cycles()
             while ( rocketnet_server_num_connected_clients( server ) != 0 &&
                     rocketnet_platform_time() - disconnect_start < 2.0 )
             {
-                rocketnet_check( rocketnet_server_update( server, rocketnet_platform_time() ) == ROCKETNET_MESSAGE_OK );
+                rocketnet_check( rocketnet_server_update( server, rocketnet_platform_time() ) == ROCKETNET_UPDATE_OK );
                 rocketnet_server_send_packets( server );
                 rocketnet_platform_sleep( 0.0005 );
             }
@@ -526,7 +526,7 @@ void windows_destroy_while_traffic()
             {
                 uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
                 const uint64_t client_id = (uint64_t) ( 50000 + cycle * 100 + t * 10 + c );
-                rocketnet_check( rocketnet_write_dev_connect_token( server_address, client_id, (uint64_t) time( NULL ), token ) );
+                rocketnet_check( rocketnet_write_dev_connect_token( server_address, client_id, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
                 rocketnet_check( rocketnet_client_connect( clients[c], token ) == ROCKETNET_STATUS_OK );
             }
 
@@ -534,12 +534,12 @@ void windows_destroy_while_traffic()
             while ( rocketnet_platform_time() - connect_start < 5.0 )
             {
                 const double now = rocketnet_platform_time();
-                rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+                rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
                 rocketnet_server_send_packets( server );
                 int connected_clients = 0;
                 for ( int c = 0; c < 4; c++ )
                 {
-                    rocketnet_check( rocketnet_client_update( clients[c], now ) == ROCKETNET_MESSAGE_OK );
+                    rocketnet_check( rocketnet_client_update( clients[c], now ) == ROCKETNET_UPDATE_OK );
                     rocketnet_client_send_packets( clients[c] );
                     if ( rocketnet_client_state( clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
                         connected_clients++;
@@ -563,28 +563,28 @@ void windows_destroy_while_traffic()
                     const uint64_t slot = rocketnet_client_index( clients[c] );
                     const int channel = step & 3;
 
-                    uint8_t * c_rel = rocketnet_client_start_message( clients[c], channel, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
+                    uint8_t * c_rel = rocketnet_client_start_message( clients[c], channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( payload ) );
                     if ( c_rel )
                     {
                         memcpy( c_rel, payload, sizeof( payload ) );
                         rocketnet_check( rocketnet_client_finish_message( clients[c], (int) sizeof( payload ) ) != 0 );
                     }
 
-                    uint8_t * c_unrel = rocketnet_client_start_message( clients[c], channel, ROCKETNET_UNRELIABLE, (int) sizeof( payload ) );
+                    uint8_t * c_unrel = rocketnet_client_start_message( clients[c], channel, ROCKETNET_RELIABILITY_UNRELIABLE, (int) sizeof( payload ) );
                     if ( c_unrel )
                     {
                         memcpy( c_unrel, payload, sizeof( payload ) );
                         rocketnet_check( rocketnet_client_finish_message( clients[c], (int) sizeof( payload ) ) != 0 );
                     }
 
-                    uint8_t * s_rel = rocketnet_server_start_message( server, slot, channel, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( payload ) );
+                    uint8_t * s_rel = rocketnet_server_start_message( server, slot, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( payload ) );
                     if ( s_rel )
                     {
                         memcpy( s_rel, payload, sizeof( payload ) );
                         rocketnet_check( rocketnet_server_finish_message( server, slot, (int) sizeof( payload ) ) != 0 );
                     }
 
-                    uint8_t * s_unrel = rocketnet_server_start_message( server, slot, channel, ROCKETNET_UNRELIABLE, (int) sizeof( payload ) );
+                    uint8_t * s_unrel = rocketnet_server_start_message( server, slot, channel, ROCKETNET_RELIABILITY_UNRELIABLE, (int) sizeof( payload ) );
                     if ( s_unrel )
                     {
                         memcpy( s_unrel, payload, sizeof( payload ) );
@@ -597,9 +597,9 @@ void windows_destroy_while_traffic()
                 rocketnet_server_send_packets( server );
                 if ( step < 4 )
                 {
-                    rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+                    rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
                     for ( int c = 0; c < 4; c++ )
-                        rocketnet_check( rocketnet_client_update( clients[c], now ) == ROCKETNET_MESSAGE_OK );
+                        rocketnet_check( rocketnet_client_update( clients[c], now ) == ROCKETNET_UPDATE_OK );
                 }
             }
 
