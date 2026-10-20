@@ -6,6 +6,11 @@
 #pragma once
 
 #include "rocketnet_internal.h"
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#include <sys/time.h>
+#else
+#include <winsock2.h>
+#endif
 
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
 #define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
@@ -98,6 +103,16 @@ double rocketnet_platform_time();
  * @return None.
  */
 void rocketnet_platform_sleep( double time );
+
+struct timeval rocketnet_platform_timeval_from_seconds( float seconds );
+
+struct rocketnet_platform_sleep_split_t
+{
+    uint32_t seconds;
+    uint32_t microseconds;
+};
+
+struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time );
 
 /**
  * @brief Looks up a process environment variable.
@@ -871,6 +886,9 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         uint64_t send_failures;
     };
 
+struct sockaddr_storage;
+bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t * socket, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
+
     /** @brief Holds a native thread and its allocator context. */
     struct rocketnet_platform_thread_t
     {
@@ -914,6 +932,9 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     };
+
+struct sockaddr_storage;
+bool rocketnet_msgx_read_sockaddr( struct rocketnet_platform_socket_t * socket, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
 
     struct rocketnet_platform_thread_t
     {
@@ -979,6 +1000,15 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     #endif // #if ROCKETNET_UNREAL_ENGINE
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform_socket_handle_t handle )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return handle != (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
+#else
+    return handle >= 0;
+#endif
+}
 
 // ----------------------------------------------------------------
 

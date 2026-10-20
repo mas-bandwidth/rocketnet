@@ -787,12 +787,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     const bool dual_stack = rocketnet_platform_client_dual_stack();
     const bool ipv6_available = rocketnet_platform_client_ipv6_available();
 
-    // on macOS an IPv4 server's client binds IPv4. Darwin picks the ephemeral
-    // port of a dual stack IPv6 socket without regard to the IPv4 sockets
-    // already bound, and delivers an IPv4 datagram to the IPv4 socket on that
-    // port, so a dual stack client sharing a port never hears its server. An
-    // IPv4 socket's ephemeral port is never one another IPv4 socket holds.
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    // on macOS and iOS an IPv4 server's client binds IPv4. Darwin picks the
+    // ephemeral port of a dual stack IPv6 socket without regard to the IPv4
+    // sockets already bound, and delivers an IPv4 datagram to the IPv4 socket
+    // on that port, so a dual stack client sharing a port never hears its
+    // server. An IPv4 socket's ephemeral port is never one another IPv4 socket
+    // holds.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     const bool ipv4_server_dual_stack = false;
 #else
     const bool ipv4_server_dual_stack = dual_stack;
