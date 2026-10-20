@@ -1743,7 +1743,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
             if ( result )
             {
-                rocketnet_error( "server could not create umem" );
+                rocketnet_error( "server could not create umem: %s (errno %d)", strerror( -result ), -result );
                 rocketnet_server_socket_destroy( server_socket );
                 return NULL;
             }
@@ -1759,7 +1759,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
             if ( !zero_copy )
             {
-                rocketnet_error( "server could not create xsk socket for queue %d", queue );
+                rocketnet_error( "server could not create xsk socket for queue %d: %s (errno %d)", queue, strerror( -result ), -result );
                 rocketnet_server_socket_destroy( server_socket );
                 return NULL;
             }
