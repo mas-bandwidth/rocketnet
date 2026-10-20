@@ -13,13 +13,13 @@
 // suite binds through the same config as the server.
 //
 // The umem config for the same bind (the server's xsk_umem__create,
-// sdk/rocketnet_server_socket_linux.cpp:1737). It sizes the fill and
+// sdk/rocketnet_server_socket_linux.cpp). It sizes the fill and
 // completion rings explicitly: libxdp 1.4.2's xsk_umem__create returns
 // -EINVAL for a zeroed config's zero ring sizes, so the server never starts
 // there without them. The fill ring asks for XSK_RING_PROD__DEFAULT_NUM_DESCS
 // (2048) entries and the completion ring for XSK_RING_CONS__DEFAULT_NUM_DESCS
 // (2048), both from xdp/xsk.h. The server reserves ROCKETNET_XDP_FILL_QUEUE_SIZE
-// fill entries at start (sdk/rocketnet_server_socket_linux.cpp:1829); the
+// fill entries at start (sdk/rocketnet_server_socket_linux.cpp); the
 // static assert below keeps the fill ring at least that large.
 
 #ifndef ROCKETNET_XDP_SOCKET_CONFIG_H
