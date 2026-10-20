@@ -203,6 +203,7 @@ MCClientSessionDestroySilent.cfg	MCClientSession.tla	invariant	DestroyDisconnect
 MCServerSession.cfg	MCServerSession.tla	pass	-	ignore-terminal	serversession	required	-
 MCServerSessionUnresetSlot.cfg	MCServerSession.tla	invariant	SlotReuseObservesNothing	ignore-terminal	serversession	required	-
 MCServerSessionStopLeavesClient.cfg	MCServerSession.tla	invariant	NoClientWhileStopped	ignore-terminal	serversession	required	-
+MCServerSessionDisconnectAllLeavesClient.cfg	MCServerSession.tla	invariant	DisconnectAllIsAtomic	ignore-terminal	serversession	required	-
 MCServerSessionTouchesOtherSlot.cfg	MCServerSession.tla	invariant	ResetTouchesOnlyItsSlot	ignore-terminal	serversession	required	-
 MCServerSessionDestroySilent.cfg	MCServerSession.tla	invariant	StopDisconnectsAll	ignore-terminal	serversession	required	-
 MCServerSessionResetClearsHistory.cfg	MCServerSession.tla	invariant	TokenAdmitsOnce	ignore-terminal	serversession	required	-
