@@ -2749,6 +2749,16 @@ uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_serve
     return rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index );
 }
 
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+// development library only: the driver instance behind the transport, for a
+// functional case that drives a native driver's test seam
+void * rocketnet_server_transport_driver_for_testing( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->io.instance;
+}
+#endif
+
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -2760,6 +2770,9 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         server_transport->io.operations->prefilter_counters( server_transport->io.instance, prefilter );
         rocketnet_counters_apply_prefilter( &server_transport->counters, prefilter );
     }
+    // SEND_FAILED is the driver's own cumulative count, assigned on read
+    if ( server_transport->io.operations && server_transport->io.operations->send_failures )
+        server_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = server_transport->io.operations->send_failures( server_transport->io.instance );
     return &server_transport->counters;
 }
 
