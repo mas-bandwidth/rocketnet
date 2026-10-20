@@ -3383,7 +3383,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 #include <wininet.h>
 #include <iphlpapi.h>
 #include <qos2.h>
-#include <mstcpip.h>
+#include <mswsock.h>
 
 #pragma comment( lib, "WS2_32.lib" )
 #pragma comment( lib, "IPHLPAPI.lib" )
