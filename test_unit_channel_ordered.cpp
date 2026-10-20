@@ -1817,9 +1817,10 @@ static void rnchannel_witness_replays_ordered()
         check( m.b->got[0].size() == 1 );
         m.now += 0.2;
         wire_packet_t again[4];
-        check( write_packets( m.a, m.now, again, 4 ) >= 1 );             // nothing was acked: every number resends
+        const int count = write_packets( m.a, m.now, again, 4 );       // nothing was acked: every number resends
+        check( count >= 1 );
         const uint64_t duplicates = counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE );
-        for ( int p = 0; p < 4; p++ )
+        for ( int p = 0; p < count; p++ )
             if ( again[p].bytes > 0 && again[p].id >= 6 )
                 open_packet( m.b, &again[p] );
         check( counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > duplicates );

@@ -107,6 +107,7 @@ struct rocketnet_client_io_t
     std::atomic<bool> quit;
     struct rocketnet_client_io_open_t open;
     uint64_t driver_faults;                     // a receive count or byte count this step refused
+    uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -140,6 +141,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
     io->driver_faults = 0;
+    io->prefilter_too_large = NULL;
 }
 
 // tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -419,7 +421,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             const int got = io->driver->operations->receive_batch( io->driver->instance, from, packet_data,
                 ROCKETNET_FRAME_SIZE, packet_bytes, max_packets );
             // a count past the slots asked for, or a byte count that is
-            // negative or past the stride, is a driver fault and is not stored
+            // negative or beyond the UDP envelope, is a driver fault and is not stored
             if ( got < 0 )
             {
                 io->driver_faults++;
@@ -439,6 +441,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 if ( packet_bytes[i] < 0 || packet_bytes[i] > ROCKETNET_FRAME_SIZE )
                 {
                     io->driver_faults++;
+                    if ( io->prefilter_too_large && packet_bytes[i] > ROCKETNET_FRAME_SIZE )
+                        (*io->prefilter_too_large)++;
                     continue;
                 }
                 if ( accepted != i )
@@ -472,6 +476,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             if ( bytes < 0 || bytes > ROCKETNET_MAX_PACKET_BYTES )
             {
                 io->driver_faults++;
+                if ( io->prefilter_too_large && bytes > ROCKETNET_MAX_PACKET_BYTES )
+                    (*io->prefilter_too_large)++;
                 break;
             }
             (void) rocketnet_client_receive_handshake_io_receive( handshake );
