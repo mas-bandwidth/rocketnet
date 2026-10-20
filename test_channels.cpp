@@ -1014,6 +1014,7 @@ static void test_channels_allocator_layout()
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // test explicit headroom without a finite send budget
     check( config.num_channels == 32 );
     check( config.window_messages == 1024 );
     check( config.receive_ring_bytes == 262144 );
@@ -1024,7 +1025,7 @@ static void test_channels_allocator_layout()
     check( layout.formula_bytes == 1588480 );
     check( layout.region_bytes == 1588480 );
     check( rocketnet_message_connection_bytes( &config ) == 1588480 );
-    check( rocketnet_message_connection_bytes( NULL ) == 1588480 );
+    check( rocketnet_message_connection_bytes( NULL ) > 1588480 );
 
     const uint64_t C = 32, W = 1024, B = 262144, Q = 1024, S = 800000, P = 256, Du = 256, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
@@ -1407,6 +1408,7 @@ static void test_channels_allocator_descriptor_pool()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // test explicit headroom without a finite send budget
     config.send_queue_messages = 16;
 
     rocketnet_counters_t counters;

@@ -2184,3 +2184,28 @@ requires.
 - The RakNet-style consumer adapter surface remains the study's provisional §13;
   it is outside RocketNet's library deliverable.
 - The layer list (section 3) has not yet gone to Glenn for correction.
+
+
+### Create-time maximum-RTO message reserve
+
+Each connection adds a local payload reserve to its configured message-region
+headroom at CREATE. Let `R = ceil(send_kbps * 125 * rto_max_ms / 1000)` bytes.
+Client and server creation use their respective resolved per-connection budgets,
+including an explicit creation override. Generic connection sizing conservatively
+uses the larger configured budget. A zero/unlimited budget has no finite reserve.
+
+The descriptor pool adds `ceil(R / 128)` entries. The 128-, 512-, and 1152-byte
+fixed pools add `ceil(R / 128)`, `ceil(R / 512)`, and `ceil(R / 1024)` chunks,
+respectively, including each chunk's four-byte link and alignment. The send-span
+arena adds R plus up to 15 padding bytes per 1153 payload bytes, rounded to 64.
+Receive-ring and reliable-window wire parameters do not change. This extends the
+historical headroom-only formula and default sizes above; runtime sizing reports
+the resulting total. All parts remain in the single allocator-hook allocation.
+
+The capacity guarantee assumes typical payload sizes of 128/512/1024 bytes in
+the corresponding fixed pools, or larger messages in the span arena. Arbitrarily
+tiny records can exhaust bounded descriptors or padding capacity; they retain
+MESSAGE_MEMORY_EXHAUSTED and disconnect behavior. Raising the runtime send budget
+after CREATE does not enlarge this allocation; configure the intended maximum
+budget before creation. The full-budget regression retains one maximum RTO of
+payload without acknowledgments at both default client and server budgets.

@@ -166,6 +166,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
         return false;
     if ( !read_env && !rocketnet_config_validate( "client", &send_kbps, rn_client_budget_fields, 1 ) )
         return false;
+    message->client_send_kbps = send_kbps;
     *kbps = rn_budget_kbps( send_kbps );
     return true;
 }
@@ -225,6 +226,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         return false;
     if ( !read_env && !rocketnet_config_validate( "server", &send_kbps, rn_server_budget_fields, 1 ) )
         return false;
+    message->server_send_kbps = send_kbps;
     *kbps = rn_budget_kbps( send_kbps );
     return true;
 }

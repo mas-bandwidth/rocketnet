@@ -105,15 +105,19 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
 
 uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server )
 {
-    (void) is_server;
     rocketnet_message_config_t defaults;
     if ( !config )
     {
         rocketnet_message_default_config( &defaults );
         config = &defaults;
     }
+    // Only this direction's resolved send budget sizes its connection region.
+    rocketnet_message_config_t sized = *config;
+    const int kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
+    sized.client_send_kbps = kbps;
+    sized.server_send_kbps = kbps;
     rn_message_object_layout_t layout;
-    if ( !rn_message_object_layout( config, num_connections, &layout ) )
+    if ( !rn_message_object_layout( &sized, num_connections, &layout ) )
         return 0;
     return layout.total;
 }
@@ -163,6 +167,13 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     // and :173) and pass it as default_kbps.
     if ( default_kbps == 0 )
         default_kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
+
+    // Resolve the explicit create override before sizing. This copy is owned
+    // by the object and does not alter the caller's configuration.
+    rocketnet_message_config_t sized = *config;
+    sized.client_send_kbps = default_kbps;
+    sized.server_send_kbps = default_kbps;
+    config = &sized;
 
     rn_message_object_layout_t layout;
     const bool laid_out = link && rn_message_object_layout( config, num_connections, &layout );

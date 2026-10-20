@@ -2284,6 +2284,7 @@ static void send_room_watch_crosses_once_and_rearms_below_half()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit descriptor headroom
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );

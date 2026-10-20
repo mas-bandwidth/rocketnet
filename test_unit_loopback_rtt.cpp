@@ -34,6 +34,7 @@
 #include "rocketnet_message_object.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_window_ack.h"
+#include "rocketnet_allocator.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -286,3 +287,41 @@ static void loopback_rtt_client_sends( void ) { loopback_rtt_check( LOOPBACK_RTT
 
 REGISTER_UNIT_TEST( loopback_rtt_server_sends );
 REGISTER_UNIT_TEST( loopback_rtt_client_sends );
+
+// Retain a full max-RTO payload budget without acknowledging any record.
+// Exercise each documented typical fixed-pool size and the large-span path.
+static void max_rto_payload_reserve_without_acks()
+{
+    const int budgets[] = { 1000, 10000 };
+    const int payloads[] = { 128, 512, 1024, 16384 };
+    for ( int side = 0; side < 2; ++side )
+    {
+        rocketnet_message_config_t config;
+        rocketnet_message_default_config( &config );
+        config.client_send_kbps = config.server_send_kbps = budgets[side];
+        rocketnet_counters_t counters;
+        memset( &counters, 0, sizeof(counters) );
+        rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+        rocketnet_unit_check( arena != NULL );
+        rn_region_t * region = rn_arena_region( arena, 0 );
+        const uint64_t budget = (uint64_t) budgets[side] * 125 * config.rto_max_ms / 1000;
+        for ( int p = 0; p < 4; ++p )
+        {
+            rn_region_carve( region );
+            uint64_t held = 0;
+            while ( held < budget )
+            {
+                const int bytes = budget - held < (uint64_t) payloads[p] ? (int) (budget - held) : payloads[p];
+                rocketnet_unit_check( rn_region_send_alloc( region, bytes ) != RN_DESCRIPTOR_NONE );
+                held += bytes;
+            }
+            rocketnet_unit_check( !rn_region_exhausted( region ) );
+        }
+        printf( "max-RTO reserve: %d kbps, %llu payload bytes, %llu bytes/connection, %llu bytes/1000\n",
+                budgets[side], (unsigned long long) budget,
+                (unsigned long long) rocketnet_message_connection_bytes( &config ),
+                (unsigned long long) rocketnet_message_connection_bytes( &config ) * 1000 );
+        rn_arena_destroy( arena );
+    }
+}
+REGISTER_UNIT_TEST( max_rto_payload_reserve_without_acks );

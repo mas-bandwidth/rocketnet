@@ -1610,9 +1610,9 @@ static void ordered_no_allocation_after_create()
     check( rocketnet_message_validate_config( NULL ) == 1 );
     rn_region_layout_t layout;
     check( rn_region_layout( NULL, &layout ) );
-    check( layout.formula_bytes == 1588480 );
-    check( layout.region_bytes == 1588480 );
-    check( rocketnet_message_connection_bytes( NULL ) == 1588480 );
+    check( layout.formula_bytes > 1588480 );
+    check( layout.region_bytes >= layout.formula_bytes );
+    check( rocketnet_message_connection_bytes( NULL ) == layout.region_bytes );
     check( layout.store_chunks[RN_STORE_LARGE] >= ( (uint32_t) defaults.max_message_bytes + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
     check( layout.bytes[RN_PART_SEND_SPANS] >= (uint64_t) defaults.max_message_bytes );
 

@@ -105,8 +105,31 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     const uint64_t C = (uint64_t) config->num_channels;
     const uint64_t W = (uint64_t) config->window_messages;
     const uint64_t B = (uint64_t) config->receive_ring_bytes;
-    const uint64_t Q = (uint64_t) config->send_queue_messages;
-    const uint64_t S = (uint64_t) config->send_buffer_bytes;
+    // Local create-time payload reserve. The documented typical payloads are
+    // 128, 512 and 1024 bytes for the fixed pools; descriptors allow 128-byte
+    // records. Tiny-record floods retain bounded exhaustion semantics.
+    const int kbps = config->client_send_kbps > config->server_send_kbps ? config->client_send_kbps : config->server_send_kbps;
+    const uint64_t reserve = kbps > 0 ? ( (uint64_t) kbps * 125 * (uint64_t) config->rto_max_ms + 999 ) / 1000 : 0;
+    const uint64_t Q = (uint64_t) config->send_queue_messages + ( reserve + 127 ) / 128;
+    const uint64_t SR = B + rn_align64( reserve + ( ( reserve + 1152 ) / 1153 ) * 15 );
+    const uint32_t chunk_bytes[RN_STORE_NUM_CLASSES] = { RN_STORE_SMALL_BYTES, RN_STORE_MEDIUM_BYTES, RN_STORE_LARGE_BYTES };
+    const uint32_t typical_payload[RN_STORE_NUM_CLASSES] = { 128, 512, 1024 };
+    uint32_t chunks[RN_STORE_NUM_CLASSES];
+    uint64_t S = 0;
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
+        const uint64_t payload_bytes = typical_payload[c];
+        const uint64_t count = rn_send_store_chunks_for( config->send_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
+        if ( count >= 0x3FFFFFFFu )
+            return false;
+        chunks[c] = (uint32_t) count;
+        S += rn_align64( count * ( chunk_bytes[c] + sizeof(uint32_t) ) );
+    }
+    // Keep all original store headroom, including its alignment slack.
+    if ( S < (uint64_t) config->send_buffer_bytes )
+        S = config->send_buffer_bytes;
+    if ( Q >= UINT32_MAX || SR > UINT32_MAX )
+        return false;
     const uint64_t P = (uint64_t) config->packets_in_flight;
     const uint64_t Du = (uint64_t) config->unreliable_deliveries;
     const uint64_t Ru = (uint64_t) config->sequenced_holds;
@@ -129,7 +152,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->bytes[RN_PART_SEQUENCED_HOLDS] = sizeof(rn_sequenced_hold_t) * Ru;
     layout->bytes[RN_PART_RECEIPTS] = sizeof(rn_receipt_t) * Rq;
     layout->bytes[RN_PART_RESEND_FIFO] = sizeof(rn_resend_link_t) * W;
-    layout->bytes[RN_PART_SEND_SPANS] = B;                                          // SR = B: a span is placed as the receiver's ring places it (4)
+    layout->bytes[RN_PART_SEND_SPANS] = SR;                                         // local send reserve; receive-ring wire size stays B
 
     uint64_t offset = 0;
     for ( int part = 0; part < RN_NUM_PARTS; part++ )
@@ -141,7 +164,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->region_bytes = offset;
 
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
-        layout->store_chunks[c] = rn_send_store_chunks_for( S, c );
+        layout->store_chunks[c] = chunks[c];
 
     return true;
 }
@@ -209,6 +232,26 @@ void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t byt
             cls->link[i] = i + 1 < cls->num_chunks ? i + 1 : RN_LINK_END;
         cls->free_head = cls->num_chunks > 0 ? 0 : RN_LINK_END;
         cls->free_count = cls->num_chunks;
+    }
+}
+
+// Region pools retain their original class headroom plus their own budget
+// reserve; standalone rn_send_store_init keeps its equal-thirds contract.
+static void rn_send_store_init_counts( rn_send_store_t * store, uint8_t * memory, const uint32_t * counts )
+{
+    uint64_t offset = 0;
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
+        rn_store_class_t * cls = &store->classes[c];
+        cls->chunk_bytes = rn_class_bytes[c];
+        cls->num_chunks = counts[c];
+        cls->data = memory + offset;
+        cls->link = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
+        for ( uint32_t i = 0; i < cls->num_chunks; i++ )
+            cls->link[i] = i + 1 < cls->num_chunks ? i + 1 : RN_LINK_END;
+        cls->free_head = cls->num_chunks ? 0 : RN_LINK_END;
+        cls->free_count = cls->num_chunks;
+        offset += rn_align64( (uint64_t) cls->num_chunks * ( cls->chunk_bytes + sizeof(uint32_t) ) );
     }
 }
 
@@ -356,7 +399,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->num_channels = (uint32_t) config->num_channels;
     region->window = (uint32_t) config->window_messages;
     region->ring_bytes = (uint32_t) config->receive_ring_bytes;
-    region->queue = (uint32_t) config->send_queue_messages;
+    region->queue = (uint32_t) ( layout->bytes[RN_PART_SEND_DESCRIPTORS] / sizeof(rn_send_descriptor_t) );
     region->packets = (uint32_t) config->packets_in_flight;
     region->held_entries = 2 * region->window;
     region->sent_index_entries = 2 * region->packets;
@@ -388,7 +431,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     // the store's memory is S at its offset; its class tables live in the region struct
     region->store_memory = base + layout->offset[RN_PART_SEND_STORE];
     region->store_bytes = layout->bytes[RN_PART_SEND_STORE];
-    rn_send_store_init( &region->store, region->store_memory, region->store_bytes );
+    rn_send_store_init_counts( &region->store, region->store_memory, layout->store_chunks );
 }
 
     // tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
@@ -430,7 +473,10 @@ void rn_region_carve( rn_region_t * region )
     region->descriptors_free = region->queue;
 
     // the store's free lists, rethreaded in place
-    rn_send_store_init( &region->store, region->store_memory, region->store_bytes );
+    uint32_t store_chunks[RN_STORE_NUM_CLASSES];
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+        store_chunks[c] = region->store.classes[c].num_chunks;
+    rn_send_store_init_counts( &region->store, region->store_memory, store_chunks );
 
     // the send spans: empty, nothing live (tla/RNSendSpans.tla, Reset)
     region->span_head = 0;
@@ -1271,7 +1317,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, SR = B\n" );
+    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include max-RTO payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_deliveries,
