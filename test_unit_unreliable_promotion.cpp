@@ -195,7 +195,6 @@ static void boundary_step(boundary_pair_t * pair,std::vector<boundary_received_t
 static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {
     std::vector<uint8_t> data((size_t)bytes); for(int i=0;i<bytes;++i) data[(size_t)i]=(uint8_t)(i+sequence); return data;
 }
-static void boundary_check_counter(const rocketnet_counters_t * counters,int index) { check(rocketnet_counter_value(counters,index)==0); }
 // ---------------------------------------------------------------------------
 // Oversize unreliable sends are promoted to their reliable twin, as RakNet's
 // ReliabilityLayer does: code 0 to 2, code 1 to 4, code 5 to its reliable

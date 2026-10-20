@@ -385,13 +385,34 @@ static inline int rn_clz64( uint64_t v )
 #endif
 }
 
+// the portable popcount: a branch-free bit sum that needs no instruction
+// set extension, used where the compiler offers no popcount builtin and the
+// target is not x64 (MSVC for ARM64 has no __popcnt64)
+
+int rocketnet_ack_popcount64_portable( uint64_t v )
+{
+    v = v - ( ( v >> 1 ) & 0x5555555555555555ull );
+    v = ( v & 0x3333333333333333ull ) + ( ( v >> 2 ) & 0x3333333333333333ull );
+    v = ( v + ( v >> 4 ) ) & 0x0f0f0f0f0f0f0f0full;
+    return (int) ( ( v * 0x0101010101010101ull ) >> 56 );
+}
+
 static inline int rn_popcount64( uint64_t v )
 {
-#if defined(_MSC_VER)
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_popcountll( v );
+#elif defined(_MSC_VER) && defined(_M_X64)
     return (int) __popcnt64( v );
 #else
-    return __builtin_popcountll( v );
+    return rocketnet_ack_popcount64_portable( v );
 #endif
+}
+
+// the popcount the ack path uses, for the unit test
+
+int rocketnet_ack_popcount64( uint64_t v )
+{
+    return rn_popcount64( v );
 }
 
 // popcount of one bitmap over the linear slot range [a,b] (a<=b), masking the
