@@ -2,6 +2,9 @@
 #include "sdk/rocketnet_send_handoff.h"
 #include "test_unit_registry.h"
 
+// the AF_XDP code is Linux only, so its tests are built there only
+#if defined(__linux__)
+
 // The send worker does not retire a generation until the test tells it to.
 // No sockets, worker threads or clock take part in this interleaving.
 static void test_xdp_transport_send_staging_retains_producer()
@@ -40,3 +43,5 @@ static void test_xdp_transport_send_staging_reflushes_without_commit()
     rocketnet_unit_check(rocketnet_server_transport_test_xdp_reflush() == 2);
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_staging_reflushes_without_commit);
+
+#endif // #if defined(__linux__)

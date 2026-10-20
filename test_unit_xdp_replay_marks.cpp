@@ -19,6 +19,9 @@
 #include "sdk/rocketnet_xdp_limits.h"
 #include "sdk/rocketnet_xdp_replay_marks.h"
 
+// the AF_XDP code is Linux only, so its tests are built there only
+#if defined(__linux__)
+
 static struct rocketnet_address_t replay_marks_ipv4( uint16_t port )
 {
     struct rocketnet_address_t a;
@@ -153,3 +156,5 @@ static void test_xdp_transport_replay_marks_full_refuses_and_counts()
 REGISTER_UNIT_TEST( test_xdp_transport_replay_key_matches_golden_bytes );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_commit_forgets_before_marks );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_full_refuses_and_counts );
+
+#endif // #if defined(__linux__)

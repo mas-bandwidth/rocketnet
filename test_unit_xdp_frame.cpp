@@ -20,6 +20,9 @@
 
 #include <stdlib.h>
 
+// the AF_XDP code is Linux only, so its tests are built there only
+#if defined(__linux__)
+
 static const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
 static const uint8_t golden_payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
@@ -736,3 +739,5 @@ REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 REGISTER_UNIT_TEST( test_xdp_transport_ipv6_pin_reaches_the_xdp_driver_at_create );
 #endif
+
+#endif // #if defined(__linux__)
