@@ -516,7 +516,7 @@ int main( int argc, char ** argv )
         {
             // the handshake replies update stages: a staged driver without
             // ROCKETNET_DRIVER_FLUSH_ON_UPDATE (xdp) publishes them only at
-            // send_packets (sdk/rocketnet_server_transport.cpp:2025-2038), and
+            // send_packets (sdk/rocketnet_server_transport.cpp:1979-1992), and
             // with no server link simulator nothing else flushes them
             rocketnet_server_transport_send_packets( server );
         }
