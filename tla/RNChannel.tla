@@ -275,7 +275,7 @@ Next == RefuseSend \/ DropUnreliableForBudget \/ Enqueue \/ NumberRecord \/ Rese
      \/ DeliverAny \/ FixBatch \/ SendAck \/ EndUpdate \/ ReceiveAckAny
      \/ GhostSequencedWrite \/ GhostSequencedRead \/ FwdEnvironment \/ RevEnvironment
 
-\* Same compact fairness as RNWindow: fair resend delay/room/budget, packet opening,
+\* Same compact fairness as RNWindow: fair RTO/room/budget, packet opening,
 \* and useful transport ACKs before sent-map eviction. No application ACK.
 ProbeAny == GhostSequencedWrite \/ GhostSequencedRead
 \* Each local action advances a bounded monotone cursor. None can run

@@ -1,25 +1,25 @@
 --------------------------- MODULE RNResendTiming ---------------------------
 (***************************************************************************)
 (* rocketnet: the resend timing of reliable records (docs/CHANNELS.md 6.4  *)
-(* "resend delay", "Resend" and "Giving up"; the code is                            *)
+(* "RTO", "Resend" and "Giving up"; the code is                            *)
 (* rn_window_ack_resend_delay, rn_window_ack_chunk_resend_delay,           *)
 (* rn_window_ack_resend and rn_window_ack_check_timeout in                 *)
 (* sdk/rocketnet_window_ack.h and .cpp, rn_ordered_write in                *)
 (* sdk/rocketnet_channel.cpp and rn_message_ordered_due in                 *)
 (* sdk/rocketnet_message_server.cpp).                                      *)
 (*                                                                         *)
-(* RNWindow keeps the resend delay abstract; this module is the timing alone.  Time *)
+(* RNWindow keeps the RTO abstract; this module is the timing alone.  Time *)
 (* is in ticks of one unit each (the committed instances use 100 ms); every *)
 (* tick is an update.  There are two numbered, unacked records of the two  *)
 (* delay classes: "s", a single-packet record, and "c", a chunk of a block *)
 (* (a record whose send descriptor has more than one fragment).  Both are  *)
 (* first sent at tick 0, in either order.  A record is due when            *)
 (*     t >= lastSend[r] + Delay(r) where                                   *)
-(*     Delay("s") = Min(resend_delay, Interval)  * backoff["s"]                     *)
-(*     Delay("c") = Min(resend_delay, ChunkCap) * backoff["c"]                      *)
+(*     Delay("s") = Min(rto, Interval)  * backoff["s"]                     *)
+(*     Delay("c") = Min(rto, ChunkCap) * backoff["c"]                      *)
 (* ChunkCap = Timeout \div MinAttempts keeps MinAttempts chunk sends       *)
-(* inside the timeout whatever resend_delay_max is; at the defaults (2.5 s against  *)
-(* resend_delay_max 250 ms) a chunk waits resend_delay alone.  With Chunk = FALSE the chunk  *)
+(* inside the timeout whatever rto_max is; at the defaults (2.5 s against  *)
+(* rto_max 250 ms) a chunk waits rto alone.  With Chunk = FALSE the chunk  *)
 (* starts acked and the module is the one-record timing of the first cut.  *)
 (*                                                                         *)
 (* An update is two steps.  In phase "walk" the acks that arrived are      *)
@@ -32,10 +32,10 @@
 (* due holds back the small record behind it (the reversed witness         *)
 (* MCRNResendTimingBrokenOneFifo.cfg).                                     *)
 (*                                                                         *)
-(* An RTT sample (the ack of any other packet) moves resend_delay to any value in   *)
-(* ResendDelayMin..ResendDelayMax, the abstraction of                                      *)
-(* clamp(srtt * scale + 2 * rttvar, resend_delay_min, resend_delay_max), and resets the      *)
-(* back-off to 1.  Before any sample resend_delay is ResendDelayInitial.  A record's own    *)
+(* An RTT sample (the ack of any other packet) moves rto to any value in   *)
+(* RtoMin..RtoMax, the abstraction of                                      *)
+(* clamp(srtt * scale + 2 * rttvar, rto_min, rto_max), and resets the      *)
+(* back-off to 1.  Before any sample rto is RtoInitial.  A record's own    *)
 (* ack may come at any update, or never: every send may be lost.  At tick  *)
 (* Timeout an unacked record ends the connection (RELIABLE_TIMEOUT) and    *)
 (* nothing more is sent.                                                   *)
@@ -43,7 +43,7 @@
 (* MaxBackoff is the back-off parameter: 1 is the rule (no back-off, the   *)
 (* delay is the same for every resend); 8 is the first version's           *)
 (* doubling per resend, 1, 2, 4, 8.  Interval is resend_interval; a value  *)
-(* of at least ResendDelayMax means no cap.                                        *)
+(* of at least RtoMax means no cap.                                        *)
 (*                                                                         *)
 (* AttemptsBeforeTimeout: a record still unacked at the timeout was sent   *)
 (* at least MinAttempts times (ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS).     *)
@@ -53,16 +53,16 @@ EXTENDS Naturals
 
 CONSTANTS
     Interval,       \* resend_interval, in ticks
-    ResendDelayInitial,     \* resend_delay before the first sample, in ticks
-    ResendDelayMin,         \* resend_delay_min, in ticks
-    ResendDelayMax,         \* resend_delay_max, in ticks
+    RtoInitial,     \* rto before the first sample, in ticks
+    RtoMin,         \* rto_min, in ticks
+    RtoMax,         \* rto_max, in ticks
     Timeout,        \* reliable_timeout, in ticks
     MaxBackoff,     \* 1: no back-off (the rule); 8: doubling to 8
     MinAttempts     \* the sends that must fit before the timeout
 
 ASSUME /\ Interval \in Nat \ {0}
-       /\ ResendDelayMin \in Nat \ {0} /\ ResendDelayMax \in Nat /\ ResendDelayMin <= ResendDelayMax
-       /\ ResendDelayInitial \in ResendDelayMin..ResendDelayMax
+       /\ RtoMin \in Nat \ {0} /\ RtoMax \in Nat /\ RtoMin <= RtoMax
+       /\ RtoInitial \in RtoMin..RtoMax
        /\ Timeout \in Nat \ {0}
        /\ MaxBackoff \in {1, 2, 4, 8}
        /\ MinAttempts \in Nat \ {0}
@@ -90,23 +90,23 @@ ChunkCap == Max(1, Timeout \div MinAttempts)
 
 \* The validation rule of sdk/rocketnet_config.cpp: at least MinAttempts
 \* sends of the longest first delay fit before the timeout.
-ConfigAccepted == Timeout >= MinAttempts * Max(Interval, ResendDelayInitial)
+ConfigAccepted == Timeout >= MinAttempts * Max(Interval, RtoInitial)
 
 VARIABLES
     t,          \* now, in ticks since the first send
     lastSend,   \* [Records -> tick of the record's last send]
-    resend_delay,        \* the current clamped resend_delay, in ticks
+    rto,        \* the current clamped rto, in ticks
     backoff,    \* [Records -> the back-off factor, 1 under the rule]
     attempts,   \* [Records -> sends so far, saturating at MinAttempts]
     acked,      \* [Records -> the record's ack has arrived]
     head,       \* OneFifo: the record at the head of the one FIFO
     phase       \* "walk": acks, then the resend walk; "tick": time moves
 
-vars == <<t, lastSend, resend_delay, backoff, attempts, acked, head, phase>>
+vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase>>
 
 Cap(r) == IF r = "s" THEN Interval ELSE ChunkCap
 
-Delay(r) == Min(resend_delay, Cap(r)) * backoff[r]
+Delay(r) == Min(rto, Cap(r)) * backoff[r]
 
 Due(r) == ~acked[r] /\ t < Timeout /\ t >= lastSend[r] + Delay(r)
 
@@ -115,7 +115,7 @@ Live == t < Timeout /\ \E r \in Records : ~acked[r]
 TypeOK ==
     /\ t \in 0..Timeout
     /\ lastSend \in [Records -> 0..Timeout]
-    /\ resend_delay \in ResendDelayMin..ResendDelayMax
+    /\ rto \in RtoMin..RtoMax
     /\ backoff \in [Records -> {1, 2, 4, 8}]
     /\ \A r \in Records : backoff[r] <= MaxBackoff
     /\ attempts \in [Records -> 1..MinAttempts]
@@ -126,7 +126,7 @@ TypeOK ==
 Init ==
     /\ t = 0
     /\ lastSend = [r \in Records |-> 0]
-    /\ resend_delay = ResendDelayInitial
+    /\ rto = RtoInitial
     /\ backoff = [r \in Records |-> 1]
     /\ attempts = [r \in Records |-> 1]
     /\ acked = [r \in Records |-> IF r = "c" THEN ~Chunk ELSE FALSE]
@@ -161,13 +161,13 @@ Walk ==
     /\ backoff' = [r \in Records |-> IF Sent(r) THEN Min(backoff[r] * 2, MaxBackoff) ELSE backoff[r]]
     /\ head' = NextHead
     /\ phase' = "tick"
-    /\ UNCHANGED <<t, resend_delay, acked>>
+    /\ UNCHANGED <<t, rto, acked>>
 
 \* rn_window_ack_on_ack of another packet: one RTT sample.
 Sample(x) ==
     /\ phase = "walk"
     /\ Live
-    /\ resend_delay' = x
+    /\ rto' = x
     /\ backoff' = [r \in Records |-> 1]
     /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase>>
 
@@ -177,7 +177,7 @@ Ack(r) ==
     /\ ~acked[r]
     /\ t < Timeout
     /\ acked' = [acked EXCEPT ![r] = TRUE]
-    /\ UNCHANGED <<t, lastSend, resend_delay, backoff, attempts, head, phase>>
+    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase>>
 
 \* The update ends and time moves on one tick.
 Tick ==
@@ -185,7 +185,7 @@ Tick ==
     /\ Live
     /\ t' = t + 1
     /\ phase' = "walk"
-    /\ UNCHANGED <<lastSend, resend_delay, backoff, attempts, acked, head>>
+    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head>>
 
 \* Every record acked, or the timeout fired: nothing more happens.
 Done ==
@@ -194,7 +194,7 @@ Done ==
 
 Next ==
     \/ Walk
-    \/ \E x \in ResendDelayMin..ResendDelayMax : Sample(x)
+    \/ \E x \in RtoMin..RtoMax : Sample(x)
     \/ \E r \in Records : Ack(r)
     \/ Tick
     \/ Done
@@ -206,11 +206,11 @@ AttemptsBeforeTimeout ==
     \A r \in Records : (~acked[r] /\ t = Timeout) => attempts[r] >= MinAttempts
 
 \* Under the rule no unacked record waits more than its cap for its next
-\* send while the connection is up: Interval for a small record, the resend delay
+\* send while the connection is up: Interval for a small record, the RTO
 \* bound for a chunk.
 ResendGapBounded ==
     \A r \in Records :
-        (~acked[r] /\ t < Timeout) => t - lastSend[r] <= Min(ResendDelayMax, Cap(r)) * MaxBackoff
+        (~acked[r] /\ t < Timeout) => t - lastSend[r] <= Min(RtoMax, Cap(r)) * MaxBackoff
 
 \* A due small record is sent in the update it falls due: no update ends
 \* with it still due, whatever the chunk beside it does.

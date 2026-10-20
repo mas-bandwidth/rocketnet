@@ -22,7 +22,7 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* Fragments have independent numbers but share their message's serial.
 \* Outcomes are ghost emission history; ring is the bounded application queue.
 \* Dropping its oldest event is counted and never permits a second emission.
-CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, ResendDelay, ReliableTimeout,
+CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReliableTimeout,
           BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss
 
 Serials == 1..3
@@ -166,7 +166,7 @@ SweepLoss(s) ==
  /\ live /\ s \in Issued /\ outcomes[s] = <<>> /\ ~Complete(s)
  /\ Parts(s) \cap sentNums # {}
  /\ (EffectiveKind(s) = 5 \/ BrokenReliableLoss)
- /\ (age[<<s,0>>] >= ResendDelay \/ s \in evicted)
+ /\ (age[<<s,0>>] >= RTO \/ s \in evicted)
  /\ outcomes' = [outcomes EXCEPT ![s] = <<"LOSS">>]
  /\ ring' = AddRing(s,"LOSS")
  /\ ringDropped' = ringDropped + IF Len(ring) = ReceiptCapacity THEN 1 ELSE 0
