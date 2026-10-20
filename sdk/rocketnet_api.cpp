@@ -633,6 +633,7 @@ const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_
         case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return "protocol violation";
         case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT:          return "reliable timeout";
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return "message memory exhausted";
+        case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return "server disconnected";
         default:                                                    return "unknown";
     }
 }
