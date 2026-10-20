@@ -47,6 +47,7 @@
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_ack.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_test_vectors.h"
@@ -135,6 +136,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server.used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server.client_slots = rocketnet_client_slots_create( NULL, 4 );
+    server.acks = rocketnet_server_acks_create( NULL, 4 );
     server.reassembly = rocketnet_reassembly_set_create( NULL, 4, 8, 16384, 4 * 8 );
     server.counters = &server_counters;
 
@@ -273,6 +275,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         // server drains the wire, answers, and its answers ride back
         {
             rocketnet_reassembly_set_begin_update( server.reassembly );
+            server.acks->num_acked = 0;
             struct rocketnet_address_t from;
             uint8_t packet[ROCKETNET_RECEIVE_CEILING];
             int bytes;
@@ -308,6 +311,16 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                     if ( to )
                         rocketnet_network_simulator_send( simulator, &server_address, to, keep_alive, keep_alive_bytes, time );
                 }
+
+                uint8_t ack[ROCKETNET_RECEIVE_CEILING];
+                const int ack_bytes = rocketnet_server_protocol_write_ack_if_due( &server, i, time, ack );
+                if ( ack_bytes > 0 )
+                {
+                    const int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
+                    const struct rocketnet_address_t * to = rocketnet_encryption_map_address( server.encryption_map, mapping_index );
+                    if ( to )
+                        rocketnet_network_simulator_send( simulator, &server_address, to, ack, ack_bytes, time );
+                }
             }
         }
 
@@ -336,6 +349,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
     rocketnet_client_slots_destroy( server.client_slots );
+    rocketnet_server_acks_destroy( server.acks );
     rocketnet_reassembly_set_destroy( server.reassembly );
     rocketnet_network_simulator_destroy( simulator );
 
