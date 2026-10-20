@@ -92,11 +92,14 @@ same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
 **msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
 (`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").
 The two symbols are resolved with `dlsym` at platform init, with no link-time
-reference, so their absence is never a load failure. At socket create, a
-non-blocking socket with both symbols runs one real `recvmsg_x` as a probe; a
-result of zero or more, or `EAGAIN`/`EWOULDBLOCK`, grants the pump, and any
-other errno leaves that socket on the portable per-packet loop (the probe block
-under `#if TARGET_OS_OSX` in `rocketnet_platform_socket_create_internal`).
+reference, so their absence is never a load failure. At socket create a
+non-blocking socket with both symbols becomes an `msgx` candidate; create reads
+nothing. The first real batch call is the functional probe: a `recvmsg_x` there
+delivers what it reads, so a fixed-port bind that already has a datagram queued
+keeps it. A result of zero or more, or `EAGAIN`/`EWOULDBLOCK`, keeps the pump;
+any other errno pauses it and that same call finishes on the portable
+per-packet loop, losing nothing (`rocketnet_msgx_pause`, the receive block in
+`rocketnet_platform_socket_receive_packets`).
 
 At runtime a send errno that is ordinary UDP weather (`EAGAIN`, `EWOULDBLOCK`,
 `ENOBUFS`, `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EMSGSIZE`,
@@ -137,9 +140,12 @@ example's own impossible pin is displaced too, its last check fails, and it
 exits 1. The functional
 case `driver_env_pin_is_honoured` fails under such a pin for the same reason.
 
-Pinning `msgx` requires the probe to grant it: a refused probe fails the create
-instead of falling to `portable`. Pinning `portable` skips the probe, so a
-fixed-port bind never has a queued datagram consumed by it
+Pinning `msgx` requires the batch symbols on the host: without them the create
+refuses instead of falling to `portable`. The first real batch call then
+decides the live pump; if the kernel refuses it there, the pinned transport
+pauses `msgx` and runs `portable` rather than failing after create. Pinning
+`portable` skips the batch decision entirely, so a fixed-port bind never has a
+queued datagram read before the caller does
 (`rocketnet_platform_socket_create_with_pump`).
 
 **`ROCKETNET_PUMP=portable`** is the older override, kept with its meaning:
