@@ -18,8 +18,8 @@
 #include <string.h>
 
 // Uses the public API names as declared in sdk/rocketnet.h: client/server
-// start_message, finish_message, receive_message, release_message,
-// send_packets and client_connected.
+// start_message, finish_message, receive_messages (one batch, no release
+// call), send_packets and client_connected.
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 #define CHAT_CHANNEL     0
 #define POSITION_CHANNEL 1

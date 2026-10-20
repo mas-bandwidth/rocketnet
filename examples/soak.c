@@ -19,8 +19,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Note: sdk/rocketnet.h at BASE declares the pre-rename message calls
-// (*_start, *_finish, *_receive, *_release, *_send_packets) and int client_index.
+// Uses the message calls declared in sdk/rocketnet.h: start_message,
+// finish_message, receive_messages (one batch, no release call) and
+// send_packets, with uint64_t client_index.
 #define CHECK( cond ) do { if ( !( cond ) ) { printf( "FAIL: %s (line %d)\n", #cond, __LINE__ ); goto cleanup; } } while ( 0 )
 #define MAX_SOAK_CLIENTS ROCKETNET_MAX_CLIENTS
 #define BATCH_CLIENTS 250
