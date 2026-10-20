@@ -92,6 +92,8 @@ void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters,
         ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_EPOCH,
         ROCKETNET_COUNTER_XDP_KERNEL_PASSED_IPV6_EXTENSION,
         ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_REPLAYED,
+        ROCKETNET_COUNTER_XDP_KERNEL_PASSED_FRAGMENT,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT,
     };
     static_assert( sizeof(rocketnet_prefilter_table) / sizeof(rocketnet_prefilter_table[0]) == ROCKETNET_SERVER_XDP_NUM_COUNTERS,
                    "a new kernel prefilter counter needs its transport row" );
