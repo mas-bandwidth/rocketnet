@@ -540,6 +540,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(functional
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
+        functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
         functional/thread_priority_timing.cpp
         functional/macos_client_timing.cpp

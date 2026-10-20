@@ -473,16 +473,21 @@ static uint64_t ep_frees = 0;
 // The clock intercept. Where the build links the test with
 // -Wl,--wrap=rocketnet_platform_time (CMakeLists.txt, GNU-style linkers),
 // every call to the library's one clock, from any object file of the
-// library, lands here first and is counted, then answered by the real clock.
-// Elsewhere the intercept is absent, and the determinism check below stands
-// alone.
+// library, lands here first and is counted. While ep_clock_fake is set (the
+// positive control below) the read is answered by a fake clock that starts
+// at 1000.0 and never reaches the real one; otherwise it is answered by the
+// real clock, as for every other case linked into the binary. Elsewhere the
+// intercept is absent, and the determinism check below stands alone.
 
 #if ROCKETNET_TEST_CLOCK_WRAP
 static uint64_t ep_clock_reads = 0;
+static bool ep_clock_fake = false;
 extern "C" double __real_rocketnet_platform_time();
 extern "C" double __wrap_rocketnet_platform_time()
 {
     ep_clock_reads++;
+    if ( ep_clock_fake )
+        return 1000.0 + (double) ep_clock_reads;
     return __real_rocketnet_platform_time();
 }
 #endif // #if ROCKETNET_TEST_CLOCK_WRAP
@@ -511,11 +516,15 @@ static void endpoint_never_allocates_or_reads_a_clock()
     ep_config( &config );
 
 #if ROCKETNET_TEST_CLOCK_WRAP
-    // the intercept works: a read of the library's clock is counted
+    // the intercept works: a read of the library's clock is counted, and is
+    // answered by the fake clock, so the control reads no real time
     {
         const uint64_t before = ep_clock_reads;
-        rocketnet_time();
+        ep_clock_fake = true;
+        const double fake_now = rocketnet_time();
+        ep_clock_fake = false;
         check( ep_clock_reads == before + 1 );
+        check( fake_now == 1000.0 + (double) ep_clock_reads );
     }
 #endif // #if ROCKETNET_TEST_CLOCK_WRAP
 

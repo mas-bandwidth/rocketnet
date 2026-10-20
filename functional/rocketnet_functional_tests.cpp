@@ -8370,9 +8370,19 @@ static void rocketnet_test_hostname_resolve_localhost()
                    rocketnet_address_equal(&address, &ipv6));
 }
 
+// the platform primitives that need the real clock, a real sleep or a real
+// thread (functional/platform_primitives.cpp), on every platform
+
+void rocketnet_functional_frame_sync_wait();
+void rocketnet_functional_connect_token_mint_concurrent();
+void rocketnet_functional_platform_thread();
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
+    { "test_frame_sync_wait", rocketnet_functional_frame_sync_wait },
+    { "test_connect_token_mint_concurrent", rocketnet_functional_connect_token_mint_concurrent },
+    { "test_platform_thread", rocketnet_functional_platform_thread },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
     { "thread_priority_timing_receive_gaps", thread_priority_timing_receive_gaps },

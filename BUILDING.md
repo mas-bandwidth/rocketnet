@@ -46,6 +46,17 @@ slowest as a table. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
+The same holds for real time: a unit case takes time as an argument (a test
+clock that starts at 1000.0) and does not sleep, read the wall clock, start a
+thread or resolve a hostname. The frame-sync pacing, concurrent token minting
+and platform thread cases are functional (`functional/platform_primitives.cpp`),
+as is `test_hostname_resolve_localhost`. `python3 tools/check_unit_purity.py`
+fails, naming file and line, on a call to `rocketnet_platform_sleep`,
+`rocketnet_platform_time`, `time(`, `std::thread`, `getaddrinfo` or
+`rocketnet_platform_thread_create` in `test_unit_*.cpp` or
+`sdk/rocketnet_tests.cpp`. The unit worker clears `ROCKETNET_SERVER_TRANSPORT`
+and `ROCKETNET_CLIENT_TRANSPORT` before each case (`test.cpp:95`), so a transport
+pin never reaches a unit case.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and

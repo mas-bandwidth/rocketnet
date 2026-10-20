@@ -259,9 +259,13 @@ jobs:
         if: runner.os == 'Linux' && contains(matrix.leg, 'b')
         run: bash tools/check_unit_no_sockets.sh ./bin/test
 
-      - name: Run unit tests with the driver pin preserved
-        if: contains(matrix.leg, 'b')
-        run: ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/test
+      # The unit suite reads no real time: the check fails, naming file and
+      # line, on a sleep, a clock read, a thread start or a name lookup in the
+      # unit sources (tools/check_unit_purity.py). The worker clears the
+      # transport pins before each case (test.cpp:95), so ./bin/test runs once.
+      - name: Unit suite reads no real time
+        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
+        run: python3 tools/check_unit_purity.py
 
       - name: Ambient config isolation and passing output
         if: contains(matrix.leg, 'b')

@@ -1,0 +1,197 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+
+    Platform primitives that need the real thing: the wall clock and a real
+    sleep (frame sync pacing), and real threads (concurrent token minting, the
+    platform thread). Each case starts a kernel thread or reads the clock, so
+    it is functional, never ./bin/test (BUILDING.md). The assertions are the
+    ones these cases carried in the unit suite. Registered in
+    functional/rocketnet_functional_tests.cpp on every platform.
+*/
+
+#include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
+#include "rocketnet_frame_sync.h"
+#include "rocketnet_connect_token.h"
+#include "rocketnet_protocol.h"
+#include "rocketnet_test_vectors.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <thread>
+
+static void platform_primitives_check_handler( const char * condition, const char * function, const char * file, int line )
+{
+    printf( "check failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
+    fflush( stdout );
+    exit( 1 );
+}
+
+#define rocketnet_check( condition )                                                                                 \
+do                                                                                                              \
+{                                                                                                               \
+    if ( !(condition) )                                                                                         \
+    {                                                                                                           \
+        platform_primitives_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \
+    }                                                                                                           \
+} while(0)
+
+// --- frame sync, paced for real ---
+
+void rocketnet_functional_frame_sync_wait()
+{
+    // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
+    // the assertion is pacing and accounting, never precision -- precision
+    // was the issue #56 measurement campaign's job, and CI runners are noisy.
+
+    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 250.0 );
+    rocketnet_check( frame_sync );
+
+    const double start = rocketnet_platform_time();
+    for ( int i = 0; i < 25; i++ )
+    {
+        rocketnet_frame_sync_wait( frame_sync );
+    }
+    const double elapsed = rocketnet_platform_time() - start;
+
+    struct rocketnet_frame_sync_stats_t stats;
+    rocketnet_frame_sync_stats( frame_sync, &stats );
+    rocketnet_check( stats.frame == 25 );
+    rocketnet_check( elapsed > 0.06 );                              // it actually paced: a free run finishes in microseconds
+    rocketnet_check( elapsed < 5.0 );                               // and it did not wedge
+    rocketnet_check( !stats.spinning || stats.priority_held );      // never an unprivileged spin
+    rocketnet_check( stats.guard_seconds <= ( 1.0 / 250.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
+
+    rocketnet_frame_sync_destroy( frame_sync );
+}
+
+// --- connect token minting on two threads at once ---
+
+static void platform_primitives_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
+                                                    struct rocketnet_connect_token_private_t * private_fields )
+{
+    memset( signed_fields, 0, sizeof(*signed_fields) );
+    signed_fields->version = ROCKETNET_WIRE_VERSION;
+    signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
+    signed_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    signed_fields->timeout_seconds = ROCKETNET_TEST_TIMEOUT;
+    signed_fields->address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
+    memcpy( signed_fields->ipv4_address, server_address, 6 );
+    memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, 32 );
+
+    memset( private_fields, 0, sizeof(*private_fields) );
+    private_fields->client_id = ROCKETNET_TEST_CLIENT_ID;
+    private_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    private_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    memcpy( private_fields->client_to_server_key, rocketnet_test_token_c2s_key, 32 );
+    memcpy( private_fields->server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+}
+
+struct rocketnet_mint_thread_result_t
+{
+    bool ok;
+    int mints;
+};
+
+// one thread's independent run: mint into its own buffer, then verify and open
+// every token against the test keys and its own private fields
+static void rocketnet_test_connect_token_mint_thread( struct rocketnet_signed_connect_data_t signed_fields,
+                                                      struct rocketnet_connect_token_private_t private_fields,
+                                                      uint64_t base_client_id,
+                                                      int iterations,
+                                                      struct rocketnet_mint_thread_result_t * result )
+{
+    result->ok = true;
+    result->mints = 0;
+
+    for ( int i = 0; i < iterations; i++ )
+    {
+        struct rocketnet_connect_token_private_t fields = private_fields;
+        fields.client_id = base_client_id + (uint64_t) i;
+
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        if ( !rocketnet_write_connect_token( &signed_fields, &fields, rocketnet_test_backend_secret_key, token_data ) )
+        {
+            result->ok = false;
+            return;
+        }
+
+        struct rocketnet_connect_token_t token;
+        rocketnet_read_connect_token( &token, token_data );
+        if ( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) )
+        {
+            result->ok = false;
+            return;
+        }
+
+        struct rocketnet_connect_token_private_t opened;
+        if ( !rocketnet_open_connect_token_private( &opened, token.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) )
+        {
+            result->ok = false;
+            return;
+        }
+
+        if ( opened.client_id != fields.client_id )
+        {
+            result->ok = false;
+            return;
+        }
+
+        if ( memcmp( opened.client_to_server_key, fields.client_to_server_key, ROCKETNET_KEY_BYTES ) != 0 ||
+             memcmp( opened.server_to_client_key, fields.server_to_client_key, ROCKETNET_KEY_BYTES ) != 0 )
+        {
+            result->ok = false;
+            return;
+        }
+
+        result->mints++;
+    }
+}
+
+void rocketnet_functional_connect_token_mint_concurrent()
+{
+    // two threads mint independent tokens at once, each with its own client
+    // ids and output buffer, and each opens only its own tokens: minting must
+    // touch no state outside its own call
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    platform_primitives_fill_vector_fields( &signed_fields, &private_fields );
+
+    const int iterations = 300;
+    struct rocketnet_mint_thread_result_t results[2];
+
+    std::thread thread_a( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
+                          ROCKETNET_TEST_CLIENT_ID + 1, iterations, &results[0] );
+    std::thread thread_b( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
+                          ROCKETNET_TEST_CLIENT_ID + 0x100000, iterations, &results[1] );
+    thread_a.join();
+    thread_b.join();
+
+    rocketnet_check( results[0].ok );
+    rocketnet_check( results[1].ok );
+    rocketnet_check( results[0].mints == iterations );
+    rocketnet_check( results[1].mints == iterations );
+}
+
+// --- the platform thread ---
+
+static bool threads_work = false;
+
+static void test_thread_function(void*)
+{
+    threads_work = true;
+}
+
+void rocketnet_functional_platform_thread()
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, test_thread_function, NULL );
+    rocketnet_check( thread );
+    rocketnet_platform_thread_join( thread );
+    rocketnet_platform_thread_destroy( thread );
+    rocketnet_check( threads_work );
+}

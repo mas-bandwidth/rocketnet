@@ -28,7 +28,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 
 #define check rocketnet_unit_check
 
@@ -80,6 +79,9 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     rocketnet_client_transport_default_config( &config );
     snprintf( config.driver, sizeof(config.driver), "%s", "loopback" );
     config.game_clock_epoch = epoch;
+    // stepped on the caller's thread: an admitted create starts no I/O thread
+    // (sdk/rocketnet_client_transport.cpp:1028-1029 returns before the thread create)
+    config.step_driven = 1;
 
     int status = 0;
     struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_ex( NULL, token_data, &config, time, &status );
@@ -201,7 +203,9 @@ static void token_time_game_clock_refuses_after_expire()
 }
 
 // with the field zero a token stamped from a fixed past epoch is refused as
-// expired, as before: the wall clock is the clock
+// expired, as before: the wall clock is the clock. The server half takes the
+// current timestamp as an argument (rocketnet_server_protocol_process_connection_request),
+// so the test passes the test clock past expire rather than reading time(NULL)
 
 static void token_time_game_clock_off_reads_the_wall_clock()
 {
@@ -209,7 +213,7 @@ static void token_time_game_clock_off_reads_the_wall_clock()
 
     struct token_time_game_server_t t;
     token_time_game_server_setup( &t );
-    check( token_time_game_server_request( &t, 1000, 1010, (uint64_t) time( NULL ) ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( token_time_game_server_request( &t, 1000, 1010, (uint64_t) GAME_CLOCK_LATER ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
     token_time_game_server_teardown( &t );
 
