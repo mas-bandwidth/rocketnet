@@ -138,13 +138,13 @@ struct rocketnet_server_payload_ring_t
 
     uint8_t padding_1[4096];
 
-    struct rocketnet_server_payload_slot_info_t info[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
+    struct rocketnet_server_payload_slot_info_t * info;
+
+    uint8_t * data;
+
+    uint64_t capacity;
 
     uint8_t padding_2[4096];
-
-    alignas(16) uint8_t data[ROCKETNET_FRAME_STRIDE*ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
-
-    uint8_t padding_3[4096];
 };
 
 static_assert( ROCKETNET_FRAME_STRIDE % 16 == 0, "frame stride must keep every slot root 16-aligned" );
@@ -1453,6 +1453,14 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // free, and one per acked batch entry, sized as the acked batch is
     protocol->connection_ids = (uint64_t*) rocketnet_malloc( context, (size_t) max_clients * sizeof(uint64_t) );
     protocol->acked_connection_ids = (uint64_t*) rocketnet_malloc( context, (size_t) max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof(uint64_t) );
+    {
+        const uint64_t ring_capacity = (uint64_t) max_clients * 4;
+        server_transport->payload_ring.capacity = ring_capacity > ROCKETNET_SERVER_PAYLOAD_RING_SIZE ? ring_capacity : ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
+        server_transport->payload_ring.info = (struct rocketnet_server_payload_slot_info_t*) rocketnet_malloc( context, (size_t) server_transport->payload_ring.capacity * sizeof(struct rocketnet_server_payload_slot_info_t) );
+        server_transport->payload_ring.data = (uint8_t*) rocketnet_malloc( context, (size_t) server_transport->payload_ring.capacity * ROCKETNET_FRAME_STRIDE );
+        if ( server_transport->payload_ring.info )
+            memset( server_transport->payload_ring.info, 0, (size_t) server_transport->payload_ring.capacity * sizeof(struct rocketnet_server_payload_slot_info_t) );
+    }
     server_transport->client_wire_totals = (struct rocketnet_server_wire_totals_t*) rocketnet_malloc( context, (size_t) max_clients * sizeof(struct rocketnet_server_wire_totals_t) );
     server_transport->client_wire_totals_capacity = max_clients;
     if ( protocol->connection_ids )
@@ -1531,6 +1539,10 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         rocketnet_free( server_transport->context, server_transport->protocol.acked_connection_ids );
     if ( server_transport->client_wire_totals )
         rocketnet_free( server_transport->context, server_transport->client_wire_totals );
+    if ( server_transport->payload_ring.info )
+        rocketnet_free( server_transport->context, server_transport->payload_ring.info );
+    if ( server_transport->payload_ring.data )
+        rocketnet_free( server_transport->context, server_transport->payload_ring.data );
     if ( server_transport->protocol.reassembly )
         rocketnet_reassembly_set_destroy( server_transport->protocol.reassembly );
     if ( server_transport->send_arena )
@@ -2182,7 +2194,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
         uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-        if ( slot >= ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
+        if ( slot >= ring->capacity )
         {
             rocketnet_spam( "server payload ring full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -2318,7 +2330,7 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
     frame->slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-    if ( frame->slot >= ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
+    if ( frame->slot >= ring->capacity )
     {
         rocketnet_spam( "server payload ring full. packet dropped" );
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -2601,32 +2613,35 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
     uint64_t num_packets = ring->num_packets;
-    if ( num_packets > ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
-        num_packets = ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
+    if ( num_packets > ring->capacity )
+        num_packets = ring->capacity;
 
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
-    int num_sends = 0;
 
-    for ( uint64_t i = 0; i < num_packets; i++ )
+    for ( uint64_t base = 0; base < num_packets; base += ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
     {
-        if ( ring->info[i].wire_bytes > 0 )
+        const uint64_t batch_end = base + ROCKETNET_SERVER_PAYLOAD_RING_SIZE < num_packets ? base + ROCKETNET_SERVER_PAYLOAD_RING_SIZE : num_packets;
+        int num_sends = 0;
+        for ( uint64_t i = base; i < batch_end; i++ )
         {
-            // the payload accumulation rides the flush walk: the ring already
-            // holds every committed packet's wire size, so this costs nothing
+            if ( ring->info[i].wire_bytes > 0 )
+            {
+                // the payload accumulation rides the flush walk: the ring already
+                // holds every committed packet's wire size, so this costs nothing
 
-            server_transport->stats_frames[stats_index].packets_sent++;
-            server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( ring->info[i].to.type ) );
-            rocketnet_server_wire_totals_add_sent( server_transport, ring->info[i].client_index, &ring->info[i].to, ring->info[i].wire_bytes );
+                server_transport->stats_frames[stats_index].packets_sent++;
+                server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( ring->info[i].to.type ) );
+                rocketnet_server_wire_totals_add_sent( server_transport, ring->info[i].client_index, &ring->info[i].to, ring->info[i].wire_bytes );
 
-            sends[num_sends].to = &ring->info[i].to;
-            sends[num_sends].packet_data = ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
-            sends[num_sends].packet_bytes = ring->info[i].wire_bytes;
-            num_sends++;
+                sends[num_sends].to = &ring->info[i].to;
+                sends[num_sends].packet_data = ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
+                sends[num_sends].packet_bytes = ring->info[i].wire_bytes;
+                num_sends++;
+            }
         }
+        if ( num_sends > 0 )
+            rocketnet_server_link_send_batch( server_transport, sends, num_sends );
     }
-
-    if ( num_sends > 0 )
-        rocketnet_server_link_send_batch( server_transport, sends, num_sends );
 
     ring->num_packets = 0;
 
