@@ -2414,6 +2414,71 @@ static void send_room_warns_in_debug_builds_only()
     mo_pair_teardown( &pair );
 }
 
+// ---------------------------------------------------------------------------
+// A queued-path (region) start left pending across an update whose reset hits
+// its slot is cancelled by that reset (sdk/rocketnet_message_server.cpp,
+// rn_message_object_update: rn_message_connection_cancel_pending before each
+// connection reset; tla/RNSlots.tla NoPendingAcrossReset): the finish after
+// it is a no-op that returns 0, the cancelled start is counted in
+// MESSAGE_SEND_REFUSED, nothing lands in the recarved region, and a later
+// start on every slot is accepted.
+// ---------------------------------------------------------------------------
+
+static void pending_start_cancelled_by_slot_reset()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, MO_MAX_SLOTS );
+    mo_step( &pair );
+    mo_step( &pair );
+    mo_step( &pair );
+
+    // a region-path start on slot 0, written by the application, not finished
+    uint8_t * pointer = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+    check( pointer != NULL );
+    mo_fill( pointer, 7, 100 );
+    const uint64_t refused = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+
+    // the transport gives slot 0 to a new connection: Observe resets the slot
+    rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+    const uint64_t carves = slot->region->carves;
+    mo_net_drop_slot( pair.net, 0 );
+    mo_net_connect( pair.net, 0 );
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+    check( slot->region->carves == carves + 1 );
+    check( slot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+    check( pair.server->object.pending_connection == -1 );
+    check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
+
+    // the finish after the reset is a no-op: nothing joins the new connection's queue
+    const uint32_t descriptors_free = slot->region->descriptors_free;
+    check( rocketnet_message_server_finish( pair.server, 0, 100 ) == 0 );
+    check( slot->region->descriptors_free == descriptors_free );
+    check( slot->region->channel_send[0].ordered_write == 0 );
+
+    // and every slot takes a later start
+    for ( int i = 0; i < MO_MAX_SLOTS; i++ )
+    {
+        uint8_t * next = rocketnet_message_server_start( pair.server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+        check( next != NULL );
+        mo_fill( next, (uint32_t) ( 100 + i ), 100 );
+        check( rocketnet_message_server_finish( pair.server, i, 100 ) != 0 );
+    }
+
+    // the client: a start pending across the update that ends its transport is
+    // cancelled by that update's reset, and its finish is a no-op
+    uint8_t * up = rocketnet_message_client_start( pair.clients[1], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+    check( up != NULL );
+    mo_fill( up, 9, 100 );
+    mo_net_drop_slot( pair.net, 1 );
+    check( rocketnet_message_client_update( pair.clients[1], pair.time + 0.01 ) == ROCKETNET_UPDATE_OK );
+    check( mo_client_connection( pair.clients[1] )->state == RN_MESSAGE_CONNECTION_FREE );
+    check( pair.clients[1]->object.pending_connection == -1 );
+    check( rocketnet_message_client_finish( pair.clients[1], 100 ) == 0 );
+
+    mo_pair_teardown( &pair );
+}
+
 REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
@@ -2532,3 +2597,4 @@ REGISTER_UNIT_TEST( unreliable_chunks_freed_when_written );
 REGISTER_UNIT_TEST( unreliable_over_a_lossy_link_arrives_intact_at_most_once );
 REGISTER_UNIT_TEST( send_room_watch_crosses_once_and_rearms_below_half );
 REGISTER_UNIT_TEST( send_room_warns_in_debug_builds_only );
+REGISTER_UNIT_TEST( pending_start_cancelled_by_slot_reset );
