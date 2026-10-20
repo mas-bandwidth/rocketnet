@@ -967,6 +967,16 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 // Unit tests only: supplies token-validation Unix time so update reads no wall clock.
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp );
 
+// The payload packets one update may stage on the drivers without their own
+// send staging (portable, msgx, loopback): a start past it returns NULL and
+// counts SEND_RING_FULL. Read at create. A NULL server is a counted no-op that
+// returns 0.
+int rocketnet_server_transport_send_capacity( struct rocketnet_server_transport_t * server_transport );
+
+// unit tests only: the send capacity every later create reads, 1 through the
+// ring size; 0 (or anything out of that range) restores the default.
+void rocketnet_server_transport_set_send_capacity_for_test( int packets );
+
 // The admission gate, set per transport (see the callback type above). NULL
 // callback -- the default -- admits every source: the connect ladder alone
 // decides. May be set or cleared at any time between updates.

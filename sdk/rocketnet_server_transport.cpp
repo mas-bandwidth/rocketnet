@@ -222,6 +222,7 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_send_buffer_t send_buffer;
     struct rocketnet_server_receive_buffer_t receive_buffer;
     struct rocketnet_server_payload_ring_t payload_ring;
+    int payload_ring_capacity;                          // payload packets one update may stage; read at create
 
     double time;                                        // the game's clock, last seen
     uint64_t test_timestamp;                            // unit-only Unix time; zero reads the wall clock
@@ -265,6 +266,23 @@ struct rocketnet_server_transport_t
     // the end of its data -- this is the last member, so the slack is real.
     uint8_t payload_storage[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
+
+// the payload send capacity the next create reads: 0 is the default,
+// ROCKETNET_SERVER_PAYLOAD_RING_SIZE; 1 .. ROCKETNET_SERVER_PAYLOAD_RING_SIZE
+// is that many payload packets per update (unit tests only)
+static int rocketnet_server_send_capacity_override = 0;
+
+void rocketnet_server_transport_set_send_capacity_for_test( int packets )
+{
+    rocketnet_server_send_capacity_override = ( packets > 0 && packets <= ROCKETNET_SERVER_PAYLOAD_RING_SIZE ) ? packets : 0;
+}
+
+int rocketnet_server_transport_send_capacity( struct rocketnet_server_transport_t * server_transport )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return 0;
+    return server_transport->payload_ring_capacity;
+}
 
 void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index )
 {
@@ -1164,6 +1182,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     server_transport->context = context;
     server_transport->time = time;
+    server_transport->payload_ring_capacity = rocketnet_server_send_capacity_override > 0 ? rocketnet_server_send_capacity_override : ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
     server_transport->game_clock_epoch = config->game_clock_epoch;
     rocketnet_server_link_drain( server_transport );
 
@@ -2207,7 +2226,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
         uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-        if ( slot >= ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
+        if ( slot >= (uint64_t) server_transport->payload_ring_capacity )
         {
             rocketnet_spam( "server payload ring full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -2343,7 +2362,7 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
     frame->slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-    if ( frame->slot >= ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
+    if ( frame->slot >= (uint64_t) server_transport->payload_ring_capacity )
     {
         rocketnet_spam( "server payload ring full. packet dropped" );
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -2626,8 +2645,8 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
     uint64_t num_packets = ring->num_packets;
-    if ( num_packets > ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
-        num_packets = ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
+    if ( num_packets > (uint64_t) server_transport->payload_ring_capacity )
+        num_packets = (uint64_t) server_transport->payload_ring_capacity;
 
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
     int num_sends = 0;
