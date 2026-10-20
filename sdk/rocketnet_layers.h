@@ -847,14 +847,16 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 // As rocketnet_server_transport_create, with the exact section-2.1 code
 // written to *status on every return path when status is not NULL
 // (ROCKETNET_STATUS_OK on success, a non-zero ROCKETNET_STATUS_* on failure).
-// A failure also logs one rocketnet_error line; the non-_ex form passes NULL.
+// A failure logs one rocketnet_error line, except the link-simulator
+// OUT_OF_MEMORY and MUTEX_CREATE_FAILED exits, which return without logging;
+// the non-_ex form passes NULL.
 /** @brief Create a server transport and report the exact refusal status.
  * @param context [in] Caller-provided allocator context passed to allocations for this transport; NULL is allowed if supported by the configured allocator.
  * @param public_address_string [in] Non-NULL numeric bind/public address with optional port; port zero requests a dynamically assigned port when the selected driver supports it.
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. Correct the reported cause before retrying. A failure logs an error line.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, or MUTEX_CREATE_FAILED. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init(NULL);
