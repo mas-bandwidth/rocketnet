@@ -121,7 +121,10 @@ struct rocketnet_server_receive_buffer_t
 // 16-aligned. the response ring above stays single-threaded under update
 // and is deliberately not this.
 
-#define ROCKETNET_SERVER_PAYLOAD_RING_SIZE      ROCKETNET_SERVER_MAX_SEND_PACKETS
+// one slot per possible client: the light profile sends one reliable ordered
+// message from the server to every client each update, so the ring must hold
+// the whole client count or the low indices starve the high ones.
+#define ROCKETNET_SERVER_PAYLOAD_RING_SIZE      ROCKETNET_MAX_CLIENTS
 
 struct alignas(64) rocketnet_server_payload_slot_info_t
 {

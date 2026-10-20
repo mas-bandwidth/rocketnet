@@ -610,8 +610,6 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < num_clients; i++ )
         client_connect_seconds[i] = -1.0;
 
-    const uint64_t token_now = (uint64_t) time( NULL );
-
 #if defined(__linux__)
     int self_netns = -1;
     int client_netns = -1;
@@ -641,15 +639,23 @@ int main( int argc, char ** argv )
             return 1;
         }
 #endif
-        if ( rocketnet_write_dev_connect_token( server_address, (uint64_t) ( i + 1 ), token_now, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+        if ( rocketnet_write_dev_connect_token( server_address, (uint64_t) ( i + 1 ), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         {
             fprintf( stderr, "load: failed to create dev connect token for client %d\n", i );
             return 1;
         }
         clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
-        if ( !clients[i] || rocketnet_client_connect( clients[i], connect_token ) != ROCKETNET_STATUS_OK )
+        if ( !clients[i] )
         {
-            fprintf( stderr, "load: failed to create or connect client %d\n", i );
+            fprintf( stderr, "load: client %d create failed errno=%d %s fds=%ld threads=%ld\n",
+                     i, errno, strerror( errno ), count_open_fds(), count_threads() );
+            return 1;
+        }
+        const enum rocketnet_status_t connect_status = rocketnet_client_connect( clients[i], connect_token );
+        if ( connect_status != ROCKETNET_STATUS_OK )
+        {
+            fprintf( stderr, "load: client %d connect failed status=%d errno=%d %s fds=%ld threads=%ld\n",
+                     i, (int) connect_status, errno, strerror( errno ), count_open_fds(), count_threads() );
             return 1;
         }
 #if defined(__linux__)
