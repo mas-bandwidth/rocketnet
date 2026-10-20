@@ -106,8 +106,10 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
     }
 
     rocketnet_server_transport_set_create_send_capacity_for_test( capacity );
-    world->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    world->server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
     check( world->server != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( world->server ) == ROCKETNET_STATUS_OK );
     check( rocketnet_server_running( world->server ) == 1 );
 
@@ -124,8 +126,10 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
             client_config.window_messages = 64;
             client_config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
         }
-        world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        create_status = ROCKETNET_STATUS_OK;
+        world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status );
         check( world->clients[i] != NULL );
+        check( create_status == ROCKETNET_STATUS_OK );
     }
 }
 
