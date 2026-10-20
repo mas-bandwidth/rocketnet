@@ -69,7 +69,7 @@ ulimit -n 65536
 
 ### Connect-deadline diagnostics
 
-When the connect phase reaches its 10-second deadline with a client short of `CONNECTED`, `bin/load` names up to eight such clients on stderr before the summary line (`load.c:600-638`): each one's transport state, its driver, the wire datagrams it has sent and received, and its nonzero transport counters, then the server's connected count and every nonzero server transport counter:
+When the connect phase reaches its 10-second deadline with a client short of `CONNECTED`, `bin/load` names up to eight such clients on stderr before the summary line (`load.c:601-637`): each one's transport state, its driver, the wire datagrams it has sent and received, and its nonzero transport counters, then the server's connected count and every nonzero server transport counter:
 
 ```
 load: client 481 not connected at the deadline: state=1 requesting cookie
@@ -80,7 +80,7 @@ load: server counter CONNECTION_REQUEST_NO_COOKIE=1035
 
 ### Dual-stack client ports
 
-A client bound dual-stack (`[::]:0`) that talks to an IPv4 server needs a port no IPv4 socket on the host holds: darwin lets a dual-stack socket bind a port an IPv4 socket already holds and delivers IPv4 datagrams for that port to the IPv4 socket, so the client sends but never hears the server, and sits in `requesting cookie` until its deadline. The darwin socket create takes a port-0 dual-stack bind's port from an IPv4 probe socket's pick and binds it explicitly while the probe holds it (`sdk/rocketnet_platform.cpp:1937-2006`). A run while another process holds 4000 IPv4 wildcard sockets bound at port 0 passes the 1000-client connect criterion; the same run with the platform taking the kernel's own dual-stack pick names 241 clients short of `CONNECTED`.
+A client bound dual-stack (`[::]:0`) that talks to an IPv4 server needs a port no IPv4 socket on the host holds: darwin lets a dual-stack socket bind a port an IPv4 socket already holds and delivers IPv4 datagrams for that port to the IPv4 socket, so the client sends but never hears the server, and sits in `requesting cookie` until its deadline. The darwin socket create takes a port-0 dual-stack bind's port from an IPv4 probe socket's pick and binds it explicitly while the probe holds it (`sdk/rocketnet_platform.cpp:2102-2171`). A run while another process holds 4000 IPv4 wildcard sockets bound at port 0 passes the 1000-client connect criterion; the same run with the platform taking the kernel's own dual-stack pick names 241 clients short of `CONNECTED`.
 
 ### Server cells
 
