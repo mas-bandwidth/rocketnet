@@ -140,7 +140,12 @@ static int test_unset_environment( const char * name )
 static void dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a release
-    // build (the unit suite's build) the published keys are refused
+    // build (the unit suite's build) the published keys are refused.
+    // The create pins the loopback driver on port 0: the development-keys
+    // warn is raised before the driver ladder
+    // (sdk/rocketnet_server_transport.cpp), so the WARN line, level and
+    // DEV_KEY_WARN_PHRASE checks are unaffected by the driver choice, and
+    // the unit suite stays free of any real socket bind.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
