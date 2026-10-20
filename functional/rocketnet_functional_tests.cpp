@@ -8036,6 +8036,18 @@ struct rocketnet_functional_test_t
     void ( *function )();
 };
 
+// macOS lifecycle stress: real sockets, counted file descriptors and threads
+// (functional/posix_lifecycle_stress.cpp). The Linux card owns its own cells
+// and registers the file there.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_posix_init_term_1000();
+extern void rocketnet_test_posix_server_create_destroy_1000();
+extern void rocketnet_test_posix_client_create_destroy_1000();
+extern void rocketnet_test_posix_server_restart_same_port_100();
+extern void rocketnet_test_posix_connect_disconnect_1000();
+extern void rocketnet_test_posix_destroy_under_traffic_100();
+#endif
+
 // the channel harness smoke cases (functional/channel_smoke.cpp, picked up by
 // the functional/channel_*.cpp glob)
 extern void harness_one_message_each_way_lossless();
@@ -8190,6 +8202,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "client_receive_thread_quit_wake_before_wait_returns", rocketnet_test_client_receive_thread_quit_wake_before_wait_returns },
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "posix_init_term_1000", rocketnet_test_posix_init_term_1000 },
+    { "posix_server_create_destroy_1000", rocketnet_test_posix_server_create_destroy_1000 },
+    { "posix_client_create_destroy_1000", rocketnet_test_posix_client_create_destroy_1000 },
+    { "posix_server_restart_same_port_100", rocketnet_test_posix_server_restart_same_port_100 },
+    { "posix_connect_disconnect_1000", rocketnet_test_posix_connect_disconnect_1000 },
+    { "posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100 },
+#endif
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
     { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn },
     { "test_client_disconnect_reports_state_change", rocketnet_test_client_disconnect_reports_state_change },
