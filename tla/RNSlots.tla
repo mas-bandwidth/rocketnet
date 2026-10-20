@@ -183,7 +183,7 @@ BeginUpdate ==
 RejectUnreleasedUpdate ==
     /\ ~Stable /\ "updatewithheld" \notin Broken
     /\ st.phase = "application" /\ (\E s \in Slots : st.held[s] # {})
-    /\ st' = [st EXCEPT !.error = "ROCKETNET_ERROR_MESSAGE_NOT_RELEASED"]
+    /\ st' = [st EXCEPT !.error = "ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED"]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 Environment == Data!Environment /\ UNCHANGED st
@@ -229,7 +229,7 @@ TypeOK ==
     /\ st.released \subseteq Records /\ st.acked \subseteq Records
     /\ st.applied \subseteq Audit /\ st.dropped \subseteq Audit
     /\ st.badKick \in BOOLEAN /\ st.badLifetime \in BOOLEAN
-    /\ st.error \in {"NONE", "ROCKETNET_ERROR_MESSAGE_NOT_RELEASED"}
+    /\ st.error \in {"NONE", "ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED"}
 
 NoCrossConnectionApply == \A a \in st.applied : a.from = a.to
 NoOwnEntryDropped == \A d \in st.dropped : d.from # d.to

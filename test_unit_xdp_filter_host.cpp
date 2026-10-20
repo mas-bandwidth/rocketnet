@@ -79,7 +79,11 @@ struct xdp_host_frame_t
     int family = 4;                         // 4 or 6
     uint16_t ethertype = 0;                 // 0: the family's own (0x0800 or 0x86dd)
     int ipv4_ihl = 5;                       // IPv4 header words; options are zero bytes
+    uint16_t ipv4_frag_off = 0x4000;        // IPv4 flags and fragment offset: DF, offset 0
     uint8_t protocol = 17;                  // IPv4 protocol or IPv6 next header
+    int ipv6_fragment = -1;                 // >= 0: an IPv6 fragment header (next header 44) with
+                                            // this offset and flags field (offset << 3 | M)
+    uint8_t ipv6_fragment_next = 17;        // the fragment header's next header
     const uint8_t * destination = NULL;     // NULL: the configured server address
     uint16_t port = xdp_host_server_port;
     int payload_bytes = 100;                // UDP payload: prefilter header + body
@@ -128,7 +132,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         out.push_back( 0x00 );
         xdp_host_put16( out, (uint16_t) ( header_bytes + udp_bytes ) );
         xdp_host_put16( out, 0x0000 );
-        xdp_host_put16( out, 0x4000 );
+        xdp_host_put16( out, f.ipv4_frag_off );
         out.push_back( 64 );
         out.push_back( f.protocol );
         xdp_host_put16( out, 0x0000 );
@@ -143,16 +147,29 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         // RFC 8200 section 3: version 6, traffic class and flow label zero,
         // payload length, next header, hop limit, source, destination
 
+        const bool fragment = f.ipv6_fragment >= 0;
         out.push_back( 0x60 );
         out.push_back( 0x00 );
         out.push_back( 0x00 );
         out.push_back( 0x00 );
-        xdp_host_put16( out, (uint16_t) udp_bytes );
-        out.push_back( f.protocol );
+        xdp_host_put16( out, (uint16_t) ( udp_bytes + ( fragment ? 8 : 0 ) ) );
+        out.push_back( fragment ? 44 : f.protocol );
         out.push_back( 64 );
         out.insert( out.end(), xdp_host_client_ipv6, xdp_host_client_ipv6 + 16 );
         const uint8_t * destination = f.destination ? f.destination : xdp_host_server_ipv6;
         out.insert( out.end(), destination, destination + 16 );
+
+        // RFC 8200 section 4.5: next header, reserved, the fragment offset
+        // in 8-byte units shifted left 3 with M in bit 0, identification
+
+        if ( fragment )
+        {
+            out.push_back( f.ipv6_fragment_next );
+            out.push_back( 0x00 );
+            xdp_host_put16( out, (uint16_t) f.ipv6_fragment );
+            xdp_host_put16( out, 0x1234 );
+            xdp_host_put16( out, 0x5678 );
+        }
     }
 
     // RFC 768: source port, destination port, length, checksum (zero)
@@ -656,26 +673,205 @@ static void xdp_host_ipv6_extension_headers_pass_counted()
     xdp_host_run_rows( rows );
 }
 
+// The fragment rows of a family: the first fragment of a datagram to this
+// server drops counted DROPPED_FIRST_FRAGMENT, before any size, epoch or
+// filter check; every other fragment passes counted PASSED_FRAGMENT. IPv4
+// fragments are flags and offset in frag_off (RFC 791); IPv6 fragments carry
+// a real fragment header (RFC 8200 section 4.5) between the fixed header and
+// the bytes that follow it.
+
+static const uint8_t xdp_host_other_ipv4[4] = { 192, 0, 2, 11 };
+static const uint8_t xdp_host_other_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11 };
+
+// a first fragment (offset 0, more-fragments set) in a family's own field
+
+static xdp_host_row_t xdp_host_fragment_row( const char * label, int family, int offset_units, bool more )
+{
+    xdp_host_row_t row = xdp_host_row( label, family );
+    if ( family == 4 )
+        row.frame.ipv4_frag_off = (uint16_t) ( ( more ? 0x2000 : 0 ) | ( offset_units & 0x1fff ) );
+    else
+        row.frame.ipv6_fragment = ( offset_units << 3 ) | ( more ? 1 : 0 );
+    return row;
+}
+
+static void xdp_host_first_fragment_drop_rows( int family, std::vector<xdp_host_row_t> & rows )
+{
+    const int dropped = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
+
+    rows.push_back( xdp_host_expect( xdp_host_fragment_row( "first fragment to the server", family, 0, true ), XDP_HOST_DROP, dropped ) );
+
+    xdp_host_row_t wrong_epoch = xdp_host_fragment_row( "first fragment to the server with a wrong epoch", family, 0, true );
+    wrong_epoch.frame.epoch = 9;
+    rows.push_back( xdp_host_expect( wrong_epoch, XDP_HOST_DROP, dropped ) );
+
+    xdp_host_row_t wrong_filter = xdp_host_fragment_row( "first fragment to the server with a wrong filter value", family, 0, true );
+    wrong_filter.frame.filter[0] = 0x00;
+    rows.push_back( xdp_host_expect( wrong_filter, XDP_HOST_DROP, dropped ) );
+
+    xdp_host_row_t tiny = xdp_host_fragment_row( "first fragment to the server with a 1-byte payload", family, 0, true );
+    tiny.frame.payload_bytes = 1;
+    rows.push_back( xdp_host_expect( tiny, XDP_HOST_DROP, dropped ) );
+
+    xdp_host_row_t large = xdp_host_fragment_row( "first fragment to the server past the receive ceiling", family, 0, true );
+    large.frame.payload_bytes = ROCKETNET_RECEIVE_CEILING + 1;
+    rows.push_back( xdp_host_expect( large, XDP_HOST_DROP, dropped ) );
+
+    xdp_host_row_t invalid = xdp_host_fragment_row( "first fragment to the server of an outbound type", family, 0, true );
+    invalid.frame.packet_type = 2;
+    rows.push_back( xdp_host_expect( invalid, XDP_HOST_DROP, dropped ) );
+
+    xdp_host_row_t replayed = xdp_host_fragment_row( "first fragment to the server behind the replay window", family, 0, true );
+    replayed.frame.sequence = 0;
+    replayed.replay_entry = true;
+    replayed.replay_high_water = 1000;
+    rows.push_back( xdp_host_expect( replayed, XDP_HOST_DROP, dropped ) );
+
+    xdp_host_row_t any = xdp_host_fragment_row( "first fragment with the any-address config", family, 0, true );
+    any.config.any_ipv4 = true;
+    any.config.any_ipv6 = true;
+    rows.push_back( xdp_host_expect( any, XDP_HOST_DROP, dropped ) );
+
+    xdp_host_row_t empty = xdp_host_fragment_row( "first fragment to the server, no socket slot", family, 0, true );
+    empty.populated_slot = -1;
+    rows.push_back( xdp_host_expect( empty, XDP_HOST_DROP, dropped ) );
+}
+
+static void xdp_host_fragment_pass_rows( int family, std::vector<xdp_host_row_t> & rows )
+{
+    const int passed = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+
+    // non-first fragments, whatever their bytes look like: the 8 bytes after
+    // the IP header here read as a UDP header to the server's port
+
+    rows.push_back( xdp_host_expect( xdp_host_fragment_row( "middle fragment to the server's port", family, 185, true ), XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t last = xdp_host_fragment_row( "last fragment to the server's port", family, 370, false );
+    last.frame.payload_bytes = 1;
+    rows.push_back( xdp_host_expect( last, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t middle_other = xdp_host_fragment_row( "middle fragment to another port", family, 185, true );
+    middle_other.frame.port = 53;
+    rows.push_back( xdp_host_expect( middle_other, XDP_HOST_PASS, passed ) );
+
+    // first fragments that are not this server's
+
+    xdp_host_row_t other_port = xdp_host_fragment_row( "first fragment to another port", family, 0, true );
+    other_port.frame.port = 53;
+    rows.push_back( xdp_host_expect( other_port, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t other_address = xdp_host_fragment_row( "first fragment to another address", family, 0, true );
+    other_address.frame.destination = family == 4 ? xdp_host_other_ipv4 : xdp_host_other_ipv6;
+    rows.push_back( xdp_host_expect( other_address, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t unconfigured = xdp_host_fragment_row( "first fragment to an unconfigured server", family, 0, true );
+    unconfigured.config.port = 0;
+    rows.push_back( xdp_host_expect( unconfigured, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t no_config = xdp_host_fragment_row( "first fragment when the config lookup fails", family, 0, true );
+    no_config.config.lookup_fails = true;
+    rows.push_back( xdp_host_expect( no_config, XDP_HOST_PASS, passed ) );
+
+    // a first fragment whose UDP header is cut by data_end: the program
+    // cannot say it is ours
+
+    const int ip_bytes = family == 4 ? 20 : 40 + 8;
+    xdp_host_row_t cut = xdp_host_fragment_row( "first fragment with its UDP header cut by the frame end", family, 0, true );
+    cut.frame.truncate_to = 14 + ip_bytes + 7;
+    rows.push_back( xdp_host_expect( cut, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t bare = xdp_host_fragment_row( "first fragment with nothing behind the IP header", family, 0, true );
+    bare.frame.truncate_to = 14 + ip_bytes;
+    rows.push_back( xdp_host_expect( bare, XDP_HOST_PASS, passed ) );
+
+    // a whole datagram to the server is no fragment: it redirects
+
+    if ( family == 4 )
+    {
+        xdp_host_row_t df = xdp_host_row( "DF set, offset zero: a whole datagram", 4 );
+        rows.push_back( df );
+
+        xdp_host_row_t whole = xdp_host_row( "no flags, offset zero: a whole datagram", 4 );
+        whole.frame.ipv4_frag_off = 0x0000;
+        rows.push_back( whole );
+    }
+    else
+    {
+        rows.push_back( xdp_host_row( "UDP directly after the fixed header: a whole datagram", 6 ) );
+    }
+}
+
+static void xdp_host_ipv4_first_fragment_drops_counted()
+{
+    std::vector<xdp_host_row_t> rows;
+    xdp_host_first_fragment_drop_rows( 4, rows );
+
+    // DF with more-fragments is still a first fragment by its offset and M
+    // bit: frag_off & 0x3fff is 0x2000 either way
+
+    xdp_host_row_t df_more = xdp_host_row( "DF and more-fragments, offset 0", 4 );
+    df_more.frame.ipv4_frag_off = 0x6000;
+    rows.push_back( xdp_host_expect( df_more, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT ) ) );
+
+    xdp_host_run_rows( rows );
+}
+
+static void xdp_host_ipv6_first_fragment_drops_counted()
+{
+    std::vector<xdp_host_row_t> rows;
+    xdp_host_first_fragment_drop_rows( 6, rows );
+    xdp_host_run_rows( rows );
+}
+
 static void xdp_host_ipv6_fragment_passes_counted()
 {
     std::vector<xdp_host_row_t> rows;
+    xdp_host_fragment_pass_rows( 6, rows );
 
-    // RFC 8200 section 4.5: the fragment header (44) passes to the kernel
-    // stack for reassembly, counted, never dropped
+    const int passed = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
 
-    xdp_host_row_t row = xdp_host_row( "fragment header", 6 );
-    row.frame.protocol = 44;
-    rows.push_back( xdp_host_expect( row, XDP_HOST_PASS, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION ) ) );
+    // a fragment header whose own 8 bytes are cut by the frame end, or
+    // with nothing behind the fixed header
 
-    xdp_host_row_t tiny = xdp_host_row( "fragment header with a 1-byte payload", 6 );
-    tiny.frame.protocol = 44;
-    tiny.frame.payload_bytes = 1;
-    rows.push_back( xdp_host_expect( tiny, XDP_HOST_PASS, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION ) ) );
+    xdp_host_row_t header_cut = xdp_host_fragment_row( "fragment header cut by the frame end", 6, 0, true );
+    header_cut.frame.truncate_to = 14 + 40 + 7;
+    rows.push_back( xdp_host_expect( header_cut, XDP_HOST_PASS, passed ) );
 
-    xdp_host_row_t unconfigured = xdp_host_row( "fragment header to an unconfigured server", 6 );
-    unconfigured.frame.protocol = 44;
-    unconfigured.config.port = 0;
-    rows.push_back( xdp_host_expect( unconfigured, XDP_HOST_PASS, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION ) ) );
+    xdp_host_row_t header_bare = xdp_host_fragment_row( "fragment next header with nothing behind the fixed header", 6, 0, true );
+    header_bare.frame.truncate_to = 14 + 40;
+    rows.push_back( xdp_host_expect( header_bare, XDP_HOST_PASS, passed ) );
+
+    // a first fragment of something other than UDP, and an atomic
+    // fragment (offset 0, M clear: RFC 6946), are not first fragments of a
+    // datagram to this server
+
+    xdp_host_row_t tcp = xdp_host_fragment_row( "first fragment of a TCP segment", 6, 0, true );
+    tcp.frame.ipv6_fragment_next = 6;
+    rows.push_back( xdp_host_expect( tcp, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t atomic = xdp_host_fragment_row( "atomic fragment to the server's port", 6, 0, false );
+    rows.push_back( xdp_host_expect( atomic, XDP_HOST_PASS, passed ) );
+
+    xdp_host_run_rows( rows );
+}
+
+static void xdp_host_ipv4_fragment_passes_counted()
+{
+    std::vector<xdp_host_row_t> rows;
+    xdp_host_fragment_pass_rows( 4, rows );
+
+    const int passed = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+
+    // a first fragment with IP options, or of something other than UDP:
+    // the program does not parse past either, and passes it
+
+    xdp_host_row_t options = xdp_host_fragment_row( "first fragment with IP options (ihl 6)", 4, 0, true );
+    options.frame.ipv4_ihl = 6;
+    rows.push_back( xdp_host_expect( options, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t tcp = xdp_host_fragment_row( "first fragment of a TCP segment", 4, 0, true );
+    tcp.frame.protocol = 6;
+    rows.push_back( xdp_host_expect( tcp, XDP_HOST_PASS, passed ) );
 
     xdp_host_run_rows( rows );
 }
@@ -1192,6 +1388,9 @@ XDP_HOST_SKIPPED( xdp_host_ipv4_short_header_drops )
 XDP_HOST_SKIPPED( xdp_host_ipv6_short_header_drops )
 XDP_HOST_SKIPPED( xdp_host_ipv6_extension_headers_pass_counted )
 XDP_HOST_SKIPPED( xdp_host_ipv6_fragment_passes_counted )
+XDP_HOST_SKIPPED( xdp_host_ipv4_fragment_passes_counted )
+XDP_HOST_SKIPPED( xdp_host_ipv4_first_fragment_drops_counted )
+XDP_HOST_SKIPPED( xdp_host_ipv6_first_fragment_drops_counted )
 XDP_HOST_SKIPPED( xdp_host_icmpv6_passes_uncounted )
 XDP_HOST_SKIPPED( xdp_host_vlan_tagged_passes )
 XDP_HOST_SKIPPED( xdp_host_too_small_drops )
@@ -1218,6 +1417,9 @@ REGISTER_UNIT_TEST( xdp_host_ipv4_short_header_drops );
 REGISTER_UNIT_TEST( xdp_host_ipv6_short_header_drops );
 REGISTER_UNIT_TEST( xdp_host_ipv6_extension_headers_pass_counted );
 REGISTER_UNIT_TEST( xdp_host_ipv6_fragment_passes_counted );
+REGISTER_UNIT_TEST( xdp_host_ipv4_fragment_passes_counted );
+REGISTER_UNIT_TEST( xdp_host_ipv4_first_fragment_drops_counted );
+REGISTER_UNIT_TEST( xdp_host_ipv6_first_fragment_drops_counted );
 REGISTER_UNIT_TEST( xdp_host_icmpv6_passes_uncounted );
 REGISTER_UNIT_TEST( xdp_host_vlan_tagged_passes );
 REGISTER_UNIT_TEST( xdp_host_too_small_drops );
