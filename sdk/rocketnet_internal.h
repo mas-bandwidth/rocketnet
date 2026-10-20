@@ -534,8 +534,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // WIRE must be identical on both ends; CONFIG verifies them (layer 7).
 // Validation applies the ranges here and the cross rules of section 14, and
 // refuses, never clamps. The public env pass reads every row but the two
-// budget rows under the endpoint's prefix (sdk/rocketnet_api.cpp
-// rn_apply_message_and_budget_env); the budget's one variable is the
+// budget rows under the endpoint's prefix (sdk/rocketnet_api.cpp:119
+// and :125); the budget's one variable is the
 // endpoint's budget field, ROCKETNET_CLIENT_SEND_KBPS or
 // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS.
 

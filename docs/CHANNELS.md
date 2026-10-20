@@ -1385,10 +1385,10 @@ header; the internal transport and message layers are in
   defined behaviour when a sender outruns its path or its peer), and
   `set_send_kbps` follows the same rule at runtime. A reused slot starts at
   the server's configured value. The message object reads no environment
-  (sdk/rocketnet_message_server.cpp `rn_message_object_create`); the public
+  (sdk/rocketnet_message_server.cpp:146); the public
   creates read the budget from `ROCKETNET_CLIENT_SEND_KBPS` and
-  `ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` (sdk/rocketnet_api.cpp
-  `rn_client_split`, `rn_server_split`) and pass it as the create argument.
+  `ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` (sdk/rocketnet_api.cpp:165
+  and :224) and pass it as the create argument.
 - **Time.** Create takes no time. The object's clock is the game's time from
   the first update on. The client's transport is seeded at 0.0 at create and
   is handed the time since the first update, so its connect timers and the

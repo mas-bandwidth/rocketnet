@@ -8,16 +8,16 @@
 // reads what the env passes do through the log callback; none opens a
 // socket, starts a transport or reads the clock.
 //
-//   - the public env pass (sdk/rocketnet_api.cpp rn_apply_message_and_budget_env)
+//   - the public env pass (sdk/rocketnet_api.cpp:119)
 //     reads the message table under the endpoint's prefix and the budget under
 //     its own name; the budget is never read a second time under a message
 //     field's name (ROCKETNET_CLIENT_CLIENT_SEND_KBPS)
-//   - a message object's create (sdk/rocketnet_message_server.cpp
-//     rn_message_object_create) reads no environment, so nothing overrides
+//   - a message object's create (sdk/rocketnet_message_server.cpp:146)
+//     reads no environment, so nothing overrides
 //     ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS after it is applied
-//   - rocketnet_init (sdk/rocketnet.cpp) applies ROCKETNET_LOG_LEVEL before
+//   - rocketnet_init (sdk/rocketnet.cpp:714) applies ROCKETNET_LOG_LEVEL before
 //     its first log line
-//   - the step_driven row (sdk/rocketnet_config.cpp rocketnet_client_config_fields)
+//   - the step_driven row (sdk/rocketnet_config.cpp:86)
 //     takes 0 or 1 only
 //   - every variable those passes apply is named in sdk/rocketnet.h
 
@@ -59,7 +59,7 @@ static void env_names_log_capture( void * context, rocketnet_log_level_t level, 
     log->levels.push_back( (int) level );
 }
 
-// rocketnet_config_apply_env logs "<endpoint> config override NAME=value"
+// rocketnet_config_apply_env logs "<endpoint> config override NAME=value" (sdk/rocketnet_config.cpp:658)
 static std::vector<std::string> env_names_overrides( const env_names_log_t & log )
 {
     std::vector<std::string> names;

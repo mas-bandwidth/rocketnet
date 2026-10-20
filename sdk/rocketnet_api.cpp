@@ -114,7 +114,7 @@ static bool rn_copy_config_string( char * dest, size_t dest_size, const char * s
 // the message table's two budget rows, client_send_kbps and server_send_kbps,
 // take no variable here: the endpoint's budget is its one budget field above,
 // ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, which
-// rn_client_split and rn_server_split pass to the message object's create
+// rn_client_split (:165) and rn_server_split (:224) resolve for the create
 
 static bool rn_apply_message_and_budget_env( const char * endpoint, struct rocketnet_message_config_t * message, int * kbps, const struct rocketnet_config_field_t * budget_fields )
 {

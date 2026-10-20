@@ -2510,10 +2510,10 @@ REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
 
-// the message object reads no environment (sdk/rocketnet_message_server.cpp
-// rn_message_object_create): the public budget variables are
+// the message object reads no environment (sdk/rocketnet_message_server.cpp:146):
+// the public budget variables are
 // ROCKETNET_CLIENT_SEND_KBPS and ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by
-// the public creates (sdk/rocketnet_api.cpp rn_client_split, rn_server_split).
+// the public creates (sdk/rocketnet_api.cpp:165 and :224).
 // A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
 // Windows has no setenv or unsetenv: _putenv_s sets, and an empty value removes.
 

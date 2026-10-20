@@ -12284,8 +12284,8 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
 
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
-                // a ranged row (step_driven's 0 .. 1, sdk/rocketnet_config.cpp
-                // rocketnet_client_config_fields) takes its max; a 0 .. 0 row
+                // a ranged row (step_driven's 0 .. 1,
+                // sdk/rocketnet_config.cpp:86) takes its max; a 0 .. 0 row
                 // takes any value of the full width
                 expected_uint64 = field->max_value > field->min_value ? (uint64_t) field->max_value : 9876543210987654321ULL;
                 snprintf( value_string, sizeof(value_string), "%" PRIu64, expected_uint64 );
