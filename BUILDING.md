@@ -83,7 +83,7 @@ To build a universal (arm64 and x86_64) library and the suites:
     lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
 
 Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
-every build tree land in the checkout's `bin/` (`CMakeLists.txt:40`), so `--clean-first` relinks
+every build tree land in the checkout's `bin/` (`CMakeLists.txt:49-54`), so `--clean-first` relinks
 them against the universal objects when a native build ran first; without it
 CMake sees the newer native files and skips the link. To read the deployment
 target on
@@ -98,25 +98,31 @@ architecture in its own clang pass, so the vendored sodium builds its x86 asm
 into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
 is embedded once with the host `xxd` and the generated header is
 architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
-the compiler-flag check (`CMakeLists.txt:156`) drops it for a fat compile while the stack protector
+the compiler-flag check (`CMakeLists.txt:174`, `CMakeLists.txt:177`) drops it for a fat compile while the stack protector
 and the other Release flags stay on both slices.
 
 Against a universal build, `tools/check_package.py build-universal` passes the
 build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py:56`)
 and `tools/check_dll_consumer.py --build build-universal` adds one `-arch` per
-library slice (`tools/check_dll_consumer.py:183`); each refuses a consumer
-executable whose `lipo -archs` lacks a slice (`tools/check_package.py:64`,
-`tools/check_dll_consumer.py:252`).
+library slice (`tools/check_dll_consumer.py:184`); each refuses a consumer
+executable whose `lipo -archs` lacks a slice (`tools/check_package.py:73`,
+`tools/check_dll_consumer.py:256`).
 
-The Xcode generator needs Xcode installed and selected; the Command Line
-Tools alone have no `xcodebuild`, so `xcode-select -p` must name Xcode.app:
+The Xcode generator needs Xcode installed, and its license accepted once by an
+administrator (`sudo xcodebuild -license`); until then `xcodebuild` refuses and
+the configure step stops with "No CMAKE_C_COMPILER could be found". The
+Command Line Tools alone have no `xcodebuild`. `DEVELOPER_DIR` selects Xcode
+for one command without changing `xcode-select`:
 
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
     cmake -B build-xcode -G Xcode
     cmake --build build-xcode --config Release --parallel 4
     ./bin/Release/test
 
-A multi-config generator writes the executables and libraries under
-`bin/Release/` (`CMakeLists.txt`, `CMAKE_RUNTIME_OUTPUT_DIRECTORY`).
+`CMakeLists.txt:49-54` sets the output directories to `bin/` with no
+configuration in the path, and a multi-config generator such as Xcode appends
+the configuration to them, so its executables and libraries land in
+`bin/Release/`.
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
