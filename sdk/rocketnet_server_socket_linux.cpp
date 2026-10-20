@@ -90,6 +90,14 @@ struct rocketnet_server_socket_send_buffer_t
 
     std::atomic<int> num_packets{0};
 
+    // finish_base for this generation: the count of packets already published
+    // when reopen handed the generation back. A finish or abort through a
+    // pointer from before the publish refuses an index below base, so a stale
+    // pointer cannot rewrite a published packet. Written by the producer on
+    // acquire/reopen; read by the producer on finish/abort. tla/SendHandoff.tla
+    // models the guard as FinishBase.
+    int base = 0;
+
     uint8_t padding_1[4096];
 
     int packet_start_index;
@@ -2229,6 +2237,13 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
+    // a pointer from before a reopen points into the packets that generation
+    // already published; refuse it so it cannot rewrite a published packet
+    // (tla/SendHandoff.tla, FinishBase)
+
+    if ( packet_index < send_buffer->base )
+        return;
+
     // the packet is complete wire bytes as the protocol wrote them; nothing
     // is prepended here -- the xdp thread adds the ethernet, ip and udp
     // headers when it copies the packet into its umem frame
@@ -2256,6 +2271,9 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
     if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
         return;
 
+    if ( packet_index < send_buffer->base )
+        return;
+
     send_buffer->packet_info[packet_index].packet_bytes = 0;
 }
 
@@ -2264,13 +2282,28 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket )
 {
     if ( socket->send_flow_index.load( std::memory_order_relaxed ) >= 0 ) return;
-    const int index = socket->send_handoff.acquire();
-    if ( index >= 0 )
+    const int acquired = socket->send_handoff.acquire();
+    if ( acquired >= 0 )
     {
-        auto * buffer = &socket->send_buffer[index];
+        // A fresh generation resumes from an empty buffer: nothing is published
+        // yet, so no finish is below base.
+        auto * buffer = &socket->send_buffer[acquired];
         buffer->num_packets = 0;
         buffer->packet_start_index = 0;
-        socket->send_flow_index.store( index, std::memory_order_release );
+        buffer->base = 0;
+        socket->send_flow_index.store( acquired, std::memory_order_release );
+        return;
+    }
+    // Slow path: every generation is queued. reopen hands back the newest
+    // queued generation, never the front, and the producer stages after the
+    // packets that generation already published. finish_base marks that count,
+    // so a finish through a pointer from before the reopen is refused.
+    const int reopened = socket->send_handoff.reopen();
+    if ( reopened >= 0 )
+    {
+        auto * buffer = &socket->send_buffer[reopened];
+        buffer->base = buffer->num_packets.load( std::memory_order_relaxed );
+        socket->send_flow_index.store( reopened, std::memory_order_release );
     }
 }
 

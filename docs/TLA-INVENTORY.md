@@ -798,8 +798,9 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
   next (`:1883-1897`). A fill thread may acquire on the slow path when both are queued
   (`:1766-1775`). The handoff's reopen (`send_handoff.h:43`) returns the newest queued
   generation and never the front; `tla/SendHandoff.tla` checks the reopen rules. The
-  socket's acquire helper (`:2260-2271`) calls only acquire; no caller of reopen exists
-  in this tree yet.
+  socket's acquire helper (`:2282-2308`) calls acquire first and, when every generation
+  is queued, reopen, marking the reopened generation's finish_base at the count it
+  already published; a finish or abort below that base is refused (`:2244`, `:2274`).
 
 **Rules.**
 - `INV FrameConservation`: every UMEM frame has exactly one owner at every step
