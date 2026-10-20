@@ -16,6 +16,10 @@
 
 #include <stdio.h>
 #include <string.h>
+
+// The GRO case reads a Linux recvmmsg header: the GSO server, and with it
+// rocketnet_server_gso_gro_segment_bytes, is built on Linux only.
+#if defined(__linux__)
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -23,8 +27,10 @@
 #define UDP_GRO 104
 #endif
 
-extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
 extern int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_bytes, uint64_t * faults );
+#endif // #if defined(__linux__)
+
+extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
 
 struct driver_results_clock_t
 {
@@ -477,6 +483,8 @@ static void driver_results_loopback_matches_destination_or_wildcard()
 }
 REGISTER_UNIT_TEST( driver_results_loopback_matches_destination_or_wildcard );
 
+#if defined(__linux__)
+
 static void driver_results_fill_gro( struct msghdr * header, char * control, size_t control_bytes, int stride, bool valid_len )
 {
     memset( header, 0, sizeof( *header ) );
@@ -527,3 +535,5 @@ static void driver_results_gso_gro_cmsg_is_checked()
     printf( "driver_results_gso_gro_cmsg_is_checked\n" );
 }
 REGISTER_UNIT_TEST( driver_results_gso_gro_cmsg_is_checked );
+
+#endif // #if defined(__linux__)

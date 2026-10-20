@@ -452,7 +452,42 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 // thread's flip lands only between passes and then drains the other buffer
 // with no lock held.
 
-int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_bytes, uint64_t * faults );
+// The GRO stride of one recvmmsg message. A truncated control buffer, or a
+// UDP_GRO cmsg whose length does not hold an int, is one fault and the
+// message is one datagram. No socket: the caller passes the message header.
+int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_bytes, uint64_t * faults )
+{
+    int segment_bytes = message_bytes;
+    if ( !header )
+        return segment_bytes;
+    if ( header->msg_flags & MSG_CTRUNC )
+    {
+        if ( faults )
+            *faults += 1;
+        return message_bytes;
+    }
+    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg != NULL; cmsg = CMSG_NXTHDR( header, cmsg ) )
+    {
+        if ( cmsg->cmsg_len < sizeof( struct cmsghdr ) )
+        {
+            if ( faults )
+                *faults += 1;
+            return message_bytes;
+        }
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
+        {
+            if ( cmsg->cmsg_len < CMSG_LEN( sizeof( int ) ) )
+            {
+                if ( faults )
+                    *faults += 1;
+                return message_bytes;
+            }
+            memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof( segment_bytes ) );
+            break;
+        }
+    }
+    return segment_bytes;
+}
 
 static void rocketnet_server_gso_worker( void * data )
 {
@@ -1231,50 +1266,5 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <string.h>
-
-#ifndef UDP_GRO
-#define UDP_GRO 104
-#endif
-
-// The GRO stride of one recvmmsg message. A truncated control buffer, or a
-// UDP_GRO cmsg whose length does not hold an int, is one fault and the
-// message is one datagram. No socket: the caller passes the message header.
-int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_bytes, uint64_t * faults )
-{
-    int segment_bytes = message_bytes;
-    if ( !header )
-        return segment_bytes;
-    if ( header->msg_flags & MSG_CTRUNC )
-    {
-        if ( faults )
-            *faults += 1;
-        return message_bytes;
-    }
-    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg != NULL; cmsg = CMSG_NXTHDR( header, cmsg ) )
-    {
-        if ( cmsg->cmsg_len < sizeof( struct cmsghdr ) )
-        {
-            if ( faults )
-                *faults += 1;
-            return message_bytes;
-        }
-        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
-        {
-            if ( cmsg->cmsg_len < CMSG_LEN( sizeof( int ) ) )
-            {
-                if ( faults )
-                    *faults += 1;
-                return message_bytes;
-            }
-            memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof( segment_bytes ) );
-            break;
-        }
-    }
-    return segment_bytes;
-}
 
 int rocketnet_server_gso_linux_cpp_dummy = 0;
