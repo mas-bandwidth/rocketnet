@@ -7471,8 +7471,24 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         to_client[i] = (uint8_t) ( i * 11 + 3 );
     }
 
+    // a send the server refuses for want of staging is counted in
+    // ROCKETNET_COUNTER_SEND_RING_FULL and never reaches the wire: the xdp
+    // driver has ROCKETNET_XDP_NUM_BUFFERS staging generations
+    // (sdk/rocketnet_constants.h:49), each flush publishes one
+    // (sdk/rocketnet_server_socket_linux.cpp:2249), and while its send
+    // thread has retired neither, a start is refused
+    // (sdk/rocketnet_server_socket_linux.cpp:2118) and counted
+    // (sdk/rocketnet_server_transport.cpp:2153). This loop flushes every
+    // iteration, so a send thread that falls two flushes behind refuses the
+    // next send. A send counts as taken when the counter did not move, and
+    // a refused send is sent again, so a send dropped without a count fails
+    // the client check below. ring_full_during also counts frames that the
+    // server update refused.
+
+    const struct rocketnet_counters_t * send_counters = rocketnet_server_transport_counters( server );
+    const uint64_t ring_full_before = rocketnet_counter_value( send_counters, ROCKETNET_COUNTER_SEND_RING_FULL );
     const int count = ROCKETNET_XDP_VETH_COUNT;
-    int server_received = 0, client_received = 0, sent_to_server = 0, sent_to_client = 0;
+    int server_received = 0, client_received = 0, sent_to_server = 0, sent_to_client = 0, refused_to_client = 0;
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 )
     {
@@ -7483,8 +7499,12 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         }
         if ( sent_to_client < count )
         {
+            const uint64_t ring_full = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL );
             rocketnet_server_transport_send_packet( server, 0, to_client, ROCKETNET_MAX_PAYLOAD_BYTES );
-            sent_to_client++;
+            if ( rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL ) == ring_full )
+                sent_to_client++;
+            else
+                refused_to_client++;
         }
         rocketnet_server_transport_send_packets( server );
 
@@ -7515,7 +7535,8 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
             break;
         rocketnet_platform_sleep( 0.001 );
     }
-    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server opened %d of %d, client opened %d of %d", case_name, server_received, count, client_received, count );
+    const uint64_t ring_full_during = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL ) - ring_full_before;
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server opened %d of %d, client opened %d of %d, server sends refused for staging %d (send ring full counted %llu)", case_name, server_received, count, client_received, count, refused_to_client, (unsigned long long) ring_full_during );
     rocketnet_check( server_received == count );
     rocketnet_check( client_received == count );
 
