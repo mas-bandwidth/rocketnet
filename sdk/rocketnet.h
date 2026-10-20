@@ -1311,18 +1311,38 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair_from
 // public key. Returns the same codes as the backend keypair call.
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
 
-// Mints a production connect token from the backend's secret key and the
-// server's public key. The token carries client_id, protocol_id, the server
-// addresses, create_timestamp, expire_timestamp, timeout_seconds and
-// user_data, and fresh session keys. server_address_strings holds
-// server_address_count entries (1 or 2), at most one of each family; user_data
-// is ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES long, or NULL for all zeros. The
-// output is ROCKETNET_CONNECT_TOKEN_BYTES long and connect_token_bytes is its
-// size; a short buffer is refused with ROCKETNET_STATUS_INVALID_ARGUMENT and
-// nothing is written. Reads no clock.
-// Returns ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT,
-// ROCKETNET_STATUS_INVALID_PROTOCOL_ID, ROCKETNET_STATUS_INVALID_ADDRESS or
-// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. Secret keys are never logged.
+/** @brief Mint a production connect token for one client and one or two server addresses.
+ *
+ * Signs the token with the backend's secret key and seals its private part,
+ * with fresh random session keys, to the server's public key. The token
+ * carries client_id, protocol_id, the server addresses, create_timestamp,
+ * expire_timestamp, timeout_seconds and user_data. The call reads no clock;
+ * the backend chooses both timestamps. Secret keys are never logged.
+ *
+ * @param backend_secret_key [in] ROCKETNET_BACKEND_SECRET_KEY_BYTES-byte signing secret held by the backend; non-NULL.
+ * @param server_public_key [in] ROCKETNET_SERVER_PUBLIC_KEY_BYTES-byte sealing public key of the server; non-NULL.
+ * @param protocol_id [in] Nonzero application protocol identifier.
+ * @param server_address_strings [in] Array of server_address_count numeric address strings, each non-NULL; non-NULL.
+ * @param server_address_count [in] 1 or 2, with at most one address of each IP family.
+ * @param client_id [in] Application client identifier carried in the sealed part of the token.
+ * @param create_timestamp [in] Unix creation time in seconds.
+ * @param expire_timestamp [in] Unix expiry time in seconds.
+ * @param timeout_seconds [in] Connection timeout carried in the token, in seconds.
+ * @param user_data [in] ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES bytes, or NULL for all zeros.
+ * @param connect_token [out] Caller-owned output buffer; non-NULL.
+ * @param connect_token_bytes [in] Size of connect_token in bytes, at least ROCKETNET_CONNECT_TOKEN_BYTES.
+ * @return ROCKETNET_STATUS_OK with ROCKETNET_CONNECT_TOKEN_BYTES written;
+ * ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL pointer argument (other than
+ * user_data) or address string, a count other than 1 or 2, two addresses of
+ * one family, or a buffer shorter than ROCKETNET_CONNECT_TOKEN_BYTES;
+ * ROCKETNET_STATUS_INVALID_PROTOCOL_ID for a zero protocol_id;
+ * ROCKETNET_STATUS_INVALID_ADDRESS for an address string that does not parse;
+ * ROCKETNET_STATUS_CRYPTO_INIT_FAILED when sealing or signing fails. Every
+ * refusal before the crypto step writes nothing; after
+ * ROCKETNET_STATUS_CRYPTO_INIT_FAILED the buffer is not a token. Correct the
+ * arguments and call again. A NULL pointer is also a counted misuse: it
+ * increments the API misuse count and fires an assert in a debug build.
+ */
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t * backend_secret_key,
                                                                                   const uint8_t * server_public_key,
                                                                                   uint64_t protocol_id,
@@ -1431,14 +1451,38 @@ ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet
 ROCKETNET_EXPORT size_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes );
 
 #if ROCKETNET_DEVELOPMENT
-// Mints a development connect token for a server at this address, signed with
-// the published development backend key and sealed to the published development
-// server key, into connect_token, connect_token_bytes long (at least
-// ROCKETNET_CONNECT_TOKEN_BYTES). Returns ROCKETNET_STATUS_OK;
-// ROCKETNET_STATUS_INVALID_ADDRESS for an address that does not parse;
-// ROCKETNET_STATUS_INVALID_ARGUMENT for a short buffer, nothing written. a NULL
-// server_address_string or connect_token is a counted no-op that returns
-// ROCKETNET_STATUS_INVALID_ARGUMENT.
+/** @brief Mint a development connect token for one numeric server address.
+ *
+ * Signs the token with the published development backend key and seals it to
+ * the published development server key, with ROCKETNET_DEV_PROTOCOL_ID, a
+ * token that expires ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS after
+ * unix_timestamp, a ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS timeout,
+ * fresh random session keys and all-zero user data. Declared only in a
+ * development build (ROCKETNET_DEVELOPMENT); a release library does not
+ * export it. The published keys secure nothing: never use these tokens in
+ * production.
+ *
+ * @param server_address_string [in] Numeric IPv4 or IPv6 address with port; non-NULL.
+ * @param client_id [in] Application client identifier carried in the token.
+ * @param unix_timestamp [in] Current Unix time in seconds, supplied by the caller; the call reads no clock.
+ * @param connect_token [out] Caller-owned output buffer; non-NULL.
+ * @param connect_token_bytes [in] Size of connect_token in bytes, at least ROCKETNET_CONNECT_TOKEN_BYTES.
+ * @return ROCKETNET_STATUS_OK with ROCKETNET_CONNECT_TOKEN_BYTES written;
+ * ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL server_address_string or
+ * connect_token, or for a buffer shorter than ROCKETNET_CONNECT_TOKEN_BYTES
+ * (logged, nothing written); ROCKETNET_STATUS_INVALID_ADDRESS for an address
+ * that does not parse as IPv4 or IPv6; ROCKETNET_STATUS_CRYPTO_INIT_FAILED
+ * when sealing or signing fails, after which the buffer is not a token. A
+ * NULL pointer is also a counted misuse: it increments the API misuse count
+ * and fires an assert in a debug build.
+ *
+ * @code
+ * uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+ * if ( rocketnet_write_dev_connect_token( "127.0.0.1:40000", client_id, now_unix_seconds,
+ *                                         token, sizeof( token ) ) == ROCKETNET_STATUS_OK )
+ *     rocketnet_client_connect( client, token );
+ * @endcode
+ */
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_write_dev_connect_token( const char * server_address_string, uint64_t client_id, uint64_t unix_timestamp, uint8_t * connect_token, size_t connect_token_bytes );
 #endif // #if ROCKETNET_DEVELOPMENT
 
