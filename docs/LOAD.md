@@ -78,3 +78,21 @@ ROCKETNET_PUMP=portable ./bin/load 1000 60                                      
 ```
 
 The msgx-degraded cell runs the auto ladder (`msgx,portable`) under the `ROCKETNET_PUMP=portable` override: the msgx rung refuses and the ladder falls to portable, so the summary names `server_driver=portable`. A pinned `msgx` under that override refuses at create by design, so `load` exits `1` with `failed to create message server`.
+
+### Gate runs
+
+The macOS gate is three consecutive runs of each server cell, nine runs in all. Each summary line must say `verdict=PASS`, `fds_end` must equal `fds_start`, `threads_end` must equal `threads_start`, and `connect_p50_s` and `connect_max_s` are recorded for the run table:
+
+```
+for cell in portable msgx msgx-degraded; do
+  for run in 1 2 3; do
+    case "$cell" in
+      portable) env ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/load 1000 60 ;;
+      msgx) env ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/load 1000 60 ;;
+      msgx-degraded) env ROCKETNET_PUMP=portable ./bin/load 1000 60 ;;
+    esac
+  done
+done
+```
+
+A refused run is a finding, not a partial run: `bin/load` names the limit and the command that raises it before it opens a socket, and exits `1`.
