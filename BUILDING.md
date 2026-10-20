@@ -68,7 +68,7 @@ share a machine at the same time. What holds then:
   kernel has not yet reaped is not counted as a leak, and a thread,
   descriptor or umem really left still fails the case.
 - `posix_server_create_destroy_1000` runs 250 cycles on the gso and
-  io_uring cells (functional/posix_lifecycle_stress.cpp:478-490), sized from
+  io_uring cells (functional/posix_lifecycle_stress.cpp:478-491), sized from
   the one-suite and two-suite times in the comment there, so it stays under
   the 120 second case limit with two suites at once.
 - `posix_server_restart_same_port_100` frees an OS-given port and binds it
