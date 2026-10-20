@@ -238,7 +238,7 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | live-small | `MCFragmentsAndAcksLiveSmall.cfg` | live with `MaxSeq = 2`, `MaxGen = 1`, `Capacity = 1`, duplication and reordering off | passes | required |
 | live-dup | `MCFragmentsAndAcksLiveDup.cfg` | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case | required |
 | pat-none / first / burst | `MCFragmentsAndAcksPatNone.cfg`, `...PatFirst.cfg`, `...PatBurst.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget |
-| pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget on a loaded bench |
+| pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | required |
 | find-stale | `MCFragmentsAndAcksFindStale.cfg` | safety + `StaleOnlyIfOlder`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1` (the `num_slots = 256` geometry: one whole payload lost poisons) | **fails** `StaleOnlyIfOlder`: D1 | required |
 | find-stale-small | `MCFragmentsAndAcksFindStaleSmall.cfg` | find-stale + stale-small | **fails** `StaleOnlyIfOlder`: D1 | required |
 | find-stale-serial-small | `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | find-stale-small + `StaleRule = "serial"` | passes: the standard's rule | bench: over budget |
@@ -281,10 +281,10 @@ pinned jar, two workers per case, 110 s per case, each case its own shard, four 
 once), re-measured after the three bitmap invariants were added to every cfg with an
 `INVARIANTS` section. Every case reaches its declared result except the six `bench`
 rows that time out (exit 124), which is a failed measurement, not a proof.
-`MCFragmentsAndAcksPatAlternate.cfg` is a seventh `bench` row: with the bitmap state it
-is 1,422,444 distinct states, which finished in 41.0 s on an idle bench and timed out
-(110.4 s) on a loaded one, so it is declared debt rather than a required control that
-passes or fails with the bench load (the bitmaps section has the measurements). The
+`MCFragmentsAndAcksPatAlternate.cfg` is a required check, not bench debt. With the bitmap state it
+is 1,422,444 distinct states and the recorded run finishes in 41.0 s, inside the budget, so a
+regression to exit 124 fails the gate. A saturated bench can still reach that budget with no
+counterexample. The
 required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 
 | Case | Result | Generated | Distinct | Time |
@@ -295,7 +295,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 | `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 8.6 s |
 | `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt |  |  | 110.3 s |
 | `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt |  |  | 110.3 s |
-| `MCFragmentsAndAcksPatAlternate.cfg` | pass (bench row) | 5,924,703 | 1,422,444 | 41.0 s |
+| `MCFragmentsAndAcksPatAlternate.cfg` | pass | 5,924,703 | 1,422,444 | 41.0 s |
 | `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt |  |  | 110.2 s |
 | `MCFragmentsAndAcksFindStale.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 205,517 | 73,495 | 4.0 s |
 | `MCFragmentsAndAcksFindStaleSmall.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 62,405 | 23,863 | 2.1 s |
@@ -328,7 +328,7 @@ are not current records; they are the evidence for the bench rows above.
 | find-stale-ahead2 (`MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on) | **StaleOnlyIfOlder violated**, 11 states (D1) | 8,174,784 | 1,739,380 | | 21 s |
 | defect (`DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxGen = 1`, `MaxSeq = 4`, `Capacity = 1`, no dup, no reorder, no burns) | pass | 82,754,545 | 17,468,462 | 30 | 2 min 44 s |
 
-The evidence for the `pat-alternate` bench row is its run with the bitmaps outside the
+The evidence for an over-budget run of `pat-alternate` (not the gate record) is its run with the bitmaps outside the
 budget (TLC 2.19, 2 workers, 2026-10-17, before the three invariants were in its cfg):
 pass, 5,924,703 states, 1,422,444 distinct, depth 43, 168.8 s.
 

@@ -518,7 +518,7 @@ jobs:
   xdp-libxdp-1-4:
     name: XDP / libxdp 1.4 / Debug
     runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
-    timeout-minutes: 10
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - name: Build the XDP functional cell (Debug)
