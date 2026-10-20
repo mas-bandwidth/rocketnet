@@ -654,8 +654,10 @@ int main( int argc, char ** argv )
             const int st = rocketnet_message_client_state( clients[i] );
             if ( st == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
+                /* the time this client is seen connected, read here rather
+                   than the sweep's now, so every client keeps its own time */
                 if ( client_connect_seconds[i] < 0.0 )
-                    client_connect_seconds[i] = now - start_time;
+                    client_connect_seconds[i] = rocketnet_time() - start_time;
                 client_ever_connected[i] = 1;
                 connected_count++;
             }

@@ -56,12 +56,33 @@ config the gate reads, without creating a transport.
 The functional suite takes its loopback ports from the OS. Every loopback
 server and socket it opens binds port 0 and reads back the port the OS gave.
 An address that must carry a real port takes a free one from the OS through
-`rocketnet_test_free_port` (functional/harness.inc:228), which binds a
-scratch socket to `127.0.0.1:0`, reads the port, and closes it. Two
-`./bin/functional` runs may share a machine at the same time. The one
-exception is the root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`), which
-makes a fixed namespace and veth pair and binds port 40411 on it
-(functional/rocketnet_functional_tests.cpp:7213); it skips without root.
+`rocketnet_test_free_port` (functional/harness.inc:243), which binds a
+scratch socket to `127.0.0.1:0`, reads the port, and closes it; its
+callers hand that port to an xdp create the commit barrier refuses before
+any bind (functional/harness.inc:238-241). Two `./bin/functional` runs may
+share a machine at the same time. What holds then:
+
+- The lifecycle cases read their after counts with `posix_settled_counts`
+  (functional/posix_lifecycle_stress.cpp:230-241), which polls until the
+  counts equal the before counts or 10 seconds pass, so a joined thread the
+  kernel has not yet reaped is not counted as a leak, and a thread,
+  descriptor or umem really left still fails the case.
+- `posix_server_create_destroy_1000` runs 250 cycles on the gso and
+  io_uring cells (functional/posix_lifecycle_stress.cpp:478-490), sized from
+  the one-suite and two-suite times in the comment there, so it stays under
+  the 120 second case limit with two suites at once.
+- `posix_server_restart_same_port_100` frees an OS-given port and binds it
+  again 100 times, and a second suite can take that port in between; that
+  case can fail with `TRANSPORT_LADDER_EXHAUSTED` when two suites run at once.
+- The root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`) makes a fixed
+  namespace and veth pair and binds port 40411 on it
+  (functional/rocketnet_functional_tests.cpp:7192); it skips without root.
+
+Two `tools/run_examples.py` runs may also share a machine: each example
+pair runs in its own temporary directory on its own free port, the client
+starts only after the server has written its keys, and a server that cannot
+bind before then is retried on a new port, at most three tries
+(tools/run_examples.py).
 
 Dependencies, per platform, as CI installs them:
 
