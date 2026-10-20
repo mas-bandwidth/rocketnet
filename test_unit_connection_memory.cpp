@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vector>
 
 #define check rocketnet_unit_check
 
@@ -249,6 +250,7 @@ static void exhaustion_is_a_kick_with_its_reason()
     // the descriptor pool running out is the same outcome, with its own counter
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
     rn_arena_t * small = rn_arena_create( NULL, &config, 1, &counters );
     check( small );
@@ -365,9 +367,9 @@ static void user_block_is_used_and_nothing_else()
         check( cm_inside( block, required, region, sizeof(*region) ) );
         check( cm_inside( block, required, region->base, region->bytes ) );
 
-        uint32_t taken[2048];
-        const int n = cm_fill( region, 200 + 300 * s, taken, 2048 );
-        check( n > 0 && n <= 2048 );
+        std::vector<uint32_t> taken( region->queue );
+        const int n = cm_fill( region, 200 + 300 * s, taken.data(), (int) taken.size() );
+        check( n > 0 && (size_t) n <= taken.size() );
         for ( int i = 0; i < n; i++ )
         {
             const rn_send_descriptor_t * d = &region->send_descriptors[taken[i]];
@@ -457,6 +459,7 @@ static void exhausted_region_refuses_sends_until_reset()
     // Use a small queue to exhaust quickly (min is 16)
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -530,6 +533,7 @@ static void receive_without_room_exhausts_the_region()
     // the shipped receive path over this region (layer 3 and 4 over the codec)
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     rn_ordered_t ordered;
     check( rn_ordered_init( &ordered, region, &config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
 
@@ -616,6 +620,7 @@ static void exhausted_region_refuses_spans()
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
     check( config.max_message_bytes >= (int) RN_SPAN_MIN_BYTES );
 
@@ -659,6 +664,7 @@ static void span_granted_after_reset()
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );

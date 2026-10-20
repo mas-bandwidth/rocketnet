@@ -293,7 +293,7 @@ REGISTER_UNIT_TEST( loopback_rtt_client_sends );
 static void max_rto_payload_reserve_without_acks()
 {
     const int budgets[] = { 1000, 10000 };
-    const int payloads[] = { 128, 512, 1024, 16384 };
+    const int payloads[] = { 128, 512, 1024, 1153, 16384 };
     for ( int side = 0; side < 2; ++side )
     {
         rocketnet_message_config_t config;
@@ -305,14 +305,15 @@ static void max_rto_payload_reserve_without_acks()
         rocketnet_unit_check( arena != NULL );
         rn_region_t * region = rn_arena_region( arena, 0 );
         const uint64_t budget = (uint64_t) budgets[side] * 125 * config.rto_max_ms / 1000;
-        for ( int p = 0; p < 4; ++p )
+        for ( int p = 0; p < 5; ++p )
         {
             rn_region_carve( region );
             uint64_t held = 0;
             while ( held < budget )
             {
                 const int bytes = budget - held < (uint64_t) payloads[p] ? (int) (budget - held) : payloads[p];
-                rocketnet_unit_check( rn_region_send_alloc( region, bytes ) != RN_DESCRIPTOR_NONE );
+                const uint32_t descriptor = bytes >= RN_SPAN_MIN_BYTES ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
+                rocketnet_unit_check( descriptor != RN_DESCRIPTOR_NONE );
                 held += bytes;
             }
             rocketnet_unit_check( !rn_region_exhausted( region ) );

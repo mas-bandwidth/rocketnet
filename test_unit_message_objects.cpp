@@ -1061,8 +1061,9 @@ static void server_kicks_exhausted_client_others_unaffected()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // deliberate fixed-pool exhaustion
     mo_pair_t pair;
-    mo_pair_setup( &pair, 2, &config );
+    mo_pair_setup( &pair, 2, &config, 0, 0 );
     mo_step( &pair );
 
     // the server queues to slot 0 without sending until its region has no room
@@ -2397,8 +2398,9 @@ static void send_room_warns_in_debug_builds_only()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // deliberate fixed-pool exhaustion
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config );
+    mo_pair_setup( &pair, 1, &config, 0, 0 );
     mo_step( &pair );
     mo_step( &pair );
 

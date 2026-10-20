@@ -1613,7 +1613,7 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
 struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status );
+                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is
@@ -1715,7 +1715,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
 struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
                                                                         const struct rocketnet_server_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status );
+                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is

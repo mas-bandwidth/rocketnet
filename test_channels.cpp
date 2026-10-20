@@ -1210,6 +1210,7 @@ static void test_channels_allocator_send_store()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate headroom capacity
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
 
@@ -1561,6 +1562,7 @@ static void test_channels_allocator_sizing()
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate headroom capacity
 
     static char text[4096];
     rn_trap_phase = "sizing";
@@ -2060,6 +2062,7 @@ static void test_channels_allocator_no_live_allocation()
     const int num_slots = 16;
     rocketnet_message_config_t server_config;
     rocketnet_message_default_config( &server_config );
+    server_config.client_send_kbps = server_config.server_send_kbps = 0; // deliberate fixed-pool exhaustion
     rocketnet_message_config_t client_config = server_config;
     client_config.send_queue_messages = 64;
 
