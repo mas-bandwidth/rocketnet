@@ -378,21 +378,21 @@ enum rocketnet_client_state_t
  * @brief The client's cumulative counters, read one at a time with rocketnet_client_counter.
  *
  * Every value is monotonic over the client's life and starts at 0 at create.
- * The packet and byte values are the client's wire totals; the others sum the
+ * The datagram and byte values are the client's wire totals; the others sum the
  * matching cumulative protocol counters of the client's transport and message
  * layers.
  */
 enum rocketnet_client_counter_t
 {
-    /** @brief UDP datagrams the client sent, handshake included. Unit: packets. */
+    /** @brief UDP datagrams the client sent, handshake included. Unit: datagrams. */
     ROCKETNET_CLIENT_COUNTER_PACKETS_SENT,          // packets: UDP datagrams sent, handshake included
-    /** @brief UDP datagrams the client received, handshake included. Unit: packets. */
+    /** @brief UDP datagrams the client received, handshake included. Unit: datagrams. */
     ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED,      // packets: UDP datagrams received, handshake included
     /** @brief Bytes the client sent, handshake included: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from the server address's family). Unit: bytes. */
     ROCKETNET_CLIENT_COUNTER_BYTES_SENT,            // bytes: UDP payload plus the IP and UDP headers of the peer's family
     /** @brief Bytes the client received, handshake included: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from the server address's family). Unit: bytes. */
     ROCKETNET_CLIENT_COUNTER_BYTES_RECEIVED,        // bytes: UDP payload plus the IP and UDP headers of the peer's family
-    /** @brief Packets from the server that opened and carried messages. Unit: payloads. */
+    /** @brief Datagrams from the server that opened and carried messages. Unit: payloads. */
     ROCKETNET_CLIENT_COUNTER_PAYLOADS_RECEIVED,     // payloads: packets from the server that opened and carried messages
     /** @brief Reliable message records the client resent on its retransmit timer. Unit: records. */
     ROCKETNET_CLIENT_COUNTER_MESSAGES_RESENT,       // records: reliable message records resent on the retransmit timer
@@ -435,15 +435,15 @@ enum rocketnet_client_stat_t
  * @brief The server's cumulative counters over all its clients, read one at a time with rocketnet_server_counter.
  *
  * Every value is monotonic over the server's life and starts at 0 at create.
- * The packet and byte values are the server's whole-socket wire totals; the
+ * The datagram and byte values are the server's whole-socket wire totals; the
  * others sum the matching cumulative protocol counters of the server's
  * transport and message layers.
  */
 enum rocketnet_server_counter_t
 {
-    /** @brief UDP datagrams the server sent to all clients. Unit: packets. */
+    /** @brief UDP datagrams the server sent to all clients. Unit: datagrams. */
     ROCKETNET_SERVER_COUNTER_PACKETS_SENT,          // packets: UDP datagrams sent
-    /** @brief UDP datagrams the server received. Unit: packets. */
+    /** @brief UDP datagrams the server received. Unit: datagrams. */
     ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED,      // packets: UDP datagrams received
     /** @brief Bytes the server sent to all clients: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from each datagram's peer family). Unit: bytes. */
     ROCKETNET_SERVER_COUNTER_BYTES_SENT,            // bytes: UDP payload plus the IP and UDP headers of the peer's family
@@ -455,7 +455,7 @@ enum rocketnet_server_counter_t
     ROCKETNET_SERVER_COUNTER_CLIENTS_DENIED_FULL,   // requests: connect attempts refused because every client slot was taken
     /** @brief Connection requests dropped by the per-update handshake work budget. Unit: requests. */
     ROCKETNET_SERVER_COUNTER_HANDSHAKES_OVER_BUDGET,// requests: connect attempts dropped by the per-update handshake budget
-    /** @brief Packets from clients that opened and carried messages. Unit: payloads. */
+    /** @brief Datagrams from clients that opened and carried messages. Unit: payloads. */
     ROCKETNET_SERVER_COUNTER_PAYLOADS_RECEIVED,     // payloads: packets from clients that opened and carried messages
     /** @brief Reliable message records the server resent on its retransmit timer. Unit: records. */
     ROCKETNET_SERVER_COUNTER_MESSAGES_RESENT,       // records: reliable message records resent on the retransmit timer
@@ -497,9 +497,9 @@ enum rocketnet_server_stat_t
  */
 enum rocketnet_server_client_counter_t
 {
-    /** @brief UDP datagrams the server sent to this client on its current connection. Unit: packets. */
+    /** @brief UDP datagrams the server sent to this client on its current connection. Unit: datagrams. */
     ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT,       // packets: UDP datagrams sent to this client
-    /** @brief UDP datagrams the server received from this client on its current connection. Unit: packets. */
+    /** @brief UDP datagrams the server received from this client on its current connection. Unit: datagrams. */
     ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_RECEIVED,   // packets: UDP datagrams received from this client
     /** @brief Bytes the server sent to this client on its current connection: each datagram's UDP payload plus its IP and UDP headers (28 bytes for IPv4, 48 for IPv6, from this client's family). Unit: bytes. */
     ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_SENT,         // bytes: UDP payload plus the IP and UDP headers of this client's family
