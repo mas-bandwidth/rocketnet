@@ -2564,8 +2564,9 @@ second time.
 
 The sender MUST estimate the round-trip time as RakNet does. On the first
 sample, it MUST set both the smoothed round-trip time and deviation to the
-sample. On every later sample, each estimate MUST move 5 percent toward the
-new sample. The retransmission timeout is
+sample. On every later sample, the deviation MUST move 5 percent toward
+the absolute difference between the prior smoothed RTT and the new sample;
+the smoothed RTT MUST then move 5 percent toward the new sample. The retransmission timeout is
 
     clamp( 2 x srtt + 4 x deviation + 30 ms, rto_min_ms, rto_max_ms )
 

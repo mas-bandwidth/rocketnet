@@ -117,8 +117,9 @@ struct rn_window_ack_t
 #endif // #if ROCKETNET_DEVELOPMENT
 };
 
-// RakNet's first deviation equals the first RTT sample, then both estimates
-// move 5% toward each ACK sample. Its RTO is 2*srtt + 4*deviation + 30 ms,
+// RakNet's first deviation equals the first RTT sample. Later deviation
+// moves 5% toward the absolute error from the prior smoothed RTT, then
+// smoothed RTT moves 5% toward the ACK sample. Its RTO is 2*srtt + 4*deviation + 30 ms,
 // bounded by the configured minimum and maximum; default minimum 0 matches RakNet
 // (docs/RAKNET-RELIABILITY.md:667-668, 686-695; CC.cpp:210-222, 288-314).
 static inline double rn_window_ack_compute_rto( double srtt, double rttvar, double rto_min, double rto_max )

@@ -3615,7 +3615,9 @@ an input ([t1.4 Conventions](#t1.4)).
     when its adaptive retransmission timeout (RTO) expires. Before any RTT
     sample, the RTO is 2 seconds by default. For the first RTT sample, the
     sender MUST set both its smoothed RTT and deviation to that sample. For
-    each later sample, each estimate MUST move 5 percent toward the sample.
+    each later sample, deviation MUST move 5 percent toward the absolute
+    difference between the prior smoothed RTT and the sample, then smoothed
+    RTT MUST move 5 percent toward the sample.
     The RTO is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
     configured maximum (2 seconds by default) and raised to the configured
     minimum (0 by default). A nonzero minimum is an implementation option.

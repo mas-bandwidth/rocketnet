@@ -4,8 +4,8 @@
 */
 
 // A reliable record waits for the adaptive RakNet RTO on every resend:
-// First deviation equals the RTT; later RTT and deviation estimates move 5%
-// toward each sample. RTO is min(2*srtt + 4*deviation + 30 ms, configured max),
+// First deviation equals the RTT; later deviation moves 5% toward the
+// absolute RTT error, then smoothed RTT moves 5% toward the sample. RTO is min(2*srtt + 4*deviation + 30 ms, configured max),
 // with no configured minimum floor by default and no back-off (docs/RAKNET-RELIABILITY.md:667-695). Before the first sample it waits for
 // rto_initial. Validation reserves four initial RTOs before reliable_timeout.
 //
@@ -136,7 +136,8 @@ static void rto_uses_configured_bounds()
 REGISTER_UNIT_TEST( rto_uses_configured_bounds );
 
 // The first deviation equals the first RTT; every subsequent sample moves
-// both estimates 5% toward the new value, as in RakNet CC.cpp:210-222.
+// deviation 5% toward the absolute RTT error and smoothed RTT 5% toward
+// the sample, as in RakNet CC.cpp:210-222.
 static void raknet_rtt_estimator_moves_five_percent()
 {
     resend_timing_fixture_t f;
