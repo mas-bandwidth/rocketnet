@@ -1,8 +1,11 @@
 # Native transports
 
 The public transport API in `rocketnet.h` is independent of the backend.
-Native transports implement `rocketnet_driver.h`; they do not add binding or
-wire-format rules. For Linux transport selection, pinning, host requirements (`xdp`, `gso`, `io_uring`, `portable`) and host verification, see [docs/LINUX.md](docs/LINUX.md).
+Native transports implement the internal transport interface in
+`sdk/rocketnet_driver.h`; they do not add binding or wire-format rules. For
+Linux transport selection, pinning, host requirements (`xdp`, `gso`,
+`io_uring`, `portable`) and host verification, see
+[docs/LINUX.md](docs/LINUX.md).
 
 `rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
 bound-port discovery property, backend record, platform mask, and server/client
