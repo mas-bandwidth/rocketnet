@@ -2283,7 +2283,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
         if ( index >= 0 && socket->send_buffer[index].num_packets > 0 )
         {
-            // RNDriverSendStaging.Publish: retain the last producer buffer.
+            // tla/RNDriverSendStaging.tla Publish: retain the last producer buffer.
             // A busy worker leaves this generation staged for the next
             // transport send_packets call (Publish retry rule).
             if ( socket->send_handoff.publish() )

@@ -5,7 +5,7 @@
 // Driver-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
 // before publish; the worker retires only after copying its final packet.
-// RNDriverSendStaging.Publish: retain producer storage until a replacement
+// tla/RNDriverSendStaging.tla Publish: retain producer storage until a replacement
 // is free; a later flush retries after the worker retires a generation.
 template<int NumBuffers> struct rocketnet_send_handoff_t
 {
