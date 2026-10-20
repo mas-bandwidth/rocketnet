@@ -249,14 +249,14 @@ def render( data, source="docs/roadmap.sexp" ):
         else:
             table, pending, owed = full_table( area, aid, columns, all_apply, full_tests[set_of( columns )] )
         lines += table
+        if owed and ( not isinstance( owed_note, str ) or not owed_note.strip() ):
+            raise ValueError( "area %s: an o cell, and the page has no :owed note" % aid )
         if tables_only:
             lines += [ "" ]
             continue
         if pending:
             lines += [ "" ] + pending
         if owed:
-            if not isinstance( owed_note, str ) or not owed_note.strip():
-                raise ValueError( "area %s: an o cell, and the page has no :owed note" % aid )
             lines += [ "", "OWED: " + owed_note ]
         lines += [ "", "[Source data](%s)" % source, "" ]
     for name in full_tests:
@@ -282,6 +282,8 @@ def full_table( area, aid, columns, all_apply, tests ):
                 raise ValueError( "area %s row %r: no :%s" % ( aid, row.get( "feature" ), key ) )
         feature = row["feature"]
         where = "area %s row %r" % ( aid, feature )
+        if feature in tests:
+            raise ValueError( "%s: the test is named twice" % where )
         tests[feature] = aid
         if len( row["cells"] ) != len( columns ):
             raise ValueError( "area %s row %r: %d cells for %d columns" % ( aid, feature, len( row["cells"] ), len( columns ) ) )

@@ -89,9 +89,9 @@
      :evidence "macOS: six cells pass with flat fds and threads, rocketnet-macos-soak-per-transport df775cf1"
      :pending ((Windows "rocketnet-win-soak-per-transport (waiting)")
                (Linux "rocketnet-linux-soak-per-transport (working)")))
-    (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (y n n)
-     :evidence "Windows: build-and-test-windows-debug and soak-windows run step by step green, rocketnet-win-nightlies-on-fleet-runner f2dae0dc"
-     :pending ((macOS "rocketnet-macos-nightlies-green-at-base (review) and rocketnet-macos-nightly-soak-green-at-base (waiting)")
+    (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (n n n)
+     :pending ((Windows "rocketnet-r1-windows-nightlies-all-run (working); rocketnet-example-ack-receipts-debug-assert (working) for the examples job; build-and-test-windows-debug ran step by step green, rocketnet-win-nightlies-on-fleet-runner f2dae0dc")
+               (macOS "rocketnet-macos-nightlies-green-at-base (review) and rocketnet-macos-nightly-soak-green-at-base (waiting)")
                (Linux "rocketnet-linux-nightly-soak-green-at-base (working) for nightly-soak, rocketnet-linux-sanitizers-green-at-base (working) for nightly-leaks, rocketnet-example-ack-receipts-debug-assert (working) for the examples job; fuzz, frame budget and channel seeds are green, rocketnet-linux-nightlies-green-at-base 381203ba")))
     (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n)
      :pending ((Windows "rocketnet-windows-ci-green-at-base (working)")

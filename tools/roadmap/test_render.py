@@ -274,6 +274,13 @@ class RenderTest( unittest.TestCase ):
         self.assertIn( "macOS", message )
         no_note = page( [ area( "platforms", [ '(:feature "f" :cells (n o n) :pending ((macOS "card-a (waiting)")))' ], aid="ow" ) ] )
         self.assertIn( ":owed", self.refusal( no_note ) )
+        tables_only = '(:title "T" :tables-only t :areas (%s))' % area( "platforms", [ '(:feature "f" :cells (n o n) :pending ((macOS "card-a (waiting)")))' ], aid="ow" )
+        self.assertIn( ":owed", self.refusal( tables_only ) )
+
+    def test_a_test_named_twice_in_a_full_table_refused( self ):
+        message = self.refusal( page( [ area( "platforms", [ '(:feature "f" :cells (n n n))', '(:feature "f" :cells (n n n))' ], aid="dup" ) ] ) )
+        self.assertIn( "area dup", message )
+        self.assertIn( "twice", message )
 
     def test_every_cell_applies_refuses_a_dash( self ):
         text = '(:title "T" :all-cells-apply t :areas (%s))' % area( "platforms", [ '(:feature "only one" :cells (n - -))' ], aid="pl" )

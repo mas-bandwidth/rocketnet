@@ -22,9 +22,9 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | 1000 clients, load harness | OWED | OWED | ✅ |
 | 1000 light clients (10 Hz, 1 packet per update) | OWED | OWED | OWED |
 | Soak (30 minutes per transport under impairment) | OWED | ✅ | OWED |
-| Nightlies (every nightly job's steps green on this branch) | ✅ | ❌ | ❌ |
+| Nightlies (every nightly job's steps green on this branch) | ❌ | ❌ | ❌ |
 | CI (ci.yml, every step green on this branch) | ❌ | ❌ | ❌ |
-| complete | 38% | 31% | 44% |
+| complete | 31% | 31% | 44% |
 
 ## Platform-specific tests
 
