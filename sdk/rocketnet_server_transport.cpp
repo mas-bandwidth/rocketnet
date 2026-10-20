@@ -700,37 +700,6 @@ static int rocketnet_server_config_has_keys( const struct rocketnet_server_trans
            memcmp( config->backend_public_key, zero, 32 ) != 0;
 }
 
-// the one surviving pre-#106 env alias kept working under the ROCKETNET_PUMP
-// pattern: ROCKETNET_SERVER_NUM_QUEUES is honored only where its successor
-// ROCKETNET_SERVER_NUM_XDP_QUEUES is unset, strict-parsed by the same rules,
-// and every use is logged loudly naming the successor; set beside the
-// successor it yields, loudly.
-
-static bool rocketnet_server_apply_env_alias( const char * alias_name, const char * successor_name, int * field )
-{
-    const char * value = rocketnet_platform_getenv( alias_name );
-    if ( !value || value[0] == '\0' )
-        return true;
-
-    const char * successor_value = rocketnet_platform_getenv( successor_name );
-    if ( successor_value && successor_value[0] != '\0' )
-    {
-        rocketnet_warn( "server config ignores %s: its successor %s is set", alias_name, successor_name );
-        return true;
-    }
-
-    int parsed;
-    if ( !rocketnet_config_parse_int_value( value, &parsed ) )
-    {
-        rocketnet_error( "server config could not parse %s=\"%s\" as an integer", alias_name, value );
-        return false;
-    }
-
-    rocketnet_info( "server config override %s=%d (deprecated alias; %s is the successor) (displaces %d)", alias_name, parsed, successor_name, *field );
-    *field = parsed;
-    return true;
-}
-
 bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * driver, rocketnet_server_memory_plan_t & plan)
 {
@@ -975,21 +944,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
     if ( !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
-    {
-        if ( status )
-            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
-        return NULL;
-    }
-
-    // the one surviving alias: ROCKETNET_SERVER_NUM_QUEUES is the pre-#106
-    // spelling of the num_xdp_queues field, whose canonical per-endpoint
-    // name is now ROCKETNET_SERVER_NUM_XDP_QUEUES. ROCKETNET_SERVER_NUM_OS_CPUS
-    // and ROCKETNET_SERVER_PUBLIC_ADDRESS are no longer aliases -- they are
-    // the canonical names the table reads above -- and the old process-wide
-    // ROCKETNET_NUM_OS_CPUS / ROCKETNET_PUBLIC_ADDRESS spellings are refused
-    // aloud by rocketnet_config_apply_env with their replacements named.
-
-    if ( !rocketnet_server_apply_env_alias( "ROCKETNET_SERVER_NUM_QUEUES", "ROCKETNET_SERVER_NUM_XDP_QUEUES", &effective_config.num_xdp_queues ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;

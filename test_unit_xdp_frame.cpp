@@ -245,6 +245,24 @@ static void parse_refuses_extension_headers()
     rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, sizeof(frame), &from, &payload, &payload_bytes ) );
 }
 
+static void parse_refuses_truncated_ipv6_frames()
+{
+    // every length from 42 to 61 is refused before the source address or UDP
+    // port is read. Each truncated frame sits in a heap buffer of exactly its
+    // own length, so a read past its end trips Asan.
+    rocketnet_address_t from;
+    const uint8_t * payload;
+    int payload_bytes;
+    for ( size_t len = 42; len <= 61; ++len )
+    {
+        uint8_t * buf = (uint8_t*) malloc( len );
+        rocketnet_unit_check( buf != NULL );
+        memcpy( buf, golden_ipv6, len );
+        rocketnet_unit_check( !rocketnet_xdp_frame_parse( buf, len, &from, &payload, &payload_bytes ) );
+        free( buf );
+    }
+}
+
 // the reply-MAC rule (rocketnet_xdp_reply_mac): learned peer, gateway
 // otherwise, the newest MAC when a peer's source MAC changes, and a refusal
 // counted when there is neither. No socket: the table is driven directly.
@@ -701,6 +719,7 @@ REGISTER_UNIT_TEST( ipv6_max_payload_is_1452_and_fits_1514 );
 REGISTER_UNIT_TEST( ipv6_payload_over_budget_is_refused );
 REGISTER_UNIT_TEST( parse_round_trips_both_families );
 REGISTER_UNIT_TEST( parse_refuses_extension_headers );
+REGISTER_UNIT_TEST( parse_refuses_truncated_ipv6_frames );
 REGISTER_UNIT_TEST( xdp_reply_mac_follows_the_peer );
 REGISTER_UNIT_TEST( xdp_frame_parse_ipv6_udp );
 REGISTER_UNIT_TEST( xdp_frame_build_ipv6_checksum_vector );
