@@ -186,6 +186,7 @@ struct rn_message_object_t
     int batch_count;                            // the entries the last receive handed out
     int32_t batch_connection[ROCKETNET_RECEIVE_BATCH_MESSAGES];
     uint32_t batch_entry[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+
     // The send pass's rotation: the first connection to offer a frame next
     // update. A cap below the client count then serves every client in turn
     // instead of always serving the low indices.
