@@ -358,9 +358,6 @@ static void check_base64_and_config()
     CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_DRIVER_PORTABLE );
     CHECK( !rocketnet_driver_ladder_parse( "rocket", available, num_available, &ladder ) );
 
-    char env_name[64];
-    CHECK( rocketnet_config_env_var_name( "driver", env_name, sizeof( env_name ) ) );
-    CHECK( strcmp( env_name, "ROCKETNET_TRANSPORT" ) == 0 );
 }
 
 int main()

@@ -501,6 +501,82 @@ ACK/keepalive clients while the buffered transport accepts only 256 controls per
 batch. Its elapsed time is a diagnostic for that synthetic workload, not a packet
 rate or a frame/send/ACK cadence requirement.
 
+## Runtime environment inventory
+
+These are the environment variables read by the SDK. Each setting has one name;
+the client and server forms are separate settings. The unit inventory checks this
+list in both directions against the SDK reads and the public header.
+
+* Environment: ROCKETNET_CLIENT_FILTER_VALUE
+* Environment: ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES
+* Environment: ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS
+* Environment: ROCKETNET_CLIENT_STEP_DRIVEN
+* Environment: ROCKETNET_CLIENT_TRANSPORT
+* Environment: ROCKETNET_CLIENT_SEND_KBPS
+* Environment: ROCKETNET_CLIENT_NUM_CHANNELS
+* Environment: ROCKETNET_CLIENT_WINDOW_MESSAGES
+* Environment: ROCKETNET_CLIENT_RECEIVE_RING_BYTES
+* Environment: ROCKETNET_CLIENT_MAX_MESSAGE_BYTES
+* Environment: ROCKETNET_CLIENT_SEND_BUFFER_BYTES
+* Environment: ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES
+* Environment: ROCKETNET_CLIENT_PACKETS_IN_FLIGHT
+* Environment: ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES
+* Environment: ROCKETNET_CLIENT_SEQUENCED_HOLDS
+* Environment: ROCKETNET_CLIENT_RECEIPT_RING
+* Environment: ROCKETNET_CLIENT_RTO_INITIAL_MS
+* Environment: ROCKETNET_CLIENT_RTO_MIN_MS
+* Environment: ROCKETNET_CLIENT_RTO_MAX_MS
+* Environment: ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT
+* Environment: ROCKETNET_CLIENT_SIMULATED_LATENCY_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_JITTER_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT
+* Environment: ROCKETNET_SERVER_PROTOCOL_ID
+* Environment: ROCKETNET_SERVER_MAX_CLIENTS
+* Environment: ROCKETNET_SERVER_FILTER_VALUE
+* Environment: ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
+* Environment: ROCKETNET_SERVER_SERVER_PUBLIC_KEY
+* Environment: ROCKETNET_SERVER_SERVER_SECRET_KEY
+* Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES
+* Environment: ROCKETNET_SERVER_NUM_OS_CPUS
+* Environment: ROCKETNET_SERVER_MAX_PAYLOAD_BYTES
+* Environment: ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS
+* Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
+* Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS
+* Environment: ROCKETNET_SERVER_TRANSPORT
+* Environment: ROCKETNET_SERVER_PUBLIC_ADDRESS
+* Environment: ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS
+* Environment: ROCKETNET_SERVER_NUM_CHANNELS
+* Environment: ROCKETNET_SERVER_WINDOW_MESSAGES
+* Environment: ROCKETNET_SERVER_RECEIVE_RING_BYTES
+* Environment: ROCKETNET_SERVER_MAX_MESSAGE_BYTES
+* Environment: ROCKETNET_SERVER_SEND_BUFFER_BYTES
+* Environment: ROCKETNET_SERVER_SEND_QUEUE_MESSAGES
+* Environment: ROCKETNET_SERVER_PACKETS_IN_FLIGHT
+* Environment: ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_SERVER_UNRELIABLE_DELIVERIES
+* Environment: ROCKETNET_SERVER_SEQUENCED_HOLDS
+* Environment: ROCKETNET_SERVER_RECEIPT_RING
+* Environment: ROCKETNET_SERVER_RTO_INITIAL_MS
+* Environment: ROCKETNET_SERVER_RTO_MIN_MS
+* Environment: ROCKETNET_SERVER_RTO_MAX_MS
+* Environment: ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT
+* Environment: ROCKETNET_SERVER_SIMULATED_LATENCY_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_JITTER_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT
+* Environment: ROCKETNET_LOG_LEVEL
+* Environment: ROCKETNET_CLIENT_GAME_CLOCK_EPOCH
+* Environment: ROCKETNET_SERVER_GAME_CLOCK_EPOCH
+* Environment: ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH
+* Environment: ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH
+* Environment: ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW
+* Environment: ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW
+* Environment: ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES
+* Environment: ROCKETNET_SERVER_MEMORY_BUDGET_BYTES
+* Environment: ROCKETNET_GATEWAY_ETHERNET_ADDRESS
+
 ## Server transports
 
 Transport selection is runtime (#106): one build carries every transport its
@@ -510,9 +586,7 @@ transport; on macOS
 the Darwin batch pump and portable — and the transport walks an ordered candidate
 list at create. The list rides the config's transport field or the
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
-environment variables (precedence: default < struct < env). The old names
-`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
-`ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied:
+environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended ladder
                                                 #   (linux: xdp,gso,io_uring,portable — falls on refusal)
@@ -531,19 +605,17 @@ clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport 
 past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
-batch pump's live-refusal pause. The pre-#106 `ROCKETNET_PUMP=portable` override is
-absorbed into this system with its exact old meaning — the msgx pump off —
-honored and named in the logs, with `ROCKETNET_SERVER_TRANSPORT=portable` and
-`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors. Run `./bin/functional`
+batch pump's live-refusal pause. Select the portable pump through
+`ROCKETNET_SERVER_TRANSPORT=portable` and `ROCKETNET_CLIENT_TRANSPORT=portable`.
+Run `./bin/functional`
 against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
-config tables and their older aliases, then restores them on return.
-`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
-test pins, and the old transport names are cleared; `ROCKETNET_TEST_VERBOSE`
-keeps its diagnostic meaning. Passing ordinary runs print test names and
+config tables, then restores them on return. `ROCKETNET_SERVER_TRANSPORT` and
+`ROCKETNET_CLIENT_TRANSPORT` remain intentional test pins;
+`ROCKETNET_TEST_VERBOSE` keeps its diagnostic meaning. Passing ordinary runs print test names and
 explicitly named platform skips. Failures retain the captured diagnostic log.
 
 ### Windows IOCP server
