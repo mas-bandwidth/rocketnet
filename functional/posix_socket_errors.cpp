@@ -312,10 +312,12 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
 
     // each cell names the drivers it tests, so a transport pin in the
     // environment (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)
-    // is lifted for the two creates and restored after them: under a pin the
-    // ladder grants the pinned driver, and a gso or io_uring cell would read
-    // the portable driver instance as its own (posix_native_counter,
-    // posix_linux_uring_fail_sends)
+    // is lifted for the two creates below and restored after them, as
+    // posix_cell_begin does (functional/posix_lifecycle_stress.cpp:492).
+    // under a pin the ladder grants the pinned driver, and a gso or io_uring
+    // cell casts pair->driver to its own driver type
+    // (posix_native_counter, functional/posix_socket_errors.cpp:101;
+    // posix_linux_uring_fail_sends, functional/posix_socket_errors.cpp:1309)
 
     char saved_server_transport[64] = "";
     char saved_client_transport[64] = "";
