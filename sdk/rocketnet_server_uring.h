@@ -46,7 +46,7 @@ struct rocketnet_server_uring_t;
 // send staging: one phase's worth of frame-stride slots, the gso driver's
 // budget
 
-#define ROCKETNET_URING_SEND_QUEUE_SIZE                           ( 4096 * 4 )
+#define ROCKETNET_URING_SEND_QUEUE_SIZE                                   2048
 
 // receive: per queue a provided buffer ring of this many buffers of this many
 // bytes. one buffer holds the multishot recvmsg header, the reserved name
@@ -69,6 +69,13 @@ struct rocketnet_server_uring_t;
 #define ROCKETNET_URING_RECEIVE_BUDGET          ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
 #define ROCKETNET_URING_SEND_BUDGET    ( ROCKETNET_URING_SEND_QUEUE_SIZE + ROCKETNET_URING_ENTRIES * 2 )
 
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "receive budget twice send: io_uring receive ring holds at least twice the send queue" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET,
+                         "receive budget twice send: one send reap fits the receive bank" );
+
 // counters, readable any time from the main thread; indexes into the array
 // rocketnet_server_uring_counters fills
 
@@ -83,7 +90,8 @@ struct rocketnet_server_uring_t;
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
 #define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that spent its completion budget with completions left for the next call (deferred, not dropped)
 #define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, retired by a later call
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 11
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 11      // a re-arm found no submission entry (queue left disarmed)
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 12
 
 // true when the library was built with liburing and this kernel accepts the
 // ring, the opcodes and the provided buffer ring the driver needs. the probe
@@ -163,6 +171,20 @@ struct rocketnet_server_uring_test_source_t
 };
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * context, int num_queues, const struct rocketnet_server_uring_test_source_t * source );
+
+// the no-kernel-ring seam of the re-arm cases: a fake driver with queues and
+// no ring, whose receive_packets runs only the re-arm loop and whose next
+// count arm calls find no submission entry. destroy_wait_rounds runs the
+// end condition destroy's wait uses (rocketnet_server_uring_destroy_wait_over)
+// with every round completing or every round silent, stopped by guard.
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues );
+void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring );
+void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring_t * uring, int count );
+void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t * uring, int queue_index, bool arm_finds_no_sqe );
+bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
+uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
+int rocketnet_server_uring_test_destroy_wait_rounds( bool always_completes, int guard );
 #endif
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );

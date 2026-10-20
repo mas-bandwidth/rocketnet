@@ -1,8 +1,7 @@
 # RNRioDriver
 
-The Windows Registered I/O (RIO) server driver, modelled from its design
-before its code exists. The driver is `sdk/rocketnet_server_rio_windows.cpp`
-(owed by the driver card); its region layout and request contexts are
+The Windows Registered I/O (RIO) server driver. The driver is
+`sdk/rocketnet_server_rio_windows.cpp`; its region layout and request contexts are
 `sdk/rocketnet_rio_layout.h`. The driver opens one UDP socket with
 `WSA_FLAG_REGISTERED_IO`, registers one region with one
 `RIORegisterBuffer`, and polls one send completion queue and one receive
@@ -47,11 +46,11 @@ runs on the main thread.
 | `Post` | send_packets, fill threads joined, posts every slot of the fill phase with bytes > 0 by RIOSendEx with RIO_MSG_DEFER, then one commit; records that phase's outstanding count |
 | `KernelCompleteSend(p, s)` | the kernel completes a posted send, with a good or a failed status |
 | `DequeueSend(p, s)` | send_packets dequeues the send CQ without blocking and retires each completed slot of either phase (a failed status counts SEND_FAILED) |
-| `SwitchPhase` | send_packets switches the fill phase to the other phase, opening it only when its outstanding count is zero; while it waits it polls the send CQ (SEND_WAITS) |
+| `SwitchPhase` | send_packets opens the other fill phase only when its outstanding count is zero; otherwise the switch stays owed and this call returns (SEND_WAITS) |
 | `KernelFillSlice(i)` | the kernel completes a posted RIOReceiveEx: a datagram in the slice, or a failed status |
-| `DequeueReceive(i)` | receive_packets, per completion: a failed status counts RECEIVE_FAILED; else the datagram is copied into the fill bank, or counted dropped (RECEIVE_DROPPED_SIZE, RECEIVE_DROPPED_OVERFLOW); then the slice is re-posted. A refused re-post counts RECEIVE_REPOST_FAILED and leaves the slice in the retry list, or retires it when `RetryRefused` is `FALSE` |
+| `DequeueReceive(i)` | receive_packets processes at most `ROCKETNET_RIO_RECEIVES` completions per call: a failed status counts RECEIVE_FAILED; else it copies the datagram into the fill bank or counts a drop, then re-posts the slice |
 | `RetryRepost(i)` | receive_packets, before it dequeues: one more post of each slice in the retry list (rocketnet_rio_retry_receives); a slice refused again stays in the list and counts RECEIVE_REPOST_FAILED again, and nothing is retried after Close |
-| `Swap` | once the receive CQ is empty, receive_packets swaps the banks: the old fill bank becomes the exposed bank |
+| `Swap` | after at most one receive bank is dequeued, receive_packets swaps the banks; any queued CQ tail remains for the next update |
 | `TransportReads` | process_packets returns views of the exposed bank, valid until the next receive_packets |
 | `Close` | closesocket completes every outstanding request with an error |
 | `Drain` | destroy dequeues both CQs; nothing is re-posted |
@@ -78,6 +77,7 @@ schedule, which only strengthens the safety result.
 - **`RepostOnlyAfterCopy`**: a posted slice holds no datagram; every
   delivered datagram is still in its slice or consumed; every banked
   datagram is consumed.
+- **`ReceiveCallBound`**: `receiveCount` never exceeds `Slices` between swaps; a receive invocation dequeues no more than one bank.
 - **`ReceiveDepthNeverShrinks`**: while the socket is `Running` every
   slice is `Posted`, `Completed`, or waiting in the retry list. A transient
   refusal never removes a slice from the receive depth.
@@ -153,15 +153,16 @@ instance is a smaller one, not a passing claim.
 
 ## Runs
 
-The four rows are in `tla/RUNS.tsv`, each measured by `tlacheck run` on a
+The five rows are in `tla/RUNS.tsv`, each measured by `tlacheck run` on a
 Linux bench (Java 21.0.12.1, the pinned JAR, 110-second budget):
 
 | Case | Outcome | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|
-| `MCRNRioDriver.cfg` | PASS, exit 0, no error, depth 18 | 25,525 | 6,542 | 7.8 |
-| `MCRNRioDriverBrokenSwitchWithoutDrain.cfg` | `NoReserveIntoPostedPhase` violated, exit 12, depth 8 | 4,563 | 1,692 | 3.6 |
-| `MCRNRioDriverBrokenFreeBeforeDrain.cfg` | `FreedOnlyWhenDrained` violated, exit 12, depth 3 | 56 | 37 | 3.0 |
-| `MCRNRioDriverBrokenRetireOnRefusal.cfg` | `ReceiveDepthNeverShrinks` violated, exit 12, depth 3 | 27 | 23 | 2.9 |
+| `MCRNRioDriver.cfg` | PASS, exit 0, no error | 70,881 | 18,464 | 5.2 |
+| `MCRNRioDriverBrokenSwitchWithoutDrain.cfg` | `NoReserveIntoPostedPhase` violated, exit 12 | 6,243 | 2,446 | 1.2 |
+| `MCRNRioDriverBrokenFreeBeforeDrain.cfg` | `FreedOnlyWhenDrained` violated, exit 12 | 56 | 38 | 1.0 |
+| `MCRNRioDriverBrokenRetireOnRefusal.cfg` | `ReceiveDepthNeverShrinks` violated, exit 12 | 27 | 23 | 1.0 |
+| `MCRNRioDriverBrokenUnboundedReceive.cfg` | `ReceiveCallBound` violated, exit 12, depth 7 | 6,523 | 2,782 | 1.2 |
 
 ## The reversed witnesses
 
@@ -230,9 +231,26 @@ retires its slice, the old rule.
   `ReceiveDepthNeverShrinks` fails. The counterexample is real for that
   defect.
 
-## Citation owed
+### `MCRNRioDriverBrokenUnboundedReceive.cfg`
 
-No sdk file is edited by this change. The driver card that writes
-`sdk/rocketnet_server_rio_windows.cpp` cites this model from its send
-switch and its destroy, and moves the `rio-driver` row of
-`tla/COVERAGE.tsv` from `owed` to `current`.
+`Slots = 2, Slices = 2, MaxSteps = 3` with `ReceiveBounded = FALSE`:
+`DequeueReceive` may run while completions keep arriving, with no per-call
+limit, so `Swap` waits for an empty receive queue as the old loop did.
+
+- **The trace TLC printed:** `KernelFillSlice` and `DequeueReceive`
+  alternate three times with no `Swap`, and `receiveCount` reaches 3, past
+  one bank of 2 slices; `ReceiveCallBound` fails at depth 7.
+- **Against the code, by hand:** the old `rocketnet_server_rio_receive_packets`
+  loop left only on a short dequeue, so a completion queue the NIC keeps
+  full holds the main thread in that call. The bounded loop counts the
+  completions it dequeues and stops at `ROCKETNET_RIO_RECEIVES`, one bank;
+  the queued tail is dequeued by the next call. The counterexample is real
+  for that defect.
+
+## Code correspondence
+
+`sdk/rocketnet_server_rio_windows.cpp` cites this model: `SwitchPhase` in
+`rocketnet_server_rio_send_packets`, which returns with the switch owed while
+the other phase has outstanding sends, and `DequeueReceive` with its per-call
+bound and `Swap` in `rocketnet_server_rio_receive_packets`. The
+`rio-driver` row of `tla/COVERAGE.tsv` maps every action to its function.
