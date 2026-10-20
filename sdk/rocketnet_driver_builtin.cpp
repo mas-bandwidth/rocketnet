@@ -169,7 +169,7 @@ extern const rocketnet_driver_backend_t rocketnet_msgx_driver = { &portable_serv
 #include "rocketnet_server_socket.h"
 
 // the native drivers' drop counts behind send_failures and receive_drops,
-// defined at sdk/rocketnet_server_gso_linux.cpp:869 and sdk/rocketnet_server_socket_linux.cpp:2594
+// defined at sdk/rocketnet_server_gso_linux.cpp:869 and sdk/rocketnet_server_socket_linux.cpp:2598
 void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
 

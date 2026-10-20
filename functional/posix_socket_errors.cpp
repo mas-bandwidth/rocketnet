@@ -1553,7 +1553,7 @@ void rocketnet_test_linux_uring_send_cqe_errors()
 #include <fcntl.h>
 
 // the xdp driver's staging entry with its queue and destination MAC named
-// (sdk/rocketnet_server_socket_linux.cpp:2129)
+// (sdk/rocketnet_server_socket_linux.cpp:2133)
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 #include <sched.h>
 #include <sys/vfs.h>
@@ -2053,7 +2053,7 @@ static void posix_xdp_weather( int ipv6 )
 
     // a send the xdp frame codec refuses to build (a destination of the
     // family this server does not serve) is dropped and counted in the
-    // queue's send_refused_build (sdk/rocketnet_server_socket_linux.cpp:2936), and
+    // queue's send_refused_build (sdk/rocketnet_server_socket_linux.cpp:2940), and
     // the transport's SEND_FAILED reads it through the xdp send_failures
     // operation: it moves by exactly that one datagram
 
