@@ -123,6 +123,8 @@ struct spec_t
     int truncate_to;                            // cut the frame to this many bytes; -1 = whole frame
     uint32_t sequence;                          // the 4 little-endian bytes after the prefilter header
     uint16_t source_port;                       // the client's UDP source port
+    uint16_t ipv4_frag_off;                     // IPv4 flags and fragment offset (RFC 791); 0 = a whole datagram
+    int ipv6_fragment_field;                    // the fragment header's offset << 3 | M; -1 = 0x0001 (offset 0, more fragments)
 };
 
 static spec_t spec_default( bool ipv6 )
@@ -140,6 +142,8 @@ static spec_t spec_default( bool ipv6 )
     spec.truncate_to = -1;
     spec.sequence = 0;
     spec.source_port = client_port;
+    spec.ipv4_frag_off = 0;
+    spec.ipv6_fragment_field = -1;
     return spec;
 }
 
@@ -171,6 +175,7 @@ static void build_frame( frame_t * frame, const spec_t & spec )
         const uint8_t * destination = spec.destination_address ? spec.destination_address : server_ipv4;
         p[0] = 0x45;                            // version 4, ihl 5
         put16( p + 2, (uint16_t) ( ROCKETNET_IPV4_HEADER_BYTES + udp_bytes ) );
+        put16( p + 6, spec.ipv4_frag_off );
         p[8] = 64;                              // ttl
         p[9] = IP_UDP;
         memcpy( p + 12, client_ipv4, 4 );
@@ -193,7 +198,7 @@ static void build_frame( frame_t * frame, const spec_t & spec )
             p[0] = IP_UDP;                      // this header is followed by UDP
             if ( spec.next_header == IPV6_FRAGMENT )
             {
-                p[3] = 0x01;                    // offset 0, more fragments
+                put16( p + 2, (uint16_t) ( spec.ipv6_fragment_field >= 0 ? spec.ipv6_fragment_field : 0x0001 ) );
                 p[7] = 0x2A;                    // identification
             }
             p += extension_bytes;
@@ -512,21 +517,107 @@ static bool ipv6_extension_header_passes( filter_t * filter )
     return ok;
 }
 
-// RFC 8200 section 4.5: the fragment header. A fragmented datagram is not a
-// RocketNet packet on this path and is never dropped by it.
+// IP fragments (RFC 791; RFC 8200 section 4.5), the same rows as the host
+// tier's: the first fragment of a datagram to this server (offset 0,
+// more-fragments set, the UDP header in the frame naming the server's port
+// and address) drops counted DROPPED_FIRST_FRAGMENT before any size, epoch or
+// filter check; every other fragment passes counted PASSED_FRAGMENT.
 
-static bool ipv6_fragment_passes( filter_t * filter )
+static spec_t fragment_spec( bool ipv6, int offset_units, bool more )
 {
-    bool ok = write_config( filter, NULL, server_ipv6 );
-    spec_t spec = spec_default( true );
-    spec.next_header = IPV6_FRAGMENT;
-    ok &= run_frame( filter, "ipv6 fragment header", spec, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+    spec_t spec = spec_default( ipv6 );
+    spec.packet_bytes = 100;
+    if ( ipv6 )
+    {
+        spec.next_header = IPV6_FRAGMENT;
+        spec.ipv6_fragment_field = ( offset_units << 3 ) | ( more ? 1 : 0 );
+    }
+    else
+    {
+        spec.ipv4_frag_off = (uint16_t) ( ( more ? 0x2000 : 0 ) | ( offset_units & 0x1fff ) );
+    }
+    return spec;
+}
 
-    // fragments of other ports pass the same way, counted the same way
+static bool write_unconfigured( filter_t * filter )
+{
+    struct rocketnet_server_xdp_config_t config;
+    memset( &config, 0, sizeof(config) );
+    const __u32 key = 0;
+    return bpf_map_update_elem( filter->config_fd, &key, &config, BPF_ANY ) == 0;
+}
 
-    spec.destination_port = 53;
-    ok &= run_frame( filter, "ipv6 fragment header, other port", spec, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+static bool fragment_rows( filter_t * filter, bool ipv6 )
+{
+    const char * family = ipv6 ? "ipv6" : "ipv4";
+    const int dropped = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT;
+    const int passed = ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT;
+    char label[160];
+    bool ok = ipv6 ? write_config( filter, NULL, server_ipv6 ) : write_config( filter, server_ipv4, NULL );
+
+    snprintf( label, sizeof(label), "%s first fragment to the server", family );
+    ok &= run_frame( filter, label, fragment_spec( ipv6, 0, true ), XDP_DROP, dropped );
+
+    spec_t wrong_epoch = fragment_spec( ipv6, 0, true );
+    wrong_epoch.epoch = (uint8_t) ( filter_epoch + 1 );
+    snprintf( label, sizeof(label), "%s first fragment to the server, wrong epoch", family );
+    ok &= run_frame( filter, label, wrong_epoch, XDP_DROP, dropped );
+
+    spec_t wrong_filter = fragment_spec( ipv6, 0, true );
+    wrong_filter.filter[0] ^= 0xFF;
+    snprintf( label, sizeof(label), "%s first fragment to the server, wrong filter value", family );
+    ok &= run_frame( filter, label, wrong_filter, XDP_DROP, dropped );
+
+    spec_t large = fragment_spec( ipv6, 0, true );
+    large.packet_bytes = ROCKETNET_RECEIVE_CEILING + 1;
+    snprintf( label, sizeof(label), "%s first fragment to the server past the ceiling", family );
+    ok &= run_frame( filter, label, large, XDP_DROP, dropped );
+
+    snprintf( label, sizeof(label), "%s middle fragment to the server's port", family );
+    ok &= run_frame( filter, label, fragment_spec( ipv6, 185, true ), XDP_PASS, passed );
+
+    snprintf( label, sizeof(label), "%s last fragment to the server's port", family );
+    ok &= run_frame( filter, label, fragment_spec( ipv6, 370, false ), XDP_PASS, passed );
+
+    spec_t other_port = fragment_spec( ipv6, 0, true );
+    other_port.destination_port = 53;
+    snprintf( label, sizeof(label), "%s first fragment to another port", family );
+    ok &= run_frame( filter, label, other_port, XDP_PASS, passed );
+
+    spec_t middle_other = fragment_spec( ipv6, 185, true );
+    middle_other.destination_port = 53;
+    snprintf( label, sizeof(label), "%s middle fragment to another port", family );
+    ok &= run_frame( filter, label, middle_other, XDP_PASS, passed );
+
+    spec_t other_address = fragment_spec( ipv6, 0, true );
+    other_address.destination_address = ipv6 ? other_ipv6 : other_ipv4;
+    snprintf( label, sizeof(label), "%s first fragment to another address", family );
+    ok &= run_frame( filter, label, other_address, XDP_PASS, passed );
+
+    spec_t cut = fragment_spec( ipv6, 0, true );
+    cut.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ( ipv6 ? ROCKETNET_IPV6_HEADER_BYTES + 8 : ROCKETNET_IPV4_HEADER_BYTES ) + 7;
+    snprintf( label, sizeof(label), "%s first fragment, UDP header cut by the frame end", family );
+    ok &= run_frame( filter, label, cut, XDP_PASS, passed );
+
+    snprintf( label, sizeof(label), "%s unfragmented packet to the server", family );
+    spec_t whole = spec_default( ipv6 );
+    whole.packet_bytes = 100;
+    ok &= run_frame( filter, label, whole, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+
+    ok &= write_unconfigured( filter );
+    snprintf( label, sizeof(label), "%s first fragment to an unconfigured server", family );
+    ok &= run_frame( filter, label, fragment_spec( ipv6, 0, true ), XDP_PASS, passed );
     return ok;
+}
+
+static bool ipv4_fragments( filter_t * filter )
+{
+    return fragment_rows( filter, false );
+}
+
+static bool ipv6_fragments( filter_t * filter )
+{
+    return fragment_rows( filter, true );
 }
 
 static bool ipv6_wrong_address_passes( filter_t * filter )
@@ -1447,7 +1538,8 @@ static const case_t cases[] =
     { "ipv4_rocketnet_packet_redirects", ipv4_rocketnet_packet_redirects },
     { "ipv6_rocketnet_packet_redirects", ipv6_rocketnet_packet_redirects },
     { "ipv6_extension_header_passes", ipv6_extension_header_passes },
-    { "ipv6_fragment_passes", ipv6_fragment_passes },
+    { "ipv4_fragments", ipv4_fragments },
+    { "ipv6_fragments", ipv6_fragments },
     { "ipv6_wrong_address_passes", ipv6_wrong_address_passes },
     { "ipv6_short_header_drops", ipv6_short_header_drops },
     { "ipv6_too_large_drops", ipv6_too_large_drops },
