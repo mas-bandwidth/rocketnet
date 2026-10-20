@@ -410,20 +410,21 @@ static void xdp_host_redirect_needs_a_populated_slot()
     for ( int f = 0; f < 2; f++ )
     {
         // an empty slot: bpf_redirect_map returns the low bits of
-        // BPF_F_INGRESS, XDP_DROP, and REDIRECTED does not move
+        // BPF_F_INGRESS, XDP_DROP; REDIRECTED does not move and
+        // DROPPED_NO_SOCKET counts the drop
 
         xdp_host_row_t empty = xdp_host_row( "no slot populated", families[f] );
         empty.populated_slot = -1;
-        rows.push_back( xdp_host_expect( empty, XDP_HOST_DROP, XDP_HOST_NO_COUNTER ) );
+        rows.push_back( xdp_host_expect( empty, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET ) ) );
 
         xdp_host_row_t other = xdp_host_row( "slot 2 populated, frame on queue 1", families[f] );
         other.queue = 1;
         other.populated_slot = 2;
-        rows.push_back( xdp_host_expect( other, XDP_HOST_DROP, XDP_HOST_NO_COUNTER ) );
+        rows.push_back( xdp_host_expect( other, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET ) ) );
 
         xdp_host_row_t beyond = xdp_host_row( "queue index past the map", families[f] );
         beyond.queue = ROCKETNET_XDP_MAX_QUEUES;
-        rows.push_back( xdp_host_expect( beyond, XDP_HOST_DROP, XDP_HOST_NO_COUNTER ) );
+        rows.push_back( xdp_host_expect( beyond, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET ) ) );
 
         xdp_host_row_t own = xdp_host_row( "slot 1 populated, frame on queue 1", families[f] );
         own.queue = 1;
@@ -442,6 +443,7 @@ static void xdp_host_redirect_needs_a_populated_slot()
     rocketnet_unit_check( rocketnet_xdp_host_redirect_calls() == 1 );
     rocketnet_unit_check( rocketnet_xdp_host_last_redirect_key() == 5 );
     rocketnet_unit_check( rocketnet_xdp_host_counter( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_host_counter( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET ) == 1 );
     (void) XDP_HOST_ABORTED;
 }
 

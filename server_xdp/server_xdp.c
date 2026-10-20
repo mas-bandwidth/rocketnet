@@ -195,7 +195,8 @@ static __always_inline int server_xdp_first_fragment_is_ours( struct udphdr * ud
 //
 // The UDP and IP length fields are byte-swapped scalars the verifier does not
 // bound, so they are compared as numbers against the frame bytes after the
-// UDP header (lines 224, 400, 434) and never added to a packet pointer.
+// UDP header (here, and in the IPv4 and IPv6 branches of server_xdp_filter)
+// and never added to a packet pointer.
 
 static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * udp, __u32 ip_udp_bytes, void * data_end,
                                            const struct rocketnet_server_xdp_config_t * config, int address_match,
@@ -323,6 +324,8 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
     // bpf_redirect_map returns XDP_REDIRECT when the queue's socket is in
     // the map. When it is not, it returns the low two bits of the flags as
     // the action: BPF_F_INGRESS is 1, which is XDP_DROP. It never returns 0.
+    // A packet that passed every check but has no socket for its queue is
+    // counted in DROPPED_NO_SOCKET.
 
     const __u32 queue_id = ctx->rx_queue_index;
     const long ret = bpf_redirect_map( &server_xdp_socket_map, queue_id, BPF_F_INGRESS );
@@ -331,6 +334,8 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
         return XDP_REDIRECT;
     }
+    debug_printf( "no socket in the map for this queue" );
+    server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET );
     return XDP_DROP;
 }
 

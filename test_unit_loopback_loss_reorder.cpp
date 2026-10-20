@@ -259,11 +259,11 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // latency: the client routes through its simulator whenever one exists
 // (rocketnet_client_io_core, sdk/rocketnet_client_transport.cpp:336-339; the
 // simulator is created at :981-984 when any simulated field is set).
-// Hashes reflect the nine message-violation counters appended in sdk/rocketnet_counters.h.
+// Hashes reflect the nine message-violation counters and XDP_KERNEL_DROPPED_NO_SOCKET appended in sdk/rocketnet_counters.h.
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xbd190b8677ba72a6 ), UINT64_C( 0x5219d21d4aad11e4 ), 24 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x2f8f7c52d926c366 ), UINT64_C( 0xb3f9e4a743573664 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xbd190b8677ba72a6 ), UINT64_C( 0x5219d21d4aad11e4 ), 26 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x2f8f7c52d926c366 ), UINT64_C( 0xb3f9e4a743573664 ), 26 };
 
 static void loopback_patterns_off_same_trace()
 {

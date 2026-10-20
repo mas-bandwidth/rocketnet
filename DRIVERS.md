@@ -257,7 +257,10 @@ before (a 20-byte header, UDP). IPv6 is parsed as the fixed 40-byte header with
 UDP directly behind it. Both families then run one shared function: the
 destination port and address against the config map, the wire size bounds, the
 filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the redirect
-into the XSKMAP for the receive queue. The counters are the same for both
+into the XSKMAP for the receive queue. A packet that passes every check but
+whose receive queue has no socket in the XSKMAP is dropped and increments
+`ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET` (surfaced as
+`XDP_KERNEL_DROPPED_NO_SOCKET`). The counters are the same for both
 families. The IPv6 destination is `public_address_ipv6` in
 `rocketnet_server_xdp_config_t`; all zero accepts any destination, as a zero
 `public_address` does for IPv4.

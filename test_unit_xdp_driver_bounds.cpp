@@ -141,14 +141,17 @@ static void xdp_receive_descriptor_refuses_bad_descriptors()
 
     rocketnet_unit_check( drops.not_ip == 0 && drops.ipv6_extension == 0 && drops.other_family == 0 && drops.malformed == 0 );
 
-    // the same headroom offset with a length ending exactly at its frame's end is taken
+    // the same headroom offset with a length ending exactly at its frame's end
+    // is taken; the payload is the frame's UDP length, and the bytes past it
+    // are padding (rocketnet_xdp_frame_parse)
     const uint32_t fitting = (uint32_t) ( ROCKETNET_XDP_FRAME_SIZE - 256 );
-    rocketnet_unit_check( bounds_receive( umem, offset_addr, fitting, &drops, slot ) == (int) fitting - header_bytes );
+    rocketnet_unit_check( (int) fitting - header_bytes > ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    rocketnet_unit_check( bounds_receive( umem, offset_addr, fitting, &drops, slot ) == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
     rocketnet_unit_check( drops.descriptor == 4 );
 
     // and a whole frame at its boundary
     bounds_write_frame( umem, BOUNDS_REGION_BEGIN );
-    rocketnet_unit_check( bounds_receive( umem, BOUNDS_REGION_BEGIN, ROCKETNET_XDP_FRAME_SIZE, &drops, slot ) == ROCKETNET_XDP_FRAME_SIZE - header_bytes );
+    rocketnet_unit_check( bounds_receive( umem, BOUNDS_REGION_BEGIN, ROCKETNET_XDP_FRAME_SIZE, &drops, slot ) == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
     rocketnet_unit_check( drops.descriptor == 4 && drops.malformed == 0 );
 
     free( slot );
