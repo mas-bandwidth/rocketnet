@@ -160,8 +160,8 @@ int main( void )
                 break;
         }
     }
-    printf( "client after disconnect state %s reason %d\n", rocketnet_client_state_name( rocketnet_client_state( client ) ), rocketnet_client_disconnect_reason( client ) );
-    printf( "server client %d disconnect reason %d\n", client_index, rocketnet_server_disconnect_reason( server, client_index ) );
+    printf( "client after disconnect state %s reason %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ), rocketnet_disconnect_reason_name( rocketnet_client_disconnect_reason( client ) ) );
+    printf( "server client %d disconnect reason %s\n", client_index, rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, client_index ) ) );
     result = 0;
 cleanup:
     rocketnet_client_destroy( client );
