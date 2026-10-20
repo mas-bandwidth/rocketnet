@@ -266,7 +266,7 @@
     /** @brief ROCKETNET_COUNTER_CLIENT_CONNECTED: Counts client connections established. Unit: occurrences. Class: expected; family: none. */ \
     X( CLIENT_CONNECTED, EXPECTED, NONE ) \
     /* REFUSAL: a resource exhaustion is a refusal. */ \
-    /** @brief ROCKETNET_COUNTER_SEND_RING_FULL: Counts packets refused because the send ring has no free slot. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_SEND_RING_FULL: Counts packets refused because the send ring has no free slot, or committed slots destroy drops at its wait deadline. Unit: occurrences. Class: refusal; family: none. */ \
     X( SEND_RING_FULL, REFUSAL, NONE ) \
     /* REFUSAL: an internal state the shipped protocol cannot produce. */ \
     /** @brief ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING: Counts internal events that find a client slot without a mapping. Unit: occurrences. Class: refusal; family: none. */ \

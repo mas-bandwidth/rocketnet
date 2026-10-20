@@ -32,14 +32,19 @@
 (* socket do not end the wait at once.  stop sets the wake, the I/O       *)
 (* thread finishes the rings handed off and exits, the main thread joins  *)
 (* it and only then frees the transport; destroy makes the last hand-off  *)
-(* first, so no committed slot is dropped.                                *)
+(* first, so no committed slot is dropped.  Destroy's wait for the other *)
+(* ring to be Sent is bounded by a deadline on the transport's clock (the *)
+(* Timeout action below; ROCKETNET_CLIENT_DESTROY_HANDOFF_WAIT_SECONDS   *)
+(* in sdk/rocketnet_client_transport.cpp): at the deadline the committed *)
+(* slots are dropped and counted, and destroy continues to Stop, Join    *)
+(* and Free, so destroy always finishes (DestroyAlwaysFinishes).         *)
 (*                                                                         *)
 (* StepDriven is the step-driven mode: no I/O thread is started, and the  *)
 (* caller's update and send_packets run the I/O step on their own thread  *)
 (* (StepBegin, CallerStep, StepEnd), never concurrently with the rest of   *)
 (* the main thread and never blocking.                                     *)
 (*                                                                         *)
-(* Six switches restore the defects the reversed witnesses must catch:    *)
+(* Seven switches restore the defects the reversed witnesses must catch:   *)
 (* ReopenBeforeSent lets the main thread reopen a ring the I/O thread is  *)
 (* still sending; ReceiveIntoExposed lets the I/O thread write a          *)
 (* datagram into the buffer update has exposed; SwapNeedsReady restores   *)
@@ -48,7 +53,9 @@
 (* hand-off that waits for the other ring to be Sent; FullWaitReadable    *)
 (* restores the wait on readable with a full buffer, which returns at     *)
 (* once while datagrams sit in the socket; StepModeStartsThread starts    *)
-(* the I/O thread at create in the step-driven mode as well.              *)
+(* the I/O thread at create in the step-driven mode as well;              *)
+(* DestroyNeverTimesOut removes destroy's deadline, so the wait that      *)
+(* HandOffWaits blocks never ends (MCRNClientIoBrokenDestroyWaitsForever). *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -61,7 +68,9 @@ CONSTANTS NumSlots,            \* slots per send ring
           HandOffWaits,        \* defect: a hand-off waits for the other ring
           FullWaitReadable,    \* defect: a full buffer waits on readable too
           StepDriven,          \* caller runs non-blocking I/O steps; no thread
-          StepModeStartsThread \* defect: step mode also starts an I/O thread
+          StepModeStartsThread, \* defect: step mode also starts an I/O thread
+          DestroyDeadline,     \* ticks destroy waits before it drops and stops
+          DestroyNeverTimesOut \* defect: destroy's wait has no deadline
 
 ASSUME NumSlots \in Nat \ {0} /\ BufferCap \in Nat \ {0}
 ASSUME MaxDatagrams \in Nat
@@ -69,6 +78,7 @@ ASSUME /\ ReopenBeforeSent \in BOOLEAN /\ ReceiveIntoExposed \in BOOLEAN
        /\ SwapNeedsReady \in BOOLEAN /\ HandOffWaits \in BOOLEAN
        /\ FullWaitReadable \in BOOLEAN
        /\ StepDriven \in BOOLEAN /\ StepModeStartsThread \in BOOLEAN
+       /\ DestroyDeadline \in Nat /\ DestroyNeverTimesOut \in BOOLEAN
 
 Rings   == {"A", "B"}
 Slots   == 1..NumSlots
@@ -100,14 +110,16 @@ VARIABLES ring,      \* each send ring's state
           phase,     \* the transport's life
           ioAlive,   \* the I/O thread has not exited (the I/O core, in step mode)
           inCall,    \* step mode: update or send_packets is running the I/O step
-          lastExec   \* who ran the last I/O core action: none, thread or caller
+          lastExec,  \* who ran the last I/O core action: none, thread or caller
+          now,       \* the transport clock, in ticks, read while destroy waits
+          dropped    \* slots destroy dropped at its deadline, per ring and slot
 
 sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait>>
 recvVars == <<pending, arrived, buf, count, snap, owed, delivered>>
 
 vars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake, waiting,
           waitReadable, pending, arrived, buf, count, snap, owed, delivered,
-          phase, ioAlive, inCall, lastExec>>
+          phase, ioAlive, inCall, lastExec, now, dropped>>
 
 TypeOK ==
     /\ ring \in [Rings -> RingStates]
@@ -127,6 +139,8 @@ TypeOK ==
     /\ ioAlive \in BOOLEAN
     /\ inCall \in BOOLEAN
     /\ lastExec \in {"none", "thread", "caller"}
+    /\ now \in 0..(DestroyDeadline + 1)
+    /\ dropped \in [Rings -> [Slots -> BOOLEAN]]
 
 Init ==
     /\ ring = [r \in Rings |-> "Filling"]
@@ -146,6 +160,8 @@ Init ==
     /\ ioAlive = TRUE
     /\ inCall = FALSE
     /\ lastExec = "none"
+    /\ now = 0
+    /\ dropped = [r \in Rings |-> [s \in Slots |-> FALSE]]
 
 FillBuffer    == CHOOSE b \in Buffers : buf[b] = "Fill"
 HasExposed    == \E b \in Buffers : buf[b] = "Exposed"
@@ -173,6 +189,7 @@ Write(s) ==
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* finish_packet: the slot is sealed and committed
 Commit(s) ==
@@ -181,6 +198,7 @@ Commit(s) ==
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* the hand-off (send_packets, send_packet through it, or the end of
 \* update) when the other ring is open: the committed ring goes to the I/O
@@ -198,6 +216,7 @@ HandOff ==
     /\ UNCHANGED <<sent, ioRing, deferred, mainWait, waiting, waitReadable,
                    phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* the hand-off when the other ring is still HandedOff or Sending: the
 \* committed slots stay in the Filling ring and CLIENT_SEND_DEFERRED moves;
@@ -214,6 +233,7 @@ Defer ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* the defect's blocked main thread resumes once the other ring is Sent
 WaitDone ==
@@ -223,6 +243,7 @@ WaitDone ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* a hand-off reopens a ring the I/O thread has finished (acquire load)
 Reopen(r) ==
@@ -236,6 +257,7 @@ Reopen(r) ==
     /\ UNCHANGED <<fill, ioRing, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* update, first step: expose the Ready buffer (acquire) when there is
 \* one.  The design holds no buffer at this point (the last update
@@ -254,7 +276,7 @@ Expose ==
          /\ delivered' = delivered + count[rb]
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, pending, arrived, count,
-                   owed, phase, ioAlive>>
+                   owed, phase, ioAlive, now, dropped>>
 
 \* update, last step, every update: the buffer it exposed is returned as
 \* Free (seq_cst store), then the owed flag is read (seq_cst load) and the
@@ -267,7 +289,7 @@ Return ==
     /\ wake' = (wake \/ owed)
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<waiting, waitReadable, pending, arrived, count, snap, owed,
-                   delivered, phase, ioAlive>>
+                   delivered, phase, ioAlive, now, dropped>>
 
 \* destroy, first half: once the Filling ring holds no committed slot
 \* (destroy makes the last hand-off itself, waiting for the other ring to
@@ -281,6 +303,7 @@ Stop ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<waiting, waitReadable, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 Join ==
     /\ phase = "Stopping"
@@ -289,6 +312,7 @@ Join ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 Free ==
     /\ phase = "Joined"
@@ -296,6 +320,37 @@ Free ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
+
+\* the transport clock ticks while time passes; it saturates one tick
+\* past the deadline, so the state stays finite
+Tick ==
+    /\ mainWait
+    /\ now < DestroyDeadline + 1
+    /\ now' = now + 1
+    /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
+                   waiting, waitReadable, pending, arrived, buf, count, snap,
+                   owed, delivered, phase, ioAlive, inCall, lastExec, dropped>>
+
+\* destroy's wait ends at its deadline: the committed slots of the Filling
+\* ring are dropped (counted under SEND_RING_FULL in the code) and the
+\* main thread goes on to Stop, Join and Free.  DestroyNeverTimesOut is
+\* the defect that removes this action.
+Timeout ==
+    /\ mainWait
+    /\ now >= DestroyDeadline
+    /\ ~DestroyNeverTimesOut
+    /\ owner' = [owner EXCEPT ![fill] =
+                    [x \in Slots |-> IF owner[fill][x] = "main" THEN "free"
+                                     ELSE owner[fill][x]]]
+    /\ dropped' = [dropped EXCEPT ![fill] =
+                    [x \in Slots |-> dropped[fill][x] \/ owner[fill][x] = "main"]]
+    /\ mainWait' = FALSE
+    /\ now' = 0
+    /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, wake, waiting,
+                   waitReadable, phase, ioAlive>>
+    /\ UNCHANGED recvVars
+    /\ UNCHANGED <<inCall, lastExec>>
 
 (* ---- the network ---- *)
 
@@ -305,7 +360,7 @@ Arrive ==
     /\ pending' = pending + 1
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, buf, count, snap, owed,
-                   delivered, phase, ioAlive>>
+                   delivered, phase, ioAlive, now, dropped>>
 
 (* ---- the I/O core ---- *)
 
@@ -333,6 +388,7 @@ IoSend(r, s) ==
     /\ UNCHANGED <<owner, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* every slot sent: the ring is released to the main thread (release store)
 IoFinishRing(r) ==
@@ -344,6 +400,7 @@ IoFinishRing(r) ==
     /\ UNCHANGED <<owner, sent, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* read one datagram into the I/O thread's buffer while it has room. Every
 \* arriving datagram becomes a record here, regardless of size, as the code
@@ -362,7 +419,7 @@ IoReceive ==
     /\ pending' = pending - 1
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, arrived, buf, snap, owed,
-                   delivered, phase, ioAlive>>
+                   delivered, phase, ioAlive, now, dropped>>
 
 \* batch end: publish the filled buffer when a returned one is there to fill
 IoPublish ==
@@ -376,7 +433,7 @@ IoPublish ==
     /\ owed' = FALSE
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, pending, arrived, snap,
-                   delivered, phase, ioAlive>>
+                   delivered, phase, ioAlive, now, dropped>>
 
 \* batch end with no Free buffer: record that a publish is owed (seq_cst
 \* store) before the wait; the wait re-checks for a Free buffer after it
@@ -388,7 +445,7 @@ IoOwe ==
     /\ owed' = TRUE
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, pending, arrived, buf, count,
-                   snap, delivered, phase, ioAlive>>
+                   snap, delivered, phase, ioAlive, now, dropped>>
 
 \* nothing to do: block.  The thread never blocks while it could publish,
 \* blocks with an unpublished batch only after it has recorded the publish
@@ -410,6 +467,7 @@ IoWait ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 IoWake ==
     /\ ioAlive /\ waiting
@@ -419,6 +477,7 @@ IoWake ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* a woken I/O thread consumes a wake it does not need to block on
 IoClearWake ==
@@ -428,6 +487,7 @@ IoClearWake ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* stop seen: the ring in flight is finished first, then the thread exits
 IoExit ==
@@ -439,6 +499,7 @@ IoExit ==
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, phase>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 Done ==
     /\ phase = "Freed"
@@ -457,6 +518,7 @@ StepBegin ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive, lastExec>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* the step is one pass that never blocks (rocketnet_client_io_step with
 \* block false): it finishes the ring it takes, exits once stopped, and
@@ -476,6 +538,7 @@ StepEnd ==
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive, lastExec>>
     /\ UNCHANGED recvVars
+    /\ UNCHANGED <<now, dropped>>
 
 \* game threads write and commit at any time; the main thread's own
 \* actions never overlap a caller step
@@ -510,6 +573,8 @@ IoNext == IoThreadNext \/ CallerStep
 Next == MainNext \/ IoNext
         \/ (Arrive /\ UNCHANGED <<inCall, lastExec>>)
         \/ (Done /\ UNCHANGED <<inCall, lastExec>>)
+        \/ (Tick /\ UNCHANGED <<inCall, lastExec>>)
+        \/ Timeout
 
 Spec == Init /\ [][Next]_vars
 
@@ -539,6 +604,10 @@ SpecFair ==
     /\ WF_vars(OnMain(HandOff))
     /\ WF_vars(OnMain(Expose))
     /\ WF_vars(OnMain(Return))
+    /\ WF_vars(Tick /\ UNCHANGED <<inCall, lastExec>>)
+    /\ WF_vars(Timeout)
+    /\ WF_vars(OnMain(Stop))
+    /\ WF_vars(OnMain(Free))
 
 \* Step mode: the main thread's own actions are disabled while it runs a
 \* step, so they are enabled only intermittently.  update makes its two
@@ -597,10 +666,16 @@ HandedOffEventuallySent ==
     \A r \in Rings : ring[r] = "HandedOff" ~> ring[r] = "Sent"
 
 \* a committed slot, deferred or not, is eventually handed to the I/O
-\* thread, and destroy drops none
+\* thread, or dropped by destroy at its wait deadline and counted
 CommittedEventuallyHandedOff ==
     \A r \in Rings, s \in Slots :
-        owner[r][s] = "main" ~> owner[r][s] = "io"
+        owner[r][s] = "main" ~> (owner[r][s] = "io" \/ dropped[r][s])
+
+\* destroy always finishes: its wait ends (handed off, or dropped at the
+\* deadline), and once it stops, the transport is joined and freed
+DestroyAlwaysFinishes ==
+    /\ (mainWait ~> ~mainWait)
+    /\ (phase = "Stopping" ~> phase = "Freed")
 
 StopEventuallyJoins ==
     phase = "Stopping" ~> phase \in {"Joined", "Freed"}
