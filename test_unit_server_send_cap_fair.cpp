@@ -433,7 +433,10 @@ REGISTER_UNIT_TEST( server_send_cap_two_multi_packet_service );
 static void server_send_capacity_spare_slots_keep_in_place()
 {
     fair_world_t world;
-    fair_world_create( &world, 1, 0, 256 );
+    // Keep fewer connected peers than configured peers: surplus is measured
+    // against the one connected peer, not the four configured slots. Four
+    // send slots preserve that distinction without reserving 256 peers.
+    fair_world_create( &world, 1, 4, 4 );
     fair_connect( &world, 0, 0x9100 );
     fair_update_clients( &world );
     fair_send_clients( &world );
