@@ -119,6 +119,15 @@ uint64_t rocketnet_server_uring_leaked_drivers();
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
 
+#if ROCKETNET_DEVELOPMENT
+// for tests: end queue 0's multishot receive now with a terminating CQE that
+// reports -error, as the kernel does on an errno; datagrams sent after the
+// call queue behind the error and the next receive_packets must deliver them.
+// development library only.
+
+void rocketnet_server_uring_inject_recv_error_for_testing( struct rocketnet_server_uring_t * uring, int error );
+#endif // #if ROCKETNET_DEVELOPMENT
+
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 // development library only. fail_receive cancels the queue's multishot
 // receive and hands its terminating CQE to the reap with error (negative

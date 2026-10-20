@@ -68,6 +68,7 @@
 // below the process arrays
 
 #define ROCKETNET_URING_BANK_SIZE              ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+#define ROCKETNET_URING_REARM_PASSES           4
 
 // completions taken per peek
 
@@ -157,6 +158,8 @@ struct rocketnet_server_uring_t
     int sends_pending;                          // sends submitted, by this send_packets or an earlier one, with no CQE reaped
     int send_submitted;                         // staged slots below this were submitted by an earlier send_packets
     int fill_bank;                              // the bank receive CQEs are copied into; the other is exposed
+    bool rearmed;                               // a reap re-armed a multishot that ended; receive_packets reaps again
+    int inject_recv_error;                      // tests only: the res the next terminating receive CQE reports
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
 
@@ -720,13 +723,31 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 
             queue->armed = false;
 
-            if ( cqe->res == -ENOBUFS )
+            int res = cqe->res;
+#if ROCKETNET_DEVELOPMENT
+            if ( uring->inject_recv_error != 0 )
+            {
+                res = -uring->inject_recv_error;
+                uring->inject_recv_error = 0;
+            }
+#endif // #if ROCKETNET_DEVELOPMENT
+
+            // an ICMP-class error (a pending SO_ERROR the multishot returns
+            // as its last res) ends the multishot like an empty buffer ring
+            // does. both are weather: counted, re-armed, and the receive
+            // keeps draining in the same update (rearmed, below)
+            if ( res == -ENOBUFS )
                 uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS]++;
+            else if ( res < 0 && rocketnet_platform_receive_error_is_weather( -res ) )
+                rocketnet_platform_count_receive_weather();
 
             if ( !uring->destroying )
             {
                 if ( rocketnet_server_uring_arm( uring, queue_index ) )
+                {
                     uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS]++;
+                    uring->rearmed = true;
+                }
             }
         }
         return;
@@ -1453,12 +1474,24 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
 {
     rocketnet_assert( uring );
 
+    uring->rearmed = false;
     if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == ROCKETNET_URING_RECEIVE_BUDGET &&
          rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
     {
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
     }
     rocketnet_server_uring_submit( uring );
+
+    // a multishot that ended on an errno was re-armed by the reap, and the
+    // re-arm's submit reads what queued while it was down: reap again, so
+    // those datagrams land in this update rather than the next. bounded, so
+    // an error on every re-arm cannot hold the update.
+    for ( int pass = 0; pass < ROCKETNET_URING_REARM_PASSES && uring->rearmed; pass++ )
+    {
+        uring->rearmed = false;
+        rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET );
+        rocketnet_server_uring_submit( uring );
+    }
 
     const int exposed_bank = uring->fill_bank;
     uring->fill_bank = 1 - exposed_bank;
@@ -1474,6 +1507,36 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
         uring->process_packets.packet_bytes[i] = exposed->packet_bytes[i];
     }
 }
+
+#if ROCKETNET_DEVELOPMENT
+// tests only: end queue 0's multishot receive now, as the kernel does on an
+// errno, and have its terminating CQE report -error. the cancel is submitted
+// and its completions waited for (bounded) but not reaped, so datagrams sent
+// after this call queue on the socket behind the error, exactly as they do
+// behind a real one; the next receive_packets reaps the error and must still
+// deliver them.
+void rocketnet_server_uring_inject_recv_error_for_testing( struct rocketnet_server_uring_t * uring, int error )
+{
+    rocketnet_assert( uring );
+    struct rocketnet_server_uring_queue_t * queue = &uring->queues[0];
+    if ( !queue->armed || queue->cancel_pending )
+        return;
+    struct io_uring_sqe * sqe = rocketnet_server_uring_get_sqe( uring );
+    if ( !sqe )
+        return;
+    io_uring_prep_cancel64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), 0 );
+    io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_CANCEL, 0, 0 ) );
+    queue->cancel_pending = true;
+    uring->inject_recv_error = error;
+    const unsigned before = io_uring_cq_ready( &uring->ring );
+    rocketnet_server_uring_submit( uring );
+    struct __kernel_timespec timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_nsec = 0;
+    struct io_uring_cqe * cqe = NULL;
+    io_uring_wait_cqes( &uring->ring, &cqe, before + 2, &timeout, NULL );
+}
+#endif // #if ROCKETNET_DEVELOPMENT
 
 // RNUringDriver TransportReads: the transport reads the exposed bank, which
 // stays put until the next receive_packets swaps

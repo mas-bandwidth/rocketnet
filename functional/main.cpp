@@ -14,6 +14,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
+#if defined(__linux__)
+int rocketnet_posix_hard_killed_child_main( const char * host, int port );
+int rocketnet_xdp_hard_killed_child_main( const char * server_address );
+#endif
+
 int rocketnet_functional_test_count();
 const char * rocketnet_functional_test_name( int index );
 void rocketnet_functional_prepare();
@@ -63,16 +72,38 @@ static int rocketnet_functional_worker( const char * name )
     return result;
 }
 
+#if defined(__APPLE__)
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 int rocketnet_posix_hard_killed_peer_test_group( const char * name );
+#endif
 
 int main( int argc, char ** argv )
 {
+#if defined(__APPLE__)
     // the child client of the hard-killed peer cases
     // (functional/posix_hard_killed_peer.cpp), started by posix_spawn and
     // ended by the case with SIGKILL
     if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
         return rocketnet_posix_hard_killed_child_main( argc, argv );
+
+    // give the transport cells an absolute path so posix_spawn does not
+    // depend on the caller's working directory
+    {
+        char self_path[4096];
+        uint32_t self_size = (uint32_t) sizeof(self_path);
+        if ( _NSGetExecutablePath( self_path, &self_size ) == 0 )
+            setenv( "ROCKETNET_FUNCTIONAL_SELF", self_path, 1 );
+    }
+#elif defined(__linux__)
+    // the hard-killed-peer case starts this same binary as its child; give it
+    // an absolute path so posix_spawn does not depend on the caller's cwd.
+    if ( argc >= 4 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
+        return rocketnet_posix_hard_killed_child_main( argv[2], atoi( argv[3] ) );
+    // the xdp hard-killed case starts this binary in the far namespace as the
+    // client it kills
+    if ( argc >= 3 && strcmp( argv[1], "--xdp-hard-killed-child" ) == 0 )
+        return rocketnet_xdp_hard_killed_child_main( argv[2] );
+#endif
 
 #if defined(_WIN32)
     static const suite_exec execs[] = {

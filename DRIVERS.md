@@ -34,6 +34,56 @@ and `rocketnet_server_uring_leaked_drivers` are internal driver helpers
 `rocketnet_server_required_memory` and the other server entry points in
 `sdk/rocketnet.h`.
 
+## ICMP errors
+
+A UDP peer that vanishes without a disconnect makes the stack return an ICMP
+port-unreachable; on a BSD socket this surfaces on a later receive as
+`ECONNREFUSED`, and `EHOSTUNREACH`, `ENETUNREACH`, `EHOSTDOWN` and `ENETDOWN`
+arrive the same way. The contract for every receive arm, portable `recvmsg`
+and the macOS batch `recvmsg_x`, is that these errors, plus `ENOBUFS`, are
+weather about one destination: the drain skips the error and keeps reading, so
+a datagram queued behind it is still delivered in the same call. Such an error
+is never fatal and never pauses the batch pump. `EAGAIN` and `EWOULDBLOCK` end
+the drain, `EINTR` retries, and only a genuinely unknown errno pauses `msgx`
+for `ROCKETNET_MSGX_RETRY_SECONDS` (one log line per pause). The sockets stay
+unconnected, so xnu has no connected-UDP control block to report the ICMP error
+against; the receive paths still hold the contract for a host or a future
+connected socket that does.
+
+On Linux an unconnected UDP socket is told of an ICMP error only when it sets
+`IP_RECVERR` or `IPV6_RECVERR`, and no rocketnet socket on Linux connects or
+sets either: the portable server and client sockets, each `gso` and
+`io_uring` queue socket, IPv4 and IPv6. The `xdp` transport takes raw frames
+from its AF_XDP ring, its program passes ICMP to the kernel, and its other
+kernel sockets are short-lived interface probes, so no ICMP report reaches a
+receive. The Linux receive arms hold the contract anyway, because a socket
+that did set the option would see the error once as a pending `SO_ERROR`,
+ahead of any queued datagram: portable `recvfrom`, the client `recvmmsg` pump
+and the `gso` worker's `recvmmsg` (both tiers) retry `EINTR`, skip
+`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EHOSTDOWN`, `ENETDOWN` and
+`ENOBUFS` (at most 64 a call) and keep draining; an `io_uring` multishot
+receive that ends with one of them is re-armed and reaped again in the same
+`receive_packets`, so the datagrams behind it land in that update. Each skip
+is counted by `rocketnet_platform_receive_weather_skipped`, which stays zero
+on a real host. With `IP_RECVERR` set the kernel hands the pending error to
+whichever call comes next, and a server that keeps sending to the dead peer
+usually takes it on `sendto`. `functional/posix_hard_killed_peer.cpp` proves
+this on Linux for portable, `gso`, `gso` with GSO and GRO off, and `io_uring`,
+IPv4 and IPv6: `posix_hard_killed_client` (a child client ended by `SIGKILL`),
+`posix_send_to_closed_port` and `posix_client_server_gone` assert exact live
+counts and a zero skip count, and `posix_hard_killed_receive_errno_seam`
+injects each errno into `recvfrom`, `recvmmsg` and the `io_uring` receive CQE. The `xdp`
+cell is `xdp_hard_killed_client_ipv4` and `_ipv6`
+(`functional/rocketnet_functional_tests.cpp:7720`), run as root in a
+virtme-ng guest the way `xdp_max_size_both_ways` runs: the server on `xdp` at
+the near end of a veth pair and portable clients in the far namespace. Two
+clients send before the server exists and meet ICMP port unreachable, then
+connect; a third is a child process ended by `SIGKILL`; the server keeps
+sending to its closed port while 200 payloads cross each way. Every live
+payload arrives, the server stays on `xdp`, both namespaces' ICMP
+destination-unreachable counters prove the errors were sent, and the skip
+count stays zero.
+
 ## Server capabilities and ownership
 
 Two I/O shapes preserve the existing implementations:

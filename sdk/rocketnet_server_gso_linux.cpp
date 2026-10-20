@@ -201,6 +201,11 @@ struct rocketnet_server_gso_t
     // the test seam: the next recvmmsg calls on any worker, and the next
     // sendmmsg calls of a flush, answer -1 with the given errno without
     // reaching the kernel
+    std::atomic<bool> test_hold_receive{false};
+    std::atomic<bool> test_receive_held{false};
+    std::atomic<uint64_t> test_receive_pass{0};
+    std::atomic<uint64_t> test_error_pass{0};
+    std::atomic<uint64_t> test_data_pass{0};
     std::atomic<int> test_fail_receives{0};
     std::atomic<int> test_fail_receive_error{0};
     int test_fail_sends;
@@ -218,6 +223,22 @@ static std::atomic<int> rocketnet_server_gso_test_create_flags{0};
 void rocketnet_server_gso_test_force_create_flags( int flags )
 {
     rocketnet_server_gso_test_create_flags.store( flags );
+}
+
+void rocketnet_server_gso_test_hold_receive( struct rocketnet_server_gso_t * gso, bool hold )
+{
+    gso->test_hold_receive.store( hold );
+}
+
+bool rocketnet_server_gso_test_receive_held( struct rocketnet_server_gso_t * gso )
+{
+    return gso->test_receive_held.load();
+}
+
+void rocketnet_server_gso_test_receive_passes( struct rocketnet_server_gso_t * gso, uint64_t * error_pass, uint64_t * data_pass )
+{
+    *error_pass = gso->test_error_pass.load();
+    *data_pass = gso->test_data_pass.load();
 }
 
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error )
@@ -450,6 +471,10 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 // thread's flip lands only between passes and then drains the other buffer
 // with no lock held.
 
+// a pass skips at most this many receive errors, so an error that repeats
+// on every call can never hold the receive mutex
+#define ROCKETNET_GSO_RECV_WEATHER_SKIP_LIMIT 64
+
 static void rocketnet_server_gso_worker( void * data )
 {
     struct rocketnet_server_gso_queue_t * queue = (struct rocketnet_server_gso_queue_t*) data;
@@ -466,11 +491,24 @@ static void rocketnet_server_gso_worker( void * data )
 
         poll( fds, 1, 1 );
 
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+        if ( queue->gso->test_hold_receive.load() )
+        {
+            queue->gso->test_receive_held.store( true );
+            while ( queue->gso->test_hold_receive.load() && !queue->quit.load() )
+                rocketnet_platform_sleep( 0.001 );
+            queue->gso->test_receive_held.store( false );
+        }
+        const uint64_t test_pass = queue->gso->test_receive_pass.fetch_add( 1 ) + 1;
+#endif
+
         rocketnet_platform_mutex_acquire( &queue->receive_mutex );
 
         const int on_index = (int) ( queue->receive_counter % 2 );
 
         struct rocketnet_server_gso_recv_buffer_t * buffer = &queue->buffers[on_index];
+
+        int weather_skipped = 0;
 
         while ( buffer->num_packets < ROCKETNET_GSO_RECV_QUEUE_SIZE )
         {
@@ -488,16 +526,30 @@ static void rocketnet_server_gso_worker( void * data )
             }
 
             int count;
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
-            int pending = queue->gso->test_fail_receives.load();
-            if ( pending > 0 && queue->gso->test_fail_receives.compare_exchange_strong( pending, pending - 1 ) )
+#if ROCKETNET_DEVELOPMENT
+            const int injected = rocketnet_platform_take_recvmmsg_error_for_testing();
+            if ( injected != 0 )
             {
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+                queue->gso->test_error_pass.store( test_pass );
+#endif
+                errno = injected;
                 count = -1;
-                errno = queue->gso->test_fail_receive_error.load();
             }
             else
+#endif // #if ROCKETNET_DEVELOPMENT
+            {
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+                int pending = queue->gso->test_fail_receives.load();
+                if ( pending > 0 && queue->gso->test_fail_receives.compare_exchange_strong( pending, pending - 1 ) )
+                {
+                    count = -1;
+                    errno = queue->gso->test_fail_receive_error.load();
+                }
+                else
 #endif
-            count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
+                count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
+            }
 
             // every recvmmsg counts, empty ones included -- an instrument
             // that hides the misses cannot argue the syscall win. the 1ms
@@ -505,12 +557,43 @@ static void rocketnet_server_gso_worker( void * data )
             // heartbeat, not the receive path.
 
             buffer->syscalls++;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            if ( count > 0 && queue->gso->test_error_pass.load() != 0 )
+            {
+                uint64_t empty = 0;
+                queue->gso->test_data_pass.compare_exchange_strong( empty, test_pass );
+            }
+#endif
 
-            // a failed call other than an empty socket is counted; the
-            // worker goes back to poll and tries again
+
+            // a failed call other than an empty socket is counted. an EINTR
+            // or a weather errno is then skipped and the drain goes on (the
+            // block below); any other ends the pass and the worker goes
+            // back to poll and tries again (the break below it)
 
             if ( count < 0 && errno != EAGAIN && errno != EWOULDBLOCK )
                 buffer->receive_errors++;
+
+            if ( count < 0 && weather_skipped < ROCKETNET_GSO_RECV_WEATHER_SKIP_LIMIT )
+            {
+                // EINTR retries; an ICMP-class or buffer error (a pending
+                // SO_ERROR recvmmsg returns once, ahead of the queued
+                // datagrams) is about one destination, not this socket:
+                // count it, skip it and keep draining this pass. ending the
+                // pass here would leave the datagrams behind it queued.
+                const int error = errno;
+                if ( error == EINTR )
+                {
+                    weather_skipped++;
+                    continue;
+                }
+                if ( rocketnet_platform_receive_error_is_weather( error ) )
+                {
+                    weather_skipped++;
+                    rocketnet_platform_count_receive_weather();
+                    continue;
+                }
+            }
 
             if ( count <= 0 )
                 break;
