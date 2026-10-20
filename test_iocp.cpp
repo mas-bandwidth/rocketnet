@@ -988,7 +988,7 @@ static void test_rio_completion_queue_full()
 // send is counted on the socket and logged with the Winsock error.
 
 // a raw socket that asks to share the port with SO_REUSEADDR, as another
-// local process would; true when Windows lets it bind
+// local process would, on the address given; true when Windows lets it bind
 static bool port_thief_binds( const rocketnet_address_t * owner, SOCKET * thief )
 {
     *thief = socket( owner->type == ROCKETNET_ADDRESS_IPV6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
@@ -1047,11 +1047,14 @@ static int port_thief_steals( const rocketnet_address_t * owner, SOCKET thief )
     return stolen;
 }
 
-// the owner's port refuses a second bind with SO_REUSEADDR: portable, IOCP
-// and RIO, IPv4 and dual-stack IPv6
+// a server bound to the wildcard address owns its port: a second socket
+// that binds the more specific loopback address on that port with
+// SO_REUSEADDR would take every datagram sent there, and is refused.
+// Portable, IOCP and RIO; IPv4 and dual-stack IPv6.
 static void test_windows_port_exclusive()
 {
-    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    const char * binds[] = { "0.0.0.0:0", "[::]:0" };
+    const char * targets[] = { "127.0.0.1:0", "[::1]:0" };
     const char * drivers[] = { "portable", "iocp", "rio" };
     for ( int b = 0; b < 2; ++b )
     {
@@ -1065,11 +1068,13 @@ static void test_windows_port_exclusive()
             if ( d == 1 ) { iocp = rocketnet_server_iocp_create(NULL, &owner, 1); CHECK(iocp); }
             if ( d == 2 ) { rio = rocketnet_server_rio_create(NULL, &owner); CHECK(rio); }
             CHECK(owner.port != 0);
+            rocketnet_address_t target = address(targets[b]);
+            target.port = owner.port;
             SOCKET thief;
-            const bool bound = port_thief_binds(&owner, &thief);
-            const int stolen = bound ? port_thief_steals(&owner, thief) : 0;
-            printf("  %s %s port %d: second bind with SO_REUSEADDR %s, %d of 8 datagrams stolen\n", drivers[d], binds[b],
-                owner.port, bound ? "ACCEPTED" : "refused", stolen);
+            const bool bound = port_thief_binds(&target, &thief);
+            const int stolen = bound ? port_thief_steals(&target, thief) : 0;
+            printf("  %s %s port %d: second bind of %s with SO_REUSEADDR %s, %d of 8 datagrams stolen\n", drivers[d], binds[b],
+                owner.port, targets[b], bound ? "ACCEPTED" : "refused", stolen);
             closesocket(thief);
             if ( portable ) rocketnet_platform_socket_destroy(portable);
             if ( iocp ) { wait_stopped(iocp); rocketnet_server_iocp_destroy(iocp); }
