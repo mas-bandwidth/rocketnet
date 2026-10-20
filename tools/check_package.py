@@ -53,7 +53,8 @@ def main():
                    # which does not exist in this independently installed Debug prefix.
                    f"-DCMAKE_CONFIGURATION_TYPES={args.config}",
                    "-G", cache["CMAKE_GENERATOR"]]
-        for key in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_GENERATOR_TOOLSET"):
+        for key in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_OSX_ARCHITECTURES", "CMAKE_OSX_DEPLOYMENT_TARGET",
+                    "CMAKE_GENERATOR_PLATFORM", "CMAKE_GENERATOR_TOOLSET"):
             if cache.get(key):
                 command.append(f"-D{key}={cache[key]}")
         run(*command)

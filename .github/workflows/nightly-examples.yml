@@ -110,6 +110,26 @@ jobs:
       - name: Run the examples
         run: python3 tools/run_examples.py --build build
 
+      - name: Build universal and run the x86_64 slice under Rosetta 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            echo "TOOL-MISSING Rosetta 2 (x86_64 translation) (arch -x86_64 refused) on $RUNNER_NAME"
+            exit 1
+          fi
+          cmake -S . -B build-universal \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-universal --config Release --parallel 4
+          lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
+          arch -x86_64 ./bin/test
+          arch -x86_64 ./bin/test_lifecycle
+          env ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
+            arch -x86_64 ./bin/functional
+          env ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx \
+            arch -x86_64 ./bin/functional
+
   examples-windows:
     name: windows-2025
     # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine

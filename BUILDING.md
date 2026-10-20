@@ -60,6 +60,34 @@ Dependencies, per platform, as CI installs them:
     # macOS
     brew install cmake
 
+The macOS default build is the host's native slice. `CMakeLists.txt` sets
+`CMAKE_OSX_DEPLOYMENT_TARGET` to 11.0 when the caller does not: 11.0 is the
+first macOS release on Apple silicon, so it is the lowest target both slices
+of a universal library can share. Override it with `-D` for another minimum.
+To build a universal (arm64 and x86_64) library and the suites:
+
+    cmake -B build-universal -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-universal --parallel 4
+    lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
+
+Both `lipo -info` lines name `x86_64 arm64`. CMake compiles each architecture
+as its own clang invocation, so the vendored sodium builds its x86 asm into
+the x86_64 slice and its ARM path into the arm64 slice; the XDP archive is
+embedded once with the host `xxd` and the generated header is
+architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
+the compiler-flag check drops it for a fat compile while the stack protector
+and the other Release flags stay on both slices.
+
+The Xcode generator needs Xcode installed and selected; the Command Line
+Tools alone have no `xcodebuild`, so `xcode-select -p` must name Xcode.app:
+
+    cmake -B build-xcode -G Xcode
+    cmake --build build-xcode --config Release --parallel 4
+    ./bin/Release/test
+
+A multi-config generator writes the executables and libraries under
+`bin/Release/` (`CMakeLists.txt`, `CMAKE_RUNTIME_OUTPUT_DIRECTORY`).
+
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
 
