@@ -17,14 +17,15 @@
     user's RLIMIT_MEMLOCK account. The Linux cells keep the heap with mmap
     off and trimming off (posix_heap_keep below), so the umem is served from
     the heap and the address space stays mapped after its free; the free
-    shows only in the heap's bytes in use. The count is glibc's bytes in use (mallinfo2 uordblks plus
-    hblkhd) divided by one umem's bytes: zero outside an xdp server's life,
-    one more for every umem a server holds or leaks. The xdp server create
-    case checks that a live server moves it by at least one.
+    shows only in the heap's bytes in use. The count is glibc's bytes in use
+    (mallinfo2 uordblks plus hblkhd) divided by one umem's bytes: zero
+    outside an xdp server's life, and one more for every leaked umem. A live
+    server (its umems and the rest of its memory) moves it by at least one,
+    which the xdp server create case checks.
 
-    The cases share one shape: a resource is created and
-    destroyed repeatedly in a cell (server transport, client transport or
-    both), and the process must end the cell exactly as it started it.
+    The cases share one shape: a resource is created and destroyed
+    repeatedly in a cell (server transport, client transport or both), and
+    the process must end the cell exactly as it started it.
 
     On Linux the server cells are portable, gso, io_uring and xdp, each with
     the portable client. io_uring is a named skip on a kernel whose
