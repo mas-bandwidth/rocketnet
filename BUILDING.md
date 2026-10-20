@@ -46,6 +46,10 @@ slowest as a table. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
+The functional-only sibling binaries are `test_serialize` (a real clock and
+`rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
+`usleep`), `test_driver`, `test_transport_control`, `test_lifecycle`,
+`test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and
