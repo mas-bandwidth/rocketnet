@@ -129,7 +129,10 @@ the configuration to them, so its executables and libraries land in
 working directory, then by the bare names (`sdk/rocketnet_tests.cpp:14671-14673`,
 `test_unit_api_polish.cpp:154-158`, `test_unit_connect_token_vectors.cpp:644-648`);
 `DYLD_LIBRARY_PATH` is where `dlopen` looks for a bare name, so it points
-those lookups at `bin/Release/`.
+those lookups at `bin/Release/`. Set it on the suite's own command line:
+macOS drops `DYLD_` variables when it launches a system binary such as
+`/bin/bash` or `/usr/bin/nice`, so a wrapper script in between loses it, and
+`env DYLD_LIBRARY_PATH=bin/Release ./bin/Release/test` keeps it.
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
