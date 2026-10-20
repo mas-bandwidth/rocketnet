@@ -9,7 +9,7 @@
 #define ROCKETNET_FRAME_SYNC_H
 
 #include <stdint.h>
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 
 // The frame sync primitive, built to the issue #56 measurements: an absolute

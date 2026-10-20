@@ -5,14 +5,14 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-// The GSO transport driver (#97). See rocketnet_server_gso.h for the shape
+// The GSO transport transport (#97). See rocketnet_server_gso.h for the shape
 // and the framing; this file is the machinery.
 //
-// The receive side is the XDP driver's pattern on portable primitives: one
+// The receive side is the XDP transport's pattern on portable primitives: one
 // socket per queue in an SO_REUSEPORT group, one worker thread per socket,
 // each worker draining its own socket with recvmmsg into its own double
 // buffer -- zero shared state between queues -- and the main thread flipping
@@ -67,7 +67,7 @@
 #endif
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing,
-// exactly as in the xdp driver: each field between walls is touched by a
+// exactly as in the xdp transport: each field between walls is touched by a
 // different thread, and without the walls those fields would share cache
 // lines. Nothing goes wrong if you remove them -- it just gets slow.
 
@@ -106,10 +106,13 @@ struct rocketnet_server_gso_recv_buffer_t
 
     uint32_t num_packets;
     uint64_t dropped_size;
+    uint64_t dropped_too_large;     // the part of dropped_size above the receive ceiling or truncated
     uint64_t dropped_overflow;
     uint64_t dropped_source;
     uint64_t gro_batches;
+    uint64_t gro_cmsg_faults;                   // a GRO cmsg this worker refused
     uint64_t syscalls;
+    uint64_t receive_errors;
     rocketnet_address_t from[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     int packet_bytes[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     alignas(16) uint8_t packet_data[ROCKETNET_GSO_RECV_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
@@ -174,7 +177,7 @@ struct rocketnet_server_gso_t
     // main-thread flush scratch: sendmmsg headers, gather iovecs (up to a
     // full super-datagram per message), destinations and segment cmsgs
 
-    struct mmsghdr send_messages[ROCKETNET_GSO_SEND_BATCH];
+    struct mmsghdr send_headers[ROCKETNET_GSO_SEND_BATCH];
     struct iovec send_iovecs[ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS];
     struct sockaddr_storage send_names[ROCKETNET_GSO_SEND_BATCH];
     char send_controls[ROCKETNET_GSO_SEND_BATCH][CMSG_SPACE(sizeof(uint16_t))];
@@ -189,12 +192,53 @@ struct rocketnet_server_gso_t
     uint64_t counter_packets_received;
     uint64_t counter_receive_syscalls;
     uint64_t counter_receive_dropped_size;
+    uint64_t counter_receive_dropped_too_large;
     uint64_t counter_receive_dropped_overflow;
     uint64_t counter_receive_dropped_source;
+    uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
+    uint64_t counter_gro_cmsg_faults;           // folded from the receive buffers; not a public counter
 
     struct rocketnet_server_socket_process_packets_t process_packets;
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    // the test seam: the next recvmmsg calls on any worker, and the next
+    // sendmmsg calls of a flush, answer -1 with the given errno without
+    // reaching the kernel
+    std::atomic<int> test_fail_receives{0};
+    std::atomic<int> test_fail_receive_error{0};
+    int test_fail_sends;
+    int test_fail_send_error;
+#endif
 };
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+
+// development library only: the create flags every following create ORs in,
+// so a transport-level case can force the plain tiers
+
+static std::atomic<int> rocketnet_server_gso_test_create_flags{0};
+
+void rocketnet_server_gso_test_force_create_flags( int flags )
+{
+    rocketnet_server_gso_test_create_flags.store( flags );
+}
+
+void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error )
+{
+    rocketnet_assert( gso );
+    gso->test_fail_receive_error.store( error );
+    gso->test_fail_receives.store( count > 0 ? count : 0 );
+}
+
+void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error )
+{
+    rocketnet_assert( gso );
+    gso->test_fail_send_error = error;
+    gso->test_fail_sends = count > 0 ? count : 0;
+}
+
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
 // ---------------------------------------------------------------------------
 
@@ -229,14 +273,7 @@ static socklen_t rocketnet_server_gso_address_to_sockaddr( const rocketnet_addre
         if ( to.type != ROCKETNET_ADDRESS_IPV4 )
             return 0;
 
-        struct sockaddr_in * addr = (struct sockaddr_in*) out;
-        memset( addr, 0, sizeof(struct sockaddr_in) );
-        addr->sin_family = AF_INET;
-        addr->sin_addr.s_addr = ( ( (uint32_t) to.data.ipv4[0] ) )       |
-                                ( ( (uint32_t) to.data.ipv4[1] ) << 8 )  |
-                                ( ( (uint32_t) to.data.ipv4[2] ) << 16 ) |
-                                ( ( (uint32_t) to.data.ipv4[3] ) << 24 );
-        addr->sin_port = rocketnet_platform_htons( to.port );
+        rocketnet_platform_address_to_sockaddr_in( &to, (struct sockaddr_in*) out );
         return sizeof(struct sockaddr_in);
     }
 }
@@ -261,13 +298,7 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
     }
     else if ( input->ss_family == AF_INET )
     {
-        const struct sockaddr_in * addr = (const struct sockaddr_in*) input;
-        out->type = ROCKETNET_ADDRESS_IPV4;
-        out->data.ipv4[0] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x000000FF ) );
-        out->data.ipv4[1] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x0000FF00 ) >> 8 );
-        out->data.ipv4[2] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x00FF0000 ) >> 16 );
-        out->data.ipv4[3] = (uint8_t) ( ( addr->sin_addr.s_addr & 0xFF000000 ) >> 24 );
-        out->port = rocketnet_platform_ntohs( addr->sin_port );
+        rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in*) input, out );
         return true;
     }
 
@@ -289,14 +320,14 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
     int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     if ( fd < 0 )
     {
-        rocketnet_error( "gso driver: failed to create socket: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to create socket: %s", strerror( errno ) );
         return -1;
     }
 
     int one = 1;
     if ( setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
     {
-        rocketnet_error( "gso driver: failed to set SO_REUSEPORT: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -306,7 +337,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         int zero = 0;
         if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero) ) != 0 )
         {
-            rocketnet_error( "gso driver: failed to clear socket ipv6 only: %s", strerror( errno ) );
+            rocketnet_error( "gso transport: failed to clear socket ipv6 only: %s", strerror( errno ) );
             close( fd );
             return -1;
         }
@@ -323,14 +354,14 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(int) ) != 0 )
     {
-        rocketnet_error( "gso driver: failed to set socket send buffer size: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to set socket send buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
     if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof(int) ) != 0 )
     {
-        rocketnet_error( "gso driver: failed to set socket receive buffer size: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to set socket receive buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -348,12 +379,12 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
     {
         if ( granted_send < send_buffer_size || granted_receive < receive_buffer_size )
         {
-            rocketnet_warn( "gso driver: socket buffers granted below request: send %d/%d receive %d/%d (raise net.core.wmem_max/rmem_max)",
+            rocketnet_warn( "gso transport: socket buffers granted below request: send %d/%d receive %d/%d (raise net.core.wmem_max/rmem_max)",
                             granted_send, send_buffer_size, granted_receive, receive_buffer_size );
         }
         else
         {
-            rocketnet_info( "gso driver: socket buffers granted: send %d receive %d", granted_send, granted_receive );
+            rocketnet_info( "gso transport: socket buffers granted: send %d receive %d", granted_send, granted_receive );
         }
     }
 
@@ -369,7 +400,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
     if ( socklen == 0 || bind( fd, (struct sockaddr*) &sockaddr, socklen ) < 0 )
     {
-        rocketnet_error( "gso driver: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -380,14 +411,14 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         socklen_t bound_length = sizeof(bound);
         if ( getsockname( fd, (struct sockaddr*) &bound, &bound_length ) != 0 )
         {
-            rocketnet_error( "gso driver: failed to get bound socket port: %s", strerror( errno ) );
+            rocketnet_error( "gso transport: failed to get bound socket port: %s", strerror( errno ) );
             close( fd );
             return -1;
         }
         rocketnet_address_t bound_address;
         if ( !rocketnet_server_gso_sockaddr_to_address( &bound, ipv6, &bound_address ) )
         {
-            rocketnet_error( "gso driver: could not read bound socket address" );
+            rocketnet_error( "gso transport: could not read bound socket address" );
             close( fd );
             return -1;
         }
@@ -396,7 +427,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
     if ( fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == -1 )
     {
-        rocketnet_error( "gso driver: failed to set socket non-blocking: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to set socket non-blocking: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -422,6 +453,43 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 // the mutex is held across the whole fill pass, the xdp pattern: the main
 // thread's flip lands only between passes and then drains the other buffer
 // with no lock held.
+
+// The GRO stride of one recvmmsg message. A truncated control buffer, or a
+// UDP_GRO cmsg whose length does not hold an int, is one fault and the
+// message is one datagram. No socket: the caller passes the message header.
+int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_bytes, uint64_t * faults )
+{
+    int segment_bytes = message_bytes;
+    if ( !header )
+        return segment_bytes;
+    if ( header->msg_flags & MSG_CTRUNC )
+    {
+        if ( faults )
+            *faults += 1;
+        return message_bytes;
+    }
+    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg != NULL; cmsg = CMSG_NXTHDR( header, cmsg ) )
+    {
+        if ( cmsg->cmsg_len < sizeof( struct cmsghdr ) )
+        {
+            if ( faults )
+                *faults += 1;
+            return message_bytes;
+        }
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
+        {
+            if ( cmsg->cmsg_len < CMSG_LEN( sizeof( int ) ) )
+            {
+                if ( faults )
+                    *faults += 1;
+                return message_bytes;
+            }
+            memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof( segment_bytes ) );
+            break;
+        }
+    }
+    return segment_bytes;
+}
 
 static void rocketnet_server_gso_worker( void * data )
 {
@@ -460,7 +528,17 @@ static void rocketnet_server_gso_worker( void * data )
                 queue->messages[i].msg_hdr.msg_controllen = sizeof(queue->controls[i]);
             }
 
-            int count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
+            int count;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            int pending = queue->gso->test_fail_receives.load();
+            if ( pending > 0 && queue->gso->test_fail_receives.compare_exchange_strong( pending, pending - 1 ) )
+            {
+                count = -1;
+                errno = queue->gso->test_fail_receive_error.load();
+            }
+            else
+#endif
+            count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
 
             // every recvmmsg counts, empty ones included -- an instrument
             // that hides the misses cannot argue the syscall win. the 1ms
@@ -469,7 +547,26 @@ static void rocketnet_server_gso_worker( void * data )
 
             buffer->syscalls++;
 
-            if ( count <= 0 )
+            // a failed call other than an empty socket is counted; the
+            // worker goes back to poll and tries again. an interrupted call
+            // (EINTR) is retried without counting as an error.
+
+            if ( count < 0 )
+            {
+                if ( errno == EINTR )
+                {
+                    if ( queue->quit.load( std::memory_order_relaxed ) )
+                        break;
+                    continue;
+                }
+
+                if ( errno != EAGAIN && errno != EWOULDBLOCK )
+                    buffer->receive_errors++;
+
+                break;
+            }
+
+            if ( count == 0 )
                 break;
 
             for ( int i = 0; i < count; i++ )
@@ -485,6 +582,16 @@ static void rocketnet_server_gso_worker( void * data )
                 if ( queue->messages[i].msg_hdr.msg_flags & MSG_TRUNC )
                 {
                     buffer->dropped_size++;
+                    buffer->dropped_too_large++;
+                    continue;
+                }
+
+                // a zero-length datagram is below the smallest packet a
+                // server reads: the size pass counts it, as io_uring's does
+
+                if ( message_bytes == 0 )
+                {
+                    buffer->dropped_size++;
                     continue;
                 }
 
@@ -497,18 +604,13 @@ static void rocketnet_server_gso_worker( void * data )
                     continue;
                 }
 
-                // the GRO segment stride: absent, the message is one
-                // datagram and the stride is its whole length
+                // the GRO stride. a truncated control buffer, or a UDP_GRO
+                // cmsg that does not hold an int, is one fault and the
+                // message is one datagram.
 
-                int segment_bytes = message_bytes;
-                for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( &queue->messages[i].msg_hdr ); cmsg; cmsg = CMSG_NXTHDR( &queue->messages[i].msg_hdr, cmsg ) )
-                {
-                    if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
-                    {
-                        memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
-                        break;
-                    }
-                }
+                uint64_t gro_faults = 0;
+                int segment_bytes = rocketnet_server_gso_gro_segment_bytes( &queue->messages[i].msg_hdr, message_bytes, &gro_faults );
+                buffer->gro_cmsg_faults += gro_faults;
                 if ( segment_bytes <= 0 )
                     segment_bytes = message_bytes;
 
@@ -520,13 +622,15 @@ static void rocketnet_server_gso_worker( void * data )
                     const int remaining = message_bytes - offset;
                     const int this_segment = remaining < segment_bytes ? remaining : segment_bytes;
 
-                    // the same cheap pass every driver makes before staging:
+                    // the same cheap pass every transport makes before staging:
                     // below the smallest packet a server reads, or above the
                     // receive ceiling, never reaches the protocol
 
                     if ( this_segment < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || this_segment > ROCKETNET_RECEIVE_CEILING )
                     {
                         buffer->dropped_size++;
+                        if ( this_segment > ROCKETNET_RECEIVE_CEILING )
+                            buffer->dropped_too_large++;
                         continue;
                     }
 
@@ -565,6 +669,18 @@ uint64_t rocketnet_server_gso_allocation_bytes(int queues)
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
 {
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    flags |= rocketnet_server_gso_test_create_flags.load();
+
+    // development library only: ROCKETNET_TEST_GSO_PLAIN=1 forces the plain
+    // tiers (plain sendmmsg, plain recvmmsg) for a whole process, so a tool
+    // such as load pins the gso plain cell without calling the hook above
+
+    const char * test_plain = rocketnet_platform_getenv( "ROCKETNET_TEST_GSO_PLAIN" );
+    if ( test_plain && strcmp( test_plain, "1" ) == 0 )
+        flags |= ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO;
+#endif
+
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
 
@@ -572,12 +688,12 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         num_queues = ROCKETNET_GSO_DEFAULT_QUEUES;
 
     // refuse, never clamp (#106's validation law): a queue count past this
-    // driver's geometry is a configuration error named here, not a silently
+    // transport's geometry is a configuration error named here, not a silently
     // different server
 
     if ( num_queues > ROCKETNET_GSO_MAX_QUEUES )
     {
-        rocketnet_error( "gso driver num_queues %d is out of range (1 to %d)", num_queues, ROCKETNET_GSO_MAX_QUEUES );
+        rocketnet_error( "gso transport num_queues %d is out of range (1 to %d)", num_queues, ROCKETNET_GSO_MAX_QUEUES );
         return NULL;
     }
 
@@ -633,7 +749,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->features |= ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT;
 
     // the runtime probes, each a real setsockopt against a real socket in
-    // the group -- the #81 probe's checks as the driver's own selection
+    // the group -- the #81 probe's checks as the transport's own selection
     // inputs. failure is a tier, not an error.
 
     if ( ( flags & ROCKETNET_SERVER_GSO_DISABLE_SEGMENT ) == 0 )
@@ -684,7 +800,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         }
     }
 
-    rocketnet_info( "gso driver: %d queue reuseport group on port %d, UDP_SEGMENT %s, UDP_GRO %s",
+    rocketnet_info( "gso transport: %d queue reuseport group on port %d, UDP_SEGMENT %s, UDP_GRO %s",
                     num_queues, bound_port,
                     ( gso->features & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) ? "yes" : "no (plain sendmmsg)",
                     ( gso->features & ROCKETNET_SERVER_GSO_FEATURE_GRO ) ? "yes" : "no (plain recvmmsg)" );
@@ -790,6 +906,20 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW] = gso->counter_receive_dropped_overflow;
     counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
+    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
+}
+
+// the builtin transport's receive_drops hook: the size
+// pass's drops (sdk/rocketnet_server_gso_linux.cpp:532-586), split at the receive
+// ceiling; main thread, as the fold into these totals is (:1209-1210)
+
+void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( too_short );
+    rocketnet_assert( too_large );
+    *too_large = gso->counter_receive_dropped_too_large;
+    *too_short = gso->counter_receive_dropped_size - gso->counter_receive_dropped_too_large;
 }
 
 // ---------------------------------------------------------------------------
@@ -806,13 +936,13 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
 
     const int slot = gso->send.num_packets.fetch_add( 1, std::memory_order_relaxed );
 
-    // the same lower bound the xdp driver learned to check: an app that
+    // the same lower bound the xdp transport learned to check: an app that
     // stages forever without flushing wraps the counter negative, and a
     // negative index is an out-of-bounds write, not a dropped packet
 
     if ( slot >= ROCKETNET_GSO_SEND_QUEUE_SIZE || slot < 0 )
     {
-        rocketnet_spam( "gso driver send staging full. packet dropped" );
+        rocketnet_spam( "gso transport send staging full. packet dropped" );
         return NULL;
     }
 
@@ -942,7 +1072,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
 
             // one message for the run
 
-            struct mmsghdr * message = &gso->send_messages[num_messages];
+            struct mmsghdr * message = &gso->send_headers[num_messages];
             struct msghdr * hdr = &message->msg_hdr;
             memset( hdr, 0, sizeof(struct msghdr) );
 
@@ -1004,9 +1134,9 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
         // socket shares the same bound address and port, so replies carry
         // the same 4-tuple whichever socket sent them, and the group's send
         // buffer headroom adds up instead of funneling through one socket.
-        // the deeper TX property the xdp driver has -- per-queue sender
+        // the deeper TX property the xdp transport has -- per-queue sender
         // threads -- is deliberately not reproduced here: transmit is
-        // main-thread by the phase contract, and this driver is the middle
+        // main-thread by the phase contract, and this transport is the middle
         // tier, not parity.
 
         const int fd = gso->queues[gso->send_rotation++ % (uint64_t) gso->num_queues].fd;
@@ -1014,7 +1144,17 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
         int sent = 0;
         while ( sent < num_messages )
         {
-            int result = sendmmsg( fd, &gso->send_messages[sent], (unsigned int) ( num_messages - sent ), 0 );
+            int result;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            if ( gso->test_fail_sends > 0 )
+            {
+                gso->test_fail_sends--;
+                result = -1;
+                errno = gso->test_fail_send_error;
+            }
+            else
+#endif
+            result = sendmmsg( fd, &gso->send_headers[sent], (unsigned int) ( num_messages - sent ), 0 );
 
             if ( result > 0 )
             {
@@ -1041,7 +1181,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
                 // this message's first slot as plain packets -- degradation
                 // is lossless, not a dropped batch.
 
-                rocketnet_warn( "gso driver: live GSO send refused (%s). degrading to plain sendmmsg", strerror( errno ) );
+                rocketnet_warn( "gso transport: live GSO send refused (%s). degrading to plain sendmmsg", strerror( errno ) );
                 *disable_gso = true;
                 return message_first_slot[sent];
             }
@@ -1053,7 +1193,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
             for ( int i = sent; i < num_messages; i++ )
                 gso->counter_send_dropped += (uint64_t) message_num_packets[i];
 
-            rocketnet_spam( "gso driver sendmmsg refused: %s. %d messages dropped", strerror( errno ), num_messages - sent );
+            rocketnet_spam( "gso transport sendmmsg refused: %s. %d messages dropped", strerror( errno ), num_messages - sent );
 
             sent = num_messages;
         }
@@ -1114,19 +1254,25 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         gso->counter_packets_received += buffer->num_packets;
         gso->counter_receive_syscalls += buffer->syscalls;
         gso->counter_receive_dropped_size += buffer->dropped_size;
+        gso->counter_receive_dropped_too_large += buffer->dropped_too_large;
         gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
         gso->counter_receive_dropped_source += buffer->dropped_source;
+        gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
+        gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
         buffer->syscalls = 0;
+        buffer->receive_errors = 0;
         buffer->dropped_size = 0;
+        buffer->dropped_too_large = 0;
         buffer->dropped_overflow = 0;
         buffer->dropped_source = 0;
         buffer->gro_batches = 0;
+        buffer->gro_cmsg_faults = 0;
 
         for ( uint32_t i = 0; i < buffer->num_packets; i++ )
         {
             // bound by the process ARRAYS, never the queue depth -- the
-            // lesson the xdp driver's staging overflow taught is baked in
+            // lesson the xdp transport's staging overflow taught is baked in
             // here from day one
 
             if ( gso->process_packets.num_packets >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )

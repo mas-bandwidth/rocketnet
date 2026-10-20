@@ -8,6 +8,11 @@ test compiled out of a platform's build is named the moment it vanishes rather
 than silently shrinking the printed count. With the functional binary
 (bin/functional) it runs the suite the way its CI job does and asserts the
 same name-set equality against functional/'s registry.
+
+The witness, corpus and reassembly tests report the reversed rule or corpus
+they just exercised; those lines are their own record and are listed in
+KNOWN_DIAGNOSTIC_RE. Every other line of a passing run must be a test name or
+a named skip.
 """
 import os
 from pathlib import Path
@@ -18,13 +23,22 @@ import sys
 REPO = Path(__file__).resolve().parent.parent
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"(test_[a-z0-9_]+)"\s*,')
+# Registry rows name every functional test, including harness and client_io cases.
+TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,')
 REGISTER_RE = re.compile(r"REGISTER_UNIT_TEST(?:_EXPECTED_FAIL)?\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)")
 EXEC_TEST_NAME_RE = re.compile(r'"(test_[a-z0-9_]+)(?:\\n)?"')
 IF_RE = re.compile(r"^\s*#\s*if(?:def|ndef)?\b")
 ELIF_RE = re.compile(r"^\s*#\s*elif\b")
 ELSE_RE = re.compile(r"^\s*#\s*else\b")
 ENDIF_RE = re.compile(r"^\s*#\s*endif\b")
+KNOWN_DIAGNOSTIC_RE = re.compile(
+    r"^(?:"
+    r"wycheproof \S+ tcId [0-9]+ .*"
+    r"|pcapng (?:coverage|corpus|witness): .*"
+    r"|reassembly_[a-z0-9_]+(?: \([0-9]+ ahead\))?: "
+    r"[0-9]+ of [0-9]+ payloads delivered, FRAGMENT_STALE [0-9]+, abandoned [0-9]+"
+    r")$"
+)
 
 
 def _table_names(path):
@@ -67,14 +81,115 @@ def _table_names(path):
     return all_names, paired_names
 
 
+LINUX_GUARD_RE = re.compile(
+    r"^\s*#\s*if\s+(?:defined\s*\(\s*__linux__\s*\)|defined\s+__linux__|__linux__)\s*$"
+)
+RAW_STRING_START_RE = re.compile(r'(?:u8|u|U|L)?R"([^ ()\\\t\r\n]{0,16})\(')
+
+
+def _mask_comments_and_literals(text):
+    # Preserve line boundaries and hide comment/string contents before guard
+    # matching, so directive-looking examples cannot change source inventory.
+    output = list(text)
+
+    def blank(start, end):
+        for index in range(start, end):
+            if output[index] != "\n":
+                output[index] = " "
+
+    index = 0
+    length = len(text)
+    while index < length:
+        raw = RAW_STRING_START_RE.match(text, index)
+        if raw:
+            terminator = ")" + raw.group(1) + '"'
+            end = text.find(terminator, raw.end())
+            end = length if end < 0 else end + len(terminator)
+            blank(index, end)
+            index = end
+            continue
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            end = length if end < 0 else end
+            blank(index, end)
+            index = end
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            end = length if end < 0 else end + 2
+            blank(index, end)
+            index = end
+            continue
+        if text[index] in ("\"", "'"):
+            quote = text[index]
+            end = index + 1
+            while end < length:
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == quote:
+                    end += 1
+                    break
+                end += 1
+            blank(index, end)
+            index = end
+            continue
+        index += 1
+    return "".join(output)
+
+def _without_linux_guarded_blocks(text):
+    # Unit registrations inside __linux__ guards exist only in the Linux
+    # registry. Select that branch on Linux and its #else branch elsewhere;
+    # nested unrelated conditions remain conservatively inventoried in both
+    # branches, as they were before this platform-aware filtering.
+    is_linux = sys.platform.startswith("linux")
+    output = []
+    active = True
+    stack = []
+    source_lines = text.splitlines(keepends=True)
+    directive_lines = _mask_comments_and_literals(text).splitlines(keepends=True)
+    for line, directive_line in zip(source_lines, directive_lines):
+        if IF_RE.match(directive_line):
+            parent_active = active
+            if LINUX_GUARD_RE.match(directive_line):
+                stack.append(("linux", parent_active))
+                active = parent_active and is_linux
+                continue
+            stack.append(("other", parent_active))
+            if active:
+                output.append(line)
+            continue
+        if ELSE_RE.match(directive_line) or ELIF_RE.match(directive_line):
+            if stack and stack[-1][0] == "linux":
+                active = stack[-1][1] and not is_linux
+                continue
+            if active:
+                output.append(line)
+            continue
+        if ENDIF_RE.match(directive_line):
+            if stack:
+                kind, parent_active = stack.pop()
+                if kind == "linux":
+                    active = parent_active
+                    continue
+                active = parent_active
+            if active:
+                output.append(line)
+            continue
+        if active:
+            output.append(line)
+    return "".join(output)
+
+
 def _register_names(path):
-    names = set()
+    names = []
     try:
         text = path.read_text()
     except OSError:
         return names
+    text = _without_linux_guarded_blocks(text)
     for m in REGISTER_RE.finditer(text):
-        names.add(m.group(1))
+        names.append(m.group(1))
     return names
 
 
@@ -85,10 +200,23 @@ def registered_unit_names():
         a, p = _table_names(REPO.joinpath(*rel))
         all_names |= a
         paired_names |= p
+    # A REGISTER_UNIT_TEST name is unique: test.cpp runs a name from the sdk
+    # and channels tables before the unit-file registry, and the registry runs
+    # a name's first registration only (rocketnet_unit_file_find in
+    # test_unit_registry.h), so a repeated name never runs its later test.
+    # The registrar aborts on the first repeat; this names every one.
+    table_names = set(all_names)
+    seen = {}
+    duplicates = []
     for path in sorted(REPO.glob("test_unit_*.cpp")):
-        r = _register_names(path)
-        all_names |= r
-        paired_names |= r
+        for name in _register_names(path):
+            if name in seen or name in table_names:
+                duplicates.append("%s (%s, %s)" % (name, seen.get(name, "registry table"), path.name))
+            seen.setdefault(name, path.name)
+    if duplicates:
+        sys.exit("unit test names registered more than once: " + "; ".join(duplicates))
+    all_names |= set(seen)
+    paired_names |= set(seen)
     return all_names, paired_names
 
 
@@ -166,9 +294,10 @@ def main():
     env.pop("ROCKETNET_TEST_VERBOSE", None)
 
     if functional:
-        # the functional suite opens loopback sockets and walks the driver
+        # the functional suite opens loopback sockets and walks the transport
         # ladder; its CI job invokes it with the ambient environment (and any
-        # ROCKETNET_DRIVER pin) rather than the unit suite's hostile config.
+        # ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin) rather than the
+        # unit suite's hostile config.
         result = run_binary(binary, env, timeout=1200)
         lines = result.stdout.splitlines()
         printed = printed_names(lines)
@@ -194,14 +323,14 @@ def main():
                 sys.exit("functional suite failed: %s" % result.returncode)
         return
 
-    # Preserve any caller's explicit ROCKETNET_DRIVER pin. Other values exercise
-    # exact names, legacy aliases, an invalid key and a long value without ever
+    # Preserve any caller's explicit ROCKETNET_SERVER_TRANSPORT and
+    # ROCKETNET_CLIENT_TRANSPORT pins. Other values exercise
+    # exact names, older aliases, an invalid key and a long value without ever
     # printing their contents. The suite derives its cleanup list from the tables.
     env.update({
         "ROCKETNET_LOG_LEVEL": "4",
         "ROCKETNET_MAX_CLIENTS": "77",
         "ROCKETNET_NUM_REASSEMBLY_SLOTS": "3",
-        "ROCKETNET_SERVER_NUM_QUEUES": "invalid",
         "ROCKETNET_SERVER_NUM_OS_CPUS": "invalid",
         "ROCKETNET_SERVER_SECRET_KEY": "x" * 4096,
         "ROCKETNET_SERVER_PUBLIC_ADDRESS": "invalid",
@@ -213,7 +342,11 @@ def main():
     if result.returncode:
         sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
     lines = result.stdout.splitlines()
-    if not lines or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]+(?: [^\r\n]*\[SKIPPED[^\r\n]*\])?", line) for line in lines):
+    if not lines or any(
+        not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]+(?: [^\r\n]*\[SKIPPED[^\r\n]*\])?", line)
+        and not KNOWN_DIAGNOSTIC_RE.fullmatch(line)
+        for line in lines
+    ):
         sys.exit("Passing SDK suite emitted output other than test names or named skips")
     if "test_suite_environment" not in lines:
         sys.exit("SDK suite did not execute its environment restoration test")

@@ -18,8 +18,13 @@
 // and the arena of regions. The only allocator calls in this file are that
 // one allocation, in create, and destroy's matching free.
 //
-// Copies (R3): the payload is written once by the application, in place, into
-// its region record (start, finish). THE COPIES (a): each packet write copies
+// Copies (R3): a fitting unreliable message is written in place in the packet
+// buffer, with no copy between the message layer and the transport: start
+// takes the transport frame and hands out a pointer inside it, finish writes
+// the header and form byte around it and finishes that frame
+// (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla). Every other message is
+// written once by the application, in place, into its region record (start,
+// finish). THE COPIES (a): each packet write copies
 // the record into the transport frame start_packet returned
 // (rocketnet_message_writer_add, inside rn_ordered_write and
 // rn_packet_builder_write), because a reliable record must outlive the frame
@@ -31,16 +36,20 @@
 
 #include <string.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
+#include "rocketnet_config.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_endpoint.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
 #include "rocketnet_message_object.h"
+#include "rocketnet_connection_reset.h"
 #include "rocketnet_packet_builder.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_send_budget.h"
+#include "rocketnet_slots.h"
 
 // ---------------------------------------------------------------
 //                          sizing
@@ -96,15 +105,19 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
 
 uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server )
 {
-    (void) is_server;
     rocketnet_message_config_t defaults;
     if ( !config )
     {
         rocketnet_message_default_config( &defaults );
         config = &defaults;
     }
+    // Only this direction's resolved send budget sizes its connection region.
+    rocketnet_message_config_t sized = *config;
+    const int kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
+    sized.client_send_kbps = kbps;
+    sized.server_send_kbps = kbps;
     rn_message_object_layout_t layout;
-    if ( !rn_message_object_layout( config, num_connections, &layout ) )
+    if ( !rn_message_object_layout( &sized, num_connections, &layout ) )
         return 0;
     return layout.total;
 }
@@ -122,30 +135,6 @@ static void rn_message_count( rn_message_object_t * object, int counter, uint64_
 // every layer bound to it fresh, so nothing of the previous connection is
 // reachable from the slot. Also the first bind at create.
 
-static void rn_message_connection_reset( rn_message_object_t * object, rn_message_connection_t * connection )
-{
-    rn_region_reset( connection->region );
-
-    rocketnet_send_budget_init( &connection->budget, object->default_kbps, object->time );
-
-    const int max_packets = object->config.max_packets_per_update < ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? object->config.max_packets_per_update : ROCKETNET_PACKET_BUILDER_MAX_PACKETS;
-    rn_ordered_init( &connection->ordered, connection->region, &object->config, &connection->budget, max_packets, ROCKETNET_MESSAGE_SINGLE_BYTES );
-    rn_packet_builder_init( &connection->unreliable_builder, connection->region, NULL, &connection->budget, 1, ROCKETNET_MESSAGE_SINGLE_BYTES );
-
-    connection->connection_id = 0;
-    connection->state = RN_MESSAGE_CONNECTION_FREE;
-    connection->changed = 0;
-    connection->serial = 0;
-    connection->pending_type = -1;
-    connection->pending_descriptor = RN_DESCRIPTOR_NONE;
-    connection->pending_bytes = 0;
-    connection->unreliable_head = RN_DESCRIPTOR_NONE;
-    connection->unreliable_tail = RN_DESCRIPTOR_NONE;
-    connection->unreliable_count = 0;
-    memset( connection->views, 0, connection->region->delivery_entries );
-    memset( connection->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
-    connection->held = 0;
-}
 
 struct rn_message_connection_t * rn_message_object_connection( struct rn_message_object_t * object, int index )
 {
@@ -160,7 +149,7 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
-                                                       uint32_t default_kbps, double time )
+                                                       int32_t default_kbps, double time, bool reserve_unlimited )
 {
     rocketnet_message_config_t defaults;
     if ( !config )
@@ -169,9 +158,28 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         config = &defaults;
     }
 
+    // R6 (docs/CHANNELS.md 11.5): a create argument of 0 takes the message
+    // config's field; a positive value overrides it for this create; 0 or
+    // lower in the config field itself disables that direction's budget.
+    // The environment is not read here: the public creates resolve the
+    // budget from ROCKETNET_CLIENT_SEND_KBPS or
+    // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS (sdk/rocketnet_api.cpp:135
+    // and :173) and pass it as default_kbps.
+    if ( default_kbps == 0 )
+        default_kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
+
+    // Resolve the explicit create override before sizing. This copy is owned
+    // by the object and does not alter the caller's configuration.
+    rocketnet_message_config_t sized = *config;
+    // Keep the public unlimited runtime ceiling separate from sizing.
+    const int reserve_kbps = reserve_unlimited ? 0 : default_kbps;
+    sized.client_send_kbps = reserve_kbps;
+    sized.server_send_kbps = reserve_kbps;
+    config = &sized;
+
     rn_message_object_layout_t layout;
     const bool laid_out = link && rn_message_object_layout( config, num_connections, &layout );
-    const bool budget_valid = rocketnet_send_budget_kbps_valid( default_kbps ) && rocketnet_send_budget_time_valid( time );
+    const bool budget_valid = ( default_kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) default_kbps ) ) && rocketnet_send_budget_time_valid( time );
     const bool memory_valid = !memory || ( laid_out && memory_bytes >= layout.total && ( (uintptr_t) memory % ROCKETNET_ALLOCATION_ALIGNMENT ) == 0 );
 
     if ( !laid_out || !budget_valid || !memory_valid )
@@ -179,7 +187,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         if ( !laid_out )
             rocketnet_error( "message object create refused: a refused message config or connection count" );
         else if ( !budget_valid )
-            rocketnet_error( "message object create refused: send budget %u kbps or time is outside its range", default_kbps );
+            rocketnet_error( "message object create refused: send budget %d kbps or time is outside its range", (int) default_kbps );
         else
             rocketnet_error( "message object create refused: the memory block is short or not %d-aligned", ROCKETNET_ALLOCATION_ALIGNMENT );
         if ( link && link->destroy )
@@ -214,9 +222,11 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
     object->pending_connection = -1;
+    object->send_next_connection = 0;
     object->block = block;
     object->owns_block = owns_block ? 1 : 0;
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
+    rn_slots_init( &object->slots, num_connections );
 
     object->arena = rn_arena_create_in_block( block + layout.arena, layout.arena_bytes, config, num_connections, &object->counters );
     if ( !object->arena )
@@ -229,32 +239,49 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         return NULL;
     }
 
+    rn_endpoint_config_t endpoint_config;
+    memset( &endpoint_config, 0, sizeof( endpoint_config ) );
+    endpoint_config.config = &object->config;
+    endpoint_config.send_kbps = default_kbps;
+
     for ( int i = 0; i < num_connections; i++ )
     {
         rn_message_connection_t * connection = &object->connections[i];
-        connection->region = rn_arena_region( object->arena, i );
+        rn_endpoint_init( connection, rn_arena_region( object->arena, i ), &endpoint_config );
         connection->views = block + layout.views + layout.view_stride * (uint64_t) i;
         connection->cursors = (uint32_t *) ( block + layout.cursors + layout.cursor_stride * (uint64_t) i );
-        connection->disconnect_reason = ROCKETNET_MESSAGE_ERROR_NONE;
-        rn_message_connection_reset( object, connection );
+        connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
+        if ( object->is_server )
+            rocketnet_server_connection_reset( object, (int) ( connection - object->connections ) );
+        else
+            rocketnet_client_connection_reset( object );
     }
 
     // CHANNELS 11.3: the client's one connection is bound at create, because
     // the client transport hands it payloads from before CONNECTED is
-    // reported, and it is never bound again.
+    // reported, and it is never bound again. Its CONFIG control record is
+    // announced here and waits in the queue for CONNECTED (RN-2 m11); an
+    // application send before CONNECTED is dropped at start, never queued
+    // (rn_message_object_start).
     if ( !is_server )
     {
         object->connections[0].state = RN_MESSAGE_CONNECTION_CONNECTED;
         object->connections[0].connection_id = 1;
+        object->slots.connection_id[0] = 1;
+        rn_endpoint_announce_config( &object->connections[0], time );     // RNEndpoint Reset: the client's connect (10.3)
     }
 
     return object;
 }
 
+static void rn_message_connection_cancel_pending( rn_message_object_t * object, int index );
+
 void rn_message_object_destroy( struct rn_message_object_t * object )
 {
     if ( !object )
         return;
+    if ( object->in_place )
+        rn_message_connection_cancel_pending( object, object->pending_connection );   // the open frame goes back first
     if ( object->link.destroy )
         object->link.destroy( object->link.transport );
     rn_arena_destroy( object->arena );
@@ -271,19 +298,44 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
     rn_message_connection_t * connection = &object->connections[index];
     if ( object->pending_connection != index )
         return;
-    if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED ||
-         connection->pending_type == ROCKETNET_RELIABLE_SEQUENCED ||
-         rn_channels_reliable_receipt_base( connection->pending_type ) >= 0 ||
-         ( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && connection->ordered.channels.pending != RN_DESCRIPTOR_NONE ) )
-        rn_channels_cancel( &connection->ordered.channels );
-    else if ( ( connection->pending_type == ROCKETNET_UNRELIABLE || connection->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
-                connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT ) &&
-              connection->pending_descriptor != RN_DESCRIPTOR_NONE )
-        rn_region_send_free( connection->region, connection->pending_descriptor );
-    connection->pending_type = -1;
-    connection->pending_descriptor = RN_DESCRIPTOR_NONE;
-    connection->pending_bytes = 0;
+    if ( object->in_place )
+    {
+        // RNOutgoingBuild Abort: the frame goes back to the transport
+        object->link.abort_packet( object->link.transport, &object->in_place_context );
+        object->in_place = 0;
+        object->in_place_payload = NULL;
+    }
+    rn_endpoint_abort( connection );
     object->pending_connection = -1;
+}
+
+// The transport forbids an update or a flush while a fill is open (sdk/rocketnet.h,
+// the threading contract), so an in-place start still pending there is aborted:
+// the caller's error, counted, and its later finish returns 0.
+
+static void rn_message_object_close_in_place( rn_message_object_t * object )
+{
+    if ( !object->in_place )
+        return;
+    rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    rocketnet_api_misuse_record();
+    rocketnet_error( "message start pending at update or send_packets: the in-place send is aborted" );
+    rn_message_connection_cancel_pending( object, object->pending_connection );
+}
+
+// RNSlots ResetCancel: a queued-path start still pending on a connection its
+// update resets is cancelled before that reset, as kick cancels it, so the
+// recarved region holds none of it and later starts on every connection are
+// not refused by it. Counted in MESSAGE_SEND_REFUSED; its finish then returns
+// 0 (rn_message_object_finish: pending_connection is -1).
+
+static void rn_message_connection_cancel_at_reset( rn_message_object_t * object, int index )
+{
+    if ( object->pending_connection != index )
+        return;
+    rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    rocketnet_info( "message start pending on connection %d at its reset: the start is cancelled", index );
+    rn_message_connection_cancel_pending( object, index );
 }
 
 void rn_message_object_kick( struct rn_message_object_t * object, int index, int reason )
@@ -311,13 +363,16 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 // ---------------------------------------------------------------
 
 // RNSlots Admit: an entry is applied only to the connection it was received
-// for. The transport tags no batch entry with its connection, so the object
-// admits an entry only for a slot that was bound before this update's
-// transport update and is still bound to the same connection after it; a
-// slot bound or dropped by this update discards every entry of the batch (the
-// entries can only be the previous connection's, CHANNELS 10.2).
+// for. The link tags each entry with the transport's id of that connection
+// (payload_connection, acked_connection: P9b), and rn_slots_admit applies it
+// only when that id is the slot's binding from this update's Observe, so an
+// entry of a connection that ended inside the update is discarded and a slot
+// bound in this update keeps its own first entries. A link with no tag
+// function presents the slot's binding, or no tag (0, which no connection
+// carries) when Observe bound or dropped the slot in this update, which
+// discards it (CHANNELS 10.2, 11.5).
 
-static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, int k )
+static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, uint64_t (*entry_connection)( void * transport, int k ), int k )
 {
     const int index = client_index ? client_index[k] : 0;
     if ( index < 0 || index >= object->num_connections )
@@ -326,7 +381,9 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
         return NULL;
     }
     rn_message_connection_t * connection = &object->connections[index];
-    if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED || connection->changed )
+    const uint64_t entry_connection_id = entry_connection ? entry_connection( object->link.transport, k )
+                                                          : ( object->slots.changed[index] ? 0 : connection->connection_id );
+    if ( rn_slots_admit( &object->slots, index, entry_connection_id ) != RN_SLOTS_APPLY )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
         return NULL;
@@ -334,15 +391,18 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
     return connection;
 }
 
+static void rn_message_object_release_batch( struct rn_message_object_t * object );
+
 int rn_message_object_update( struct rn_message_object_t * object, double time )
 {
-    int result = ROCKETNET_MESSAGE_OK;
+    int result = ROCKETNET_UPDATE_OK;
 
     // RNSlots BeginUpdate, and RejectUnreleasedUpdate: every view handed out
     // in the last update must be released before this one. A held view is the
     // application's error: it asserts in a debug build and returns the named
     // error in release. The views die with the transport's batch either way,
     // so they are taken back here and memory never grows from a held view.
+    rn_message_object_release_batch( object );            // a batch is released by the update that follows it
     uint32_t held = 0;
     for ( int i = 0; i < object->num_connections; i++ )
         held += object->connections[i].held;
@@ -351,18 +411,22 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED, held );
         rocketnet_error( "message update with %u received message(s) not released", held );
         rocketnet_assert( held == 0 && "every received message is released before the next update" );
-        result = ROCKETNET_ERROR_MESSAGE_NOT_RELEASED;
+        result = ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED;
     }
 
-    if ( time != time || time < object->time )
-        time = object->time;
+    rn_message_object_close_in_place( object );
+
+    bool time_clamped = false;
+    time = rocketnet_clamp_update_time( object->time, time, &time_clamped );
+    if ( time_clamped && !object->clock_started )
+        return result;
     object->time = time;
 
-    // the transport's clock: a client transport seeded at 0.0 at create starts
-    // counting at this first update, so its connect timers and token lifetime
-    // run from the first update the game makes, whatever its clock reads then.
-    // The object's own clock (budgets, resends, timeouts) is the game's time.
-    if ( !object->clock_started )
+    // rn_message_object_update leaves both clocks untouched on a rejected
+    // first sample. The client transport starts its clock at the
+    // first valid update, so connect timers and token lifetime start there; the
+    // object's own clock (budgets, resends, timeouts) reads game time.
+    if ( !object->clock_started && !time_clamped )
     {
         object->clock_started = 1;
         object->clock_origin = object->link.clock_from_first_update ? time : 0.0;
@@ -374,25 +438,46 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
         // RNChannel EndUpdate: the last update's deliveries expire and their
         // receive descriptors return to the region (RNSlots Release's charge)
-        const uint32_t delivered = connection->ordered.channels.deliveries;
-        rn_ordered_end_update( &connection->ordered );
-        rn_window_ack_receipt_begin_update( &connection->ordered.ack );
+        const uint32_t delivered = rn_endpoint_begin_update( connection );
         memset( connection->views, 0, delivered < connection->region->delivery_entries ? delivered : connection->region->delivery_entries );
         memset( connection->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
         connection->held = 0;
-        connection->changed = 0;
 
         // RNSlots ResetFree: a kicked connection's region is reset before the
-        // transport's update can give the slot to another client
+        // transport's update can give the slot to another client, and the
+        // slots machine sees the slot free until Observe reads the transport
         if ( connection->state == RN_MESSAGE_CONNECTION_KICKED )
         {
-            const int reason = connection->disconnect_reason;
-            rn_message_connection_reset( object, connection );
-            connection->disconnect_reason = reason;
+            rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel (kick cancelled it already)
+            if ( object->is_server )
+                rocketnet_server_connection_reset( object, i );
+            else
+                rocketnet_client_connection_reset( object );
+            rn_slots_observe( &object->slots, i, 0 );
         }
     }
 
+    object->receive_connection = 0;                     // the receive queue starts again at the first connection
     object->link.update( object->link.transport, time - object->clock_origin );
+
+    // The client message connection is bound before the handshake so its
+    // CONFIG record waits while its transport connects (application sends
+    // before CONNECTED are dropped at start). Once that transport reaches a
+    // terminal state, the binding has ended: release its channel/region state
+    // before any ack or payload from the ended connection can be admitted.
+    // Explicit message kicks were reset at the start of this update.
+    if ( !object->is_server && object->link.state &&
+         object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED &&
+         object->link.state( object->link.transport ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+    {
+        // the transport's end reason (SERVER_DISCONNECTED once it accepted
+        // the server's disconnect) is recorded before the reset, which keeps it
+        if ( object->link.end_reason )
+            object->connections[0].disconnect_reason = object->link.end_reason( object->link.transport );
+        rn_message_connection_cancel_at_reset( object, 0 );         // RNSlots ResetCancel
+        rocketnet_client_connection_reset( object );
+        rn_slots_observe( &object->slots, 0, 0 );
+    }
 
     // RNSlots Observe: the server reads every slot's connection after the
     // transport's update; a changed connection resets the slot (Connect,
@@ -403,22 +488,19 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         {
             rn_message_connection_t * connection = &object->connections[i];
             const uint64_t id = object->link.connection( object->link.transport, i );
+            const int action = rn_slots_observe( &object->slots, i, id );
+            if ( action == RN_SLOTS_NONE )
+                continue;
 
-            if ( connection->state == RN_MESSAGE_CONNECTION_CONNECTED && id != connection->connection_id )
-            {
-                const int reason = connection->disconnect_reason;
-                rn_message_connection_reset( object, connection );
-                connection->disconnect_reason = reason;
-                connection->changed = 1;
-            }
+            rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel
+            rocketnet_server_connection_reset( object, i );
 
-            if ( connection->state == RN_MESSAGE_CONNECTION_FREE && id != 0 )
+            if ( action == RN_SLOTS_RESET )
             {
-                rn_message_connection_reset( object, connection );
                 connection->state = RN_MESSAGE_CONNECTION_CONNECTED;
                 connection->connection_id = id;
-                connection->disconnect_reason = ROCKETNET_MESSAGE_ERROR_NONE;
-                connection->changed = 1;
+                connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
+                rn_endpoint_announce_config( connection, time );   // RNEndpoint Reset: the server's connect (10.3)
             }
         }
     }
@@ -431,9 +513,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         const int count = object->link.acked( object->link.transport, &client_index, &packet_ids );
         for ( int k = 0; k < count; k++ )
         {
-            rn_message_connection_t * connection = rn_message_admit( object, client_index, k );
+            rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.acked_connection, k );
             if ( connection )
-                rn_ordered_acks( &connection->ordered, &packet_ids[k], 1, time );
+                rn_endpoint_on_acked( connection, packet_ids[k], time );   // RNEndpoint OnAcked
         }
     }
 
@@ -442,8 +524,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_message_connection_t * connection = &object->connections[i];
         if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
-        rn_window_ack_receipt_sweep( &connection->ordered.ack, time ); // RNReceipts SweepLoss
-        rn_window_ack_receipt_end_update( &connection->ordered.ack );
+        rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss
     }
 
     // RNSlots TransportOpen then Admit: each payload through layer 2's reader
@@ -455,22 +536,32 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         const int count = object->link.payloads( object->link.transport, &client_index, &payload_data, &payload_bytes );
         for ( int k = 0; k < count; k++ )
         {
-            rn_message_connection_t * connection = rn_message_admit( object, client_index, k );
+            rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.payload_connection, k );
             if ( connection )
-                rn_ordered_receive( &connection->ordered, payload_data[k], payload_bytes[k] );
+                rn_endpoint_on_payload( connection, payload_data[k], payload_bytes[k], NULL, 0, NULL, time );    // RNEndpoint OnPayload
         }
     }
 
     // RNSlots Kick, RNConnectionMemory Kick: exhaustion first, then a wire
-    // violation, then a reliable message past its timeout (rn_ordered_decide)
+    // violation, then a reliable message past its timeout (rn_endpoint_error)
     for ( int i = 0; i < object->num_connections; i++ )
     {
         rn_message_connection_t * connection = &object->connections[i];
         if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
-        const int reason = rn_ordered_decide( &connection->ordered );
-        if ( reason != ROCKETNET_MESSAGE_ERROR_NONE )
+        // RNEndpoint Tick, the CONFIG half: the wait for the peer's CONFIG
+        // starts at the first update the connection is connected at (the
+        // server's from its Observe reset, the client's from the first update
+        // its transport reports CONNECTED, 11.3)
+        const int transport_connected = object->is_server || object->link.connection( object->link.transport, i ) != 0;
+        rn_endpoint_config_tick( connection, transport_connected, time );   // RNEndpoint Tick, the CONFIG half
+        const int reason = rn_endpoint_error( connection );
+        if ( reason != ROCKETNET_DISCONNECT_REASON_NONE )
+        {
+            // RNEndpoint OnPayload: a CONFIG mismatch was logged with the
+            // field and both values when the CONFIG was compared
             rn_message_object_kick( object, i, reason );
+        }
     }
 
     return result;
@@ -488,174 +579,176 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     if ( index < 0 || index >= object->num_connections )
         return NULL;
 
+    // the channel is RakNet's ordering channel: the types that are neither
+    // ordered nor sequenced ignore it (ReliabilityLayer::Send sets no
+    // orderingChannel for them) and travel with none (codes 0 and 2), so any
+    // value is accepted for them, never refused, and taken as 0
+    if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_RELIABLE ||
+         reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT || reliability == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
+        channel = 0;
+
     rn_message_connection_t * connection = &object->connections[index];
-    if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED || object->pending_connection >= 0 ||
-         channel < 0 || channel >= object->config.num_channels || bytes < 1 )
+
+    // standard/MESSAGES.md m1.5 (tla/ClientSession.tla DropSend,
+    // tla/ServerSession.tla ServerDropSend): an application message is sent
+    // only on a CONNECTED connection. A client whose transport is not
+    // CONNECTED, or a slot with no connection, drops the start: NULL, counted
+    // once, nothing queued for later. A link with no connection query (a bare
+    // object with no transport) has no transport state to wait on.
+    const bool connected = connection->state == RN_MESSAGE_CONNECTION_CONNECTED &&
+                           ( object->is_server || !object->link.connection || object->link.connection( object->link.transport, 0 ) != 0 );
+    if ( !connected )
+    {
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
+        return NULL;
+    }
+    // one start pending per object: a second is refused until the first is
+    // finished or aborted, or a reset of its connection cancels it
+    // (rn_message_connection_cancel_at_reset, RNSlots ResetCancel)
+    if ( object->pending_connection >= 0 )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
         return NULL;
     }
 
-    rn_region_t * region = connection->region;
-    uint8_t * pointer = NULL;
+    // the transport's payload cap, which the endpoint's large unreliable
+    // check reads (a seam: a transport value passed in as an argument)
+    const bool unreliable = reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+                            reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
+    const int transport_max = unreliable && object->link.max_payload_bytes ?
+        object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PAYLOAD_BYTES;
 
-    if ( reliability == ROCKETNET_RELIABLE || reliability == ROCKETNET_RELIABLE_ORDERED ||
-         reliability == ROCKETNET_RELIABLE_SEQUENCED ||
-         rn_channels_reliable_receipt_base( reliability ) >= 0 )
+    // RNOutgoingBuild StartInPlace: a fitting unreliable message takes a
+    // transport frame and is written in it, its header's room in front and
+    // the form byte's after; header + bytes + 1, the declared maximum,
+    // decides the frame
+    if ( unreliable && object->link.start_packet )
     {
-        pointer = rn_channels_start( &connection->ordered.channels, (uint32_t) channel, reliability, (uint32_t) bytes );
-        if ( !pointer )
+        int header = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
+        // Reserve a complete round for the rotating pass, including this
+        // connection's reliable work. In-place writes may use surplus slots,
+        // but application call order cannot consume another client's turn.
+        const int send_connections = object->link.send_connected_count ?
+            object->link.send_connected_count( object->link.transport ) : object->num_connections;
+        if ( header >= 0 && object->link.send_capacity_available &&
+             object->link.send_capacity_available( object->link.transport ) <= send_connections )
+            header = RN_ENDPOINT_IN_PLACE_QUEUED;
+        if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
+            header = RN_ENDPOINT_IN_PLACE_QUEUED;               // the bucket cannot pay it now: the write pass decides
+        if ( header >= 0 )
         {
-            if ( rn_region_exhausted( region ) )
-                rn_message_object_kick( object, index, ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );     // R5
-            else
-                rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
-            return NULL;
+            const int request = header + bytes + 1;
+            rocketnet_packet_context_t context;
+            uint8_t * frame = object->link.start_packet( object->link.transport, index, request, &context );
+            if ( frame && context.payload_capacity < request )
+            {
+                object->link.abort_packet( object->link.transport, &context );
+                frame = NULL;
+            }
+            if ( frame )
+            {
+                rn_endpoint_in_place_begin( connection, channel, reliability, bytes, header );
+                object->in_place = 1;
+                object->in_place_context = context;
+                object->in_place_payload = frame + context.payload_index;
+                object->pending_connection = index;
+                return object->in_place_payload + header;
+            }
         }
-        connection->pending_descriptor = connection->ordered.channels.pending;
+        // RNOutgoingBuild StartQueued with fellback: no frame, unreliable
+        // messages wait ahead of it, the update's packet allowance is spent
+        // (one packet of it kept while reliable work is due), or the budget
+        // cannot pay it now (MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK)
+        if ( header >= 0 || header == RN_ENDPOINT_IN_PLACE_QUEUED )
+            rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
     }
-    else if ( reliability == ROCKETNET_UNRELIABLE || reliability == ROCKETNET_UNRELIABLE_SEQUENCED ||
-              reliability == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
+
+    // RNEndpoint Send's first half. The send room watch runs around it: before,
+    // so acks that freed room rearm it, and after, so this start message's room
+    // is seen (a debug-build warning, nothing in a release build)
+    rn_region_send_room_note( connection->region, object->is_server, index );
+    uint8_t * pointer = rn_endpoint_start( connection, channel, reliability, bytes, transport_max );
+    if ( !pointer )
     {
-        if ( rn_channels_send_check( &connection->ordered.channels, reliability, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
-            return NULL;
-        // Code 1 may occupy one large RECORDS payload. Its u16 length and
-        // the transport's configured payload cap are permanent refusal
-        // boundaries; checking here keeps an impossible send off the FIFO.
-        const int header = 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 );
-        const int transport_max = object->link.max_payload_bytes ?
-            object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PAYLOAD_BYTES;
-        const bool too_large = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
-            bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES || bytes > object->config.max_message_bytes ||
-            bytes + header + 1 > transport_max : (uint32_t) bytes > object->unreliable_limit;
-        if ( too_large )
+        if ( connection->send_error != ROCKETNET_DISCONNECT_REASON_NONE )
         {
-            if ( reliability != ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
-            {
-                // Non-receipt unreliable sends cannot exceed their wire limit.
-                rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-                return NULL;
-            }
-            // RNReceipts EffectiveKind: a large public type 5 reserves through
-            // the internal reliable code-2 block path, preserving code 5's
-            // receipt serial and reliable-only completion.
-            pointer = rn_channels_start( &connection->ordered.channels, (uint32_t) channel, ROCKETNET_RELIABLE, (uint32_t) bytes );
-            if ( !pointer )
-            {
-                if ( rn_region_exhausted( region ) )
-                    rn_message_object_kick( object, index, ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-                else
-                    rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
-                return NULL;
-            }
-            connection->pending_descriptor = connection->ordered.channels.pending;
+            if ( connection->send_error == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED )
+                rn_region_send_room_exhausted( connection->region, object->is_server, index );
+            rn_message_object_kick( object, index, connection->send_error );   // R5
         }
-        else if ( rn_region_exhausted( region ) )
-        {
-            rn_message_object_kick( object, index, ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-            return NULL;
-        }
-        else
-        {
-            const uint32_t d = bytes >= RN_SPAN_MIN_BYTES ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
-            if ( d == RN_DESCRIPTOR_NONE )
-            {
-                // RNConnectionMemory Exhaust then Kick (R5): the region has no room
-                // for a send it must not drop
-                rn_message_object_kick( object, index, ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-                return NULL;
-            }
-            rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-            descriptor->channel = (uint16_t) channel;
-            descriptor->reliability = (uint8_t) reliability;
-            descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
-            descriptor->fragments = 1;
-            descriptor->next = RN_DESCRIPTOR_NONE;
-            connection->pending_descriptor = d;
-            pointer = rn_region_send_write_pointer( region, d );
-        }
-    }
-    else
-    {
-        // the remaining types are refused until their cards enable them (7.5)
-        if ( reliability >= 0 && reliability < ROCKETNET_CHANNEL_NUM_TYPES )
-            rn_channels_send_check( &connection->ordered.channels, reliability, (uint32_t) channel );
-        else
-            rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
         return NULL;
     }
+    rn_region_send_room_note( connection->region, object->is_server, index );
 
-    connection->pending_type = reliability;
-    connection->pending_bytes = (uint32_t) bytes;
     object->pending_connection = index;
     return pointer;
+}
+
+// The functional tier's pacing reads the send room through these: 1 when a
+// start message of `bytes` bytes would be given room now (rn_region_send_fits).
+// Internal: declared by the test that reads them, never in rocketnet.h, never
+// exported.
+int rn_message_client_send_fits( struct rocketnet_message_client_t * client, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
+int rn_message_server_send_fits( struct rocketnet_message_server_t * server, int client_index, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
+
+static int rn_message_object_send_fits( struct rn_message_object_t * object, int index, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages )
+{
+    if ( !object || index < 0 || index >= object->num_connections )
+        return 0;
+    return rn_region_send_fits( object->connections[index].region, bytes, free_bytes, pool_bytes, free_messages );
+}
+
+int rn_message_client_send_fits( struct rocketnet_message_client_t * client, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages )
+{
+    return client ? rn_message_object_send_fits( &client->object, 0, bytes, free_bytes, pool_bytes, free_messages ) : 0;
+}
+
+int rn_message_server_send_fits( struct rocketnet_message_server_t * server, int client_index, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages )
+{
+    return server ? rn_message_object_send_fits( &server->object, client_index, bytes, free_bytes, pool_bytes, free_messages ) : 0;
 }
 
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes )
 {
     // RNChannel Enqueue's second half: the message joins its channel's queue
-    // in FIFO order and takes its receipt serial (7.4: nonzero for every send)
+    // in FIFO order and takes its receipt serial (7.4: nonzero for every send).
+    // 0 when no start is pending on this connection, a start a reset of the
+    // connection cancelled included (rn_message_connection_cancel_at_reset)
     if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
         return 0;
 
-    rn_message_connection_t * connection = &object->connections[index];
-    if ( bytes < 1 || (uint32_t) bytes > connection->pending_bytes )
+    if ( object->in_place )
+    {
+        // RNOutgoingBuild FinishInPlace: the header and form byte written
+        // around the bytes, and the same frame finished: sealed and staged by
+        // the transport, the acks due riding in it
+        rn_message_connection_t * connection = &object->connections[index];
+        rn_message_link_t * link = &object->link;
+        int payload_bytes = 0;
+        const uint32_t serial = rn_endpoint_in_place_finish( connection, object->in_place_payload, bytes, object->time, &payload_bytes );
+        if ( serial == 0 )
+            return 0;                                           // the start stays pending
+        rocketnet_packet_context_t context = object->in_place_context;
+        object->in_place = 0;
+        object->in_place_payload = NULL;
+        object->pending_connection = -1;
+        if ( payload_bytes == 0 )
+        {
+            link->abort_packet( link->transport, &context );     // FinishInPlaceOverBudget: dropped and counted
+            return serial;
+        }
+        const int wire_bytes = link->finish_packet( link->transport, &context, payload_bytes );
+        if ( wire_bytes > 0 )
+            rn_endpoint_in_place_sent( connection, context.packet_id, wire_bytes, object->time );
+        else
+            rn_endpoint_in_place_failed( connection );
+        return serial;
+    }
+
+    const uint32_t serial = rn_endpoint_finish( &object->connections[index], bytes, 0 );   // RNEndpoint Send's second half
+    if ( serial == 0 )
         return 0;                                               // the start stays pending
 
-    uint32_t serial = connection->serial + 1;
-    if ( serial == 0 )
-        serial = 1;
-
-    if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED ||
-         connection->pending_type == ROCKETNET_RELIABLE_SEQUENCED ||
-         rn_channels_reliable_receipt_base( connection->pending_type ) >= 0 ||
-         ( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && connection->ordered.channels.pending != RN_DESCRIPTOR_NONE &&
-           (uint32_t) bytes > object->unreliable_limit ) )
-    {
-        const uint32_t d = connection->ordered.channels.pending;
-        if ( !rn_channels_finish( &connection->ordered.channels, (uint32_t) bytes ) )
-            return 0;
-        rn_send_descriptor_t * descriptor = &connection->region->send_descriptors[d];
-        descriptor->serial = serial;
-        if ( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
-            descriptor->flags |= RN_SEND_FLAG_RECEIPT_PROMOTED; // RNReceipts EffectiveKind: reliable completion, no LOSS
-    }
-    else
-    {
-        rn_region_t * region = connection->region;
-        const uint32_t d = connection->pending_descriptor;
-        rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( connection->ordered.channels.pending == d )
-        {
-            // A caller may reserve a block and finish fewer bytes. Move the
-            // same region descriptor to the single-packet route without a copy.
-            rocketnet_assert( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT );
-            connection->ordered.channels.pending = RN_DESCRIPTOR_NONE;
-            descriptor->reliability = ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
-            descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
-            descriptor->fragments = 1;
-        }
-        descriptor->bytes = (uint32_t) bytes;
-        descriptor->serial = serial;
-        descriptor->next = RN_DESCRIPTOR_NONE;
-        if ( connection->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED )
-        {
-            // RNChannelTypes!Enqueue: a sequenced send stays in the unreliable
-            // queue and takes no reliable number or resend entry.
-            descriptor->sequencing = rn_channels_send_sequenced( &connection->ordered.channels, descriptor->channel, &descriptor->ordering );
-        }
-        if ( connection->unreliable_tail == RN_DESCRIPTOR_NONE )
-            connection->unreliable_head = d;
-        else
-            region->send_descriptors[connection->unreliable_tail].next = d;
-        connection->unreliable_tail = d;
-        connection->unreliable_count++;
-    }
-
-    connection->serial = serial;
-    connection->pending_type = -1;
-    connection->pending_descriptor = RN_DESCRIPTOR_NONE;
-    connection->pending_bytes = 0;
     object->pending_connection = -1;
     return serial;
 }
@@ -679,322 +772,84 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
     return rn_message_object_finish( object, index, bytes );
 }
 
-// Whether the ordered path has a packet to write now: a message queued for
-// its first write, or a number at the head of the resend FIFO that is unsent
-// or past its RTO. It keeps a frame from being started for nothing.
-
-static bool rn_message_ordered_due( const rn_message_connection_t * connection, double now )
-{
-    const rn_ordered_t * ordered = &connection->ordered;
-    if ( ordered->channels.ready_head != RN_DESCRIPTOR_NONE )
-        return true;
-
-    const rn_window_ack_t * ack = &ordered->ack;
-    const rn_region_t * region = connection->region;
-    uint32_t cursor = ack->resend_head;
-    for ( int steps = 0; cursor != RN_RESEND_NONE; steps++ )
-    {
-        if ( steps >= 64 )
-            return true;                                        // a long acked prefix: let the write walk it
-        const rn_send_number_t * slot = &region->send_numbers[cursor];
-        if ( !slot->acked )
-            return slot->last_send <= 0.0 || now >= slot->last_send + ack->rto * (double) ack->backoff;
-        cursor = region->resend_fifo[cursor].next;
-    }
-    return false;
-}
-
-static void rn_message_unreliable_unlink( rn_message_connection_t * connection, uint32_t d, uint32_t previous )
-{
-    rn_region_t * region = connection->region;
-    const uint32_t next = region->send_descriptors[d].next;
-    if ( previous == RN_DESCRIPTOR_NONE )
-        connection->unreliable_head = next;
-    else
-        region->send_descriptors[previous].next = next;
-    if ( connection->unreliable_tail == d )
-        connection->unreliable_tail = previous;
-    connection->unreliable_count--;
-    rn_region_send_free( region, d );
-}
-
-static void rn_message_unreliable_drop_all( rn_message_object_t * object, rn_message_connection_t * connection, int counter, uint32_t already_counted )
-{
-    const uint32_t count = connection->unreliable_count;
-    while ( connection->unreliable_head != RN_DESCRIPTOR_NONE )
-    {
-        const rn_send_descriptor_t * descriptor = &connection->region->send_descriptors[connection->unreliable_head];
-        if ( descriptor->reliability == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
-            rn_window_ack_receipt_emit_loss( &connection->ordered.ack, descriptor->serial ); // local budget drop before wire send
-        rn_message_unreliable_unlink( connection, connection->unreliable_head, RN_DESCRIPTOR_NONE );
-    }
-    if ( count > already_counted )
-        rn_message_count( object, counter, count - already_counted );
-}
-
-static int rn_message_sequenced_payload_bytes( const rn_send_descriptor_t * descriptor )
-{
-    const int header = 3 + 3 + 3 + ( descriptor->channel >= 256 ? 2 : 1 );
-    return (int) descriptor->bytes + header + 1; // one RECORDS record and form byte
-}
-
-// RNChannelTypes!WritePacket: a large code-1 state is one unreliable RECORDS
-// payload. The existing transport splits it into type-9 fragments; no layer-6
-// block or reliable number is created. Charge the whole fragment plan before
-// writing, so an over-budget state cannot send only a prefix of its fragments.
-static bool rn_message_write_large_sequenced( rn_message_object_t * object, int index, rn_message_connection_t * connection )
-{
-    rn_region_t * region = connection->region;
-    const uint32_t d = connection->unreliable_head;
-    const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    const int payload_bytes = rn_message_sequenced_payload_bytes( descriptor );
-    int fragment_count, stride;
-    if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &stride ) )
-    {
-        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-        rn_message_unreliable_unlink( connection, d, RN_DESCRIPTOR_NONE );
-        return true;
-    }
-
-    int admitted_wire_bytes = 0;
-    for ( int i = 0; i < fragment_count; i++ )
-    {
-        const int fragment_bytes = i + 1 < fragment_count ? stride : payload_bytes - stride * ( fragment_count - 1 );
-        const int maximum = rocketnet_send_budget_max_wire_bytes( fragment_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES );
-        if ( maximum == 0 )
-            return false;
-        admitted_wire_bytes += maximum;
-    }
-
-    rocketnet_send_budget_t * budget = &connection->budget;
-    if ( budget->rank_reached < rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE ) )
-        budget->rank_reached = rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE );
-    if ( budget->reliable_waiting || (double) admitted_wire_bytes > budget->tokens )
-    {
-        budget->unreliable_dropped++;
-        budget->unreliable_dropped_bytes += (uint64_t) admitted_wire_bytes;
-        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
-        rn_message_unreliable_unlink( connection, d, RN_DESCRIPTOR_NONE );
-        return true;
-    }
-
-    rocketnet_packet_context_t context;
-    uint8_t * frame = object->link.start_packet( object->link.transport, index, payload_bytes, &context );
-    if ( !frame )
-        return false; // transient transport room shortage; keep the queue head
-
-    rocketnet_message_record_t record = {};
-    record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
-    record.channel = descriptor->channel;
-    record.ordering = descriptor->ordering & ROCKETNET_MESSAGE_U24_MASK;
-    record.sequencing = descriptor->sequencing & ROCKETNET_MESSAGE_U24_MASK;
-    record.data = rn_region_send_write_pointer( region, d );
-    record.bytes = (int) descriptor->bytes;
-    rocketnet_message_writer_t writer;
-    rocketnet_message_writer_begin( &writer, frame + context.payload_index, payload_bytes );
-    if ( !rocketnet_message_writer_add( &writer, &record ) || rocketnet_message_writer_finish( &writer ) != payload_bytes )
-    {
-        object->link.abort_packet( object->link.transport, &context );
-        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-        rn_message_unreliable_unlink( connection, d, RN_DESCRIPTOR_NONE );
-        return true;
-    }
-
-    // The plan's maximum wire charge is conservative; settle with the sum
-    // returned by the transport after it stages every sealed fragment.
-    budget->tokens -= (double) admitted_wire_bytes;
-    budget->bytes_spent += (uint64_t) admitted_wire_bytes;
-    const int actual_wire_bytes = object->link.finish_packet( object->link.transport, &context, payload_bytes );
-    if ( actual_wire_bytes > 0 )
-        rocketnet_send_budget_settle( budget, admitted_wire_bytes, actual_wire_bytes );
-    else
-        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-    rn_message_unreliable_unlink( connection, d, RN_DESCRIPTOR_NONE );
-    return true;
-}
-
 // RNChannel WritePacket with RNSendBudget Send, Wait and Drop, for one
-// connection: one frame from the transport at a time, written by layer 6 in
-// place (THE COPIES (a)), finished, and its packet id committed to the sent
-// map (RNSlots Send). Ordered progress and retransmits first, then the
-// unreliable records, under the connection's budget (R6).
+// connection: the endpoint plans each packet (rn_endpoint_next_packet_bytes),
+// the object starts one frame from the transport at a time, the endpoint
+// writes it in place (THE COPIES (a)), and the object finishes it and tells the
+// endpoint whether it left, under the transport's packet id (RNSlots Send).
 
-static void rn_message_connection_write( rn_message_object_t * object, int index )
+static bool rn_message_connection_write( rn_message_object_t * object, int index )
 {
     rn_message_connection_t * connection = &object->connections[index];
     rn_message_link_t * link = &object->link;
     const double now = object->time;
-    const int max_packets = object->config.max_packets_per_update;
 
-    rocketnet_send_budget_begin_update( &connection->budget, now );
-
-    int written = 0;
-
-    // the reliable path, one packet per call so a frame is started only for a
-    // packet that is written; the RTO back-off doubles at most once an update
-    rn_window_ack_t * ack = &connection->ordered.ack;
-    const uint32_t backoff = ack->backoff;
-    bool backed_off = false;
-
-    while ( written < max_packets && rn_message_ordered_due( connection, now ) )
+    for ( ;; )
     {
+        const int request = rn_endpoint_next_packet_bytes( connection, now );
+        if ( request == 0 )
+            return false;
+
         rocketnet_packet_context_t context;
-        uint8_t * frame = link->start_packet( link->transport, index, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        uint8_t * frame = link->start_packet( link->transport, index, request, &context );
         if ( !frame )
-            break;
-        uint8_t * payload = frame + context.payload_index;
-
-        const int packets = rn_ordered_write( &connection->ordered, now, &payload, 1 );
-        if ( ack->backoff != backoff )
         {
-            backed_off = true;
-            ack->backoff = backoff;
-        }
-        if ( packets == 0 )
-        {
-            link->abort_packet( link->transport, &context );
-            break;
-        }
-
-        const int wire_bytes = link->finish_packet( link->transport, &context, (int) connection->ordered.builder.packet[0].payload_bytes );
-        if ( wire_bytes > 0 )
-        {
-            rn_ordered_commit( &connection->ordered, 0, context.packet_id, now );
-            rn_ordered_settle( &connection->ordered, 0, wire_bytes );
-        }
-        else
-        {
-            rn_ordered_packet_failed( &connection->ordered, 0, now );     // 6.4 Failed send: resent first next update
-            written++;
-            break;
-        }
-        written++;
-    }
-
-    if ( backed_off )
-        ack->backoff = backoff * 2 > 8 ? 8 : backoff * 2;
-
-    // a reliable packet the budget could not pay waits; nothing after it
-    // spends the bucket this update (RNSendBudget Wait), so this update's
-    // unreliable sends are over budget: dropped and counted (Drop, R6)
-    if ( connection->budget.reliable_waiting )
-    {
-        rn_message_unreliable_drop_all( object, connection, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET, 0 );
-        return;
-    }
-
-    // the unreliable records, packed several to a packet
-    rn_region_t * region = connection->region;
-    while ( written < max_packets && connection->unreliable_count > 0 )
-    {
-        const rn_send_descriptor_t * first = &region->send_descriptors[connection->unreliable_head];
-        if ( first->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED &&
-             rn_message_sequenced_payload_bytes( first ) > ROCKETNET_MAX_PAYLOAD_BYTES )
-        {
-            if ( !rn_message_write_large_sequenced( object, index, connection ) )
-                break;
-            written++;
+            rn_endpoint_packet_failed( connection, 0, now );    // no frame: nothing written
             continue;
         }
-        rn_packet_item_t items[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-        uint32_t descriptors[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-        int count = 0;
-        for ( uint32_t d = connection->unreliable_head; d != RN_DESCRIPTOR_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS; d = region->send_descriptors[d].next )
-        {
-            const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-            if ( descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED &&
-                 rn_message_sequenced_payload_bytes( descriptor ) > ROCKETNET_MAX_PAYLOAD_BYTES )
-                break; // send the preceding small records first
-            rn_packet_item_t * item = &items[count];
-            memset( item, 0, sizeof( *item ) );
-            item->data = rn_region_send_write_pointer( region, d );
-            item->bytes = descriptor->bytes;
-            item->number = ROCKETNET_PACKET_NUMBER_NONE;
-            item->descriptor = d;
-            item->channel = descriptor->channel;
-            item->code = descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ?
-                         ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED : ROCKETNET_MESSAGE_CODE_UNRELIABLE;
-            item->ordering = descriptor->ordering & ROCKETNET_MESSAGE_U24_MASK;
-            item->sequencing = descriptor->sequencing & ROCKETNET_MESSAGE_U24_MASK;
-            item->send_class = ROCKETNET_SEND_CLASS_UNRELIABLE;
-            descriptors[count] = d;
-            count++;
-        }
 
-        rocketnet_packet_context_t context;
-        uint8_t * frame = link->start_packet( link->transport, index, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
-        if ( !frame )
-            break;
-        uint8_t * payload = frame + context.payload_index;
-
-        const int packets = rn_packet_builder_write( &connection->unreliable_builder, items, count, &payload, 1 );
-        if ( packets == 0 )
+        const int payload_bytes = rn_endpoint_write_packet( connection, frame + context.payload_index, context.payload_capacity, context.packet_id, now );
+        if ( payload_bytes == 0 )
         {
             link->abort_packet( link->transport, &context );
-            // RNSendBudget Drop: unreliable sends over budget are dropped and
-            // counted, all of this update's (R6)
-            if ( connection->unreliable_builder.unreliable_dropped > 0 )
-                rn_message_unreliable_drop_all( object, connection, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET, connection->unreliable_builder.unreliable_dropped );
-            break;
+            continue;
         }
 
-        const int wire_bytes = link->finish_packet( link->transport, &context, (int) connection->unreliable_builder.packet[0].payload_bytes );
+        const int wire_bytes = link->finish_packet( link->transport, &context, payload_bytes );
         if ( wire_bytes > 0 )
-        {
-            uint32_t serials[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-            uint32_t receipts = 0;
-            for ( int i = 0; i < count; i++ )
-            {
-                if ( !items[i].taken )
-                    continue;
-                const rn_send_descriptor_t * descriptor = &region->send_descriptors[descriptors[i]];
-                if ( descriptor->reliability == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
-                    serials[receipts++] = descriptor->serial;
-            }
-            if ( receipts )
-                rn_window_ack_commit_receipt_packet( ack, context.packet_id, serials, receipts, now ); // RNReceipts WritePacket
-            rn_packet_builder_settle( &connection->unreliable_builder, 0, wire_bytes );
-        }
+            rn_endpoint_packet_sent( connection, context.packet_id, wire_bytes, now );
         else
-        {
-            rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED, connection->unreliable_builder.packet[0].records );
-            for ( int i = 0; i < count; i++ )
-                if ( items[i].taken && region->send_descriptors[descriptors[i]].reliability == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
-                    rn_window_ack_receipt_emit_loss( ack, region->send_descriptors[descriptors[i]].serial );
-        }
-
-        // the written records' room returns to the region (9.3 step 3)
-        for ( int i = 0; i < count; i++ )
-        {
-            if ( !items[i].taken )
-                continue;
-            uint32_t previous = RN_DESCRIPTOR_NONE;
-            for ( uint32_t d = connection->unreliable_head; d != RN_DESCRIPTOR_NONE; previous = d, d = region->send_descriptors[d].next )
-            {
-                if ( d == descriptors[i] )
-                {
-                    rn_message_unreliable_unlink( connection, d, previous );
-                    break;
-                }
-            }
-        }
-        written++;
+            rn_endpoint_packet_failed( connection, context.packet_id, now );
+        return true;
     }
 }
 
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
-    for ( int i = 0; i < object->num_connections; i++ )
+    rn_message_object_close_in_place( object );
+
+    // RNSlots Send, fair rotation: start at the first connection not yet
+    // offered a frame, and stop when the transport's send capacity for this
+    // update is spent. The cursor names the next unserved connection, so a
+    // cap below the client count serves every client in turn rather than
+    // forever serving the low indices. A connection that finds no capacity
+    // leaves its queued sends for the next update; reliability keeps them
+    // due, so nothing is lost.
+    const int num_connections = object->num_connections;
+    const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
+    bool progress;
+    do
     {
-        rn_message_connection_t * connection = &object->connections[i];
-        if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
-            continue;
-        // the client transport accepts sends only while CONNECTED (11.3):
-        // until then the queue waits, unnumbered
-        if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
-            continue;
-        rn_message_connection_write( object, i );
-    }
+        progress = false;
+        for ( int offset = 0; offset < num_connections; offset++ )
+        {
+            const int i = ( start + offset ) % num_connections;
+            rn_message_connection_t * connection = &object->connections[i];
+            if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+                continue;
+            // The client's CONFIG waits unnumbered until the transport connects.
+            if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
+                continue;
+            if ( object->link.send_capacity_available &&
+                 object->link.send_capacity_available( object->link.transport ) <= 0 )
+                goto flush;
+            // One frame per connection per round, including when the per-client
+            // allowance is larger than one. A busy client cannot take K turns.
+            progress |= rn_message_connection_write( object, i );
+            object->send_next_connection = ( i + 1 ) % num_connections;
+        }
+    } while ( progress );
+flush:
     object->link.send_packets( object->link.transport );
 }
 
@@ -1002,12 +857,75 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
 //                          receive and release
 // ---------------------------------------------------------------
 
-int rn_message_object_receive( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes )
+// RakPeer::Receive pops one return queue across every remote system. The
+// object's queue is the update's deliveries, connection by connection in index
+// order and each connection's in the order its channels delivered them
+// (rn_delivery_t entries are appended in dispatch order, the drain of an
+// ordered hold included), whatever channel they carry: a message is never
+// filtered by channel, so an unordered type delivered on channel 0
+// (standard/MESSAGES.md, code 0 and code 2 carry no channel) is seen like
+// every other. Ordered and sequenced order holds within each channel of each
+// connection, as RakNet's ordering channels do per remote system.
+
+static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t * object, int * out_index, uint32_t * out_entry )
+{
+    for ( int i = object->receive_connection; i < object->num_connections; i++ )
+    {
+        rn_message_connection_t * connection = &object->connections[i];
+        if ( connection->state == RN_MESSAGE_CONNECTION_CONNECTED )
+        {
+            const uint32_t deliveries = connection->ordered.channels.deliveries;
+            const rn_delivery_t * table = connection->region->deliveries;
+            for ( uint32_t k = connection->cursors[0]; k < deliveries; k++ )
+            {
+                if ( connection->views[k] != RN_MESSAGE_VIEW_WAITING )
+                    continue;
+                connection->views[k] = RN_MESSAGE_VIEW_HELD;
+                connection->held++;
+                connection->cursors[0] = k + 1;
+                object->receive_connection = i;
+                *out_index = i;
+                *out_entry = k;
+                return &table[k];
+            }
+            connection->cursors[0] = deliveries;
+        }
+        object->receive_connection = i + 1;
+    }
+    return NULL;
+}
+
+int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes )
 {
     // RNSlots EndUpdate: the update's deliveries go to the application, each a
     // view -- into the transport's batch, or into the receive ring for a
     // message held ahead of its turn -- valid until the next update and held
     // until released
+    *data = NULL;
+    *bytes = 0;
+    if ( index )
+        *index = 0;
+    if ( channel )
+        *channel = 0;
+
+    int connection_index = 0;
+    uint32_t entry = 0;
+    const rn_delivery_t * delivery = rn_message_object_next( object, &connection_index, &entry );
+    if ( !delivery )
+        return 0;
+    if ( index )
+        *index = connection_index;
+    if ( channel )
+        *channel = delivery->channel;
+    *data = delivery->data;
+    *bytes = delivery->bytes;
+    return 1;
+}
+
+int rn_message_object_receive_channel( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes )
+{
+    // the per-channel cursor the unit suite's pre-batch cases still use; the
+    // public one queue passes through rn_message_object_receive instead
     *data = NULL;
     *bytes = 0;
     if ( index < 0 || index >= object->num_connections || channel < 0 || channel >= object->config.num_channels )
@@ -1034,14 +952,10 @@ int rn_message_object_receive( struct rn_message_object_t * object, int index, i
     return 0;
 }
 
-void rn_message_object_release( struct rn_message_object_t * object, int index, const uint8_t * data )
+static bool rn_message_connection_release_view( rn_message_connection_t * connection, const uint8_t * data )
 {
-    // RNSlots Release: the view goes back, and with it the region's charge for
-    // the message at the next update's EndUpdate
-    if ( index < 0 || index >= object->num_connections || !data )
-        return;
-
-    rn_message_connection_t * connection = &object->connections[index];
+    if ( connection->held == 0 )
+        return false;
     const uint32_t deliveries = connection->ordered.channels.deliveries;
     const rn_delivery_t * table = connection->region->deliveries;
     for ( uint32_t k = 0; k < deliveries; k++ )
@@ -1050,25 +964,91 @@ void rn_message_object_release( struct rn_message_object_t * object, int index, 
         {
             connection->views[k] = RN_MESSAGE_VIEW_RELEASED;
             connection->held--;
-            return;
+            return true;
         }
     }
+    return false;
+}
 
-    // not a held view of this connection: the caller's error, counted
+void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data )
+{
+    // RNSlots Release: the view goes back, and with it the region's charge for
+    // the message at the next update's EndUpdate. RakNet's release takes the
+    // received message alone; the view is looked for in the connection the
+    // queue is at first, then in every connection that holds one
+    if ( !data )
+        return;
+
+    const int at = object->receive_connection < object->num_connections ? object->receive_connection : object->num_connections - 1;
+    if ( rn_message_connection_release_view( &object->connections[at], data ) )
+        return;
+    for ( int i = 0; i < object->num_connections; i++ )
+    {
+        if ( i != at && rn_message_connection_release_view( &object->connections[i], data ) )
+            return;
+    }
+
+    // not a held view of any connection: the caller's error, counted
     rocketnet_api_misuse_record();
 }
 
-bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, uint32_t kbps )
+// The batch's views go back together: each entry still HELD (a connection
+// reset since the batch cleared its views already) is released.
+static void rn_message_object_release_batch( struct rn_message_object_t * object )
+{
+    for ( int n = 0; n < object->batch_count; n++ )
+    {
+        rn_message_connection_t * connection = &object->connections[object->batch_connection[n]];
+        const uint32_t k = object->batch_entry[n];
+        if ( k < connection->region->delivery_entries && connection->views[k] == RN_MESSAGE_VIEW_HELD )
+        {
+            connection->views[k] = RN_MESSAGE_VIEW_RELEASED;
+            connection->held--;
+        }
+    }
+    object->batch_count = 0;
+}
+
+int rn_message_object_receive_messages( struct rn_message_object_t * object, struct rocketnet_message_batch_t * out )
+{
+    // the pumped receive of the one queue (flow's batch handoff to the game):
+    // the last call's entries are released, then out is filled with up to
+    // ROCKETNET_RECEIVE_BATCH_MESSAGES next deliveries, in the order
+    // rn_message_object_receive hands them out. The views point into the
+    // transport's batch or the receive ring, never copied
+    rn_message_object_release_batch( object );
+    out->num_messages = 0;
+    while ( out->num_messages < ROCKETNET_RECEIVE_BATCH_MESSAGES )
+    {
+        int connection_index = 0;
+        uint32_t entry = 0;
+        const rn_delivery_t * delivery = rn_message_object_next( object, &connection_index, &entry );
+        if ( !delivery )
+            break;
+        const int n = out->num_messages++;
+        object->batch_connection[n] = connection_index;
+        object->batch_entry[n] = entry;
+        object->batch_count = out->num_messages;
+        out->client_index[n] = connection_index;
+        out->channel[n] = delivery->channel;
+        out->reliability[n] = (enum rocketnet_reliability_t) delivery->code;
+        out->bytes[n] = delivery->bytes;
+        out->data[n] = delivery->data;
+    }
+    return out->num_messages;
+}
+
+bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps )
 {
     if ( index < 0 || index >= object->num_connections )
         return false;
-    return rocketnet_send_budget_set_kbps( &object->connections[index].budget, kbps, object->time );
+    return rn_endpoint_set_send_kbps( &object->connections[index], kbps, object->time );
 }
 
 int rn_message_object_disconnect_reason( const struct rn_message_object_t * object, int index )
 {
     if ( index < 0 || index >= object->num_connections )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
+        return ROCKETNET_DISCONNECT_REASON_NONE;
     return object->connections[index].disconnect_reason;
 }
 
@@ -1123,13 +1103,38 @@ static void rn_server_link_send_packets( void * transport )
     rocketnet_server_transport_send_packets( (rocketnet_server_transport_t *) transport );
 }
 
+static int rn_server_link_send_connected_count( void * transport )
+{
+    return rocketnet_server_transport_num_connected_clients( (rocketnet_server_transport_t *) transport );
+}
+
+static int rn_server_link_send_capacity_available( void * transport )
+{
+    return rocketnet_server_transport_send_capacity_available( (const rocketnet_server_transport_t *) transport );
+}
+
+// P9a: the transport's id of the connection in the slot, 0 while it is free;
+// a reconnect into the slot has a new id even with the same client id and
+// inside one update, so Observe resets the slot for it
 static uint64_t rn_server_link_connection( void * transport, int client_index )
 {
-    rocketnet_server_transport_t * server = (rocketnet_server_transport_t *) transport;
-    if ( !rocketnet_server_transport_is_client_connected( server, client_index ) )
-        return 0;
-    const uint64_t id = rocketnet_server_transport_client_id( server, client_index );
-    return id != 0 ? id : 1;
+    return rocketnet_server_transport_client_connection_id( (rocketnet_server_transport_t *) transport, client_index );
+}
+
+// P9b: the connection each batch entry was received for, parallel to the
+// batch's client index array
+static uint64_t rn_server_link_payload_connection( void * transport, int k )
+{
+    const uint64_t * connection_id = NULL;
+    const int count = rocketnet_server_transport_payload_connection_ids( (rocketnet_server_transport_t *) transport, &connection_id );
+    return connection_id && k >= 0 && k < count ? connection_id[k] : 0;
+}
+
+static uint64_t rn_server_link_acked_connection( void * transport, int k )
+{
+    const uint64_t * connection_id = NULL;
+    const int count = rocketnet_server_transport_acked_connection_ids( (rocketnet_server_transport_t *) transport, &connection_id );
+    return connection_id && k >= 0 && k < count ? connection_id[k] : 0;
 }
 
 static void rn_server_link_disconnect( void * transport, int client_index )
@@ -1154,11 +1159,15 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->update = rn_server_link_update;
     link->payloads = rn_server_link_payloads;
     link->acked = rn_server_link_acked;
+    link->payload_connection = rn_server_link_payload_connection;
+    link->acked_connection = rn_server_link_acked_connection;
     link->max_payload_bytes = rn_server_link_max_payload_bytes;
     link->start_packet = rn_server_link_start_packet;
     link->finish_packet = rn_server_link_finish_packet;
     link->abort_packet = rn_server_link_abort_packet;
     link->send_packets = rn_server_link_send_packets;
+    link->send_capacity_available = rn_server_link_send_capacity_available;
+    link->send_connected_count = rn_server_link_send_connected_count;
     link->connection = rn_server_link_connection;
     link->disconnect = rn_server_link_disconnect;
     link->state = rn_server_link_state;
@@ -1190,26 +1199,63 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps )
 {
+    return rocketnet_message_server_create_ex( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, NULL, 0 );
+}
+
+struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
+                                                                        const struct rocketnet_server_transport_config_t * transport_config,
+                                                                        const struct rocketnet_message_config_t * message_config,
+                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited )
+{
+    int ignored = ROCKETNET_STATUS_OK;
+    if ( !status )
+        status = &ignored;
+    *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !rocketnet_api_null_guard( address ) )
         return NULL;
 
-    const uint32_t kbps = per_client_send_kbps != 0 ? per_client_send_kbps : ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS;
+    // R6 (docs/CHANNELS.md 11.5): 0 takes server_send_kbps from the message
+    // config; a positive value overrides it for every slot this create makes.
+    // The create argument is uint32_t, so refuse above the maximum before
+    // narrowing: a value in [2^31, 2^32) must not wrap negative and become
+    // uncapped.
+    if ( per_client_send_kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
+    {
+        rocketnet_error( "message server create refused: send budget above maximum" );
+        *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return NULL;
+    }
+    int32_t kbps = (int32_t) per_client_send_kbps;
+    if ( kbps == 0 )
+    {
+        rocketnet_message_config_t defaults;
+        const rocketnet_message_config_t * resolved = message_config;
+        if ( !resolved )
+        {
+            rocketnet_message_default_config( &defaults );
+            resolved = &defaults;
+        }
+        kbps = resolved->server_send_kbps;
+    }
     const int max_clients = rn_message_server_max_clients( transport_config );
 
     // refuse before the transport opens a socket
-    if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !rocketnet_send_budget_kbps_valid( kbps ) )
+    if ( rn_message_object_required_bytes( message_config, max_clients, 1 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
     {
         rocketnet_error( "message server create refused: message config, client count or send budget" );
+        *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return NULL;
     }
 
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create( context, address, transport_config );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( context, address, transport_config, status );
     if ( !transport )
         return NULL;
 
     rn_message_link_t link;
     rn_message_server_link( &link, transport );
-    return (rocketnet_message_server_t *) rn_message_object_create( context, &link, 1, max_clients, message_config, memory, memory_bytes, kbps, 0.0 );
+    rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create( context, &link, 1, max_clients, message_config, memory, memory_bytes, kbps, 0.0, reserve_unlimited != 0 );
+    *status = server ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY;
+    return server;
 }
 
 void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server )
@@ -1229,7 +1275,7 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
-        return ROCKETNET_MESSAGE_OK;
+        return ROCKETNET_UPDATE_OK;
     return rn_message_object_update( &server->object, time );
 }
 
@@ -1270,7 +1316,28 @@ uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * serv
     return rn_message_object_send( &server->object, client_index, channel, reliability, data, bytes );
 }
 
-int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
+int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( data ) )
+        return 0;
+
+    // CHANNELS 11.4 Broadcast: a loop over the slots, each send the same copying
+    // convenience as rocketnet_message_server_send. The R3 copy is one per
+    // connected connection, into that connection's region; there is no new
+    // state and no allocation. A slot that refuses (free, kicked or exhausted)
+    // is skipped by the send path, which counts the refusal, and never retried.
+    int queued = 0;
+    for ( int i = 0; i < server->object.num_connections; i++ )
+    {
+        if ( rn_message_object_send( &server->object, i, channel, reliability, data, bytes ) != 0 )
+            queued++;
+    }
+    return queued;
+}
+
+int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int * client_index, int * channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
@@ -1281,6 +1348,24 @@ int rocketnet_message_server_receive( struct rocketnet_message_server_t * server
     return rn_message_object_receive( &server->object, client_index, channel, data, bytes );
 }
 
+int rocketnet_message_server_receive_channel( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( data ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( bytes ) )
+        return 0;
+    return rn_message_object_receive_channel( &server->object, client_index, channel, data, bytes );
+}
+
+int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * messages )
+{
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( messages ) )
+        return 0;
+    return rn_message_object_receive_messages( &server->object, messages );
+}
+
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity )
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( out ) || capacity < 1 )
@@ -1288,19 +1373,19 @@ int rocketnet_message_server_receipts( struct rocketnet_message_server_t * serve
     rn_message_connection_t * connection = rn_message_object_connection( &server->object, client_index );
     if ( !connection || connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
         return 0;
-    return rn_window_ack_receipts( &connection->ordered.ack, out, capacity );
+    return rn_endpoint_take_receipts( connection, out, capacity );
 }
 
-void rocketnet_message_server_release( struct rocketnet_message_server_t * server, int client_index, const uint8_t * data )
+void rocketnet_message_server_release( struct rocketnet_message_server_t * server, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return;
     if ( !rocketnet_api_null_guard( data ) )
         return;
-    rn_message_object_release( &server->object, client_index, data );
+    rn_message_object_release( &server->object, data );
 }
 
-int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, uint32_t kbps )
+int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, int32_t kbps )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
@@ -1310,7 +1395,7 @@ int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * 
 int rocketnet_message_server_disconnect_reason( struct rocketnet_message_server_t * server, int client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
-        return ROCKETNET_MESSAGE_ERROR_NONE;
+        return ROCKETNET_DISCONNECT_REASON_NONE;
     return rn_message_object_disconnect_reason( &server->object, client_index );
 }
 

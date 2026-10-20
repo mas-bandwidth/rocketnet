@@ -65,7 +65,7 @@
 #   big-endian              the suite on real big-endian bytes (s390x), the
 #                           only leg that can see an endianness break before
 #                           a customer does
-#   conformance             STANDARD.md against the implementation
+#   conformance             the standard in standard/ against the implementation
 #   platform-selftests      soak_sim's instruments and the bench harnesses'
 #                           abort paths, each against its own negative
 #                           control -- once per OS, on the Release build,
@@ -84,12 +84,18 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, sprint/rocketnet-proof ]
   pull_request:
-  # Filtering push to main means a feature branch no longer runs the matrix
-  # twice -- once for the push, once for its PR. workflow_dispatch keeps a
-  # deliberate way to run it on a branch, which is the capability the filter
-  # would otherwise silently remove. (serialize's ci.yml, same reasoning.)
+  # Filtering push to main and sprint/rocketnet-proof means a feature branch no
+  # longer runs the matrix twice -- once for the push, once for its PR.
+  # sprint/rocketnet-proof is named by name, not by sprint/**: every worker
+  # pushes a sprint/<card> branch, and a sprint/** filter would start this
+  # matrix on every one of those pushes, dozens an hour, for work the pull
+  # request filter already runs. sprint/rocketnet-proof is where v1.0 lands, by
+  # direct land commits with no pull request to run them, so naming that branch
+  # is what puts this gate on the landing. workflow_dispatch keeps a deliberate
+  # way to run it on any other branch, which is the capability the filter would
+  # otherwise silently remove. (serialize's ci.yml, same reasoning.)
   workflow_dispatch:
 
 # a superseded commit's run is not a gate on anything -- the gate is the head
@@ -98,6 +104,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job sets timeout-minutes: 3, the per-commit law above (one to two
+# minutes) with a minute of headroom, except xdp-libxdp-1-4, whose own
+# comment names its bound; a job that runs longer fails.
 jobs:
 
   # THE ubuntu-24.04 / Release ROW IS SPLIT IN TWO (2026-09-13); every other
@@ -133,11 +142,11 @@ jobs:
     # self-hosted apt step is skipped. They ran on [self-hosted,Linux,X64,rocketnet] until 2026-10-13, a label only
     # hulk carried: hulk went down and every Linux job sat QUEUED for hours.
     # macOS rows run on HOSTED macos-15 AS A STOPGAP (2026-10-13): no [self-hosted,macOS,ARM64,rocketnet] runner was
-    # ever registered, so those rows never started. Hosted macOS is $0.16/min and was ~80% of September's Actions
-    # bill; the self-hosted target is mini-m5 (the fleet's Apple-silicon Mac) once its org runner is registered, and
+    # ever registered, so those rows never started. The self-hosted target is mini-m5 (the fleet's Apple-silicon Mac) once its org runner is registered, and
     # these rows go back to a runner label then. matrix.os stays the display name and the image the row was written
     # against; runner, when set, is the label set runs-on uses instead.
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -146,22 +155,45 @@ jobs:
           - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","fleet"]' }
-          # macos apple silicon
-          - { os: macos-15,     build_type: Debug,   leg: ab }   # hosted stopgap; mini-m5 once registered
-          - { os: macos-15,     build_type: Release, leg: ab }   # hosted stopgap; mini-m5 once registered
+          # macOS Apple silicon on the fleet's darwin runner (mini-m5-1-rocketnet-1, label rocketnet-macos; rowan-tools fleet/runners.tsv)
+          - { os: macos-15, build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Release, leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+          set -euo pipefail
+          missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # System sodium is installed only as an independent parity reference;
       # the production targets compile the committed, namespaced vendor.
@@ -184,6 +216,10 @@ jobs:
       - name: Check the floating-point floor on every compiler invocation
         if: runner.os == 'Linux'
         run: bash tools/check_fp_contract.sh
+
+      - name: Check every child make has a bounded -j
+        if: runner.os == 'Linux'
+        run: bash tools/check_make_jobs.sh
 
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
@@ -210,13 +246,34 @@ jobs:
           cmake --build build --target rocketnet_sodium_oracle --parallel
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
 
+      - name: Replay the fuzz corpora without libFuzzer
+        if: runner.os == 'macOS'
+        run: |
+          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured; do
+            cmake --build build --target "fuzz_replay_${harness}" --parallel 2
+          done
+          ./bin/fuzz_replay_rocketnet_fuzz fuzz/corpus/*
+          ./bin/fuzz_replay_rocketnet_fuzz_message fuzz/corpus_message/*
+          ./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
+          ./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
+
       - name: Run unit tests
         if: contains(matrix.leg, 'b')
         run: ./bin/test
 
-      - name: Run unit tests with the driver pin preserved
+      # The unit suite opens no socket: ./bin/test runs under strace and the
+      # check fails, naming the first opener, on any socket() call
+      # (tools/check_unit_no_sockets.sh).
+      - name: Unit suite opens no socket
+        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
+        run: bash tools/check_unit_no_sockets.sh ./bin/test
+
+      # The unit suite reads no real time, sleep, thread or resolver: the
+      # check fails, naming file and line, on any such call in the unit
+      # sources (tools/check_unit_purity.py).
+      - name: Unit suite uses no real time, sleep, thread or resolver
         if: contains(matrix.leg, 'b')
-        run: ROCKETNET_DRIVER=portable ./bin/test
+        run: python3 tools/check_unit_purity.py .
 
       - name: Ambient config isolation and passing output
         if: contains(matrix.leg, 'b')
@@ -224,18 +281,137 @@ jobs:
 
       - name: Run functional suite (auto ladder — the fall, on Linux)
         if: contains(matrix.leg, 'b')
-        timeout-minutes: 20
         run: ./bin/functional
 
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
-        timeout-minutes: 20
-        run: ROCKETNET_DRIVER=portable ./bin/functional
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          ./bin/functional | tee functional-pinned.log
+          grep -qx 'transport_env_pin_is_honoured' functional-pinned.log
+          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-pinned.log
 
-      - name: Run lifecycle unit binary
+      # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
+      # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
+      # server, so a family regression on any one transport fails here.
+      # transport_env_pin_is_honoured runs under the same pin and proves the
+      # pinned transport is the one granted. tools/check_transport_matrix.py
+      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # OS it builds for. A cell line is: server transport, client
+      # transport, then case=card for each case expected to fail until that
+      # card lands: the case fails, or prints a skip naming that card. An
+      # expected failure that passes fails the step, so the mark is removed
+      # as the card lands; any other skip fails. No cell holds a mark: the
+      # in-memory loopback serves dual stack like the socket transports. The xdp
+      # cell needs root, a namespace and a veth pair, so it runs
+      # xdp_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
+      # client) as root inside a virtme-ng guest on the runner's own kernel,
+      # never on the host; a runner with no VM tier fails the cell.
+      - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
+        if: contains(matrix.leg, 'b')
+        timeout-minutes: 3
+        shell: bash
+        env:
+          TRANSPORT_MATRIX_LINUX: |
+            portable portable
+            gso portable
+            io_uring portable
+            loopback loopback
+            xdp portable
+          TRANSPORT_MATRIX_MACOS: |
+            portable portable
+            portable msgx
+            msgx portable
+            msgx msgx
+            loopback loopback
+        run: |
+          set +e -uo pipefail
+          case "$RUNNER_OS" in
+            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
+            macOS)   matrix=$TRANSPORT_MATRIX_MACOS;   functional=./bin/functional ;;
+            Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
+            *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
+          esac
+          socket_cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured"
+          xdp_cases="xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6"
+          cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
+          uring_offered=0
+          if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+          mkdir -p build
+          logs=$(mktemp -d "$PWD/build/transport-matrix.XXXXXX")
+          # each cell runs its cases in series; the cells run in parallel
+          while read -r server client expected; do
+            [ -n "$server" ] || continue
+            if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
+              echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              continue
+            fi
+            if [ "$server" = xdp ]; then
+              (
+                # root, a namespace and a veth pair inside a guest of the
+                # runner's own kernel; the host is never touched
+                vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+                if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+                  for case in $xdp_cases; do
+                    echo "no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm" > "$logs/$server.$client.$case.log"
+                    echo 1 > "$logs/$server.$client.$case.rc"
+                  done
+                  exit 0
+                fi
+                timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                  sh -c 'for case in '"$xdp_cases"'; do sudo '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                  > "$logs/$server.$client.vm.log" 2>&1
+                for case in $xdp_cases; do
+                  [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs/$server.$client.vm.log" > "$logs/$server.$client.$case.log"; }
+                done
+              ) &
+              continue
+            fi
+            (
+              for case in $socket_cases; do
+                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
+                echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
+              done
+            ) &
+          done <<< "$matrix"
+          wait
+          failed=0
+          while read -r server client expected; do
+            [ -n "$server" ] && [ -d "$logs" ] || continue
+            cases=$(cell_cases "$server")
+            [ -f "$logs/$server.$client.${cases##* }.rc" ] || continue
+            for case in $cases; do
+              log="$logs/$server.$client.$case.log"
+              rc=$(cat "$logs/$server.$client.$case.rc")
+              card=""
+              for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
+              ok=1
+              [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
+              if [ -n "$card" ] && { [ "$ok" = 1 ] || grep -q 'remove the marker' "$log"; }; then
+                echo "XPASS server=$server client=$client $case: $card has landed; remove its expected-fail mark"
+                failed=1
+              elif [ -n "$card" ]; then
+                echo "XFAIL server=$server client=$client $case (expected until $card lands)"
+              elif [ "$ok" = 1 ]; then
+                echo "PASS server=$server client=$client $case"
+              else
+                echo "FAIL server=$server client=$client $case (exit $rc)"
+                tail -n 5 "$log" | sed 's/^/    /'
+                failed=1
+              fi
+            done
+          done <<< "$matrix"
+          rm -rf "$logs"
+          exit "$failed"
+
+      - name: "Functional: lifecycle binary"
         if: contains(matrix.leg, 'a')
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
       - name: Check production library boundary
@@ -246,6 +422,46 @@ jobs:
           else
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
+
+      - name: Check every driver row has transport matrix cells
+        if: runner.os == 'Linux'
+        run: python3 tools/check_transport_matrix.py
+
+      # tools/check_platform_policy.py exits 1 when a docs/PLATFORMS.md row
+      # does not match its named workflow (check_row, :139) or when functional/
+      # holds a wildcard address literal outside WILDCARD_ALLOWED (:30,
+      # check_wildcard_binds :185). It reads files only, so one leg per Linux
+      # row runs it.
+      - name: Check the platform policy and functional/ wildcard binds
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: python3 tools/check_platform_policy.py
+
+      - name: Check export source gate
+        if: runner.os == 'Linux'
+        run: python3 tools/test_check_exports.py
+
+      - name: Test the MSan gate's verdicts
+        if: runner.os == 'Linux'
+        run: python3 tools/test_run_msan.py
+
+      # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
+      # extern "C" block, and a C and a C++ client and server built from only
+      # the header and the prebuilt static library (seconds)
+      - name: Check the public header is clean and self-contained
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_public_header.py --build build
+
+      # The library is callable from a C and a C++ program through rocketnet.h
+      # alone, against the development shared and static libraries, and the
+      # production shared library exports only the reviewed list (so the
+      # development token minting symbol stays out of it).
+      - name: Check the library is callable from C and C++ through rocketnet.h
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_dll_consumer.py --build build
+
+      - name: Check the examples against the house rules
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_examples.py
 
       - name: Check larger history budget and reject undersized history
         if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
@@ -262,26 +478,31 @@ jobs:
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
+      - name: Memory plans echo the allocator observation on macOS
+        if: runner.os == 'macOS' && contains(matrix.leg, 'a')
+        run: |
+          ./bin/transport_memory 1 1416 1 portable 1 || true
+          ./bin/transport_memory 1 1416 1 msgx 1 || true
+
       - name: Memory plans against allocator observations
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_memory.py ./bin/transport_memory
 
-      - name: Native driver contract and external backend
+      - name: "Functional: native driver contract and external backend"
         if: contains(matrix.leg, 'a')
         run: |
-          ./bin/test_driver
+          ./bin/test_transport
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
-      - name: XDP source archive excludes incremental build output
+      # Linux: the embedded server_xdp.o is reproducible and equals a fresh
+      # compile of the current sources; elsewhere: the listed inputs exist.
+      - name: Embedded XDP object is reproducible and current
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_xdp_archive.py
 
-      - name: Compile the embedded XDP program without attaching it
+      - name: The build compiled and embedded the XDP program
         if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
-        run: |
-          xdp_compile_dir=$(mktemp -d "$PWD/build/xdp-archive.XXXXXX")
-          tar -xzf build/generated/rocketnet_server_xdp.tar.gz -C "$xdp_compile_dir"
-          make -C "$xdp_compile_dir" server_xdp.o
+        run: test -s build/generated/server_xdp.o
 
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions
@@ -296,6 +517,50 @@ jobs:
       - name: Provisioning script selftest
         if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
         run: bash scripts/rocketnet-provision selftest
+
+  # sdk/rocketnet_server_socket_linux.cpp:1807 initializes UMEM ring sizes.
+  # libxdp 1.4 rejects zeroed ring sizes; 1.6 accepts them, so pin this XDP cell.
+  xdp-libxdp-1-4:
+    name: XDP / libxdp 1.4 / Debug
+    runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
+    # The guest run alone takes 120s (timeout 120 vng below) after a Debug
+    # build of the functional cell; the bound stays 10 until a fleet
+    # measurement names a smaller one.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the XDP functional cell (Debug)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(pkg-config --modversion libxdp)
+          echo "libxdp $version"
+          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --target functional --parallel 2
+      - name: XDP max size on IPv4 and IPv6 in the runner kernel guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+          command -v vng
+          test -r "$vm_kernel"
+          test -w /dev/kvm
+          cat > build/xdp-libxdp-1-4.sh <<'GUEST'
+          uname -r
+          failed=0
+          for case in xdp_max_size_both_ways_ipv4 xdp_max_size_both_ways_ipv6; do
+            log="build/libxdp-1-4.$case.log"
+            sudo ./bin/functional --run "$case" > "$log" 2>&1
+            rc=$?
+            cat "$log"
+            echo "CASE $case EXIT $rc"
+            if [ "$rc" != 0 ] || ! grep -qx "$case" "$log" || grep -q '\[SKIPPED' "$log"; then failed=1; fi
+          done
+          exit "$failed"
+          GUEST
+          timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+            sh build/xdp-libxdp-1-4.sh
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
@@ -343,8 +608,8 @@ jobs:
   #
   # AND IT STILL GATES EVERY COMMIT, on Linux and macOS. Only the WINDOWS
   # spelling went nightly, where it cost 42s on top of a 92s floor; the same
-  # script runs per commit in build-and-test's `Native driver contract and
-  # external backend` step, 15s there. What waits until morning is
+  # script runs per commit in build-and-test's `Functional: native driver
+  # contract and external backend` step, 15s there. What waits until morning is
   # specifically "does the out-of-tree backend still build under MSVC", and
   # nothing else. That is a much smaller hole than moving the check itself.
   #
@@ -356,10 +621,11 @@ jobs:
   #              source, the serialization surface, memory plans
   #   (b)  ~35s  the library boundary (10s), install and relocate the SDK
   #              (12s), ambient config isolation (12s), the native driver
-  #              contract itself (test_driver; transport control is inside functional)
+  #              contract itself (test_transport; transport control is inside functional)
   #
-  # `Native driver contract and external backend` was ONE step running three
-  # commands. The two exes stay here as `Native driver contract`; the python
+  # `Functional: native driver contract and external backend` was ONE step
+  # running three commands. The two exes stay here as `Functional: native
+  # driver contract`; the python
   # check is the thing that left. Same commands, same order, one of them on a
   # different clock.
   #
@@ -388,8 +654,11 @@ jobs:
   # tests windows does not build.
 
   build-and-test-windows:
-    name: windows-2025 / Release (${{ matrix.leg }})
-    runs-on: windows-2025
+    name: windows / Release (${{ matrix.leg }})
+    # the fleet's native Windows runner (captain-rocketnet-1: Windows 11, VS 18 Community MSVC, CMake 4, Git Bash, Python 3.9;
+    # label rocketnet-windows; rowan-tools fleet/runners-windows.tsv), never a hosted image
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -400,7 +669,7 @@ jobs:
 
       - name: Check committed XDP fallback source on Windows
         if: matrix.leg == 'a'
-        # Uses Python and CMake preinstalled on the windows-2025 runner.
+        # Uses the Python and CMake on the fleet Windows runner's job PATH.
         run: python tools/check_xdp_archive.py --committed-only
 
       - name: Configure
@@ -408,6 +677,23 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel
+
+      # rocketnet.h alone under MSVC cl, and a C and a C++ client and server
+      # built from only the header and the prebuilt static library (seconds)
+      - name: Check the public header is clean and self-contained
+        if: matrix.leg == 'a'
+        run: python tools/check_public_header.py --build build --config Release
+
+      - name: Replay the fuzz corpora without libFuzzer
+        shell: bash
+        run: |
+          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured; do
+            cmake --build build --config Release --target "fuzz_replay_${harness}" --parallel 2
+          done
+          ./bin/Release/fuzz_replay_rocketnet_fuzz.exe fuzz/corpus/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_message.exe fuzz/corpus_message/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_connect_token.exe fuzz/corpus_connect_token/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_receive_structured.exe fuzz/corpus_receive_structured/*
 
       # ---- leg (a): the suite as the runner executes it ----
 
@@ -420,23 +706,26 @@ jobs:
 
       - name: Run functional suite
         if: matrix.leg == 'a'
-        timeout-minutes: 20
         shell: bash
         run: ./bin/Release/functional.exe
 
       - name: Functional suite with IOCP selected
         if: matrix.leg == 'a'
-        timeout-minutes: 20
         shell: bash
         env:
-          ROCKETNET_DRIVER: iocp
-        run: ./bin/Release/functional.exe
+          ROCKETNET_SERVER_TRANSPORT: iocp
+        run: |
+          set -o pipefail
+          ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
+          grep -qx 'transport_env_pin_is_honoured' functional-iocp.log
+          ! grep -q '^transport_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
-      - name: Run lifecycle unit binary
+      - name: "Functional: lifecycle binary"
         if: matrix.leg == 'a'
         shell: bash
         env:
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/Release/test_lifecycle.exe
 
       - name: Memory plans against allocator observations
@@ -449,6 +738,10 @@ jobs:
         if: matrix.leg == 'b'
         run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
 
+      - name: Check the library is callable from C and C++ through rocketnet.h
+        if: matrix.leg == 'b'
+        run: python tools/check_dll_consumer.py --build build
+
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: matrix.leg == 'b'
         run: python tools/check_package.py build --config Release
@@ -457,11 +750,193 @@ jobs:
         if: matrix.leg == 'b'
         run: python tools/check_test_environment.py ./bin/Release/test.exe
 
-      - name: Native driver contract
+      - name: "Functional: native driver contract"
         if: matrix.leg == 'b'
         run: |
-          ./bin/Release/test_driver.exe
+          ./bin/Release/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
+      # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
+      # server, so a family regression on any one transport fails here.
+      # transport_env_pin_is_honoured runs under the same pin and proves the
+      # pinned transport is the one granted. tools/check_transport_matrix.py
+      # refuses a driver row in sdk/rocketnet_drivers.inc with no cell on an
+      # OS it builds for. A cell line is: server transport, client
+      # transport, then case=card for each case expected to fail until that
+      # card lands: the case fails, or prints a skip naming that card. An
+      # expected failure that passes fails the step, so the mark is removed
+      # as the card lands; any other skip fails. xdp is Linux only; its cell
+      # is in the Linux matrix.
+      - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
+        if: matrix.leg == 'b'
+        timeout-minutes: 3
+        shell: bash
+        env:
+          TRANSPORT_MATRIX_WINDOWS: |
+            portable portable
+            iocp portable
+            rio portable
+            loopback loopback
+        run: |
+          set +e -uo pipefail
+          case "$RUNNER_OS" in
+            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
+            macOS)   matrix=$TRANSPORT_MATRIX_MACOS;   functional=./bin/functional ;;
+            Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
+            *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
+          esac
+          cases="test_transport_udp_loopback test_transport_ipv6_loopback test_transport_dual_stack_ipv4_client transport_env_pin_is_honoured"
+          uring_offered=0
+          if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+          mkdir -p build
+          logs=$(mktemp -d "$PWD/build/transport-matrix.XXXXXX")
+          # each cell runs its cases in series; the cells run in parallel
+          while read -r server client expected; do
+            [ -n "$server" ] || continue
+            if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
+              echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              continue
+            fi
+            (
+              for case in $cases; do
+                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
+                echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
+              done
+            ) &
+          done <<< "$matrix"
+          wait
+          failed=0
+          while read -r server client expected; do
+            [ -n "$server" ] && [ -d "$logs" ] || continue
+            [ -f "$logs/$server.$client.transport_env_pin_is_honoured.rc" ] || continue
+            for case in $cases; do
+              log="$logs/$server.$client.$case.log"
+              rc=$(cat "$logs/$server.$client.$case.rc")
+              card=""
+              for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
+              ok=1
+              [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
+              if [ -n "$card" ] && { [ "$ok" = 1 ] || grep -q 'remove the marker' "$log"; }; then
+                echo "XPASS server=$server client=$client $case: $card has landed; remove its expected-fail mark"
+                failed=1
+              elif [ -n "$card" ]; then
+                echo "XFAIL server=$server client=$client $case (expected until $card lands)"
+              elif [ "$ok" = 1 ]; then
+                echo "PASS server=$server client=$client $case"
+              else
+                echo "FAIL server=$server client=$client $case (exit $rc)"
+                tail -n 5 "$log" | sed 's/^/    /'
+                failed=1
+              fi
+            done
+          done <<< "$matrix"
+          rm -rf "$logs"
+          exit "$failed"
+
+  # THE HAPPY PATH: the real server and client binaries as separate processes
+  # over loopback, watched stage by stage. It is deliberately small -- connect,
+  # one message of every reliability type, receipts, clean disconnect, clean
+  # stop -- and it is its own job with NO needs, so it starts at once beside
+  # build-and-test and adds nothing to the wall time of the per-commit gate.
+  # The tools/happy_path Go tool is standard library only; nothing here needs
+  # root and nothing selects XDP (the tool pins the portable transport).
+
+  happy-path:
+    name: happy path / ${{ matrix.os }}
+    # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos, Windows on rocketnet-windows
+    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: windows, runner: '["self-hosted","Windows","X64","rocketnet-windows"]' }
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            # MSVC comes through CMake's Visual Studio generator; the job PATH carries cmake, python and Git Bash
+            for tool in cmake python git; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            exit "$missing"
+          fi
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check the fleet's Go is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          # tools/happy_path/go.mod says go 1.22: any Go at or above 1.23 builds it (the fleet pins 1.26 on Linux and macOS)
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go >= 1.23 (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          got="$(go version)"
+          echo "$got"
+          minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\).*/\1/p')"
+          if [ -z "$minor" ] || [ "$minor" -lt 23 ]; then
+            echo "TOOL-MISSING go >= 1.23 $got on $RUNNER_NAME"; exit 1
+          fi
+
+      - name: Build (Linux and macOS, through the Makefile)
+        if: runner.os != 'Windows'
+        run: make
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -A x64
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel
+
+      # the two C programs share this directory with the Go tool, so name the
+      # tool's .go file rather than the directory
+      - name: Run happy_path
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          cd tools/happy_path
+          go run happy_path.go
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
@@ -479,18 +954,48 @@ jobs:
   # against a known baseline. The per-commit gate takes asan's memory-safety
   # findings and ubsan's, both of which are immediate and unambiguous.
 
+  # SPLIT INTO THREE PARALLEL LEGS, not shortened. One job ran two unit-suite
+  # passes, the functional suite, three lifecycle binaries and a python control
+  # in series on one runner. The same reasoning and the same trade as tsan
+  # below: each leg now pays the sanitizer build once in parallel and builds
+  # only the targets it runs. NOTHING WAS DROPPED OR SHORTENED -- the same two
+  # unit passes, the functional suite, the lifecycle binaries and the control,
+  # still per commit, still with -fno-sanitize-recover=all.
+  #
+  # MEASURED WITH THE EXACT CI COMMANDS ON A 16-CORE BENCH: unit suite 45s,
+  # unit suite portable 44s, functional suite 36s, per-leg totals. Each leg
+  # fits within timeout-minutes: 3.
+
   sanitizers:
-    name: asan + ubsan
+    name: asan + ubsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [unit suite, unit suite portable, functional suite]
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Configure
         run: >
@@ -499,40 +1004,57 @@ jobs:
           -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
-      - name: Build
-        run: cmake --build build --parallel
+      - name: Build the sanitized unit suite
+        if: matrix.leg == 'unit suite' || matrix.leg == 'unit suite portable'
+        run: cmake --build build --target test --parallel
+
+      - name: Build the sanitized functional suite and the lifecycle binaries
+        if: matrix.leg == 'functional suite'
+        run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
 
       - name: Run unit tests
+        if: matrix.leg == 'unit suite'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./bin/test
 
       - name: Run unit tests with the driver pin preserved
+        if: matrix.leg == 'unit suite portable'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test
 
       - name: Run functional suite under sanitizers
+        if: matrix.leg == 'functional suite'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-        timeout-minutes: 30
         run: ./bin/functional
 
-      - name: Allocation lifecycle under sanitizers
+      - name: "Functional binaries under sanitizers: lifecycle and driver contract"
+        if: matrix.leg == 'functional suite'
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           ./bin/test_lifecycle
-          ./bin/test_driver
-          ./bin/test_sodium
+          ./bin/test_transport
+
+      - name: Sodium known answers under sanitizers
+        if: matrix.leg == 'functional suite'
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ./bin/test_sodium
 
       - name: Inactive XDP index negative control
+        if: matrix.leg == 'functional suite'
         run: python3 tools/check_xdp_guard_control.py
 
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.
@@ -556,15 +1078,43 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # the library is built once with coverage instrumentation and the
       # sanitizers, then the harness links against it -- one parallel build
@@ -589,7 +1139,7 @@ jobs:
             -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isdk fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
-            -lbpf -lxdp -lpthread \
+            -lbpf -lxdp -luring -lpthread \
             -o bin/fuzz
 
       - name: Build the message harness
@@ -598,7 +1148,7 @@ jobs:
             -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isdk fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a \
-            -lbpf -lxdp -lpthread \
+            -lbpf -lxdp -luring -lpthread \
             -o bin/fuzz_message
 
       # THE GATE: each committed input, once, in order. libFuzzer given files
@@ -618,37 +1168,28 @@ jobs:
       - name: Exact-field oracle rejects memory-safe truncation
         run: python3 tools/check_fuzz_oracle.py build-fuzz
 
-      # The bounded pass: fixed seed, FIXED EXECUTION COUNT, and the corpus
-      # copied out first so the source tree is not mutated. -runs, not
-      # -max_total_time, is what makes this repeatable: a wall-clock bound
-      # makes the number of inputs tried a function of how fast the runner
-      # is that morning, so a latent crash reddens whichever pull request
-      # happens to draw a quick machine, on code it did not touch. A fixed
-      # seed and a fixed count try the same inputs everywhere. The step's
-      # timeout is the runaway guard and fails red if the count cannot finish;
-      # libFuzzer's wall-clock cap would instead return success early.
-      # Two million executions measured at
-      # roughly thirty seconds on this runner, which is the same depth the
-      # wall-clock bound was reaching before -- the change buys determinism,
-      # it does not buy less fuzzing.
+      # The bounded pass: fixed seed, fixed WALL-CLOCK BUDGET, and the corpus
+      # copied out first so the source tree is not mutated. Every target gets
+      # the same few seconds, and the step's timeout is the runaway guard that
+      # fails red if a pass cannot finish; the CI budget is one minute end to
+      # end per job. The gate's determinism argument stays the replay above --
+      # this pass only adds a few seconds of mutation on top of it.
 
-      - name: Bounded mutation pass (fixed seed, fixed count)
-        timeout-minutes: 5
+      - name: Mutation pass (time-boxed, fixed seed)
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
           # RUNNER_TEMP, not /tmp: on a persistent self-hosted host /tmp/fuzz-corpus outlives the job and is
           # shared by every runner on the machine, so the pass would start from another run's grown corpus
           cp -r fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
-          ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -runs=2000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+          ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
-      - name: Bounded message mutation pass (fixed seed, fixed count)
-        timeout-minutes: 5
+      - name: Message mutation pass (time-boxed, fixed seed)
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
           cp -r fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
-          ./bin/fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -runs=1000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+          ./bin/fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
         if: failure()
@@ -672,15 +1213,43 @@ jobs:
   fuzz-smoke-ndebug:
     name: fuzz smoke NDEBUG (four fuzzers, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Configure the instrumented library
         run: >
@@ -702,7 +1271,7 @@ jobs:
               -DROCKETNET_DEVELOPMENT=1 -DNDEBUG \
               -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
               -Isodium -Isdk -Itest "fuzz/${src}.cpp" build-fuzz/librocketnet_dev.a \
-              -lbpf -lxdp -lpthread \
+              -lbpf -lxdp -luring -lpthread \
               -o "bin/${src}_ndebug"
           done
 
@@ -714,6 +1283,36 @@ jobs:
           ./bin/rocketnet_fuzz_connect_token_ndebug fuzz/corpus_connect_token/*
           ./bin/rocketnet_fuzz_receive_structured_ndebug fuzz/corpus_receive_structured/*
           ./bin/rocketnet_fuzz_message_ndebug fuzz/corpus_message/*
+
+      # The connect token and receive/structured targets are built only in
+      # this job, so their time-boxed mutation pass lives here, after the
+      # replay: a copy of the seed corpus, a fixed seed, a few seconds.
+
+      - name: Connect token mutation pass (time-boxed, fixed seed)
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cp -r fuzz/corpus_connect_token "$RUNNER_TEMP/fuzz-corpus_connect_token"
+          ./bin/rocketnet_fuzz_connect_token_ndebug "$RUNNER_TEMP/fuzz-corpus_connect_token" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
+      - name: Receive structured mutation pass (time-boxed, fixed seed)
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cp -r fuzz/corpus_receive_structured "$RUNNER_TEMP/fuzz-corpus_receive_structured"
+          ./bin/rocketnet_fuzz_receive_structured_ndebug "$RUNNER_TEMP/fuzz-corpus_receive_structured" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-smoke-ndebug-crashes
+          path: |
+            crash-*
+            oom-*
+            timeout-*
+            leak-*
+          if-no-files-found: ignore
 
   # THE BIG-ENDIAN LEG (#111), and the reason it was built before the bug it
   # was built for (#112).
@@ -769,7 +1368,8 @@ jobs:
 
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -778,45 +1378,28 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Add the s390x architecture and the ports archive
+      - name: Check the s390x cross toolchain, libraries, and qemu are present
+        shell: bash
         run: |
           set -euo pipefail
-          sudo dpkg --add-architecture s390x
-
-          # The amd64 mirrors carry only amd64, so every EXISTING entry is
-          # pinned to it -- otherwise apt goes looking for s390x indexes that
-          # are not there and the update fails on the third-party lists the
-          # runner image ships. deb822 entries take an Architectures: field,
-          # one-line entries take [arch=amd64].
-
-          for f in /etc/apt/sources.list.d/*.sources; do
-            [ -e "$f" ] || continue
-            grep -q '^Architectures:' "$f" || sudo sed -i '/^Types: deb/a Architectures: amd64' "$f"
+          missing=0
+          for tool in cmake xxd pkg-config readelf s390x-linux-gnu-gcc s390x-linux-gnu-g++ qemu-s390x-static; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
           done
-          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
-            [ -e "$f" ] || continue
-            sudo sed -i -E 's|^deb +\[|deb [arch=amd64 |; s|^deb +([^[])|deb [arch=amd64] \1|' "$f"
+          for lib in libsodium libbpf libxdp; do
+            if ! PKG_CONFIG_LIBDIR=/usr/lib/s390x-linux-gnu/pkgconfig:/usr/share/pkgconfig pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (s390x) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
           done
-
-          sudo tee /etc/apt/sources.list.d/s390x-ports.sources > /dev/null <<'EOF'
-          Types: deb
-          URIs: http://ports.ubuntu.com/ubuntu-ports/
-          Suites: noble noble-updates
-          Components: main universe
-          Architectures: s390x
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-
-          sudo apt-get update -y
-
-      - name: Install the cross toolchain, the s390x libraries, and qemu
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            cmake xxd pkg-config qemu-user-static \
-            g++-s390x-linux-gnu \
-            libstdc++6:s390x \
-            libsodium-dev:s390x libbpf-dev:s390x libxdp-dev:s390x
+          if [ ! -e /usr/lib/s390x-linux-gnu/libstdc++.so.6 ]; then
+            echo "TOOL-MISSING libstdc++ (s390x) (no /usr/lib/s390x-linux-gnu/libstdc++.so.6) on $RUNNER_NAME"
+            missing=1
+          fi
+          exit "$missing"
 
       # CMAKE_SYSTEM_NAME=Linux keeps the linux branch of CMakeLists.txt --
       # this leg builds the same library the ubuntu leg does, xdp dataplane
@@ -878,7 +1461,6 @@ jobs:
       # multiarch tree.
 
       - name: Run the big-endian wire check
-        timeout-minutes: 5
         env:
           QEMU_LD_PREFIX: /
           LD_LIBRARY_PATH: /usr/lib/s390x-linux-gnu:/usr/s390x-linux-gnu/lib
@@ -886,18 +1468,13 @@ jobs:
           qemu-s390x-static ./bin/wire_check
           qemu-s390x-static ./bin/test_sodium
 
-  # STANDARD.md against the implementation, per serialize's tools/conformance.
-  # The checker reads the specification as a DOCUMENT -- its published tables,
-  # parsed as markdown, with no reference to the source tree -- and compares
-  # THE ROWS IT NAMES against the same constants as the compiler expands
-  # them. A row deleted from the document fails as loudly as a value that
-  # disagrees, because deleting the row would otherwise be the cheapest way
-  # to pass.
-  #
-  # It names the wire-format rows, not every row in the table: the timing and
-  # sizing rows, the magic and the KDF context strings are not compared, and
-  # the checker's own docstring lists exactly which and why. The count it
-  # prints on success is how many comparisons a green stands for.
+  # The standard in standard/ (RN-1, RN-2, RN-R), per serialize's
+  # tools/conformance. The checker reads each document as a DOCUMENT -- its
+  # published tables, parsed as markdown, with no reference to the source tree
+  # -- and compares every pinned row against the same constants as the
+  # compiler expands them. A row deleted from the document fails as loudly as
+  # a value that disagrees, because deleting the row would otherwise be the
+  # cheapest way to pass.
   #
   # A failure means the document and the code disagree. Decide which is wrong
   # and fix that one. A specification nothing verifies drifts, and a drifted
@@ -905,14 +1482,20 @@ jobs:
   # it.
 
   conformance:
-    name: STANDARD.md conformance
+    name: standard conformance
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Verify STANDARD.md against the implementation
-        run: python3 tools/conformance/check_standard.py
+      # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
+      # standard/STYLE.md, every pinned constant against the compiler, every
+      # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
+      # the cross-references and the normative language. Pending sections are
+      # listed, not failed. One compile; well under ten seconds.
+      - name: Verify the RocketNet standard against the implementation
+        run: python3 tools/conformance/check_rn_standard.py
 
   # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
   # story or leaves the threads to luck; this is the only leg that watches the
@@ -963,6 +1546,7 @@ jobs:
   tsan:
     name: tsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -971,11 +1555,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # setarch -R runs each tsan binary with address-space randomisation off FOR THAT PROCESS ONLY (no sysctl,
       # no root). gcc 13's tsan runtime (Ubuntu 24.04: the hetzner org runners) cannot map its shadow under the
@@ -1009,7 +1606,6 @@ jobs:
         if: matrix.leg == 'threaded transport'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        timeout-minutes: 30
         run: setarch "$(uname -m)" -R ./bin/functional
 
       - name: Run the bounded loopback soak under tsan (real transport threads)
@@ -1018,11 +1614,12 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: setarch "$(uname -m)" -R ./bin/soak 20000
 
-      - name: Allocation lifecycle under tsan
+      - name: "Functional binary under tsan: lifecycle"
         if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: setarch "$(uname -m)" -R ./bin/test_lifecycle
 
   # THE PINNED-SODIUM LEG.
@@ -1032,6 +1629,7 @@ jobs:
   sodium-pinned:
     name: pinned libsodium (built from source)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     env:
       SODIUM_VERSION: "1.0.20"
       SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
@@ -1042,11 +1640,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies (no libsodium-dev)
-        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential pkg-config libbpf-dev libxdp-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Restore the pinned sodium prefix
         id: sodium-cache
@@ -1143,27 +1754,51 @@ jobs:
   platform-selftests:
     name: platform selftests / ${{ matrix.os }}
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
         include:
-          # the Linux platform selftest stays on the hosted image: it is the bench-host capability check
-          # (bench/selftest.sh), and hulk fails its UDP_SEGMENT legs with EIO on loopback (measured 2026-09-21)
-          - { os: ubuntu-24.04 }
-          - { os: macos-15 }   # hosted stopgap; mini-m5 once registered
+          # the Linux platform selftest runs on the fleet bench; a host that
+          # cannot build a harness reports it as SKIPPED and fails a built one
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+          set -euo pipefail
+          missing=0
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # darwin has no libbpf, libxdp or liburing; libsodium is the independent parity reference check_sodium.py loads
+            for tool in cmake clang c++ xxd python3; do
+              if ! command -v "$tool" >/dev/null 2>&1; then
+                echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+                missing=1
+              fi
+            done
+            if ! python3 -c "import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library('sodium') else 1)"; then
+              echo "TOOL-MISSING libsodium (any) (ctypes.util.find_library failed) on $RUNNER_NAME"
+              missing=1
+            fi
+            exit "$missing"
+          fi
+          for tool in cmake gcc g++ clang xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # only soak_sim, not the whole tree: build-and-test already compiles
       # everything on both these OSes in both configurations, so a second full
@@ -1171,10 +1806,10 @@ jobs:
       # protect. Release, because that is the build the selftest is written
       # against.
 
-      - name: Build soak_sim (Release)
+      - name: Build soak_sim and soak (Release)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target soak_sim --parallel
+          cmake --build build --target soak_sim soak --parallel
 
       # soak_sim's instruments, each driven against its own negative control
       # (#99). The audit legs corrupt the simulator's index on purpose and
@@ -1185,6 +1820,16 @@ jobs:
 
       - name: soak_sim instrument selftest
         run: bash scripts/soak-sim-selftest
+
+      # soak's command line and end-of-run summary: every argument refusal
+      # exits 2 without a run, a --seconds 3 run ends inside 3..15 s with
+      # every summary line, the positional iteration count keeps its meaning,
+      # and a planted verify failure (ROCKETNET_SOAK_FAULT_VERIFY=1) goes red.
+      # About 8 s of wall time.
+
+      - name: soak argument and summary selftest
+        timeout-minutes: 3
+        run: bash scripts/soak-args-selftest
 
       # the bench harnesses' failure states (#98). Building them here is the
       # only place bench/ is compiled by CI at all, which alone catches the
@@ -1207,3 +1852,44 @@ jobs:
 
       - name: Benchmark campaign result gate
         run: python3 bench/test_campaign.py
+
+  # bench/instruction_baseline.json is pinned to GNU-15.2.0 / valgrind-3.26.0;
+  # the fleet label also matches gcc-13 hosts, so route this job to the quiet
+  # runner label that carries the pinned toolchain.
+  instruction-gate:
+    name: instruction count gate
+    runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
+    timeout-minutes: 3
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config valgrind python3; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Test the instruction-count checker
+        run: python3 tools/test_check_instructions.py
+
+      - name: Build instruction_count (Release)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target instruction_count --parallel
+
+      - name: Run the cachegrind instruction gate
+        run: python3 tools/check_instructions.py --bin ./build/instruction_count

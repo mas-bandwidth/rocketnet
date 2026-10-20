@@ -3,12 +3,16 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "test/suite_runner.h"
 #include "test_unit_registry.h"
 
 #include <stdint.h>
 #include <stdio.h>
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -43,13 +47,41 @@ static const char * rocketnet_suite_test_name( int index )
     return rocketnet_unit_tests_name( cindex - channels );
 }
 
+// the unit suite opens no socket: the platform's network lookups read these
+// instead of getifaddrs, the netlink route dump and the IPv6 probe socket
+// (rocketnet_platform_set_network_lookups_for_testing, rocketnet_internal.h;
+// read at sdk/rocketnet_platform.cpp:391 and :4352). UNKNOWN is what
+// get_connection_type returns when a lookup fails (sdk/rocketnet_platform.cpp:1777),
+// and true is the probe's answer on a host with an IPv6 stack (:4361).
+
+static int rocketnet_unit_fake_connection_type()
+{
+    return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+}
+
+static bool rocketnet_unit_fake_ipv6_available()
+{
+    return true;
+}
+
+static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lookups =
+{
+    rocketnet_unit_fake_connection_type,
+    rocketnet_unit_fake_ipv6_available,
+};
+
 static int rocketnet_unit_worker( const char * name )
 {
 #if defined(_WIN32)
     // MSVC treats _IOLBF as full buffering and rejects a zero buffer size.
-    // A 4096-byte buffer paired with explicit fflush keeps each worker's
-    // test-name line in a single pipe write so parallel workers never tear lines.
-    if ( setvbuf( stdout, NULL, _IOFBF, 4096 ) != 0 ||
+    // A full buffer flushes when it fills, wherever that falls in a line, so
+    // it is sized above any one worker's output (the ed25519 witness alone
+    // prints about 6 KB): the worker's lines reach the shared pipe in the one
+    // write of the fflush below, and parallel workers never tear a line. A
+    // text-mode stream may split a flush into several writes as it converts
+    // newlines, so stdout is binary: a flush is then a single write.
+    if ( _setmode( _fileno( stdout ), _O_BINARY ) == -1 ||
+         setvbuf( stdout, NULL, _IOFBF, 1 << 20 ) != 0 ||
          setvbuf( stderr, NULL, _IONBF, 0 ) != 0 )
         return 1;
 #else
@@ -57,27 +89,51 @@ static int rocketnet_unit_worker( const char * name )
     setvbuf( stderr, NULL, _IOLBF, 0 );
 #endif
 
-    // init reads this before the suite installs its config isolation.
+    // init reads this before the suite installs its config isolation. The
+    // unit suite must never run against a pin-selected real-socket transport, so
+    // both transport pins are cleared for every case, like LOG_LEVEL above.
 #if defined(_WIN32)
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
+    const int cleared_server = _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
+    const int cleared_client = _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
 #else
     const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
+    const int cleared_server = unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const int cleared_client = unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 #endif
-    if ( cleared != 0 )
+    if ( cleared != 0 || cleared_server != 0 || cleared_client != 0 )
         return 1;
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     // allocator cases install their hooks here: replacement is refused after init
     rocketnet_channels_prepare( name );
 
-    if ( !rocketnet_init() )
+    rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
+
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
     }
 
     rocketnet_unit_prepare();
+
+    // the suite's config isolation clears every transport variable above. Two
+    // cases create a client transport through the public API before stepping
+    // it themselves; run those step-driven, after the isolation, so the unit
+    // suite starts no client I/O thread.
+    if ( strcmp( name, "token_time_game_clock_admits_a_fixed_token" ) == 0 ||
+         strcmp( name, "public_link_simulator_revision_1_prefixes" ) == 0 )
+    {
+#if defined(_WIN32)
+        if ( _putenv_s( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) != 0 )
+            return 1;
+#else
+        if ( setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
+            return 1;
+#endif
+    }
     rocketnet_channels_prepare_log( name );
     int result = rocketnet_channels_run_named( name );
     if ( result == 2 )
@@ -166,14 +222,56 @@ int main( int argc, char ** argv )
     if ( test_fp_contract_off() )
         return 1;
 
+    // The unit suite runs over the loopback transport with no sockets, so a
+    // transport pin in the environment must not reach it: both pins are
+    // cleared for the whole run and restored on exit, the way
+    // posix_pair_create lifts them around its creates
+    // (functional/posix_socket_errors.cpp). Worker processes inherit the
+    // cleared environment; a case that tests pin handling itself sets and
+    // reads its own pins.
+
+    char saved_server_transport[64] = "";
+    char saved_client_transport[64] = "";
+    const char * pinned_server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const char * pinned_client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
+    const bool server_pinned = pinned_server != NULL;
+    const bool client_pinned = pinned_client != NULL;
+    if ( server_pinned )
+        snprintf( saved_server_transport, sizeof( saved_server_transport ), "%s", pinned_server );
+    if ( client_pinned )
+        snprintf( saved_client_transport, sizeof( saved_client_transport ), "%s", pinned_client );
+#if defined(_WIN32)
+    _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
+    _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
+#else
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+#endif
+
+    int result;
     // ./bin/test <name> runs that one test alone, in this process: a suite
     // name, or a message-layer test's alias (the name a card's TEST line uses)
 
     if ( argc == 2 && argv[1][0] != '-' )
     {
         const char * resolved = rocketnet_channels_test_resolve( argv[1] );
-        return rocketnet_unit_worker( resolved ? resolved : argv[1] );
+        result = rocketnet_unit_worker( resolved ? resolved : argv[1] );
+    }
+    else
+    {
+        result = suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0, NULL, 0, true );
     }
 
-    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0, NULL, 0, true );
+#if defined(_WIN32)
+    if ( server_pinned )
+        _putenv_s( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport );
+    if ( client_pinned )
+        _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport );
+#else
+    if ( server_pinned )
+        setenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, 1 );
+    if ( client_pinned )
+        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, 1 );
+#endif
+    return result;
 }

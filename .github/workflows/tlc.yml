@@ -2,7 +2,9 @@ name: TLC records
 
 on:
   push:
-    branches: [main, sprint/rocketnet-fixes]
+    # main and the branch v1.0 lands on, named by name: a sprint/** filter
+    # would start this gate on every worker branch push as well.
+    branches: [main, sprint/rocketnet-proof]
   pull_request:
   workflow_dispatch:
 
@@ -22,9 +24,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.6'
+      - name: Model coverage rows are true
+        shell: bash
+        run: python3 tools/check_tla_coverage.py --all
+      - name: Coverage checker tests pass
+        shell: bash
+        run: python3 tools/test_check_tla_coverage.py
+      - name: Check the fleet's Go is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go 1.26.6 (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          got="$(go version)"
+          echo "$got"
+          case "$got" in
+            *go1.26.6*)
+              ;;
+            *) echo "TOOL-MISSING go 1.26.6 $got on $RUNNER_NAME"; exit 1 ;;
+          esac
       - name: Build the pinned public runner and check records
         shell: bash
         env:
@@ -56,3 +76,7 @@ jobs:
                   assert case['gate'] == 'bench' and case['debt'] != '-' and row['exit'] == '124', row['config'] + ': failure without declared timeout debt'
           print('Required outcomes match; any unfinished cases are explicit timeout debt.')
           PY
+      - name: TLA ledgers merge clean
+        shell: bash
+        run: |
+          python3 tools/check_tla_ledger_merge.py

@@ -22,7 +22,7 @@ def main():
             key, value = line.split("=", 1)
             cache[key.split(":", 1)[0]] = value
     source = Path(cache["rocketnet_SOURCE_DIR"])
-    with tempfile.TemporaryDirectory(prefix="driver extension ", dir=build) as directory:
+    with tempfile.TemporaryDirectory(prefix="transport extension ", dir=build) as directory:
         command = ["cmake", "-S", source / "test/driver_extension", "-B", directory,
                    f"-DROCKETNET_SOURCE_PATH={source}", f"-DCMAKE_BUILD_TYPE={args.config}",
                    f"-DCMAKE_CONFIGURATION_TYPES={args.config}", "-G", cache["CMAKE_GENERATOR"]]
@@ -33,7 +33,7 @@ def main():
         native_options = ["--", "-nodeReuse:false"] if cache["CMAKE_GENERATOR"].startswith("Visual Studio") else []
         run("cmake", "--build", directory, "--config", args.config, "--parallel", "4", *native_options)
         run("ctest", "--test-dir", directory, "-C", args.config, "--output-on-failure")
-    print("Native extension: new client/server driver registered without transport edits")
+    print("Native extension: new client/server transport registered without transport edits")
 
 
 if __name__ == "__main__":

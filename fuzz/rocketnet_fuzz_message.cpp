@@ -44,7 +44,7 @@
 //   ./bin/fuzz_message fuzz/corpus_message/*                     # the replay gate
 //   ./bin/fuzz_message corpus fuzz/corpus_message -dict=fuzz/rocketnet.dict
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 
 #include <stdint.h>
@@ -179,7 +179,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 
     // the codec allocates nothing and touches nothing else: no rocketnet_init
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
     return 0;
 }
 

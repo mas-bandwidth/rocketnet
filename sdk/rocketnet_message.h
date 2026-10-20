@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 // Layer 2 of the message layer (docs/CHANNELS.md section 5): message records
 // inside one transport payload, and the zero-copy single-message form. The
@@ -158,6 +158,21 @@ int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * wr
 // payload unchanged: a record is never split (CHANNELS.md 9.3).
 
 int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
+
+// Appends one valid record whose data is already in place, right after the
+// header's room (record->data == payload + bytes so far + its header bytes):
+// only the header is written, and nothing is copied. The in-place unreliable
+// send (docs/OUTGOING-BUILD.md) writes its one record this way. Returns 1, or
+// 0 when it does not fit or the data is not where its header ends.
+
+int rocketnet_message_writer_add_in_place( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
+
+#if defined(ROCKETNET_MESSAGE_COPY_TEST_HOOKS)
+// Test builds only (the unit suite's library, never the release library): the
+// payload copies writer_add has made, from a send store into a frame -- the
+// message-to-packet copy a fitting unreliable send never makes.
+uint64_t rn_message_payload_copy_count();
+#endif
 
 // Writes the RECORDS form byte. Returns the payload's length L, or 0 when no
 // record was added (an empty plan writes nothing).

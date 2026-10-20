@@ -1,4 +1,4 @@
-# Driver interface cost checks
+# Transport interface cost checks
 
 These are CPU microbenchmarks for a native interface change, separate from the
 NIC campaign in `PROTOCOL.md`. They do not certify packet delivery rate,
@@ -10,7 +10,7 @@ Update, flush and client drain are outside the timer. Every reservation and
 commit must succeed; received payloads are checked. UDP may drop in the OS or
 receiver, so received count is diagnostic and is not the denominator. The first
 500 batches are discarded. One result is an aggregate fill cost per packet,
-not a latency percentile. Select the driver, payload bytes, and measured batch
+not a latency percentile. Select the transport, payload bytes, and measured batch
 count as arguments. The client uses portable I/O.
 
 Build the same source against each candidate's Release static library, with the
@@ -81,4 +81,4 @@ Nine interleaved dispatch samples of ten million start/finish pairs each:
 
 The dispatch overhead is measurable here. Linux GSO/XDP and Windows IOCP need
 real backend/hardware measurements before making performance claims for them.
-Raw observations are in `driver_interface_cost_2026-09-08.json`.
+Raw observations are in `transport_interface_cost_2026-09-08.json`.

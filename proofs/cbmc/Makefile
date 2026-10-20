@@ -1,6 +1,12 @@
 # CBMC proofs. `make -C proofs/cbmc` runs the proofs that finish:
-# the arithmetic leaves below, then the bounded readers, fragment bounds,
-# the message reader, and the XDP free list.
+# the arithmetic leaves below, then the bounded readers, the message reader,
+# and the XDP free list. fragment-bounds stays a target but leaves `all`:
+# proofs/cbmc/fragment_reassembly proves the real reassembly code on ESBMC
+# and supersedes the copy that target checks.
+#
+# Every target prints the bound it proves beside the deployed constant the
+# bound is measured against, so a bounded proof cannot read as the whole
+# range.
 #
 # Arithmetic leaves:
 #   replay-delta-1-3   proved: harness_replay_near in proof_replay_advance.c,
@@ -21,12 +27,11 @@
 #                        bits, |result - reference| <= 2^23, round-trips every
 #                        in-window value (tie at 2^23 goes to the lower
 #                        candidate).
-#   replay-far         expected counterexample (not a passing proof):
-#                      harness_replay_far in proof_replay_advance.c, unwind 65,
-#                      sequence - highest_opened >= 4096. Fails at
-#                      sdk/rocketnet_replay.cpp because the far branch clears
-#                      window[0]..window[3] only, not all 64 words (fix card:
-#                      rocketnet-replay-far-advance-clears-every-window-word).
+#   replay-far         proved: harness_replay_far in proof_replay_advance.c,
+#                      unwind 65, sequence - highest_opened >= 4096: a delta of
+#                      at least 4096 clears every word, then sets the new
+#                      sequence bit. Runs against sdk/rocketnet_replay.cpp
+#                      itself, which the harness includes.
 #
 # `make -C proofs/cbmc slow-unproved` runs replay-near-4096 and ack-run-bound-8.
 # Neither is proved, and neither is in the default target or CI:
@@ -42,7 +47,23 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
              --unsigned-overflow-check --div-by-zero-check \
              --unwinding-assertions
 
-# Bounded readers, fragment bounds, the message reader, and the XDP free
+SDK = ../../sdk
+
+# The deployed constants each bound is printed beside, read from the sdk
+# headers. A macro written as an arithmetic expression carries its deployed
+# value in a trailing comment.
+deployed_literal = $(shell sed -n 's/^#define $(1)[[:space:]]*\([0-9][0-9]*\).*/\1/p' $(SDK)/$(2) | head -1)
+deployed_comment = $(shell sed -n 's/^#define $(1).*\/\/ \([0-9][0-9]*\).*/\1/p' $(SDK)/$(2) | head -1)
+
+REPLAY_WINDOW_BITS := $(call deployed_literal,ROCKETNET_HISTORY_PACKETS,rocketnet_history.h)
+MAX_PAYLOAD_BYTES := $(call deployed_literal,ROCKETNET_MAX_PAYLOAD_BYTES,rocketnet.h)
+MAX_FRAGMENT_BYTES := $(call deployed_comment,ROCKETNET_MAX_FRAGMENT_BYTES,rocketnet_fragment.h)
+MAX_FRAGMENTS := $(call deployed_literal,ROCKETNET_MAX_FRAGMENTS,rocketnet_fragment.h)
+MAX_FRAGMENTED_PAYLOAD_BYTES := $(shell expr $(MAX_FRAGMENTS) \* $(MAX_FRAGMENT_BYTES))
+XDP_NUM_FRAMES := $(call deployed_literal,ROCKETNET_XDP_NUM_FRAMES,rocketnet_constants.h)
+XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_constants.h)
+
+# Bounded readers, the message reader, and the XDP free
 # list. Same flags as the arithmetic leaves. Each proof is a bounded
 # instance, in the same sense as replay-delta-1-3:
 #   read-write         proved: proof_read_write.c, unwind 9. Symbolic
@@ -55,11 +76,14 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
 #                      and terminates it. The backing object for a bounded
 #                      read is 8 bytes of slack past the end pointer, so the
 #                      guard's pointer add stays inside the object.
-#   fragment-bounds    proved: proof_fragment_bounds.c, unwind 64, one
-#                      connection and one slot. Fragment payloads are
-#                      symbolic up to 8 bytes, or outside the legal size
-#                      window (refused, no read). max_payload_bytes is
-#                      symbolic from 1 to 16. A reconstructed total above
+#   fragment-bounds    superseded: proof_fragment_bounds.c copies the
+#                      reassembly function, and fragment_reassembly/ proves
+#                      the real one on ESBMC. It is no longer in `all`.
+#                      Its bounds: unwind 64, one connection and one slot.
+#                      Fragment payloads are symbolic up to 8 bytes, or
+#                      outside the legal size window (refused, no read).
+#                      max_payload_bytes is symbolic from 1 to 16, below
+#                      every deployed maximum. A reconstructed total above
 #                      that maximum is refused with no eviction and no
 #                      payload write. A final that arrives while the stride
 #                      is 0 is staged, and the payload region is untouched.
@@ -86,37 +110,31 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
         slow-unproved replay-near-4096 ack-run-bound-8 clean
 
 all: replay-delta-1-3 replay-far reconstruct \
-     read-write fragment-bounds message-read xdp-free-list
+     read-write message-read xdp-free-list
 
 # delta = sequence - highest_opened is at least 1 and strictly less than 4,
 # so the admitted deltas are 1, 2, and 3. Unwind 65 initializes all 64
 # symbolic window words; the clear loop runs at most twice.
 replay-delta-1-3: proof_replay_advance.c
-	$(CBMC) $(CBMC_FLAGS) --unwind 65 \
+	@echo "replay-delta-1-3 bound delta 1..3 deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS); deltas 4..$(shell expr $(REPLAY_WINDOW_BITS) - 1) are not proved by this target"
+	$(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
 	    -DREPLAY_DELTA_BOUND=4 \
 	    --function harness_replay_near proof_replay_advance.c
 
 replay-far: proof_replay_advance.c
-	@output=$$(mktemp); \
-	trap 'rm -f "$$output"' EXIT HUP INT TERM; \
-	status=0; \
-	$(CBMC) $(CBMC_FLAGS) --unwind 65 --function harness_replay_far \
-	    --json-ui --trace proof_replay_advance.c > "$$output" 2>&1 || status=$$?; \
-	cat "$$output"; \
-	if [ $$status -ne 10 ]; then \
-	    echo "replay-far: expected CBMC verification failure (exit 10), got $$status" >&2; \
-	    exit 1; \
-	fi; \
-	python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); properties=[p for group in data if isinstance(group,dict) for p in group.get("result",[]) if isinstance(p,dict)]; bad=[p for p in properties if p.get("status") not in ("SUCCESS","UNREACHABLE")]; expected="a delta at least the width clears every word"; ok=len(bad)==1 and bad[0].get("status")=="FAILURE" and expected in bad[0].get("description","") and "harness_replay_far" in bad[0].get("property",""); print("expected-fail: far advance counterexample (rocketnet-replay-far-advance-clears-every-window-word)" if ok else "replay-far: unrelated or missing failed property", file=sys.stdout if ok else sys.stderr); sys.exit(0 if ok else 1)' "$$output"
+	@echo "replay-far bound delta >= $(REPLAY_WINDOW_BITS) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
+	$(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
+	    --function harness_replay_far proof_replay_advance.c
 
 reconstruct: proof_reconstruct_sequence.c
+	@echo "reconstruct bound 32-bit and 24-bit wire half-ranges deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 1 proof_reconstruct_sequence.c
 
 # Not proved. Not part of `all`.
 slow-unproved: replay-near-4096 ack-run-bound-8
 
 replay-near-4096: proof_replay_advance.c
-	$(CBMC) $(CBMC_FLAGS) --unwind 4096 \
+	$(CBMC) $(CBMC_FLAGS) --unwind 4096 -I$(SDK) \
 	    -DREPLAY_DELTA_BOUND=4096 \
 	    --function harness_replay_near proof_replay_advance.c
 
@@ -125,19 +143,35 @@ ack-run-bound-8: proof_ack_apply_run.c
 	    -DACK_RUN_BOUND=8 \
 	    proof_ack_apply_run.c
 
-SDK = ../../sdk
-
 read-write: proof_read_write.c
+	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 9 -I$(SDK) proof_read_write.c
 
+# Superseded by fragment_reassembly/. Not part of `all`.
 fragment-bounds: proof_fragment_bounds.c
+	@echo "fragment-bounds bound payload max 16 bytes, fragment 8 bytes deployed ROCKETNET_MAX_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES) ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES) ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES=$(MAX_FRAGMENTED_PAYLOAD_BYTES); not proved above 16"
 	$(CBMC) $(CBMC_FLAGS) --unwind 64 -I$(SDK) proof_fragment_bounds.c
 
 message-read: proof_message_read.c
+	@echo "message-read bound payload 24 bytes deployed ROCKETNET_MAX_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 8 -DNDEBUG -I$(SDK) proof_message_read.c
 
 xdp-free-list: proof_xdp_free_list.c
+	@echo "xdp-free-list bound capacity 3 frames deployed ROCKETNET_XDP_NUM_FRAMES=$(XDP_NUM_FRAMES) frames of $(XDP_FRAME_SIZE) bytes"
 	$(CBMC) $(CBMC_FLAGS) --unwind 5 -I$(SDK) proof_xdp_free_list.c
 
 clean:
 	rm -f *.goto *.output
+
+# Nightly proofs. Each reader directory holds a proof.mk that appends its
+# target to NIGHTLY, so a CBMC card adds a reader without editing a shared
+# file. The `all` target above is the per-commit set and is unchanged; the
+# nightly target runs the longer proofs that are not part of CI.
+
+NIGHTLY :=
+
+-include $(wildcard */proof.mk)
+
+.PHONY: nightly
+
+nightly: $(NIGHTLY)

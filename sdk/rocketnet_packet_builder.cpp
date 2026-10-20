@@ -30,6 +30,7 @@ static const uint64_t rn_builder_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3,
 // RNScheduler!Init and Tick's reset: with nothing queued the clocks go back to
 // the seeds, so the interleave describes a backlog and nothing else.
 
+// tla/RNScheduler.tla, Init and Tick's clock reset
 static void rn_builder_reset_clocks( struct rn_packet_builder_t * builder )
 {
     for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_LEVELS; p++ )
@@ -37,7 +38,8 @@ static void rn_builder_reset_clocks( struct rn_packet_builder_t * builder )
     builder->clock_base = 0;
 }
 
-bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int max_packets_per_update, int payload_capacity )
+// tla/RNScheduler.tla, Init and Seeds (round_robin = num_channels - 1 so the first turn is channel 0's)
+bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int packets_per_update, int payload_capacity )
 {
     if ( !builder )
         return false;
@@ -51,7 +53,7 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
     builder->ack = ack;
     builder->budget = budget;
     builder->payload_capacity = payload_capacity;
-    builder->max_packets_per_update = max_packets_per_update < 1 ? 1 : ( max_packets_per_update > ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? ROCKETNET_PACKET_BUILDER_MAX_PACKETS : max_packets_per_update );
+    builder->packets_per_update = packets_per_update < 1 ? 1 : ( packets_per_update > ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? ROCKETNET_PACKET_BUILDER_MAX_PACKETS : packets_per_update );
     builder->num_channels = region->num_channels;
     builder->round_robin = builder->num_channels > 0 ? builder->num_channels - 1 : 0;     // the first turn is channel 0's
     rn_builder_reset_clocks( builder );
@@ -80,6 +82,7 @@ static void rn_builder_record( const struct rn_packet_item_t * item, struct rock
 
         case ROCKETNET_MESSAGE_CODE_RELIABLE:
             record->number = item->number == ROCKETNET_PACKET_NUMBER_NONE ? 0 : (uint32_t) ( item->number & ROCKETNET_MESSAGE_U24_MASK );
+            record->control = item->control && !item->block ? 1 : 0;   // CONFIG: code 2 with CONTROL set, never a block (10.3, 13.4)
             if ( item->block )
             {
                 record->block = 1;
@@ -145,12 +148,14 @@ static bool rn_builder_writable( const struct rn_packet_item_t * item )
 // The plan is a few dozen items per update at most, so the scan is quadratic
 // in it and keeps no table: the builder owns no memory (R2).
 
+// tla/RNScheduler.tla, PickLevel's pull-forward: a clock behind clock_base counts as clock_base
 static uint64_t rn_builder_effective_clock( const struct rn_packet_builder_t * builder, int level )
 {
     const uint64_t clock = builder->level_clock[level];
     return clock > builder->clock_base ? clock : builder->clock_base;
 }
 
+// tla/RNScheduler.tla, IsHead, Boost, PickLevel and PickIn
 static int rn_builder_next_in_class( const struct rn_packet_builder_t * builder, const struct rn_packet_item_t * items, int num_items, int send_class, int * out_level )
 {
     const uint32_t channels = builder->num_channels > 0 ? builder->num_channels : 1;
@@ -203,6 +208,7 @@ static int rn_builder_next_in_class( const struct rn_packet_builder_t * builder,
 // RNScheduler!Write's clock step: the level taken becomes the origin and its
 // clock advances by its stride.
 
+// tla/RNScheduler.tla, Write's clock step (the level taken becomes the origin and advances by its stride)
 static void rn_builder_take_level( struct rn_packet_builder_t * builder, int level )
 {
     const uint64_t clock = rn_builder_effective_clock( builder, level );
@@ -210,9 +216,10 @@ static void rn_builder_take_level( struct rn_packet_builder_t * builder, int lev
     builder->level_clock[level] = clock + rn_builder_stride[level];
 }
 
+// tla/RNScheduler.tla, Write (class order, clock step, rr') and Tick's clock reset (every item taken)
 int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int num_items, uint8_t ** payloads, int num_payloads )
 {
-    if ( !builder || builder->max_packets_per_update == 0 )
+    if ( !builder || builder->packets_per_update == 0 )
         return 0;
 
     builder->packets = 0;
@@ -221,7 +228,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
     if ( !items || num_items < 1 || !payloads || num_payloads < 1 )
         return 0;
 
-    const int limit = builder->max_packets_per_update < num_payloads ? builder->max_packets_per_update : num_payloads;
+    const int limit = builder->packets_per_update < num_payloads ? builder->packets_per_update : num_payloads;
 
     for ( int p = 0; p < limit; p++ )
     {

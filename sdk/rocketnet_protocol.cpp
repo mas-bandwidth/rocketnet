@@ -8,7 +8,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_connect_token.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_crypto_tally.h"
 
@@ -16,6 +16,14 @@
 #include <string.h>
 
 thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
+
+// The packet header already carries the filter field a keyed check reads:
+// the prefilter header (ROCKETNET_PREFILTER_BYTES in sdk/rocketnet_wire.h,
+// written by rocketnet_write_prefilter_header) holds the packet type, a
+// filter epoch byte and a ROCKETNET_FILTER_VALUE_BYTES filter value. v1.0 has
+// no keyed filter-epoch check and writes ROCKETNET_FILTER_EPOCH_UNKEYED; the
+// field stays exactly as it is, so a keyed filter can return later as a value
+// change, never a format change.
 
 void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * filter_value )
 {
@@ -26,6 +34,37 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
 
 // maps a refusal code to its counter, so both receive paths attribute the
 // reason identically and neither invents its own mapping
+
+// The keyed filter value, from STANDARD.md "The keyed filter value":
+// SipHash-2-4 under the 16-byte magic over the 7-byte input of packet type,
+// packet length as a little-endian uint16, then the four bytes following the
+// prefilter header; the low 4 bytes of the 64-bit result, little-endian, are
+// the filter value.
+
+void rocketnet_keyed_filter_value( const uint8_t * magic,
+                                   uint8_t packet_type,
+                                   uint16_t packet_length,
+                                   const uint8_t * four_bytes,
+                                   uint8_t * out_filter_value )
+{
+    rocketnet_assert( magic );
+    rocketnet_assert( four_bytes );
+    rocketnet_assert( out_filter_value );
+
+    uint8_t input[7];
+    uint8_t * p = input;
+    rocketnet_write_uint8( &p, packet_type );
+    rocketnet_write_uint16( &p, packet_length );
+    rocketnet_write_bytes( &p, four_bytes, 4 );
+
+    uint8_t hash[8];
+    crypto_shorthash_siphash24( hash, input, sizeof( input ), magic );
+
+    out_filter_value[0] = hash[0];
+    out_filter_value[1] = hash[1];
+    out_filter_value[2] = hash[2];
+    out_filter_value[3] = hash[3];
+}
 
 int rocketnet_prefilter_counter( int refusal_code )
 {
@@ -99,7 +138,7 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
     rocketnet_assert( connection_salt );
 
     uint8_t * p = associated_data;
-    rocketnet_write_uint32( &p, ROCKETNET_VERSION );
+    rocketnet_write_uint32( &p, ROCKETNET_WIRE_VERSION );
     rocketnet_write_uint64( &p, protocol_id );
     rocketnet_write_uint8( &p, packet_type );
     rocketnet_write_bytes( &p, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );

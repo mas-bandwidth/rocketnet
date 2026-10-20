@@ -25,7 +25,9 @@ name: static analysis
 
 on:
   push:
-    branches: [ main ]
+    # main and the branch v1.0 lands on, named by name: a sprint/** filter
+    # would start this gate on every worker branch push as well.
+    branches: [ main, sprint/rocketnet-proof ]
   pull_request:
   workflow_dispatch:
 
@@ -49,6 +51,12 @@ jobs:
     steps:
 
       - uses: actions/checkout@v4
+
+      - name: Fleet-runner lint
+        run: python3 scripts/check-fleet-runners
+
+      - name: Fleet-runner lint selftest
+        run: bash scripts/check-fleet-runners-selftest
 
       - name: Install dependencies
         if: runner.environment == 'github-hosted'

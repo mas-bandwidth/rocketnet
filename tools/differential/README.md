@@ -42,6 +42,23 @@ in the report; the reference column matches that run.
   cookie gate. The reason class is read from the counters the ladder
   actually incremented, never from the case's expectation.
 
+* **the rocketnet replay case** drives whole handshakes, because the server
+  binds a token to its source when a connection response opens, never at
+  the request (`standard/TRANSPORT.md`; `tla/RNSecurityTables.tla`,
+  `BoundOnlyToOpener`). netcode 1.02 binds at the request. A first client
+  holding the token connects (request, cookie, challenge, response) through
+  `rocketnet_server_protocol_process_packet`, and the server admits it. A
+  second client holding the same token then connects from another address,
+  its handshake driven through response open as far as the server lets it.
+  It is refused at the request ladder with `TOKEN_ALREADY_USED`: the first
+  response open bound the token to the first address. The reason class
+  `replay` is read from `CONNECTION_REQUEST_TOKEN_ALREADY_USED` or
+  `CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED`, whichever fired
+  (`CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED` is a retired slot that reads
+  zero; tools/differential/netcode_decisions.cpp reads both). The second
+  client holds the token keys, so it is at least as strong as an attacker
+  replaying the captured request, which cannot open the challenge.
+
 * **netcode** has two modes. In the default **reference** mode the decision
   is read from the `netcode_reference` column of `cases.tsv`. With
   `NETCODE_DIR` on the command line the harness compiles

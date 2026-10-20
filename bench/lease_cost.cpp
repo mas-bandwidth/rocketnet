@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Valid-call diagnostic. See lease_cost.md; this does not measure NIC throughput.
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_packet_lease.h"
 #include <atomic>
 #include <chrono>
@@ -91,26 +91,26 @@ int main(int argc, char ** argv)
     const int payload_bytes = atoi(argv[3]), threads = atoi(argv[4]), batches = atoi(argv[5]);
     const bool plant = argc > 6 && strcmp(argv[6], "plant") == 0;
     CHECK(payload_bytes > 0 && payload_bytes <= 4096 && (threads == 1 || threads == 4) && batches > 0);
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    rocketnet_allocator(allocate, release);
-    CHECK(rocketnet_init());
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    rocketnet_set_allocator(allocate, release);
+    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = 2;
     config.max_payload_bytes = 4096;
-    strcpy(config.driver, "portable");
+    strcpy(config.transport, "portable");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
-    CHECK(server && strcmp(rocketnet_server_transport_driver(server), "portable") == 0);
+    CHECK(server && strcmp(rocketnet_server_transport_io_name(server), "portable") == 0);
     const size_t server_bytes = live_bytes.load();
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token));
+    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     client_config.max_payload_bytes = 4096;
-    strcpy(client_config.driver, "portable");
+    strcpy(client_config.transport, "portable");
     auto * client = rocketnet_client_transport_create(NULL, token, &client_config, rocketnet_time());
     CHECK(client);
     const size_t client_bytes = live_bytes.load() - server_bytes;

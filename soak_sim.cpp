@@ -58,13 +58,14 @@
                                   scripts/soak-sim-selftest runs both.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_ack.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_test_vectors.h"
 
@@ -359,10 +360,10 @@ int main( int argc, char ** argv )
 {
     signal( SIGINT, interrupt_handler );
 
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     uint64_t max_iterations = 0;
     if ( argc > 1 )
@@ -428,17 +429,17 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
-    server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, 256 );
-    if ( !server.admitted_token_set )
-    {
-        printf( "soak_sim: failed to create the admitted token set\n" );
-        rocketnet_term();
-        return 1;
-    }
     server.client_slots = rocketnet_client_slots_create( NULL, 16 );
     if ( !server.client_slots )
     {
         printf( "soak_sim: failed to create the client slots\n" );
+        rocketnet_term();
+        return 1;
+    }
+    server.acks = rocketnet_server_acks_create( NULL, 16 );
+    if ( !server.acks )
+    {
+        printf( "soak_sim: failed to create the server acks\n" );
         rocketnet_term();
         return 1;
     }
@@ -578,7 +579,7 @@ int main( int argc, char ** argv )
             struct rocketnet_connect_token_private_t private_fields;
             memset( &signed_fields, 0, sizeof(signed_fields) );
             memset( &private_fields, 0, sizeof(private_fields) );
-            signed_fields.version = ROCKETNET_VERSION;
+            signed_fields.version = ROCKETNET_WIRE_VERSION;
             signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
             signed_fields.create_timestamp = timestamp;
             signed_fields.expire_timestamp = timestamp + 300;
@@ -689,6 +690,7 @@ int main( int argc, char ** argv )
         int bytes;
         SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
             rocketnet_reassembly_set_begin_update( server.reassembly ) );
+        server.acks->num_acked = 0;
         while ( ( bytes = wire_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
         {
             uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -730,6 +732,17 @@ int main( int argc, char ** argv )
                 int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
                 const struct rocketnet_address_t * to = rocketnet_encryption_map_address( server.encryption_map, mapping_index );
                 wire_send( simulator, &server_address, to, keep_alive, keep_alive_bytes, time );
+            }
+
+            uint8_t ack_packet[ROCKETNET_RECEIVE_CEILING];
+            int ack_bytes = 0;
+            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                ack_bytes = rocketnet_server_protocol_write_ack_if_due( &server, i, time, ack_packet ) );
+            if ( ack_bytes > 0 )
+            {
+                int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
+                const struct rocketnet_address_t * to = rocketnet_encryption_map_address( server.encryption_map, mapping_index );
+                wire_send( simulator, &server_address, to, ack_packet, ack_bytes, time );
             }
         }
 
@@ -863,8 +876,8 @@ int main( int argc, char ** argv )
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
-    rocketnet_admitted_token_set_destroy( server.admitted_token_set );
     rocketnet_client_slots_destroy( server.client_slots );
+    rocketnet_server_acks_destroy( server.acks );
     rocketnet_reassembly_set_destroy( server.reassembly );
     rocketnet_network_simulator_destroy( simulator );
 

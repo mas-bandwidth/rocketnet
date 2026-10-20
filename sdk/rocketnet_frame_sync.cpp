@@ -63,25 +63,46 @@ static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_syn
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 
-static mach_timebase_info_data_t rocketnet_frame_sync_timebase;
+// the timebase is read once, on first use by any caller (a function-local
+// static, initialized once even under concurrent first calls), so
+// rocketnet_frame_sync_now_ns called before any create never divides by an
+// unread zero denominator.
+
+static const mach_timebase_info_data_t & rocketnet_frame_sync_timebase()
+{
+    static const mach_timebase_info_data_t timebase = []
+    {
+        mach_timebase_info_data_t value;
+        mach_timebase_info( &value );
+        return value;
+    }();
+    return timebase;
+}
+
+// This metadata-only probe verifies the scale is available before frame-sync
+// creation, without reading the live clock.
+int rocketnet_frame_sync_timebase_ready_for_testing()
+{
+    const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
+    return timebase.numer != 0 && timebase.denom != 0;
+}
 
 static void rocketnet_frame_sync_platform_init()
 {
-    if ( rocketnet_frame_sync_timebase.denom == 0 )
-    {
-        mach_timebase_info( &rocketnet_frame_sync_timebase );
-    }
+    rocketnet_frame_sync_timebase();
 }
 
 uint64_t rocketnet_frame_sync_now_ns()
 {
-    return mach_absolute_time() * rocketnet_frame_sync_timebase.numer / rocketnet_frame_sync_timebase.denom;
+    const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
+    return mach_absolute_time() * timebase.numer / timebase.denom;
 }
 
 static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_sync_t * frame_sync, uint64_t deadline_ns )
 {
     (void) frame_sync;
-    mach_wait_until( deadline_ns * rocketnet_frame_sync_timebase.denom / rocketnet_frame_sync_timebase.numer );
+    const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
+    mach_wait_until( deadline_ns * timebase.denom / timebase.numer );
 }
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -90,21 +111,32 @@ static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_syn
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
 
-static LARGE_INTEGER rocketnet_frame_sync_qpc_frequency;
+// the counter frequency is read once, on first use by any caller (a
+// function-local static, initialized once even under concurrent first
+// calls), so rocketnet_frame_sync_now_ns called before any create never
+// divides by an unread zero frequency.
+
+static double rocketnet_frame_sync_qpc_frequency()
+{
+    static const double frequency = []
+    {
+        LARGE_INTEGER value;
+        QueryPerformanceFrequency( &value );
+        return (double) value.QuadPart;
+    }();
+    return frequency;
+}
 
 static void rocketnet_frame_sync_platform_init()
 {
-    if ( rocketnet_frame_sync_qpc_frequency.QuadPart == 0 )
-    {
-        QueryPerformanceFrequency( &rocketnet_frame_sync_qpc_frequency );
-    }
+    rocketnet_frame_sync_qpc_frequency();
 }
 
 uint64_t rocketnet_frame_sync_now_ns()
 {
     LARGE_INTEGER counter;
     QueryPerformanceCounter( &counter );
-    return (uint64_t) ( (double) counter.QuadPart * ( 1e9 / (double) rocketnet_frame_sync_qpc_frequency.QuadPart ) );
+    return (uint64_t) ( (double) counter.QuadPart * ( 1e9 / rocketnet_frame_sync_qpc_frequency() ) );
 }
 
 static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_sync_t * frame_sync, uint64_t deadline_ns )
@@ -139,14 +171,20 @@ static void rocketnet_frame_sync_sleep_until( struct rocketnet_frame_sync_t * fr
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
+    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // without priority held the wait is plain absolute sleep
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+
     frame_sync->waiter_thread = pthread_self();
     pthread_getschedparam( pthread_self(), &frame_sync->waiter_previous_policy, &frame_sync->waiter_previous_param );
     struct sched_param param;
     memset( &param, 0, sizeof(param) );
     param.sched_priority = 80;
-    if ( pthread_setschedparam( pthread_self(), SCHED_FIFO, &param ) != 0 )
+    const int error = pthread_setschedparam( pthread_self(), SCHED_FIFO, &param );
+    if ( error != 0 )
     {
-        rocketnet_info( "frame sync: SCHED_FIFO refused (%s), plain absolute sleep", strerror( errno ) );
+        rocketnet_info( "frame sync: SCHED_FIFO refused (%s), plain absolute sleep", strerror( error ) );
         return;
     }
     frame_sync->priority_held = 1;
@@ -164,12 +202,18 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
+    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // without priority held the wait is plain absolute sleep
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+
     // the real-time thread contract pro audio uses: period, computation and
     // constraint in mach time units. needs no privileges.
 
     frame_sync->waiter_thread = pthread_self();
 
-    const uint64_t period_mach = frame_sync->period_ns * rocketnet_frame_sync_timebase.denom / rocketnet_frame_sync_timebase.numer;
+    const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
+    const uint64_t period_mach = frame_sync->period_ns * timebase.denom / timebase.numer;
 
     thread_time_constraint_policy_data_t policy;
     policy.period = (uint32_t) period_mach;
@@ -177,8 +221,12 @@ static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t
     policy.constraint = (uint32_t) ( period_mach / 2 );
     policy.preemptible = TRUE;
 
-    kern_return_t result = thread_policy_set( mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY,
+    // mach_thread_self returns a new send right on each call; it is released
+    // after the policy call so no port leaks per call
+    const mach_port_t thread = mach_thread_self();
+    kern_return_t result = thread_policy_set( thread, THREAD_TIME_CONSTRAINT_POLICY,
                                               (thread_policy_t) &policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT );
+    mach_port_deallocate( mach_task_self(), thread );
     if ( result != KERN_SUCCESS )
     {
         rocketnet_info( "frame sync: time constraint policy refused (%d), plain absolute sleep", (int) result );
@@ -193,14 +241,21 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
     if ( !frame_sync->priority_held || !pthread_equal( pthread_self(), frame_sync->waiter_thread ) )
         return;
     thread_standard_policy_data_t policy;
-    thread_policy_set( mach_thread_self(), THREAD_STANDARD_POLICY,
+    const mach_port_t thread = mach_thread_self();
+    thread_policy_set( thread, THREAD_STANDARD_POLICY,
                        (thread_policy_t) &policy, THREAD_STANDARD_POLICY_COUNT );
+    mach_port_deallocate( mach_task_self(), thread );
 }
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
+    // off (rocketnet_set_thread_priority( false )): no priority call, and
+    // without priority held the wait is plain absolute sleep
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+
     frame_sync->waiter_thread_id = GetCurrentThreadId();
     frame_sync->waiter_previous_priority = GetThreadPriority( GetCurrentThread() );
     if ( !SetThreadPriority( GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL ) )
@@ -220,6 +275,23 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 }
 
 #endif
+
+// For unit tests only (test_unit_thread_priority.cpp declares it): the
+// priority step rocketnet_frame_sync_wait takes on its first wait, run on a
+// frame sync that is never created (no timer, no thread), then given back
+// through rocketnet_frame_sync_restore_priority. Returns priority_held.
+int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns )
+{
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
+    rocketnet_frame_sync_platform_init();
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
+    struct rocketnet_frame_sync_t frame_sync;
+    memset( &frame_sync, 0, sizeof( frame_sync ) );
+    frame_sync.period_ns = period_ns;
+    rocketnet_frame_sync_elevate_priority( &frame_sync );
+    rocketnet_frame_sync_restore_priority( &frame_sync );
+    return frame_sync.priority_held;
+}
 
 // -------------------------------------------------------------------
 // the pure parts
@@ -273,17 +345,29 @@ int rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, ui
 
 struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate )
 {
+    return rocketnet_frame_sync_create_ex( context, frame_rate, NULL );
+}
+
+struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, double frame_rate, int * status )
+{
     // the lifecycle state is read once here, before any allocation; a create
     // before rocketnet_init is refused, logged and counted
     if ( !rocketnet_library_initialized() )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
         rocketnet_error( "rocketnet_frame_sync_create: rocketnet_init must be called first" );
         rocketnet_api_misuse_record();
         return NULL;
     }
 
+    // docs/ERRORS-AND-LOGGING.md 1.4 and 2.1: F1 invalid frame rate is
+    // INVALID_ARGUMENT, F2 the malloc refusal is OUT_OF_MEMORY, and F3 the
+    // Windows timer refusal is TIMER_CREATE_FAILED.
     if ( !( frame_rate > 0.0 ) || frame_rate > ROCKETNET_FRAME_SYNC_MAX_FRAME_RATE )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
         rocketnet_error( "frame sync: invalid frame rate %.1f", frame_rate );
         return NULL;
     }
@@ -294,7 +378,12 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
 
     struct rocketnet_frame_sync_t * frame_sync = (struct rocketnet_frame_sync_t*) rocketnet_malloc( context, sizeof( struct rocketnet_frame_sync_t ) );
     if ( !frame_sync )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+        rocketnet_error( "frame sync: could not allocate frame sync" );
         return NULL;
+    }
 
     memset( frame_sync, 0, sizeof( struct rocketnet_frame_sync_t ) );
 
@@ -309,15 +398,26 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
     }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    frame_sync->waitable_timer = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
+    frame_sync->waitable_timer = rocketnet_platform_priority_calls_current()->create_waitable_timer( CREATE_WAITABLE_TIMER_HIGH_RESOLUTION );
     if ( !frame_sync->waitable_timer )
     {
         rocketnet_info( "frame sync: high resolution waitable timer unavailable, using standard" );
-        frame_sync->waitable_timer = CreateWaitableTimerExW( NULL, NULL, 0, TIMER_ALL_ACCESS );
+        frame_sync->waitable_timer = rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 );
     }
     if ( !frame_sync->waitable_timer )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
         rocketnet_error( "frame sync: could not create waitable timer (%lu)", (unsigned long) GetLastError() );
+        rocketnet_free( context, frame_sync );
+        return NULL;
+    }
+#else
+    if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
+        rocketnet_error( "frame sync: could not create timer" );
         rocketnet_free( context, frame_sync );
         return NULL;
     }
@@ -325,6 +425,8 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
 
     rocketnet_info( "frame sync: %.1f hz", frame_rate );
 
+    if ( status )
+        *status = ROCKETNET_STATUS_OK;
     return frame_sync;
 }
 

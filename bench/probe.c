@@ -1,7 +1,7 @@
 /*
-    rocketnet driver probe (#81)
+    rocketnet transport probe (#81)
 
-    Static, self-contained feature report for the Linux driver matrix.
+    Static, self-contained feature report for the Linux transport matrix.
     Prints what the running kernel and NICs actually support: io_uring
     availability and opcodes, UDP GSO/GRO socket options, per-interface
     tx-udp-segmentation offload, SO_REUSEPORT steering (cBPF vs eBPF),
@@ -431,7 +431,7 @@ static void probe_reuseport_steering( void )
 
 int main( void )
 {
-    printf( "rocketnet driver probe (#81)\n" );
+    printf( "rocketnet transport probe (#81)\n" );
     printf( "============================\n" );
     probe_kernel();
     probe_io_uring();

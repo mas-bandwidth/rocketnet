@@ -1,0 +1,67 @@
+/usr/bin/clang -v -E -x c++ -
+Extracting declarations
+Finalizing corpus
+/workspace/rocketnet/sdk/rocketnet.h:1770:23:
+    1) rocketnet_message_client_required_memory: function is undocumented
+  1770 | ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_client_required_memory( const struct rocketnet_client_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
+       |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet.h:1366:5:
+    1) dropped_frames: variable is undocumented
+  1366 |     uint64_t dropped_frames;
+       |     ^~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet.h:1363:1:
+    1) rocketnet_frame_sync_stats_t: record is undocumented
+  1363 | struct rocketnet_frame_sync_stats_t
+       | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet.h:1476:9:
+    1) ROCKETNET_RELIABILITY_UNRELIABLE: macro is undocumented
+  1476 | #define ROCKETNET_RELIABILITY_UNRELIABLE 0
+       |         ^~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet.h:1814:23:
+    1) rocketnet_message_client_send: function is undocumented
+  1814 | ROCKETNET_EXPORT_FUNC int rocketnet_message_client_send( struct rocketnet_message_client_t * client, int channel, int reliability, const uint8_t * data, int bytes );
+       |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet.h:340:23:
+    1) rocketnet_init: function is undocumented
+  340 | ROCKETNET_EXPORT_FUNC bool rocketnet_init( const struct rocketnet_init_config_t * config );
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet_platform.h:20:23:
+    1) rocketnet_platform_init: function is undocumented
+  20 | ROCKETNET_EXPORT_FUNC bool rocketnet_platform_init();
+     |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet_counters.h:575:5:
+    1) <unnamed enum>::ROCKETNET_COUNTER_PACKETS_SENT: Missing documentation for enum value
+  575 |     ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_ENUM_ROW )
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet_connect_token.h:150:23:
+    1) rocketnet_generate_connect_token: function is undocumented
+  150 | ROCKETNET_EXPORT_FUNC bool rocketnet_generate_connect_token( int num_server_addresses, const char ** server_addresses, const char * public_address, int expire_seconds, int timeout_seconds, uint64_t client_id, uint64_t protocol_id, const uint8_t * user_data, const uint8_t * server_public_key, const uint8_t * backend_secret_key, uint8_t * token_output );
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet_address.h:25:1:
+    1) rocketnet_address_t: record is undocumented
+  25 | struct rocketnet_address_t
+     | ^~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet_route.h:18:24:
+    1) rocketnet_route_ip: function is undocumented
+  18 | static inline uint32_t rocketnet_route_ip( const uint8_t * ip )
+     |                        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/workspace/rocketnet/sdk/rocketnet_unknown.h:10:1:
+    1) mysterious_helper: function is undocumented
+  10 | void mysterious_helper( void );
+     | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Extracted 13 declarations in 10ms
+Generating docs
+Generated 13 pages
+Generated html documentation in 20ms

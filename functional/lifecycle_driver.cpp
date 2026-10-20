@@ -2,12 +2,12 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The lifecycle checks that start a real driver or open a platform socket.
+    The lifecycle checks that start a real transport or open a platform socket.
     The allocation, alignment, thread, and arithmetic checks stay in
     test_lifecycle.cpp, which is part of the unit suite.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_fragment.h"
@@ -23,7 +23,10 @@
 #include <string.h>
 #include <time.h>
 
-#define check(c) do { if (!(c)) { fprintf(stderr, "lifecycle driver check failed: %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
+// defined in functional/harness.inc: the connect token timestamp from the clock that judges it
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
+#define check(c) do { if (!(c)) { fprintf(stderr, "lifecycle transport check failed: %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
 
 struct allocator_state
 {
@@ -58,16 +61,16 @@ static void release( void * context, void * pointer )
     free( base );
 }
 
-void rocketnet_test_lifecycle_driver()
+void rocketnet_test_lifecycle_transport()
 {
     // The runner already initialized the library. This test owns the
     // allocator, so shut that down and start again with the failing allocator.
     rocketnet_term();
 
     allocator_state state;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_allocator( allocate, release );
-    check( rocketnet_init( &state ) );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_allocator( allocate, release );
+    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     const int baseline = state.live;
 
@@ -80,7 +83,7 @@ void rocketnet_test_lifecycle_driver()
         config.max_clients = 1000;
         config.num_reassembly_slots = 256;
         config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
-        strcpy(config.driver, "portable");
+        strcpy(config.transport, "portable");
         check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config));
         check(state.calls == before);
     }
@@ -99,10 +102,10 @@ void rocketnet_test_lifecycle_driver()
     check( state.live == baseline );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time(NULL), token ) );
+    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, rocketnet_functional_token_timestamp( 0, 0.0 ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    strcpy( client_config.driver, "portable" );
+    strcpy( client_config.transport, "portable" );
     int client_success = 0;
     for ( int failure = 1; failure <= 64; ++failure )
     {
@@ -124,7 +127,7 @@ void rocketnet_test_lifecycle_driver()
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
-    strcpy( server_config.driver, "portable" );
+    strcpy( server_config.transport, "portable" );
     int server_success = 0;
     for ( int failure = 1; failure <= 64; ++failure )
     {
@@ -143,5 +146,6 @@ void rocketnet_test_lifecycle_driver()
     }
     check( server_success );
     rocketnet_term();
-    printf( "lifecycle driver OK: client %d, server %d allocation failure stages\n", client_success - 1, server_success - 1 );
+    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL )
+        printf( "lifecycle transport OK: client %d, server %d allocation failure stages\n", client_success - 1, server_success - 1 );
 }

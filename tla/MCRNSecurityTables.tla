@@ -11,4 +11,10 @@ EXTENDS RNSecurityTables
 
 MCExpire == [tk \in Tokens |-> IF tk = "te" THEN 3 ELSE 0]
 MCCid == [tk \in Tokens |-> CASE tk = "te" -> 2 [] tk = "tf" -> 3 [] OTHER -> 1]
+\* "th" and "te" are held at both addresses (one client that moved, or a
+\* shared token); only "A" holds "tf", so "B" replaying it is the attacker.
+MCHolds == [tk \in Tokens |-> IF tk = "tf" THEN {"A"} ELSE {"A", "B"}]
+\* MCRNSecurityTablesBrokenGlobalLockout.cfg overrides RefuseUnremembered
+\* with this: the full failure table refuses a source it cannot remember.
+MCRefuseUnremembered == TRUE
 =============================================================================

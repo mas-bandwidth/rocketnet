@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_message.h"
@@ -34,8 +34,7 @@
 // 7.5 admits a type; a disabled type is refused on send
 // (ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED) and counted as a violation
 // on receive (ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED). Each later type's
-// case lives in its own file so its card runs
-// without touching this one:
+// case lives in its own file:
 //
 //   sdk/rocketnet_channel_reliable.cpp    code 2
 //   sdk/rocketnet_channel_sequenced.cpp   codes 1 and 4
@@ -54,7 +53,7 @@
 #define ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT    7
 #define ROCKETNET_CHANNEL_NUM_TYPES                             8
 
-// the enabled application types; each type card adds only its own bit (7.5)
+// the enabled application types: all eight, from the first version (7.5)
 
 #define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_WITH_RECEIPT ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT ) )
 
@@ -64,7 +63,7 @@
 
 // what a dispatch did with one record (docs/CHANNELS.md 7.2)
 
-#define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused, counted, or held by a later card
+#define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused or counted
 #define ROCKETNET_CHANNEL_DISPATCH_DELIVERED                    1   // a view into the batch, or a delivery from the ring
 #define ROCKETNET_CHANNEL_DISPATCH_HELD                         2   // kept ahead of its turn, live (7.2, 7.3)
 #define ROCKETNET_CHANNEL_DISPATCH_STALE                        3   // dropped, counted (7.3)
@@ -88,7 +87,7 @@ struct rn_channels_t
     uint32_t delivery_capacity;       // W + Du, the region's delivery table
     uint32_t violations;              // records refused on receive this update
     uint32_t payload_capacity;        // the payload bytes a frame holds: a message is small when its record fits one (8)
-    int error;                        // sticky: ROCKETNET_MESSAGE_ERROR_NONE, or ERROR_PROTOCOL_VIOLATION after a wire violation (17.3 item 11)
+    int error;                        // sticky: ROCKETNET_DISCONNECT_REASON_NONE, or ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION after a wire violation (17.3 item 11)
     uint32_t pending;                 // the send descriptor between start and finish, or RN_DESCRIPTOR_NONE
     uint32_t pending_bytes;           // what the pending start reserved
     uint32_t pending_channel;
@@ -260,8 +259,6 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels );
 // types 6 or 7, and -1 for every other type. No wire receipt code is sent.
 int rn_channels_reliable_receipt_base( int type );
 
-int rn_channels_dispatch_receipt( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
-
 // Counts one receive violation on the owner's counters, once per record:
 // ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED for a code its mask does not
 // admit (7.5), the given counter for anything else.
@@ -322,16 +319,21 @@ struct rn_ordered_t
     struct rn_packet_builder_t builder;
     struct rocketnet_send_budget_t * budget;        // R6, or NULL
     struct rocketnet_message_limits_t limits;       // what layer 2's reader checks a payload against
+
+    // CONFIG (docs/CHANNELS.md 10.3, 13.4; tla/RNEndpoint.tla)
+    struct rocketnet_message_config_body_t config;  // this end's CONFIG body, set by rn_ordered_announce_config
+    int config_announced;                           // this end's CONFIG is queued (RNEndpoint Reset)
+    int config_received;                            // the peer's CONFIG was taken and equals this end's (RNEndpoint peerCfg # NoCfg)
 };
 
 // Binds the whole path to one connection's carved region. `config` is the
 // connection's message config (NULL: the defaults), `budget` the connection's
-// send budget (NULL: unbudgeted), max_packets_per_update at most
+// send budget (NULL: unbudgeted), packets_per_update at most
 // ROCKETNET_PACKET_BUILDER_MAX_PACKETS, payload_capacity the frame payload
 // bytes. The region is carved already; nothing is allocated.
 
 bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region, const struct rocketnet_message_config_t * config,
-                      struct rocketnet_send_budget_t * budget, int max_packets_per_update, int payload_capacity );
+                      struct rocketnet_send_budget_t * budget, int packets_per_update, int payload_capacity );
 
 // RNChannel!WritePacket for one update. Resends first (the oldest due
 // number, then each number numbered and never sent), then new messages, each
@@ -362,6 +364,28 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 
 int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, int bytes );
 
+// tla/RNEndpoint.tla Reset, the CONFIG half (CHANNELS.md 10.3): queues this
+// end's one CONFIG control record, code 2 with CONTROL set and the 28-byte
+// body of 13.4 written from `config` (NULL: the defaults) and the enabled
+// mask, at the head of IMMEDIATE on channel 0, so it takes the connection's
+// first reliable number and is resent until acked like any reliable record.
+// Called once per connection, before anything else is queued. False when it
+// was already queued, or the region has no room (the region is then
+// exhausted and the owner kicks the connection).
+
+bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config );
+
+// tla/RNEndpoint.tla OnPayload with ConfigCompare (CHANNELS.md 10.3, 13.4):
+// the peer's CONFIG record, already accepted by layer 3, read and compared
+// field by field with this end's body. Equal: config_received is set. A
+// different field, or a version this end does not know, logs one error line
+// naming the first differing field and both values and sets the sticky error
+// ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH (rn_ordered_decide). A body layer 2
+// refuses (MESSAGE_BAD_CONTROL) is a wire violation. rn_ordered_receive calls
+// it for each new control record; returns the error it set, or NONE.
+
+int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketnet_message_record_t * record );
+
 // The update's deliveries, in order: region->deliveries[0 .. count).
 
 uint32_t rn_ordered_deliveries( const struct rn_ordered_t * ordered );
@@ -370,7 +394,7 @@ uint32_t rn_ordered_deliveries( const struct rn_ordered_t * ordered );
 
 void rn_ordered_end_update( struct rn_ordered_t * ordered );
 
-// What to end the connection with, or ROCKETNET_MESSAGE_ERROR_NONE: the region's
+// What to end the connection with, or ROCKETNET_DISCONNECT_REASON_NONE: the region's
 // exhaustion first (tla/RNConnectionMemory.tla Kick), then a wire violation,
 // then an unacked reliable message past its timeout (6.4). The owner reads it
 // every update.

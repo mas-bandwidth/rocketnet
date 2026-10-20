@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 
+import check_header_exports
+
 
 def run(*command):
     return subprocess.check_output(command, text=True, errors="replace")
@@ -27,11 +29,68 @@ def msvc_tool(name):
     return str(tools[-1])
 
 
+def header_declared_names(header_path):
+    names, seen, buffer, depth, in_dev = [], set(), None, 0, False
+    for raw in Path(header_path).read_text().splitlines():
+        line = raw.strip()
+        if line == "#if ROCKETNET_DEVELOPMENT":
+            in_dev = True
+        if in_dev:
+            if line.startswith("#endif"):
+                in_dev = False
+            continue
+        if buffer is None:
+            if line.startswith(("ROCKETNET_EXPORT ", "ROCKETNET_EXPORT_FUNC")):
+                buffer, depth = line, line.count("(") - line.count(")")
+        else:
+            buffer += " " + line
+            depth += line.count("(") - line.count(")")
+        if buffer is not None and depth <= 0:
+            match = re.search(r"(\w+)\s*$", buffer[:buffer.find("(")])
+            if match and match.group(1) not in seen:
+                seen.add(match.group(1))
+                names.append(match.group(1))
+            buffer, depth = None, 0
+    return names
+
+
+def source_check(header_path, tests_path):
+    declared = header_declared_names(header_path)
+    tests = Path(tests_path).read_text()
+    match = re.search(r"rocketnet_test_exports\[\]\s*=\s*\{(.*?)\};", tests, flags=re.S)
+    table = re.findall(r'"([^"]+)"', match.group(1)) if match else []
+    seen = set()
+    problems = []
+    for name in table:
+        if name in seen:
+            problems.append(f"Duplicate in rocketnet_test_exports: {name}")
+        seen.add(name)
+    problems += [f"Export missing from rocketnet_test_exports: {name}" for name in declared if name not in seen]
+    problems += [f"Table name not declared in sdk/rocketnet.h: {name}" for name in table if name not in set(declared)]
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    if problems:
+        return 1
+    print(f"Source exports: {len(declared)} declared, table matches")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("shared", type=Path)
-    parser.add_argument("archive", type=Path)
+    parser.add_argument("--sources-only", action="store_true", help="stop after the source check")
+    parser.add_argument("--header", type=Path, default=Path(__file__).parent.parent / "sdk" / "rocketnet.h")
+    parser.add_argument("--tests", type=Path, default=Path(__file__).parent.parent / "sdk" / "rocketnet_tests.cpp")
+    parser.add_argument("shared", nargs="?", type=Path)
+    parser.add_argument("archive", nargs="?", type=Path)
     args = parser.parse_args()
+    if check_header_exports.check(args.header, Path(__file__).with_name("exports.txt")) != 0:
+        return 1
+    if source_check(args.header, args.tests) != 0:
+        return 1
+    if args.sources_only:
+        return 0
+    if args.shared is None or args.archive is None:
+        parser.error("the following arguments are required: shared archive")
     expected = {line.strip() for line in Path(__file__).with_name("exports.txt").read_text().splitlines()
                 if line.strip() and not line.startswith("#")}
     if sys.platform == "win32":

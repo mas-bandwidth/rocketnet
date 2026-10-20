@@ -4,7 +4,8 @@
 */
 
 #include "rocketnet_counters.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
+#include "rocketnet_wire.h"
 
 #include <stdio.h>
 
@@ -76,6 +77,36 @@ const char * rocketnet_counter_class_name( int counter_class )
 // index order of the RECEIVED counter so the first unbalanced family is the
 // same one every time. A counter is a RECEIVED counter when some counter's
 // family names it; the sum of a family is every counter whose family it is.
+
+void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters, const uint64_t * prefilter )
+{
+    // One transport counter per kernel prefilter counter, in
+    // ROCKETNET_SERVER_XDP_COUNTER_* index order.
+    static const int rocketnet_prefilter_table[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
+    {
+        ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_LARGE,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_FILTER,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_INVALID_TYPE,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_EPOCH,
+        ROCKETNET_COUNTER_XDP_KERNEL_PASSED_IPV6_EXTENSION,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_REPLAYED,
+        ROCKETNET_COUNTER_XDP_KERNEL_PASSED_FRAGMENT,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT,
+        ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET,
+    };
+    static_assert( sizeof(rocketnet_prefilter_table) / sizeof(rocketnet_prefilter_table[0]) == ROCKETNET_SERVER_XDP_NUM_COUNTERS,
+                   "a new kernel prefilter counter needs its transport row" );
+
+    if ( !rocketnet_api_null_guard( counters ) )
+        return;
+    if ( !rocketnet_api_null_guard( prefilter ) )
+        return;
+
+    for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+        counters->values[rocketnet_prefilter_table[i]] = prefilter[i];
+}
 
 int rocketnet_counters_conserved( const struct rocketnet_counters_t * counters, char * report, int report_bytes )
 {

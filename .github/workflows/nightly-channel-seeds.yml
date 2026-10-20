@@ -1,0 +1,66 @@
+# The nightly channel seed sweep: every functional channel case
+# (functional/channel_*.cpp) over simulator seeds 1-2000. Each functional case
+# runs on one deterministic seed on the per-push tier (the pinned seed), so a
+# case that holds only on that seed is green there; this sweep walks the other
+# seeds so a seed-fragile case shows at night and not in a landing. It lives
+# here, not in ci.yml, because the per-push tier stays at or under two minutes.
+#
+# A red night prints one line per failure, `FAIL seed=<n> case=<name>
+# reason=<what>`, and replays with
+#   ROCKETNET_CHANNEL_SEED=<n> ./bin/functional --run <name>
+# The runner is the fleet's org runner, named the way nightly-soak.yml names it.
+
+name: nightly-channel-seeds
+
+on:
+  schedule:
+    - cron: "30 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  channel-seed-sweep:
+    runs-on: ["self-hosted", "Linux", "X64", "fleet", "long"]
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ make xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Build
+        run: make
+
+      - name: Sweep every channel case over seeds 1-2000
+        run: |
+          set -o pipefail
+          scripts/channel-seed-sweep --all --seeds 1-2000 --timeout 120 | tee channel-seed-sweep.log
+
+      - name: Upload the sweep log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: channel-seed-sweep-log-${{ replace(matrix.ref, '/', '-') }}
+          path: channel-seed-sweep.log
+          if-no-files-found: ignore

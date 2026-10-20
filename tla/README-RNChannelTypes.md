@@ -20,7 +20,7 @@ for `RNChannel`, `RNWindow`, a scheduler or the C++ implementation.
   the stable message identity, not the packet id. A retransmission has a new
   packet id and the same reliable identity.
 - `ReceiveAck(q)` takes a set of **transport packet ids**, resolves the sent
-  map and clears reliable resend state. The bounded driver uses singleton
+  map and clears reliable resend state. The bounded transport uses singleton
   batches. Redundant ACKs after a reliable identity is retired, and ACKs of
   unreliable-only packets, stutter: they have no message-state effect and
   their history is not retained. It never receives a message-level or application-delivery ACK.
@@ -31,6 +31,19 @@ The four counter names and the packet-input action names align with the
 `RNChannel` module on the staged base. No module from it is imported or
 changed: the approved standalone interface keeps this work independent.
 Channel dispatch composes the models later.
+
+## Promotion
+
+An unreliable send too big for one packet's record is promoted to its
+reliable twin: 0 to 2, 1 to 4, and 5 to the reliable code-2 path (the receipt
+stays with the layer above). `Source(m)` is the API mode and `Code(m)` is the
+wire twin, so every sender and receiver rule runs on the twin. The `promote`
+scenario sends codes 1, 0 and 5 large (`Large(m)`, on the plan 1, 0, 5, 2)
+and also runs the mixed plan 1, 3, 4, 2 with nothing large, so
+`MCRNChannelTypes.cfg` checks both; `PromotedIsTwin` checks
+the mapping and `PromotedNeverUnreliable` checks that a promoted code-0 or
+code-5 send is delivered, never dropped as unreliable. A promoted code-1 send
+follows code-4 sequenced semantics, including their permitted supersession.
 
 ## Types
 
@@ -94,9 +107,9 @@ from its delivered sequenced trace; it detects stale watermark leakage.
 | Ordering/sequence wrap | Small nonwrapping counters | Wire half-range/wrap arithmetic is outside this model |
 | Scheduling | First packet writes follow enqueue order; retransmits may overtake | CHANNELS §9.2 requires channel FIFO; RakNet can reorder sends by priority |
 | Payload | Opaque stable byte-record identity | Allocation, byte lengths, copy counts and view lifetime need implementation tests |
-| Channels | Two channels in the bounded driver | Runtime range checks and up-to-65536 scaling are outside this bound |
+| Channels | Two channels in the bounded transport | Runtime range checks and up-to-65536 scaling are outside this bound |
 
-The fair-transport driver permits one original plus one retransmission for each
+The fair-transport transport permits one original plus one retransmission for each
 reliable message, arbitrary arrival order, original loss, and delayed ACKs.
 Retransmissions are not lost; weak fairness drains the finite actions. Thus
 liveness is conditional on this explicitly bounded fair environment, not a
@@ -104,7 +117,7 @@ claim under permanent loss. A reliable-sequenced message need not be delivered
 to the application. Memory exhaustion terminates the connection rather than
 counting as delivery. No bandwidth-budget or fragment rule is proved here.
 
-## Finite driver bounds
+## Finite transport bounds
 
 The control explores seven fixed four-message programs, not all possible type
 sequences. They cover mixed 1/3/4/2 traffic, multiple sequencing indices in one
@@ -150,7 +163,7 @@ exact generated/distinct counts after the evaluation change.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|
-| `MCRNChannelTypes.cfg` | 109855 | 23381 | 3.850 | pass - |
+| `MCRNChannelTypes.cfg` | 2058385 | 376853 | 65.946 | pass - |
 | `MCRNChannelBrokenSequencedBackwards.cfg` | 49 | 32 | 0.659 | invariant SequencedNeverBackwards |
 | `MCRNChannelBrokenHeapDrainNoReset.cfg` | 723 | 304 | 0.721 | invariant EpochWatermark |
 | `MCRNChannelBrokenReliableTwice.cfg` | 53 | 35 | 0.663 | invariant ReliableExactlyOnce |

@@ -344,8 +344,8 @@ static void send_priorities_no_allocation_after_create()
     // refused after init, so the test terminates it, installs the counting
     // allocator, and initialises again
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( priorities_malloc, priorities_free ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_set_allocator( priorities_malloc, priorities_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     priorities_allocs = 0;
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
@@ -385,8 +385,8 @@ static void send_priorities_no_allocation_after_create()
     // the suite's own term follows: hand it back an initialised library on
     // the default allocator
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( higher_priority_first_within_class );

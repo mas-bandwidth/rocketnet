@@ -1,18 +1,20 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_server_socket.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
 #include <stdio.h>
 
 bool rocketnet_server_socket_test_inactive_generation();
+bool rocketnet_server_socket_test_replay_marks();
 
 int main()
 {
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    if (!rocketnet_init()) return 1;
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    if (rocketnet_init( NULL ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_server_socket_forbid_commit();
     const bool passed = rocketnet_server_socket_test_inactive_generation();
+    const bool replay_passed = rocketnet_server_socket_test_replay_marks();
     rocketnet_term();
     if (!passed)
     {
@@ -20,6 +22,13 @@ int main()
         return 1;
     }
     printf("test_xdp_inactive_generation\n");
+
+    if (!replay_passed)
+    {
+        fprintf(stderr, "native XDP replay-marks buffer/commit check failed\n");
+        return 1;
+    }
+    printf("test_xdp_replay_marks_buffered_and_committed\n");
 
     // a umem frame holds the largest datagram a receiver accepts, with the
     // ethernet header and the larger (IPv6) IP header in front of it

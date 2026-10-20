@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet_replay.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <string.h>
 
@@ -26,6 +26,7 @@ static void rocketnet_replay_clear_bit( struct rocketnet_replay_protection_t * r
     replay->window[bit / 64] &= ~( 1ULL << ( bit % 64 ) );
 }
 
+// tla/ReplayWindow.tla AlreadyReceived
 int rocketnet_replay_already_received( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
     rocketnet_assert( replay );
@@ -41,6 +42,7 @@ int rocketnet_replay_already_received( const struct rocketnet_replay_protection_
     return rocketnet_replay_bit( replay, sequence );
 }
 
+// tla/ReplayWindow.tla Advance
 void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
     rocketnet_assert( replay );

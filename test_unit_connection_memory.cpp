@@ -14,18 +14,20 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_allocator.h"
+#include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
-#include "rocketnet.h"
-#include "rocketnet_unreliable.h"
+#include "rocketnet_internal.h"
+#include "rocketnet_fragment.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vector>
 
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// The counting allocator: rocketnet_allocator accepts a replacement only on an
+// The counting allocator: rocketnet_set_allocator accepts a replacement only on an
 // uninitialized library with nothing live, so the worker's init is stopped,
 // the counter installed and the library started again; the restore reverses it.
 // ---------------------------------------------------------------------------
@@ -50,15 +52,15 @@ static void cm_free( void * context, void * p )
 static void cm_install()
 {
     rocketnet_term();
-    check( rocketnet_allocator( cm_malloc, cm_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_set_allocator( cm_malloc, cm_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void cm_restore()
 {
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init() );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static uint64_t cm_calls()
@@ -184,7 +186,7 @@ static void memory_isolation_between_slots()
     check( memcmp( &b_before, b, sizeof(*b) ) == 0 );
     check( memcmp( b_memory, b->base, (size_t) b->bytes ) == 0 );
     check( !rn_region_exhausted( b ) );
-    check( rn_connection_memory_decide( b ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_connection_memory_decide( b ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // B goes on: frees, sends, and is still whole
     for ( int i = 0; i < 8; i++ )
@@ -195,7 +197,7 @@ static void memory_isolation_between_slots()
 
     // A's exhaustion is a kick for A only: the exhaustion step counts once, and
     // the refusal above (a send after exhaustion) also counts, so it is 2
-    check( rn_connection_memory_decide( a ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rn_connection_memory_decide( a ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
 
     free( b_memory );
@@ -207,7 +209,7 @@ static void memory_isolation_between_slots()
 // every update until the region is reset; a flood is kicked by name.
 static void exhaustion_is_a_kick_with_its_reason()
 {
-    check( ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED != ROCKETNET_MESSAGE_ERROR_NONE );
+    check( ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED != ROCKETNET_DISCONNECT_REASON_NONE );
     check( strcmp( rocketnet_counter_name( ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
 
     rocketnet_counters_t counters;
@@ -219,8 +221,8 @@ static void exhaustion_is_a_kick_with_its_reason()
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     check( !rn_region_exhausted( region ) );
-    check( rn_region_exhausted_reason( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_region_exhausted_reason( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // a refusal for the caller's own argument is not exhaustion
     check( rn_region_send_alloc( region, 0 ) == RN_DESCRIPTOR_NONE );
@@ -231,7 +233,7 @@ static void exhaustion_is_a_kick_with_its_reason()
     const int sent = cm_fill( region, (int) region->max_message_bytes, NULL, 0 );
     check( sent >= 1 );
     check( rn_region_exhausted( region ) );
-    check( rn_region_exhausted_reason( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rn_region_exhausted_reason( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
 
@@ -243,24 +245,25 @@ static void exhaustion_is_a_kick_with_its_reason()
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
     for ( int update = 0; update < 3; update++ )
-        check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+        check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
     // the descriptor pool running out is the same outcome, with its own counter
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
     rn_arena_t * small = rn_arena_create( NULL, &config, 1, &counters );
     check( small );
     rn_region_t * q = rn_arena_region( small, 0 );
     check( cm_fill( q, 10, NULL, 0 ) == 16 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
-    check( rn_connection_memory_decide( q ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rn_connection_memory_decide( q ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 3 );
 
     // the kick resets the region for the slot's next client
     rn_region_reset( region );
     check( !rn_region_exhausted( region ) );
-    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     rn_arena_destroy( small );
     rn_arena_destroy( arena );
@@ -364,9 +367,9 @@ static void user_block_is_used_and_nothing_else()
         check( cm_inside( block, required, region, sizeof(*region) ) );
         check( cm_inside( block, required, region->base, region->bytes ) );
 
-        uint32_t taken[2048];
-        const int n = cm_fill( region, 200 + 300 * s, taken, 2048 );
-        check( n > 0 && n <= 2048 );
+        std::vector<uint32_t> taken( region->queue );
+        const int n = cm_fill( region, 200 + 300 * s, taken.data(), (int) taken.size() );
+        check( n > 0 && (size_t) n <= taken.size() );
         for ( int i = 0; i < n; i++ )
         {
             const rn_send_descriptor_t * d = &region->send_descriptors[taken[i]];
@@ -378,9 +381,9 @@ static void user_block_is_used_and_nothing_else()
                 check( rn_region_contains( region, data, 1 ) );
             }
         }
-        check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+        check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
         rn_region_reset( region );
-        check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
     }
 
     rn_arena_destroy( arena );
@@ -393,7 +396,7 @@ static void user_block_is_used_and_nothing_else()
 // R2: a counting allocator sees create's one allocation and then nothing
 // across sends, acks, exhaustion, the kick decision, the reset and reuse,
 // for a server-shaped arena and a client-shaped one; destroy is the one free.
-static void no_allocation_after_create()
+static void connection_memory_no_allocation_after_create()
 {
     cm_install();
 
@@ -429,9 +432,9 @@ static void no_allocation_after_create()
                     rn_region_send_free( region, taken[i] );
             }
             const int reason = rn_connection_memory_decide( region );
-            check( reason == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+            check( reason == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
             rn_region_reset( region );
-            check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
+            check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
         }
     }
 
@@ -456,6 +459,7 @@ static void exhausted_region_refuses_sends_until_reset()
     // Use a small queue to exhaust quickly (min is 16)
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -488,12 +492,12 @@ static void exhausted_region_refuses_sends_until_reset()
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
 
     // Kick decision says disconnect
-    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
     // Reset the region (Reuse in the model)
     rn_region_reset( region );
     check( !rn_region_exhausted( region ) );
-    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // Now send succeeds
     const uint32_t d = rn_region_send_alloc( region, 10 );
@@ -503,59 +507,6 @@ static void exhausted_region_refuses_sends_until_reset()
     rn_region_send_free( region, d );
     check( region->descriptors_free == 16 );
 
-    rn_arena_destroy( arena );
-}
-
-// RNConnectionMemory Exhaust from an unreliable send: a full store refuses and
-// exhausts the region, exactly as a reliable send does. The FIFO length bound
-// is a configured queue length, not memory, and stays a counted drop
-// (tla/RNConnectionMemory.tla, R1), so this drives the store's no-room
-// outcome only.
-static void unreliable_store_full_exhausts_the_region()
-{
-    rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
-
-    // the default store: a flood of small messages fills its small class, and
-    // the FIFO (capacity 4096) is far larger than that class's chunk count, so
-    // the flood reaches the store's no-room outcome, never the queue length
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
-    check( arena );
-    rn_region_t * region = rn_arena_region( arena, 0 );
-
-    const uint32_t capacity = 4096;
-    rn_unreliable_message_t * queue =
-        (rn_unreliable_message_t*) malloc( sizeof(rn_unreliable_message_t) * capacity );
-    check( queue );
-    memset( queue, 0, sizeof(rn_unreliable_message_t) * capacity );
-    rn_unreliable_t u;
-    rn_unreliable_init( &u, region, queue, capacity );
-
-    uint8_t data[16];
-    memset( data, 0xAB, sizeof(data) );
-    int sent = 0;
-    while ( rn_unreliable_send( &u, data, 16, 0, 0 ) )
-    {
-        sent++;
-        check( sent < 1000000 );
-    }
-
-    // the flood never frees, so the store refused and that refusal is exhaustion
-    check( sent > 0 );
-    check( rn_region_exhausted( region ) );
-    check( rn_region_exhausted_reason( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
-
-    // sticky and refused: a later send on the exhausted region delivers nothing,
-    // counted as a store-full drop like any other (R1)
-    check( rn_unreliable_send( &u, data, 16, 0, 0 ) == 0 );
-    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 2 );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
-
-    free( queue );
     rn_arena_destroy( arena );
 }
 
@@ -579,10 +530,12 @@ static void receive_without_room_exhausts_the_region()
     check( n > 0 );
     check( rn_region_exhausted( region ) );
 
-    rn_unreliable_t u;
-    rn_unreliable_message_t queue[64];
-    memset( queue, 0, sizeof(queue) );
-    rn_unreliable_init( &u, region, queue, 64 );
+    // the shipped receive path over this region (layer 3 and 4 over the codec)
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
+    rn_ordered_t ordered;
+    check( rn_ordered_init( &ordered, region, &config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
 
     // a valid unreliable record
     uint8_t payload[2048];
@@ -597,29 +550,157 @@ static void receive_without_room_exhausts_the_region()
     const int payload_bytes = rocketnet_message_writer_finish( &writer );
     check( payload_bytes > 0 );
 
-    struct rocketnet_message_limits_t limits;
-    memset( &limits, 0, sizeof(limits) );
-    limits.num_channels = (int) region->num_channels;
-    limits.window_messages = (int) region->window;
-    limits.receive_ring_bytes = (int) region->ring_bytes;
-    limits.enabled_codes = 1u << ROCKETNET_MESSAGE_CODE_UNRELIABLE;
-
-    rn_delivery_t out[4];
-    int out_count = -1;
-    const int rc = rn_unreliable_receive( &u, payload, payload_bytes, &limits, out, 4, &out_count );
+    const uint64_t exhausted_before = counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED];
+    const int rc = rn_ordered_receive( &ordered, payload, payload_bytes );
     check( rc == ROCKETNET_MESSAGE_VIOLATION_NONE );
-    check( out_count == 0 );            // refused: nothing is delivered
-    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rn_ordered_deliveries( &ordered ) == 0 );            // refused: nothing is delivered
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == exhausted_before );
+
+    rn_arena_destroy( arena );
+}
+
+// Reassembly geometry: an out-of-range argument (connections and slots at
+// least 1, slots at most ROCKETNET_MAX_FRAGMENTS, payload between
+// ROCKETNET_MAX_PAYLOAD_BYTES and ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
+// delivered at least 1) or an over-budget geometry is refused before any
+// allocation (sdk/rocketnet_fragment.cpp rocketnet_reassembly_memory_required,
+// rocketnet_reassembly_memory_allowed, rocketnet_reassembly_set_create).
+static void reassembly_geometry_refuses_bad_arguments_and_budget()
+{
+    const int MP = ROCKETNET_MAX_PAYLOAD_BYTES;
+
+    // a bad argument yields required 0 and allowed false
+    const int bad[][4] = {
+        { 0, 1, MP, 1 },
+        { 1, 0, MP, 1 },
+        { 1, ROCKETNET_MAX_FRAGMENTS + 1, MP, 1 },
+        { 1, 1, MP - 1, 1 },
+        { 1, 1, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, 1 },
+        { 1, 1, MP, 0 },
+    };
+    for ( size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++ )
+    {
+        check( rocketnet_reassembly_memory_required( bad[i][0], bad[i][1], bad[i][2], bad[i][3] ) == 0 );
+        check( !rocketnet_reassembly_memory_allowed( bad[i][0], bad[i][1], bad[i][2], bad[i][3] ) );
+    }
+
+    // valid geometries are accepted
+    check( rocketnet_reassembly_memory_required( 4, 8, 16384, 32 ) != 0 );
+    check( rocketnet_reassembly_memory_allowed( 4, 8, 16384, 32 ) );
+    check( rocketnet_reassembly_memory_required( 1, 1, MP, 1 ) != 0 );
+    check( rocketnet_reassembly_memory_allowed( 1, 1, MP, 1 ) );
+
+    // an over-budget geometry: required is non-zero and over the budget,
+    // allowed is false, and create refuses it before any allocation
+    const uint64_t required = rocketnet_reassembly_memory_required(
+        1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 );
+    const uint64_t budget = (uint64_t) ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024;
+    check( required != 0 );
+    check( required > budget );
+    check( !rocketnet_reassembly_memory_allowed(
+        1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 ) );
+
+    cm_install();
+    const uint64_t before = cm_calls();
+    check( rocketnet_reassembly_set_create( NULL, 1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 ) == NULL );
+    check( cm_calls() == before );
+    cm_restore();
+}
+
+// RNConnectionMemory Use requires ~exhausted for every way a send takes room,
+// the large-message span path too (rn_region_send_alloc_span). A region
+// exhausted by its descriptor table, with one descriptor then returned, still
+// refuses a span: nothing is taken, and each refusal counts
+// MESSAGE_MEMORY_EXHAUSTED exactly as rn_region_send_alloc does.
+static void exhausted_region_refuses_spans()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
+    config.send_queue_messages = 16;
+    check( config.max_message_bytes >= (int) RN_SPAN_MIN_BYTES );
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    uint32_t descriptors[16];
+    for ( int i = 0; i < 16; i++ )
+    {
+        descriptors[i] = rn_region_send_alloc( region, 10 );
+        check( descriptors[i] != RN_DESCRIPTOR_NONE );
+    }
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+
+    // room returns (an ack), and the span ring is empty: a span would fit
+    rn_region_send_free( region, descriptors[3] );
+    check( region->descriptors_free == 1 );
+    check( region->span_first == RN_DESCRIPTOR_NONE );
+
+    check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 1 );                         // nothing taken
+    check( region->span_first == RN_DESCRIPTOR_NONE );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
+
+    check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 3 );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+
+    rn_arena_destroy( arena );
+}
+
+// RNConnectionMemory Reuse: the reset clears the sticky state, and the span
+// path takes room again.
+static void span_granted_after_reset()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    for ( int i = 0; i < 16; i++ )
+        check( rn_region_send_alloc( region, 10 ) != RN_DESCRIPTOR_NONE );
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+
+    rn_region_reset( region );
+    check( !rn_region_exhausted( region ) );
+
+    const uint64_t before = counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED];
+    const uint32_t d = rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES );
+    check( d != RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 15 );
+    check( region->span_first == d );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == before );
+
+    rn_region_send_free( region, d );
+    check( region->descriptors_free == 16 );
+    check( region->span_first == RN_DESCRIPTOR_NONE );
 
     rn_arena_destroy( arena );
 }
 
 REGISTER_UNIT_TEST( memory_isolation_between_slots );
+REGISTER_UNIT_TEST( reassembly_geometry_refuses_bad_arguments_and_budget );
 REGISTER_UNIT_TEST( exhaustion_is_a_kick_with_its_reason );
 REGISTER_UNIT_TEST( reused_slot_starts_clean );
 REGISTER_UNIT_TEST( user_block_is_used_and_nothing_else );
-REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( connection_memory_no_allocation_after_create );
 REGISTER_UNIT_TEST( exhausted_region_refuses_sends_until_reset );
-REGISTER_UNIT_TEST( unreliable_store_full_exhausts_the_region );
 REGISTER_UNIT_TEST( receive_without_room_exhausts_the_region );
+REGISTER_UNIT_TEST( exhausted_region_refuses_spans );
+REGISTER_UNIT_TEST( span_granted_after_reset );

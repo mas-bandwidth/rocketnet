@@ -9,7 +9,7 @@
 #define ROCKETNET_CLIENT_PROTOCOL_H
 
 #include <stdint.h>
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_keys.h"
@@ -29,86 +29,85 @@
 
 struct rocketnet_reassembly_set_t;
 
+// The verdict a client I/O thread records for each datagram it worked
+// (tla/RNClientIoDecrypt.tla IoCheck and IoOpen, docs/CLIENT-IO-DECRYPT.md):
+// raw (not opened: a handshake packet, or anything while its copy of the open
+// key is not live), opened, or the rung that refused it before or at the AEAD.
+
+enum
+{
+    ROCKETNET_CLIENT_IO_VERDICT_RAW = 0,
+    ROCKETNET_CLIENT_IO_VERDICT_OPENED = 1,
+    ROCKETNET_CLIENT_IO_VERDICT_ALREADY_RECEIVED = 2,
+    ROCKETNET_CLIENT_IO_VERDICT_DID_NOT_OPEN = 3,
+    ROCKETNET_CLIENT_IO_VERDICT_ZERO_SEQUENCE = 4,
+    ROCKETNET_CLIENT_IO_VERDICT_WRONG_SIZE = 5,
+};
+
+struct rocketnet_client_protocol_t;
+
+// The open block hooks of a transport whose I/O thread opens session packets
+// (tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys): publish runs where
+// the challenge commits the session keys, retire on every terminal state
+// before the keys are zeroed. NULL on every other path.
+
+typedef void ( * rocketnet_client_publish_keys_t )( void * context, const struct rocketnet_client_protocol_t * client );
+typedef void ( * rocketnet_client_retire_keys_t )( void * context );
+
+/*
+    The declaration manifest is deliberately independent of the RESET/KEEP
+    inventory in rocketnet_connection_reset.h. Tests compare the two by name,
+    offset and size. Adding a member here without an inventory decision names
+    that exact member in connection_reset_inventory_covers_every_field.
+*/
+#define ROCKETNET_CLIENT_PROTOCOL_LAYOUT_FIELDS( X ) \
+    X( filter_value, uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] ) \
+    X( send_rate, double send_rate ) \
+    X( counters, struct rocketnet_counters_t * counters ) \
+    X( state, int state ) \
+    X( token, struct rocketnet_connect_token_t token ) \
+    X( signed_fields, struct rocketnet_signed_connect_data_t signed_fields ) \
+    X( server_address, struct rocketnet_address_t server_address ) \
+    X( connection_salt, uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES] ) \
+    X( client_ephemeral_public_key, uint8_t client_ephemeral_public_key[ROCKETNET_KEY_BYTES] ) \
+    X( client_ephemeral_secret_key, uint8_t client_ephemeral_secret_key[ROCKETNET_KEY_BYTES] ) \
+    X( return_cookie, uint8_t return_cookie[ROCKETNET_COOKIE_FIELD_BYTES] ) \
+    X( has_cookie, int has_cookie ) \
+    X( session_nonce, uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES] ) \
+    X( keys, struct rocketnet_connection_keys_t keys ) \
+    X( stored_response, uint8_t stored_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES] ) \
+    X( client_index, int client_index ) \
+    X( max_clients, int max_clients ) \
+    X( send_sequence_handshake, uint64_t send_sequence_handshake ) \
+    X( send_sequence_session, uint64_t send_sequence_session ) \
+    X( next_fragment_payload_id, uint64_t next_fragment_payload_id ) \
+    X( replay_handshake, struct rocketnet_replay_protection_t replay_handshake ) \
+    X( replay_session, struct rocketnet_replay_protection_t replay_session ) \
+    X( integrity_failures, uint64_t integrity_failures ) \
+    X( attempt_start_time, double attempt_start_time ) \
+    X( last_send_time, double last_send_time ) \
+    X( last_receive_time, double last_receive_time ) \
+    X( total_deadline_seconds, uint64_t total_deadline_seconds ) \
+    X( timeout_seconds, int32_t timeout_seconds ) \
+    X( state_first_send_time, double state_first_send_time ) \
+    X( rtt_estimate, double rtt_estimate ) \
+    X( rtt_session_sampled, int rtt_session_sampled ) \
+    X( received_session_sequence, uint64_t received_session_sequence ) \
+    X( ack, struct rocketnet_ack_endpoint_t ack ) \
+    X( num_acked, int num_acked ) \
+    X( acked_packet_ids, uint64_t acked_packet_ids[ROCKETNET_SENT_PACKET_BUFFER_SIZE] ) \
+    X( reassembly, struct rocketnet_reassembly_set_t * reassembly ) \
+    X( publish_keys, rocketnet_client_publish_keys_t publish_keys ) \
+    X( retire_keys, rocketnet_client_retire_keys_t retire_keys ) \
+    X( keys_context, void * keys_context ) \
+    X( record_verdict, uint8_t record_verdict ) \
+    X( record_sequence, uint64_t record_sequence )
+
 struct rocketnet_client_protocol_t
 {
-    // configuration, set before connect
-    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
-    double send_rate;                                       // packets per second, default 10
-    struct rocketnet_counters_t * counters;
-
-    // the current state, readable at any time
-    int state;
-
-    // the token, parsed once at connect
-    struct rocketnet_connect_token_t token;
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_address_t server_address;
-
-    // this attempt: one salt, one ephemeral keypair, one sequence space per
-    // phase, never reset within the attempt
-    uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
-    uint8_t client_ephemeral_public_key[ROCKETNET_KEY_BYTES];
-    uint8_t client_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
-    uint8_t return_cookie[ROCKETNET_COOKIE_FIELD_BYTES];
-    int has_cookie;
-
-    // the keys and the server contribution, committed only after a
-    // successful challenge open
-    uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
-    struct rocketnet_connection_keys_t keys;
-    uint8_t stored_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
-
-    // the connection, once the first keep-alive arrives
-    int client_index;
-    int max_clients;
-
-    // sending sequences per phase, and receive replay per phase
-    uint64_t send_sequence_handshake;
-    uint64_t send_sequence_session;
-    uint64_t next_fragment_payload_id;                      // per _Fragmentation_: from 1, per fragmented payload sent
-    struct rocketnet_replay_protection_t replay_handshake;      // challenge and denied ride here
-    struct rocketnet_replay_protection_t replay_session;
-    uint64_t integrity_failures;                            // sealed packets that did not open this attempt, across its keys; ROCKETNET_INTEGRITY_LIMIT disconnects
-
-    // time. the caller supplies both clocks; nothing in here reads a clock.
-    double attempt_start_time;
-    double last_send_time;
-    double last_receive_time;
-    uint64_t total_deadline_seconds;                        // expire - create
-    int32_t timeout_seconds;                                // from the token
-
-    // quality measurement for the transport's stats. rtt is sampled from the
-    // handshake's round trips -- the server answers a request, a challenge
-    // provocation and a response immediately, so first-send-in-state to
-    // first-answer is the round trip; the estimate keeps the minimum across
-    // the three exchanges, which discards any sample inflated by a lost
-    // first send. received_session_sequence is the session sequence of the
-    // packet the last process_packet call accepted, zero when it accepted
-    // none -- the transport feeds its loss and jitter trackers from it.
-    double state_first_send_time;                           // -1 until the state's first send
-    double rtt_estimate;                                    // seconds; 0 until the first sample
-    int rtt_session_sampled;                                // the session round trip is sampled once
-    uint64_t received_session_sequence;
-
-    // The general acks: this end's delivery bookkeeping and the per-update
-    // batch of newly-acknowledged packet ids the transport surfaces. Every
-    // session packet sent carries a block built from replay_session; every
-    // session packet received applies its block here. The rtt estimate
-    // above seeds from the handshake and the endpoint's first-ack samples
-    // refresh it continuously from there.
-
-    struct rocketnet_ack_endpoint_t ack;
-    int num_acked;
-    uint64_t acked_packet_ids[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
-
-    // Fragment reassembly, per _Fragmentation_: one connection's slots,
-    // owned by whoever built this protocol object -- the transport creates
-    // it from its config -- and carried across connect, which resets its
-    // state. A completed payload is reported through the set's completed
-    // fields, in arrival position, at the process_packet call that
-    // completed it.
-
-    struct rocketnet_reassembly_set_t * reassembly;
+#define ROCKETNET_CLIENT_PROTOCOL_DECLARE_FIELD( name, declaration ) declaration;
+    ROCKETNET_CLIENT_PROTOCOL_LAYOUT_FIELDS( ROCKETNET_CLIENT_PROTOCOL_DECLARE_FIELD )
+#undef ROCKETNET_CLIENT_PROTOCOL_DECLARE_FIELD
 };
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );
@@ -156,6 +155,26 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
                                      uint8_t * out_payload,
                                      int out_payload_capacity,
                                      int * out_payload_bytes );
+
+// tla/RNClientIoDecrypt.tla UpdateConsume: processes one record of a receive
+// buffer a client I/O thread filled, in arrival order. A raw record is
+// rocketnet_client_protocol_process_packet unchanged. An opened record carries
+// the plaintext behind its wire header and the I/O thread's sequence: the
+// state check, update's own reconstruction (a disagreement is counted as did
+// not open, with no integrity failure), update's own replay check and advance,
+// then the rest of the session path as today, with no AEAD. A refused record
+// is counted with today's counter for its rung in its arrival position; a
+// did-not-open record also runs the integrity failure there.
+
+int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t * client,
+                                              const uint8_t * packet_data,
+                                              int packet_bytes,
+                                              uint8_t verdict,
+                                              uint64_t sequence,
+                                              double current_time,
+                                              uint8_t * out_payload,
+                                              int out_payload_capacity,
+                                              int * out_payload_bytes );
 
 // Builds a payload packet for the server, and stamps the send -- ordinary
 // traffic suppresses the client's own keep-alive. NOT "as on the server":

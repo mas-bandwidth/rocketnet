@@ -3,14 +3,23 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Parallel suite runner. Each test is a process. A test over 60s prints a
-    warning. A test over 120s is killed and fails the suite. The ten slowest
-    are printed at the end. strict_names keeps every line inside the
+    warning. A test over 120s is killed and fails the suite (a Debug or
+    sanitizer build scales the 120s: test/time_scale.h). The ten slowest
+    are printed at the end. Each case's peak resident set (wait4 ru_maxrss on
+    POSIX, PeakWorkingSetSize on Windows) is printed at the end as
+    `<case> peak_rss_mb=<n> bound_mb=<b>`, and a case over the bound fails the
+    suite (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment
+    variable; a sanitizer build prints the peaks and does not enforce the bound
+    unless the environment variable sets one). A case whose subject is a
+    full-capacity server declares its own bound with SUITE_CASE_RSS_BOUND,
+    derived from the SDK's memory plan for the configuration it uses. strict_names keeps every line inside the
     names-only shape tools/check_test_environment.py accepts, because that
     checker merges stderr into stdout and is not ours to change.
 */
 
 #pragma once
 
+#include "time_scale.h"
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -31,14 +40,25 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <psapi.h>
+#include "resource_file.h"
 #else
 #include <errno.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 #include <unistd.h>
 extern char **environ;
 #endif
+
+// The largest peak resident set one case process may reach, in MiB: the larger
+// of 256 and 1.5 times the largest case measured on a Linux Release build
+// (465 MiB, test_server_transport_io_pin_gso, 2026-10-19), so 698; never over 1024.
+// A case over it fails the suite. The environment variable of the same name
+// overrides it with a positive value.
+#define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
 
 struct suite_exec
 {
@@ -53,6 +73,7 @@ struct suite_case
     std::string exec_path; // empty: re-exec this binary with --run name
     bool skipped;
     std::string skip_line;
+    int group; // suite_main's group_of: cases of different groups never run at once
 };
 
 struct suite_result
@@ -62,16 +83,121 @@ struct suite_result
     bool skipped;
     bool failed;
     std::string detail;
+    long peak_rss_mb; // -1: not measured
 };
+
+// The bound in MiB, or 0 when it is not enforced (a sanitizer build with no
+// environment override: sanitizer shadow memory is not the case's footprint).
+inline long suite_max_case_rss_mb()
+{
+    if ( const char * env = std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    {
+        const long requested = std::atol( env );
+        if ( requested > 0 )
+            return requested;
+    }
+#if defined(ROCKETNET_FUNCTIONAL_SANITIZED)
+    return 0;
+#else
+    return ROCKETNET_TEST_MAX_CASE_RSS_MB;
+#endif
+}
+
+// A case whose subject is a full-capacity server allocates its designed
+// per-client memory up front, so its footprint is set by the SDK's memory
+// plan, not by the suite-wide bound. Such a case declares its bound beside
+// itself with SUITE_CASE_RSS_BOUND( name, function ): function returns the
+// bound in MiB, computed from the memory plan for the configuration the case
+// uses plus a margin the case states (suite_rss_bound_mb). A static
+// registrar adds it to a list before main runs, so the parent reads it by
+// case name. Every other case keeps ROCKETNET_TEST_MAX_CASE_RSS_MB.
+
+struct suite_case_rss_bound_t
+{
+    const char * name;
+    long ( *bound_mb )();
+    suite_case_rss_bound_t * next;
+};
+
+inline suite_case_rss_bound_t ** suite_case_rss_bound_head()
+{
+    static suite_case_rss_bound_t * head = NULL;
+    return &head;
+}
+
+struct suite_case_rss_bound_registrar_t
+{
+    suite_case_rss_bound_t entry;
+    suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() )
+    {
+        entry.name = name;
+        entry.bound_mb = bound_mb;
+        entry.next = *suite_case_rss_bound_head();
+        *suite_case_rss_bound_head() = &entry;
+    }
+};
+
+#define SUITE_CASE_RSS_BOUND_JOIN_( a, b ) a##b
+#define SUITE_CASE_RSS_BOUND_JOIN( a, b ) SUITE_CASE_RSS_BOUND_JOIN_( a, b )
+#define SUITE_CASE_RSS_BOUND( name, function ) \
+    static suite_case_rss_bound_registrar_t SUITE_CASE_RSS_BOUND_JOIN( suite_case_rss_bound_, __LINE__ )( #name, function )
+
+// A planned byte count as a bound in MiB: the bytes rounded up to whole MiB,
+// plus the case's stated margin for the process itself (executable, runtime
+// and stacks), which the plan does not count. 0 when the plan refused.
+inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
+{
+    if ( planned_bytes == 0 )
+        return 0;
+    const uint64_t mib = 1024 * 1024;
+    return (long) ( ( planned_bytes + mib - 1 ) / mib ) + margin_mb;
+}
+
+// The bound for one case: the environment override when set, else none in a
+// sanitizer build, else the bound the case declares, else the suite-wide one.
+// A declared bound of 0 (a refused plan) keeps the suite-wide bound.
+inline long suite_case_rss_mb( const std::string & name )
+{
+    const long bound = suite_max_case_rss_mb();
+    if ( bound <= 0 || std::getenv( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+        return bound;
+    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    {
+        if ( name == entry->name )
+        {
+            const long declared = entry->bound_mb();
+            return declared > 0 ? declared : bound;
+        }
+    }
+    return bound;
+}
+
+// Fails a finished case whose peak is over the bound, naming both.
+inline void suite_check_rss( suite_result & result, long bound_mb )
+{
+    if ( result.failed || bound_mb <= 0 || result.peak_rss_mb <= bound_mb )
+        return;
+    char text[96];
+    snprintf( text, sizeof( text ), " peak_rss_mb=%ld bound_mb=%ld", result.peak_rss_mb, bound_mb );
+    result.failed = true;
+    result.detail = result.name + text;
+}
 
 inline std::string suite_executable_path()
 {
 #if defined(_WIN32)
-    char buf[MAX_PATH];
-    DWORD n = GetModuleFileNameA( NULL, buf, MAX_PATH );
-    if ( n == 0 || n >= MAX_PATH )
-        return "";
-    return std::string( buf, buf + n );
+    std::vector<wchar_t> buf( MAX_PATH );
+    for ( ;; )
+    {
+        const DWORD n = GetModuleFileNameW( NULL, buf.data(), (DWORD) buf.size() );
+        if ( n == 0 )
+            return "";
+        if ( n < buf.size() )
+            return rocketnet_test_wide_to_utf8( buf.data(), (int) n );
+        if ( buf.size() >= 32768 )
+            return "";
+        buf.resize( buf.size() * 2 );
+    }
 #elif defined(__APPLE__)
     char buf[4096];
     uint32_t size = (uint32_t) sizeof( buf );
@@ -98,11 +224,19 @@ inline std::string suite_directory_of( const std::string & path )
 
 inline bool suite_file_exists( const std::string & path )
 {
+#if defined(_WIN32)
+    const std::wstring wide = rocketnet_test_wide_path( path );
+    if ( wide.empty() )
+        return false;
+    const DWORD attributes = GetFileAttributesW( wide.c_str() );
+    return attributes != INVALID_FILE_ATTRIBUTES && !( attributes & FILE_ATTRIBUTE_DIRECTORY );
+#else
     FILE * file = fopen( path.c_str(), "rb" );
     if ( !file )
         return false;
     fclose( file );
     return true;
+#endif
 }
 
 inline int suite_job_count()
@@ -123,6 +257,22 @@ inline int suite_job_count()
 
 inline void suite_print_summary( const std::vector<suite_result> & results, bool strict_names )
 {
+    // A passing run with no verbose switch prints no summary. A failure
+    // still prints, and the unit suite (strict_names) is unchanged.
+    if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+    {
+        bool quiet = true;
+        for ( size_t i = 0; i < results.size(); i++ )
+        {
+            if ( results[i].failed )
+            {
+                quiet = false;
+                break;
+            }
+        }
+        if ( quiet )
+            return;
+    }
     std::vector<suite_result> ran;
     for ( size_t i = 0; i < results.size(); i++ )
         if ( !results[i].skipped )
@@ -139,6 +289,25 @@ inline void suite_print_summary( const std::vector<suite_result> & results, bool
             printf( "test_timing_slowest_%02d [SKIPPED %.3fs %s]\n", i + 1, ran[i].seconds, ran[i].name.c_str() );
         else
             printf( "  %8.3fs  %s\n", ran[i].seconds, ran[i].name.c_str() );
+    }
+    std::vector<suite_result> by_rss = ran;
+    std::sort( by_rss.begin(), by_rss.end(), []( const suite_result & a, const suite_result & b ) {
+        return a.peak_rss_mb > b.peak_rss_mb;
+    } );
+    if ( !strict_names )
+        printf( "peak rss, largest first:\n" );
+    for ( size_t i = 0; i < by_rss.size(); i++ )
+    {
+        if ( by_rss[i].peak_rss_mb < 0 )
+            continue;
+        if ( strict_names )
+        {
+            if ( i >= 10 )
+                break;
+            printf( "test_timing_rss_%02d [SKIPPED %s peak_rss_mb=%ld bound_mb=%ld]\n", (int) i + 1, by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, suite_case_rss_mb( by_rss[i].name ) );
+        }
+        else
+            printf( "%s peak_rss_mb=%ld bound_mb=%ld\n", by_rss[i].name.c_str(), by_rss[i].peak_rss_mb, suite_case_rss_mb( by_rss[i].name ) );
     }
     int warnings = 0;
     int fails = 0;
@@ -164,7 +333,130 @@ inline void suite_print_summary( const std::vector<suite_result> & results, bool
     fflush( stdout );
 }
 
+inline int suite_usage( char ** argv )
+{
+    fprintf( stderr, "usage: %s [--run <case>]\n", argv[0] );
+    return 2;
+}
+
 #if !defined(_WIN32)
+
+// A passing case prints its name, or a name plus " [SKIPPED". Anything else
+// stays in the capture unless the case fails. The verbose switch does not
+// capture, so the child prints straight through. strict_names (the unit
+// suite) does not capture.
+inline bool suite_passing_line( const std::string & line )
+{
+    if ( line.empty() )
+        return false;
+    const char first = line[0];
+    if ( !( ( first >= 'A' && first <= 'Z' ) || ( first >= 'a' && first <= 'z' ) || first == '_' ) )
+        return false;
+    size_t n = 1;
+    while ( n < line.size() )
+    {
+        const char c = line[n];
+        const bool ident = ( c >= 'A' && c <= 'Z' ) || ( c >= 'a' && c <= 'z' ) ||
+                           ( c >= '0' && c <= '9' ) || c == '_';
+        if ( !ident )
+            break;
+        n++;
+    }
+    if ( n == line.size() )
+        return true;
+    return line.compare( n, 9, " [SKIPPED" ) == 0;
+}
+
+inline void suite_drain( int fd, std::string & output )
+{
+    if ( fd < 0 )
+        return;
+    char buf[4096];
+    for ( ;; )
+    {
+        const ssize_t n = ::read( fd, buf, sizeof( buf ) );
+        if ( n > 0 )
+        {
+            output.append( buf, (size_t) n );
+            continue;
+        }
+        if ( n < 0 && errno == EINTR )
+            continue;
+        break;
+    }
+}
+
+inline void suite_emit_captured( const std::string & output, bool show_all )
+{
+    std::string pending = output;
+    if ( !pending.empty() && pending.back() != '\n' )
+        pending.push_back( '\n' );
+    size_t i = 0;
+    while ( i < pending.size() )
+    {
+        const size_t nl = pending.find( '\n', i );
+        std::string line = pending.substr( i, nl == std::string::npos ? std::string::npos : nl - i );
+        if ( !line.empty() && line.back() == '\r' )
+            line.pop_back();
+        if ( show_all || suite_passing_line( line ) )
+            printf( "%s\n", line.c_str() );
+        if ( nl == std::string::npos )
+            break;
+        i = nl + 1;
+    }
+    fflush( stdout );
+}
+
+// Runs one case in a child with its stdout and stderr read through a pipe,
+// then prints every line when it failed and only the name lines when it
+// passed. The child may exit(1), abort or be killed and the parent still has
+// every line it wrote. This is the same names-only shape the suite applies to
+// its children, so `--run <case>` does not leak a passing case's diagnostics
+// without ROCKETNET_TEST_VERBOSE.
+inline int suite_run_names_only( int ( *worker )( const char * ), const char * name )
+{
+    fflush( stdout );
+    fflush( stderr );
+    int pipefd[2];
+    if ( pipe( pipefd ) != 0 )
+        return worker( name );
+    const pid_t pid = fork();
+    if ( pid < 0 )
+    {
+        close( pipefd[0] );
+        close( pipefd[1] );
+        return worker( name );
+    }
+    if ( pid == 0 )
+    {
+        close( pipefd[0] );
+        if ( dup2( pipefd[1], STDOUT_FILENO ) < 0 || dup2( pipefd[1], STDERR_FILENO ) < 0 )
+            _exit( 127 );
+        if ( pipefd[1] != STDOUT_FILENO && pipefd[1] != STDERR_FILENO )
+            close( pipefd[1] );
+        const int rc = worker( name );
+        fflush( stdout );
+        fflush( stderr );
+        _exit( rc );
+    }
+    close( pipefd[1] );
+    std::string output;
+    suite_drain( pipefd[0], output );
+    close( pipefd[0] );
+    int status = 0;
+    pid_t waited;
+    do
+    {
+        waited = waitpid( pid, &status, 0 );
+    } while ( waited < 0 && errno == EINTR );
+    int rc = 1;
+    if ( waited >= 0 && WIFEXITED( status ) )
+        rc = WEXITSTATUS( status );
+    else if ( waited >= 0 && WIFSIGNALED( status ) )
+        rc = 128 + WTERMSIG( status );
+    suite_emit_captured( output, rc != 0 );
+    return rc;
+}
 
 inline int suite_main( int argc, char ** argv,
     int ( *worker )( const char * name ),
@@ -172,10 +464,31 @@ inline int suite_main( int argc, char ** argv,
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
     const char ** skip_lines, int nskips,
-    bool strict_names )
+    bool strict_names,
+    int ( *group_of )( const char * name ) = NULL )
 {
-    if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+    if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
+    {
+        if ( argc < 3 || argv[2][0] == '-' )
+            return suite_usage( argv );
+        for ( int i = 3; i < argc; i++ )
+            if ( argv[i][0] == '-' )
+                return suite_usage( argv );
+        // Under a suite run the parent already captures this process, so
+        // stream straight through; a second capture would lose lines when the
+        // parent kills the process group at the time limit.
+        if ( std::getenv( "ROCKETNET_TEST_SUITE_CAPTURE" ) != NULL )
+        {
+            unsetenv( "ROCKETNET_TEST_SUITE_CAPTURE" );
+            return worker( argv[2] );
+        }
+        if ( !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+            return suite_run_names_only( worker, argv[2] );
         return worker( argv[2] );
+    }
+    for ( int i = 1; i < argc; i++ )
+        if ( argv[i][0] == '-' )
+            return suite_usage( argv );
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
@@ -211,6 +524,16 @@ inline int suite_main( int argc, char ** argv,
         pending.push_back( item );
     }
 
+    // group_of (NULL: every case is group 0) keeps cases that measure wall
+    // time apart from cases that load the host: the cases run in ascending
+    // group order, and a case starts only while every running case is of its
+    // own group, so a group runs in parallel within itself and alone
+    for ( size_t i = 0; i < pending.size(); i++ )
+        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
+        return a.group < b.group;
+    } );
+
     for ( int i = 0; i < nskips; i++ )
     {
         printf( "%s\n", skip_lines[i] );
@@ -218,14 +541,20 @@ inline int suite_main( int argc, char ** argv,
     }
 
     const int jobs = suite_job_count();
-    const double limit_s = 120.0;
+    const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
     struct running_t
     {
         std::string name;
         pid_t pid;
         std::chrono::steady_clock::time_point start;
         bool killed;
+        int group;
+        int out_fd;
+        std::string output;
     };
+    const bool suite_capture = !strict_names && std::getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL;
+    if ( suite_capture )
+        setenv( "ROCKETNET_TEST_SUITE_CAPTURE", "1", 1 );
     std::vector<running_t> running;
     std::vector<suite_result> results;
     size_t next = 0;
@@ -233,7 +562,7 @@ inline int suite_main( int argc, char ** argv,
 
     while ( next < pending.size() || !running.empty() )
     {
-        while ( (int) running.size() < jobs && next < pending.size() )
+        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
         {
             const suite_case item = pending[next++];
             if ( item.skipped )
@@ -245,6 +574,7 @@ inline int suite_main( int argc, char ** argv,
                 result.seconds = 0;
                 result.skipped = true;
                 result.failed = false;
+                result.peak_rss_mb = -1;
                 results.push_back( result );
                 continue;
             }
@@ -271,20 +601,59 @@ inline int suite_main( int argc, char ** argv,
                 spawn_argv[1] = NULL;
             }
 
+            int pipefd[2] = { -1, -1 };
+            posix_spawn_file_actions_t actions;
+            posix_spawn_file_actions_t * actionsp = NULL;
+            bool actions_live = false;
+            if ( suite_capture )
+            {
+                if ( pipe( pipefd ) != 0 )
+                {
+                    suite_result result;
+                    result.name = item.name;
+                    result.seconds = 0;
+                    result.skipped = false;
+                    result.failed = true;
+                    result.peak_rss_mb = -1;
+                    result.detail = item.name + " failed to spawn";
+                    results.push_back( result );
+                    failures++;
+                    continue;
+                }
+                fcntl( pipefd[0], F_SETFD, FD_CLOEXEC );
+                int fl = fcntl( pipefd[0], F_GETFL, 0 );
+                if ( fl >= 0 )
+                    fcntl( pipefd[0], F_SETFL, fl | O_NONBLOCK );
+                posix_spawn_file_actions_init( &actions );
+                actions_live = true;
+                posix_spawn_file_actions_adddup2( &actions, pipefd[1], STDOUT_FILENO );
+                posix_spawn_file_actions_adddup2( &actions, pipefd[1], STDERR_FILENO );
+                posix_spawn_file_actions_addclose( &actions, pipefd[0] );
+                posix_spawn_file_actions_addclose( &actions, pipefd[1] );
+                actionsp = &actions;
+            }
+
             posix_spawnattr_t attr;
             posix_spawnattr_init( &attr );
             posix_spawnattr_setflags( &attr, POSIX_SPAWN_SETPGROUP );
             posix_spawnattr_setpgroup( &attr, 0 );
             pid_t pid = 0;
-            const int spawned = posix_spawn( &pid, path.c_str(), NULL, &attr, spawn_argv, environ );
+            const int spawned = posix_spawn( &pid, path.c_str(), actionsp, &attr, spawn_argv, environ );
             posix_spawnattr_destroy( &attr );
+            if ( actions_live )
+                posix_spawn_file_actions_destroy( &actions );
+            if ( pipefd[1] >= 0 )
+                close( pipefd[1] );
             if ( spawned != 0 )
             {
+                if ( pipefd[0] >= 0 )
+                    close( pipefd[0] );
                 suite_result result;
                 result.name = item.name;
                 result.seconds = 0;
                 result.skipped = false;
                 result.failed = true;
+                result.peak_rss_mb = -1;
                 result.detail = item.name + " failed to spawn";
                 results.push_back( result );
                 failures++;
@@ -295,16 +664,21 @@ inline int suite_main( int argc, char ** argv,
             child.pid = pid;
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
+            child.group = item.group;
+            child.out_fd = pipefd[0];
             running.push_back( child );
         }
 
         for ( size_t i = 0; i < running.size(); )
         {
             int status = 0;
-            const pid_t got = waitpid( running[i].pid, &status, WNOHANG );
+            struct rusage usage;
+            std::memset( &usage, 0, sizeof( usage ) );
+            const pid_t got = wait4( running[i].pid, &status, WNOHANG, &usage );
             const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - running[i].start ).count();
             if ( got == 0 )
             {
+                suite_drain( running[i].out_fd, running[i].output );
                 if ( !running[i].killed && seconds > limit_s )
                 {
                     kill( -running[i].pid, SIGKILL );
@@ -319,6 +693,11 @@ inline int suite_main( int argc, char ** argv,
             result.seconds = seconds;
             result.skipped = false;
             result.failed = false;
+#if defined(__APPLE__)
+            result.peak_rss_mb = got > 0 ? (long) ( usage.ru_maxrss / ( 1024 * 1024 ) ) : -1; // bytes on macOS
+#else
+            result.peak_rss_mb = got > 0 ? (long) ( usage.ru_maxrss / 1024 ) : -1; // kilobytes on Linux
+#endif
             if ( got < 0 )
             {
                 result.failed = true;
@@ -328,7 +707,7 @@ inline int suite_main( int argc, char ** argv,
             {
                 result.failed = true;
                 result.seconds = seconds < limit_s ? limit_s : seconds;
-                result.detail = running[i].name + " exceeded 120s";
+                { char limit_text[64]; snprintf( limit_text, sizeof( limit_text ), " exceeded %.0fs", limit_s ); result.detail = running[i].name + limit_text; }
             }
             else if ( WIFEXITED( status ) && WEXITSTATUS( status ) == 0 )
             {
@@ -347,6 +726,14 @@ inline int suite_main( int argc, char ** argv,
                 char buf[64];
                 snprintf( buf, sizeof( buf ), " signal %d", WIFSIGNALED( status ) ? WTERMSIG( status ) : 0 );
                 result.detail = running[i].name + buf;
+            }
+            suite_check_rss( result, suite_case_rss_mb( result.name ) );
+            if ( running[i].out_fd >= 0 )
+            {
+                suite_drain( running[i].out_fd, running[i].output );
+                close( running[i].out_fd );
+                running[i].out_fd = -1;
+                suite_emit_captured( running[i].output, result.failed );
             }
             if ( result.failed )
                 failures++;
@@ -370,10 +757,21 @@ inline int suite_main( int argc, char ** argv,
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
     const char ** skip_lines, int nskips,
-    bool strict_names )
+    bool strict_names,
+    int ( *group_of )( const char * name ) = NULL )
 {
-    if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+    if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
+    {
+        if ( argc < 3 || argv[2][0] == '-' )
+            return suite_usage( argv );
+        for ( int i = 3; i < argc; i++ )
+            if ( argv[i][0] == '-' )
+                return suite_usage( argv );
         return worker( argv[2] );
+    }
+    for ( int i = 1; i < argc; i++ )
+        if ( argv[i][0] == '-' )
+            return suite_usage( argv );
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
@@ -408,6 +806,16 @@ inline int suite_main( int argc, char ** argv,
         }
         pending.push_back( item );
     }
+    // group_of (NULL: every case is group 0) keeps cases that measure wall
+    // time apart from cases that load the host: the cases run in ascending
+    // group order, and a case starts only while every running case is of its
+    // own group, so a group runs in parallel within itself and alone
+    for ( size_t i = 0; i < pending.size(); i++ )
+        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
+        return a.group < b.group;
+    } );
+
     for ( int i = 0; i < nskips; i++ )
     {
         printf( "%s\n", skip_lines[i] );
@@ -415,13 +823,14 @@ inline int suite_main( int argc, char ** argv,
     }
 
     const int jobs = suite_job_count();
-    const double limit_s = 120.0;
+    const double limit_s = 120.0 * ROCKETNET_FUNCTIONAL_TIME_SCALE; // Release as written; Debug/sanitizer scaled (test/time_scale.h)
     struct running_t
     {
         std::string name;
         HANDLE process;
         std::chrono::steady_clock::time_point start;
         bool killed;
+        int group;
     };
     std::vector<running_t> running;
     std::vector<suite_result> results;
@@ -430,7 +839,7 @@ inline int suite_main( int argc, char ** argv,
 
     while ( next < pending.size() || !running.empty() )
     {
-        while ( (int) running.size() < jobs && next < pending.size() )
+        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
         {
             const suite_case item = pending[next++];
             if ( item.skipped )
@@ -442,27 +851,30 @@ inline int suite_main( int argc, char ** argv,
                 result.seconds = 0;
                 result.skipped = true;
                 result.failed = false;
+                result.peak_rss_mb = -1;
                 results.push_back( result );
                 continue;
             }
             const std::string path = item.exec_path.empty() ? self : item.exec_path;
-            std::string command = "\"" + path + "\"";
+            const std::wstring wide_path = rocketnet_test_wide_path( path );
+            std::wstring command = L"\"" + wide_path + L"\"";
             if ( item.exec_path.empty() )
-                command += " --run " + item.name;
-            std::vector<char> mutable_command( command.begin(), command.end() );
-            mutable_command.push_back( '\0' );
-            STARTUPINFOA startup;
+                command += L" --run " + rocketnet_test_utf8_to_wide( item.name );
+            std::vector<wchar_t> mutable_command( command.begin(), command.end() );
+            mutable_command.push_back( L'\0' );
+            STARTUPINFOW startup;
             std::memset( &startup, 0, sizeof( startup ) );
             startup.cb = sizeof( startup );
             PROCESS_INFORMATION info;
             std::memset( &info, 0, sizeof( info ) );
-            if ( !CreateProcessA( NULL, mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info ) )
+            if ( wide_path.empty() || !CreateProcessW( wide_path.c_str(), mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info ) )
             {
                 suite_result result;
                 result.name = item.name;
                 result.seconds = 0;
                 result.skipped = false;
                 result.failed = true;
+                result.peak_rss_mb = -1;
                 result.detail = item.name + " failed to spawn";
                 results.push_back( result );
                 failures++;
@@ -474,6 +886,7 @@ inline int suite_main( int argc, char ** argv,
             child.process = info.hProcess;
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
+            child.group = item.group;
             running.push_back( child );
         }
 
@@ -502,17 +915,22 @@ inline int suite_main( int argc, char ** argv,
             }
             DWORD code = 1;
             GetExitCodeProcess( running[i].process, &code );
+            PROCESS_MEMORY_COUNTERS memory;
+            std::memset( &memory, 0, sizeof( memory ) );
+            memory.cb = sizeof( memory );
+            const bool measured = GetProcessMemoryInfo( running[i].process, &memory, sizeof( memory ) ) != 0;
             CloseHandle( running[i].process );
             suite_result result;
             result.name = running[i].name;
             result.seconds = seconds;
             result.skipped = false;
             result.failed = false;
+            result.peak_rss_mb = measured ? (long) ( memory.PeakWorkingSetSize / ( 1024 * 1024 ) ) : -1;
             if ( running[i].killed || seconds > limit_s )
             {
                 result.failed = true;
                 result.seconds = seconds < limit_s ? limit_s : seconds;
-                result.detail = running[i].name + " exceeded 120s";
+                { char limit_text[64]; snprintf( limit_text, sizeof( limit_text ), " exceeded %.0fs", limit_s ); result.detail = running[i].name + limit_text; }
             }
             else if ( code == 0 )
             {
@@ -525,6 +943,7 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( buf, sizeof( buf ), " exit %lu", (unsigned long) code );
                 result.detail = running[i].name + buf;
             }
+            suite_check_rss( result, suite_case_rss_mb( result.name ) );
             if ( result.failed )
                 failures++;
             results.push_back( result );

@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Public-API packet-fill microbenchmark. See transport_fill.md for its limits.
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include <chrono>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,29 +11,29 @@
 
 int main(int argc, char ** argv)
 {
-    const char * driver = argc > 1 ? argv[1] : "portable";
+    const char * transport = argc > 1 ? argv[1] : "portable";
     const int payload_bytes = argc > 2 ? atoi(argv[2]) : 64;
     const int batches = argc > 3 ? atoi(argv[3]) : 4000;
     const bool plant = argc > 4 && strcmp(argv[4], "plant") == 0;
     const bool drain = argc > 4 && strcmp(argv[4], "drain") == 0;
     CHECK(payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES && batches > 0);
-    CHECK(strlen(driver) < sizeof(rocketnet_server_transport_config_t().driver));
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init());
+    CHECK(strlen(transport) < sizeof(rocketnet_server_transport_config_t().transport));
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = 2;
-    strcpy(config.driver, driver);
+    strcpy(config.transport, transport);
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
-    CHECK(server && strcmp(rocketnet_server_transport_driver(server), driver) == 0);
+    CHECK(server && strcmp(rocketnet_server_transport_io_name(server), transport) == 0);
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token));
+    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
-    strcpy(client_config.driver, "portable");
+    strcpy(client_config.transport, "portable");
     auto * client = rocketnet_client_transport_create(NULL, token, &client_config, rocketnet_time());
     CHECK(client);
     int client_index = -1;
@@ -101,12 +101,12 @@ int main(int argc, char ** argv)
         }
     }
     CHECK(received_packets > 0 && wire_bytes > 0);
-    printf("driver=%s bytes=%d packets=%llu fill_ns=%.3f wire_bytes=%llu received=%llu plant=%d plant_state=%llu\n",
-        driver, payload_bytes, (unsigned long long)batches * batch_size, elapsed_ns / (batches * batch_size),
+    printf("transport=%s bytes=%d packets=%llu fill_ns=%.3f wire_bytes=%llu received=%llu plant=%d plant_state=%llu\n",
+        transport, payload_bytes, (unsigned long long)batches * batch_size, elapsed_ns / (batches * batch_size),
         (unsigned long long)wire_bytes, (unsigned long long)received_packets, plant, (unsigned long long)plant_state);
     if (drain)
-        printf("drain driver=%s bytes=%d drained=%llu drain_ns=%.3f\n",
-            driver, payload_bytes, (unsigned long long)drained_packets,
+        printf("drain transport=%s bytes=%d drained=%llu drain_ns=%.3f\n",
+            transport, payload_bytes, (unsigned long long)drained_packets,
             drained_packets ? drain_ns / (double)drained_packets : 0.0);
     rocketnet_client_transport_destroy(client);
     rocketnet_server_transport_destroy(server);

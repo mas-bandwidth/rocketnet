@@ -160,7 +160,7 @@ static void large_future_state_drops_without_violation()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == before + 1 );
     rocketnet_unit_check( channels.violations == 0 );
-    rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
     const uint8_t small = 9;
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 1, &small );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
@@ -185,7 +185,7 @@ static void never_takes_a_reliable_number()
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     rn_message_connection_t * connection = &object->connections[0];
     const uint64_t next = connection->ordered.send.next;
-    uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED, 4 );
+    uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 4 );
     rocketnet_unit_check( p != NULL );
     if ( p )
     {
@@ -226,7 +226,7 @@ static void sequenced_large_send_packets( void * )
 {
 }
 
-static void large_state_over_budget_drops_whole_payload()
+static void large_state_promotes_to_reliable_sequenced()
 {
     rn_message_link_t link = {};
     link.max_payload_bytes = sequenced_large_max_payload;
@@ -235,20 +235,20 @@ static void large_state_over_budget_drops_whole_payload()
     link.send_packets = sequenced_large_send_packets;
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0, 1, 0.0 );
     rocketnet_unit_check( object != NULL );
-    rocketnet_unit_check( rn_message_object_start( object, 0, 0, ROCKETNET_UNRELIABLE_SEQUENCED,
-                                                    ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES ) == NULL );
-    rocketnet_unit_check( object->connections[0].unreliable_count == 0 );
-    uint8_t payload[2000] = {};
-    rocketnet_unit_check( rn_message_object_send( object, 0, 0, ROCKETNET_UNRELIABLE_SEQUENCED, payload, (int) sizeof( payload ) ) != 0 );
+    // An oversize unreliable send is promoted to its reliable twin (RakNet
+    // ReliabilityLayer), never dropped as unreliable.
+    uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
+                                                  ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_unit_check( pointer != NULL );
+    if ( pointer )
+    {
+        memset( pointer, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+        rocketnet_unit_check( rn_message_object_finish( object, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES ) != 0 );
+    }
     rn_message_connection_t * connection = &object->connections[0];
-    rocketnet_unit_check( connection->unreliable_count == 1 );
-    const uint64_t over_budget = object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET];
-    sequenced_large_start_calls = 0;
-    rn_message_object_send_packets( object );
-    rocketnet_unit_check( sequenced_large_start_calls == 0 );
+    rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] == 1 );
     rocketnet_unit_check( connection->unreliable_count == 0 );
-    rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == over_budget + 1 );
-    rocketnet_unit_check( connection->budget.bytes_spent == 0 );
+    rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 0 );
     rn_message_object_destroy( object );
 }
 
@@ -280,8 +280,8 @@ static void sequenced_counting_free( void * context, void * memory )
 static void sequenced_no_allocation_after_create()
 {
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( sequenced_counting_malloc, sequenced_counting_free ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_set_allocator( sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
     rocketnet_unit_check( arena != NULL );
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -299,8 +299,8 @@ static void sequenced_no_allocation_after_create()
     rocketnet_unit_check( sequenced_allocations == after_create );
     rn_arena_destroy( arena );
     rocketnet_term();
-    rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    rocketnet_unit_check( rocketnet_init() );
+    rocketnet_unit_check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( older_dropped_newest_delivered );
@@ -310,6 +310,6 @@ REGISTER_UNIT_TEST( reliable_sequenced_uses_shared_watermark );
 REGISTER_UNIT_TEST( hold_full_drops_and_counts );
 REGISTER_UNIT_TEST( large_future_state_drops_without_violation );
 REGISTER_UNIT_TEST( never_takes_a_reliable_number );
-REGISTER_UNIT_TEST( large_state_over_budget_drops_whole_payload );
+REGISTER_UNIT_TEST( large_state_promotes_to_reliable_sequenced );
 REGISTER_UNIT_TEST( rnchannel_sequenced_witness_replays );
 REGISTER_UNIT_TEST( sequenced_no_allocation_after_create );

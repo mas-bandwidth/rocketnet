@@ -96,9 +96,9 @@ static void reliable_test_config( rocketnet_message_config_t * config )
     config->receive_ring_bytes = 262144;
     config->max_message_bytes = 262144;
     config->send_buffer_bytes = 800000;
-    config->rto_min_ms = 20;
-    config->rto_initial_ms = 100;
-    config->rto_max_ms = 400;
+    config->resend_delay_min_ms = 20;
+    config->resend_delay_initial_ms = 100;
+    config->resend_delay_max_ms = 400;
 }
 
 static void reliable_exactly_once_any_order_under_loss_dup_reorder()
@@ -283,8 +283,8 @@ static void reliable_counted_free( void * context, void * memory )
 static void reliable_no_allocation_after_create()
 {
     rocketnet_term();
-    check( rocketnet_allocator( reliable_counted_malloc, reliable_counted_free ) );
-    check( rocketnet_init() );
+    check( rocketnet_set_allocator( reliable_counted_malloc, reliable_counted_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -306,17 +306,107 @@ static void reliable_no_allocation_after_create()
     rn_arena_destroy( sender.arena );
     rn_arena_destroy( receiver.arena );
     rocketnet_term();
-    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    check( rocketnet_init() );
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( reliable_no_allocation_after_create );
 
-// Other unit files also register the general name. The distinct registration
-// above guarantees this code-2 path runs whichever alias the registry selects.
-static void no_allocation_after_create()
+// A control record frees its number's descriptor and is never an application
+// view (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp).
+static void reliable_control_record_frees_its_number()
 {
-    reliable_no_allocation_after_create();
+    rocketnet_message_config_t config;
+    reliable_test_config( &config );
+    reliable_test_node_t node;
+    reliable_test_init( &node, &config );
+
+    static const uint8_t data[16] = { 0 };
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.channel = 0;
+    record.number = 3;
+    record.control = 1;
+    record.data = data;
+    record.bytes = 16;
+
+    uint32_t slot = RN_DESCRIPTOR_NONE;
+    check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( node.region->receive_descriptors[slot].live == 1 );
+
+    rn_delivery_t delivery;
+    check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_CONTROL );
+    check( node.region->receive_descriptors[slot].live == 0 );
+    check( node.ordered.channels.deliveries == 0 );
+    check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    rn_arena_destroy( node.arena );
 }
 
-REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( reliable_control_record_frees_its_number );
+
+// A channel set whose mask does not enable code 2 refuses it
+// (rn_channels_dispatch, sdk/rocketnet_channel.cpp, by wire code): counted
+// TYPE_NOT_ENABLED, the error set, and no delivery.
+static void reliable_record_on_a_disabled_mask_is_refused()
+{
+    rocketnet_message_config_t config;
+    reliable_test_config( &config );
+    reliable_test_node_t node;
+    reliable_test_init( &node, &config );
+
+    rn_channels_t ch;
+    check( rn_channels_init( &ch, node.region, 1, 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) );
+
+    static const uint8_t data[16] = { 0 };
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.channel = 0;
+    record.number = 0;
+    record.data = data;
+    record.bytes = 16;
+
+    const uint64_t before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED];
+    rn_delivery_t delivery;
+    check( rn_channels_dispatch( &ch, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED] == before + 1 );
+    check( ch.deliveries == 0 );
+    check( ch.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( reliable_record_on_a_disabled_mask_is_refused );
+
+// A record whose number layer 3 never accepted is a violation
+// (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp): counted
+// PROTOCOL_VIOLATION, the error set, and no delivery.
+static void reliable_record_without_a_live_number_is_refused()
+{
+    rocketnet_message_config_t config;
+    reliable_test_config( &config );
+    reliable_test_node_t node;
+    reliable_test_init( &node, &config );
+
+    static const uint8_t data[16] = { 0 };
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.channel = 0;
+    record.number = 7;
+    record.data = data;
+    record.bytes = 16;
+
+    const uint64_t before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION];
+    rn_delivery_t delivery;
+    check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == before + 1 );
+    check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+    check( node.ordered.channels.deliveries == 0 );
+
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( reliable_record_without_a_live_number_is_refused );

@@ -8,6 +8,7 @@
 #ifndef ROCKETNET_NETWORK_SIMULATOR_H
 #define ROCKETNET_NETWORK_SIMULATOR_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "rocketnet_address.h"
 
@@ -46,6 +47,23 @@ void rocketnet_network_simulator_config( struct rocketnet_network_simulator_t * 
                                          double jitter,
                                          float packet_loss_percent,
                                          float duplicate_percent );
+
+// Deterministic loss and reorder patterns, adjustable at any time.
+// drop_every_nth: 0 = disabled, 2..1000000 = drop every Nth send on this link.
+// reverse_window: 0 = disabled, 2..64 = buffer every W surviving packets and
+// emit them into the wire slots in reversed order (W-1 down to 0). The
+// counters start at the call. Returns false, patterns off, when the window
+// cannot be allocated.
+
+bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t * simulator,
+                                           int drop_every_nth,
+                                           int reverse_window );
+
+// Whether either pattern is on.
+bool rocketnet_network_simulator_patterns_active( const struct rocketnet_network_simulator_t * simulator );
+
+// Emits the held window reversed, whole; a no-op with nothing held.
+void rocketnet_network_simulator_flush_window( struct rocketnet_network_simulator_t * simulator );
 
 // Sends a packet into the wire. Loss is rolled here; delivery time is
 // current_time + latency + random jitter; a duplicate may follow with its
@@ -86,6 +104,15 @@ int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * 
                                          double current_time,
                                          struct rocketnet_address_t * out_from,
                                          uint8_t * out_packet );
+
+// Receives the lowest-slot due packet regardless of destination. This is the
+// transport-facing drain: it preserves simulator slot order while also
+// returning the destination the transport must send to.
+int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t * simulator,
+                                             double current_time,
+                                             struct rocketnet_address_t * out_from,
+                                             struct rocketnet_address_t * out_to,
+                                             uint8_t * out_packet );
 
 // The audit: the instrument's failure state. With it on, every receive() also
 // runs the original full-array scan as a reference and compares which slot the

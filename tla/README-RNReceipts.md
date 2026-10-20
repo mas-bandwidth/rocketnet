@@ -25,14 +25,18 @@ layer implementation exists.
   ACKs of evicted map entries acknowledge no numbers. Duplicate/unknown
   events with no live transport slot are stuttering inputs.
 - `Tick` ages sent, unacked numbers. `SweepLoss` scans eligible type-5
-  descriptors after their one-RTO deadline or map eviction. Its retained
+  descriptors after their one-resend delay deadline or map eviction. Its retained
   outcome suppresses a late ACK. `Disconnect` represents the documented
   `RELIABLE_TIMEOUT` error when a sent, still-unacked reliable number
   reaches its first-send deadline, even if other traffic progresses.
 - `EmitAck` emits a reliable receipt only when every number of the message
   is acked. Type 7 has the same receipt rule as type 6; receiver ordering
-  is a channel responsibility. A two-fragment type-5 send promotes to
-  effective type 6 and therefore never emits LOSS.
+  is a channel responsibility. An unreliable send too big for one packet is
+  promoted to its reliable twin: type 0 to effective type 2, type 1 to
+  effective type 4, and type 5 to effective type 6. A promoted send therefore
+  never emits LOSS. `EffectiveKind` maps all three source modes; the fixed
+  workload exercises the type-5 promotion, and `PromotionTable` checks the
+  twin mapping for every source mode.
 - `outcomes` is a ghost history of generated events, separate from `ring`.
   A full ring drops its oldest event and increments `ringDropped`, as
   CHANNELS specifies. Draining or overflowing the ring does not allow a
@@ -79,11 +83,15 @@ that prunes transitions or hides violations.
 - `ExactlyOneOutcomePerReceiptSerial`: at most one generated outcome, only
   for an issued receipt serial. `ReceiptProgress` supplies the eventual half.
 - `LossOnlyForUnreliableReceipt`: only effective type 5 emits LOSS; large
-  type 5 is reliable and excluded.
+  type 5, and the promoted type 0 and type 1 twins, are reliable and excluded.
+- `PromotedIsTwin` and `PromotedNeverLoses`: each promoted source maps to
+  its declared twin (0 to 2, 1 to 4, 5 to 6) and never emits LOSS.
+- `PromotionTable`: the twin mapping covers every unreliable source mode.
 - `AckedMeansPacketOpened`: acknowledged numbers were transport-opened, and
   an unreliable ACKED receipt has a matched transport packet ACK.
-- `BlockAckedOnlyWhenAllFragmentsAcked`: reliable receipt generation waits
-  for all fragment numbers, independently of their index/arrival order.
+- `BlockAckedOnlyWhenAllFragmentsAcked`: reliable receipt generation, including
+  a promoted unreliable send, waits for all fragment numbers, independently of
+  their index/arrival order.
 - `ReceiptRingBounded`: receipt queue length never exceeds its capacity.
 - `UnreliableNeverResent`: effective type 5 is written at most once.
 - `ReceiptProgress`: every issued receipt send eventually generates an
@@ -107,14 +115,14 @@ property, plus `TypeOK`. They must exit 12 and identify that property.
   in `acked`. `EmitAck(2)` then violates
   `BlockAckedOnlyWhenAllFragmentsAcked`, with `<<2,0>>` still unacked.
 - `BrokenTwoOutcomes`: the nine-state trace chooses single-record type 5.
-  The sends and packet write are followed by `Tick` to RTO 1, transport
+  The sends and packet write are followed by `Tick` to resend delay 1, transport
   open, then `SweepLoss(2)`. Its late transport ACK matches the retained
   map entry. `EmitAck(2)` appends ACKED after LOSS, violating
   `ExactlyOneOutcomePerReceiptSerial` even though the full one-entry ring
   now contains only ACKED. Generation history catches what the ring hides.
 - `BrokenReliableLoss`: the six-state trace chooses a two-fragment type-5
   message promoted to effective type 6. Fragment `<<2,0>>` is written;
-  `Tick` reaches RTO 1. The broken `SweepLoss(2)` emits LOSS for this reliable
+  `Tick` reaches resend delay 1. The broken `SweepLoss(2)` emits LOSS for this reliable
   block, violating `LossOnlyForUnreliableReceipt` before its reliable timeout
   at 2. Actual types 6 and 7 share this checked rule; the enumerated witness
   selects the promoted type first.
@@ -137,7 +145,7 @@ The deliberate receipt differences are:
 1. A block waits for all fragment numbers, rather than firing on the
    highest-index fragment alone (study 7.3).
 2. Sent-map eviction explicitly produces unreliable LOSS in addition to
-   the RTO sweep; the reference receipt history is separate from its
+   the resend delay sweep; the reference receipt history is separate from its
    datagram history (study 6.1 and 7.3).
 3. The fixed receipt ring drops/counts its oldest event when full. The
    reference puts five-byte notification messages on its output queue;
@@ -168,3 +176,22 @@ Measured final outcomes (generated/distinct, elapsed seconds): fixed
 72,559/25,028, 10.274; last-index 421/250, 0.988; two-outcomes 1,599/755,
 1.073; reliable-loss 155/96, 0.970. The fixed run completes temporal checking;
 the three witnesses each exit 12 with precisely their declared invariant.
+
+## Mid-scale instance
+
+`MCRNReceiptsMid.cfg` is the same safety invariants with `MaxPid = 2` instead
+of 0 (three transport packet IDs), a one-entry sent map and receipt ring, and
+`ReliableTimeout = 1`. It passes: 3,602,016 generated / 792,811 distinct
+states in 83.357 s, exit 0, and is a required case in CASES.tsv. The larger
+packet-ID space lets an ACK, a loss notification, map eviction and a fresh
+write coexist without reusing the only ID, which the one-ID instance cannot.
+
+The deployed receipt ring and sent map are `max_clients`-sized (and bounded
+by the connection's receipt capacity), not one entry. `ReceiptRingBounded`,
+`ExactlyOneOutcomePerReceiptSerial`, the promotion table and the
+all-fragments rule are local predicates over a serial, a number and a ring
+position; a larger ring adds events and evictions but does not weaken them.
+The mid instance checks two live packet IDs and one map/ring entry, so it does
+not cover a split map with several simultaneously live receipt blocks; that
+size-dependent case remains the exploratory bound recorded above. The
+`uint32` serial wrap and `uint64` packet-ID wrap are still not proved.

@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_CONFIG_H
 #define ROCKETNET_CONFIG_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
 
 // The config engine (#106): the machinery behind the per-transport config
@@ -44,12 +44,44 @@ const struct rocketnet_config_field_t * rocketnet_client_transport_config_fields
 
 const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields( int * num_fields );
 
-// the mechanical env var derivation: "driver" -> "ROCKETNET_DRIVER". this
-// is the pre-ruling process-wide spelling; it is kept only to NAME the old
-// variable a create refuses aloud (see rocketnet_config_apply_env). returns
-// false when the buffer cannot hold the derived name.
+// the mechanical environment-name derivation used by source utilities and
+// tests. Returns false when the buffer cannot hold the derived name.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
+
+// the public configs' send budget fields (sdk/rocketnet_api.cpp), one int
+// each: send_kbps for the client, per_client_send_kbps for the server. with
+// the transport tables and the message table they are every env-backed field
+// of rocketnet_client_config_t and rocketnet_server_config_t.
+
+const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( int * num_fields );
+
+const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( int * num_fields );
+
+// the name of a public struct's field by its index in the ABI descriptors
+// (sdk/rocketnet_abi.cpp), NULL past the end: the walk the env completeness
+// test takes over rocketnet_client_config_t and rocketnet_server_config_t.
+
+const char * rocketnet_abi_field_name( const char * type_name, int index );
+
+// the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
+// the defaults, into the transport config, the message config and the send
+// budget the layers take. read_env applies the message fields', the budget's
+// and the server's max_clients overrides, as create does; the other transport
+// fields take theirs at the transport's create. false, with a log line, for a
+// string too long for its layer field or a budget out of range.
+
+struct rocketnet_client_transport_config_t;
+struct rocketnet_server_transport_config_t;
+struct rocketnet_message_config_t;
+struct rocketnet_client_config_t;
+struct rocketnet_server_config_t;
+
+bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
+                                     struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+
+bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
+                                     struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 // the per-endpoint derivation (ruling 11): "server" + "max_payload_bytes" ->
 // "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" and "client" + "max_payload_bytes" ->
@@ -59,11 +91,18 @@ bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int 
 
 bool rocketnet_config_env_var_name_for( const char * transport_name, const char * field_name, char * buffer, int buffer_size );
 
-// the strict integer parse, exposed for the deprecated env alias reads
-// (the pre-#106 spellings kept working under the ROCKETNET_PUMP pattern):
-// whole-string, digits only after an optional leading minus, or false.
+// the strict integer parse: whole-string, digits only after an optional
+// leading minus, or false.
 
 bool rocketnet_config_parse_int_value( const char * value, int * out );
+
+// strictly apply one per-endpoint uint64 env overlay -- the operator memory
+// budget reads ROCKETNET_<TRANSPORT>_<FIELD> with the table parser, so an
+// unset or empty variable leaves *out unchanged, a non-number refuses loudly
+// exactly as the table overlays refuse, and a parseable number assigns.
+// returns false on a value that does not parse.
+
+bool rocketnet_config_apply_env_uint64( const char * transport_name, const char * field_name, uint64_t * out );
 
 // overlay the environment onto a config struct, field by field from the
 // descriptors: unset vars leave the struct value; set vars parse under the
@@ -81,16 +120,46 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
 
 // validate a config struct against the descriptors: numeric ranges (zero
 // admitted where the field declares ZERO_MEANS_DEFAULT), string
-// termination. refuses loudly, never clamps. driver list content is
+// termination. refuses loudly, never clamps. transport list content is
 // validated by the ladder parse below, at create.
+
+void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
+// the current-size creates with the section-2.1 code written to *status (NULL skips it)
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, int * status );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
+void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
 
 bool rocketnet_config_validate( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 
+// The public link simulator fields (simulated_loss_percent,
+// simulated_latency_ms, simulated_jitter_ms, simulated_duplicate_percent) are
+// a development and test instrument. A production library refuses a nonzero
+// value at create with CONFIG_OUT_OF_RANGE and one error line naming the
+// field; the same walk is exposed here so a unit suite that links only the
+// development library can pin the refusal. development is the caller's build
+// posture, normally ROCKETNET_DEVELOPMENT.
+
+bool rocketnet_config_validate_public_link_simulator( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields, bool development );
+
+// Whether the public link simulator is honoured: true in a development
+// library, and, only in a build carrying the unit suite's test hooks, when
+// the suite has explicitly enabled it. A production library never answers
+// true.
+
+bool rocketnet_public_link_simulator_development( void );
+
+#if ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
+void rocketnet_public_link_simulator_test_development( int enabled );
+#endif
+
 // ----------------------------------------------------------------
-//                        the driver ladder
+//                        the transport ladder
 // ----------------------------------------------------------------
 
-// The runtime driver ladder (#106): the driver config value is always an
+// The runtime transport ladder (#106): the transport config value is always an
 // ordered candidate list, tried left to right at transport create, first
 // grant wins, and a list exhausted by refusal fails loudly. "auto" (or the
 // empty string) expands to the platform's recommended order for the
@@ -100,28 +169,28 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
 // the endpoint's own auto order, loudly, rather than bricking an endpoint
 // the value was not addressing; a name in no transport set anywhere is a
 // typo and fails loudly at parse listing the valid names (spelling errors
-// stay catchable). An applicable one-element list is a pin: that driver or
+// stay catchable). An applicable one-element list is a pin: that transport or
 // loud failure.
 
-const char * rocketnet_driver_name( int driver );
+const char * rocketnet_transport_name( int transport );
 
-// #109: does this driver's create discover the port the kernel granted and
+// #109: does this transport's create discover the port the kernel granted and
 // hand it back? a port-zero public address asks the kernel for an
-// ephemeral port, so it is only meaningful to a driver that answers yes --
+// ephemeral port, so it is only meaningful to a transport that answers yes --
 // the transport's ladder refuses a port-zero address on any rung that
 // answers no, before that rung's create runs, and falls to one that
-// answers yes. an unclassified driver reads false, which fails safe.
+// answers yes. an unclassified transport reads false, which fails safe.
 
-bool rocketnet_driver_discovers_bound_port( int driver );
+bool rocketnet_transport_discovers_bound_port( int transport );
 
-#define ROCKETNET_MAX_DRIVER_CANDIDATES 8
+#define ROCKETNET_MAX_TRANSPORT_CANDIDATES 8
 
-struct rocketnet_driver_ladder_t
+struct rocketnet_transport_ladder_t
 {
     int num_candidates;                                     // available candidates, in list order
-    int candidates[ROCKETNET_MAX_DRIVER_CANDIDATES];
+    int candidates[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
     int num_skipped;                                        // known names ignored for this endpoint on this platform
-    int skipped[ROCKETNET_MAX_DRIVER_CANDIDATES];
+    int skipped[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
 };
 
 // parse a candidate list against an explicit availability order --
@@ -131,25 +200,25 @@ struct rocketnet_driver_ladder_t
 // was skipped for this endpoint. whitespace around names is tolerated;
 // names match exactly otherwise. returns false, loudly, on a name in no
 // transport set, an empty list element, "auto" inside a longer list, or a
-// list longer than ROCKETNET_MAX_DRIVER_CANDIDATES.
+// list longer than ROCKETNET_MAX_TRANSPORT_CANDIDATES.
 
-bool rocketnet_driver_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_driver_ladder_t * ladder );
+bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder );
 
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from:
 //
-//               server                  client
-//   linux       xdp, gso, portable      portable
-//   macOS       msgx, portable          msgx, portable
-//   iOS         portable                portable
-//   windows     portable                portable
-//   BSDs        portable                portable
+//               server                            client
+//   linux       xdp, gso, io_uring, portable      portable
+//   macOS       msgx, portable                    msgx, portable
+//   iOS         portable                          portable
+//   windows     portable, iocp, rio               portable
+//   BSDs        portable                          portable
 //
-// (the staged linux drivers are server-side machinery; the client is the
+// (the staged linux transports are server-side machinery; the client is the
 // platform socket everywhere, with the darwin batch pump where granted)
 
-const int * rocketnet_server_driver_availability( int * num_available );
+const int * rocketnet_server_transport_io_availability( int * num_available );
 
-const int * rocketnet_client_driver_availability( int * num_available );
+const int * rocketnet_client_transport_io_availability( int * num_available );
 
 #endif // #ifndef ROCKETNET_CONFIG_H

@@ -19,7 +19,9 @@
 
 #include "test_unit_registry.h"
 
+#include "rocketnet_ack.h"
 #include "rocketnet_packet_loss_tracker.h"
+#include <math.h>
 
 // The update scan reaches exactly `finish - start == HISTORY` after HISTORY +
 // SAFETY + 1 consecutive packets: the receiver stores sequence + 1, so the
@@ -83,5 +85,97 @@ static void test_packet_loss_tracker_reorder_does_not_recount()
     rocketnet_unit_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
 }
 
+// A send record is written only for a sequence newer than the one its slot
+// holds and within one buffer of the highest sent, at a finite time; anything
+// else is refused and changes nothing. rocketnet_ack_endpoint_record_sent_
+// classified (sdk/rocketnet_ack.cpp) returns ROCKETNET_ACK_SENT_REFUSED_STALE
+// and leaves the endpoint byte-identical when the slot already holds this or a
+// newer sequence, when the sequence fell more than one buffer behind the
+// highest sent, or when the time is not finite. Sequence 0 is never passed: it
+// is an assert, not a refusal.
+static void ack_record_sent_refuses_stale_and_nonfinite()
+{
+    const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+
+    struct rocketnet_server_acks_t * acks = rocketnet_server_acks_create( NULL, 1 );
+    rocketnet_unit_check( acks );
+    struct rocketnet_ack_endpoint_t * endpoint = &acks->endpoints[0];
+
+    // (a) the same sequence twice: the first is recorded, the second (the
+    // same slot, not newer) is refused and leaves the record and high-water
+    // mark untouched.
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+        endpoint, 5, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_RECORDED );
+
+    {
+        const uint64_t highest_before = endpoint->highest_sequence;
+        struct rocketnet_sent_packet_record_t before;
+        memcpy( &before, &endpoint->sent[5 % N], sizeof( before ) );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            endpoint, 5, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( endpoint->highest_sequence == highest_before );
+        rocketnet_unit_check( memcmp( &before, &endpoint->sent[5 % N], sizeof( before ) ) == 0 );
+    }
+
+    // (b) a new high is recorded; the older sequence in the same slot is
+    // refused.
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+        endpoint, N + 10, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_RECORDED );
+
+    {
+        const uint64_t highest_before = endpoint->highest_sequence;
+        struct rocketnet_sent_packet_record_t before;
+        memcpy( &before, &endpoint->sent[10 % N], sizeof( before ) );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            endpoint, 10, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( endpoint->highest_sequence == highest_before );
+        rocketnet_unit_check( memcmp( &before, &endpoint->sent[10 % N], sizeof( before ) ) == 0 );
+    }
+
+    rocketnet_server_acks_destroy( acks );
+
+    // (c) on a fresh endpoint, a sequence more than one buffer behind the
+    // highest sent (in a different slot) is refused.
+    struct rocketnet_server_acks_t * acks_fresh = rocketnet_server_acks_create( NULL, 1 );
+    rocketnet_unit_check( acks_fresh );
+    struct rocketnet_ack_endpoint_t * fresh = &acks_fresh->endpoints[0];
+
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+        fresh, 2 * N, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_RECORDED );
+
+    {
+        const uint64_t highest_before = fresh->highest_sequence;
+        struct rocketnet_sent_packet_record_t before;
+        memcpy( &before, &fresh->sent[( N - 1 ) % N], sizeof( before ) );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            fresh, N - 1, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( fresh->highest_sequence == highest_before );
+        rocketnet_unit_check( memcmp( &before, &fresh->sent[( N - 1 ) % N], sizeof( before ) ) == 0 );
+    }
+
+    // (d) a non-finite time refuses before any state is touched.
+    {
+        const uint64_t highest_before = fresh->highest_sequence;
+        struct rocketnet_sent_packet_record_t before;
+        memcpy( &before, &fresh->sent[( 2 * N + 1 ) % N], sizeof( before ) );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            fresh, 2 * N + 1, 100, 0, 0, 0, NAN ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( fresh->highest_sequence == highest_before );
+        rocketnet_unit_check( memcmp( &before, &fresh->sent[( 2 * N + 1 ) % N], sizeof( before ) ) == 0 );
+    }
+    {
+        const uint64_t highest_before = fresh->highest_sequence;
+        struct rocketnet_sent_packet_record_t before;
+        memcpy( &before, &fresh->sent[( 2 * N + 2 ) % N], sizeof( before ) );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            fresh, 2 * N + 2, 100, 0, 0, 0, INFINITY ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( fresh->highest_sequence == highest_before );
+        rocketnet_unit_check( memcmp( &before, &fresh->sent[( 2 * N + 2 ) % N], sizeof( before ) ) == 0 );
+    }
+
+    rocketnet_server_acks_destroy( acks_fresh );
+}
+
 REGISTER_UNIT_TEST( test_packet_loss_tracker_window_edge_is_not_lost );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_reorder_does_not_recount );
+REGISTER_UNIT_TEST( ack_record_sent_refuses_stale_and_nonfinite );

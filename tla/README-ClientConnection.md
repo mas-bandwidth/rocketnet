@@ -1,5 +1,7 @@
 # ClientConnection: the client's connection state machine
 
+> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
+
 `tla/ClientConnection.tla` is the client of `sdk/rocketnet_client_protocol.cpp` (driven
 by `sdk/rocketnet_client_transport.cpp`'s update cycle), checked over two instances of
 the shared lossy link `tla/Link.tla`: `C2S` carries what the client sends, `S2C` what
@@ -46,7 +48,7 @@ models in the module:
 | `ClientDiscCopy` | the client | one copy of the disconnect burst |
 | `ClientRecvCookie` | a packet arrives | `rocketnet_client_process_cookie`: 1 or 2, salt matches, store, 1 → 2 |
 | `ClientRecvChallenge` | a packet arrives | `rocketnet_client_process_challenge`: 2 only, commit keys, erase ephemeral, 2 → 3 |
-| `ClientRecvDenied` | a packet arrives | `rocketnet_client_process_denied`: 2 or 3, → -1 |
+| `ClientRecvDenied` | a packet arrives | `rocketnet_client_process_denied`: 2 or 3, → -1, keys and ephemeral zeroed |
 | `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session_packet` then keep-alive (3 → 4, index set), payload (accepted from 3 on), disconnect (→ 0) |
 | `ServerRecvRequest` | a packet arrives | `rocketnet_server_protocol_process_connection_request`: connected address ignored; half-open mapping answers its stored challenge; no cookie → cookie; no slot → denied, no mapping; else a mapping and its challenge |
 | `ServerRecvResponse` | a packet arrives | `rocketnet_server_process_connection_response`: already connected → ignored (the mapping is refreshed); no slot → denied, mapping kept; else slot assigned and the first keep-alive |
@@ -91,8 +93,8 @@ Liveness, under the fairness described below:
 | `CrashedServerTimesOut` | a connected client whose server has gone silent reaches -5 (or its own application disconnects) |
 | `AttemptResolves` | every attempt leaves the handshake range |
 
-Findings, each in its own run and expected to fail (see below): `TerminalAbsorbing`
-(F8), `EphemeralErasedOutsideHandshake` (F4), `KeysErasedWhenDown` (an observation).
+`TerminalAbsorbing` and `EphemeralErasedOutsideHandshake` hold. `KeysErasedWhenDown`
+is still an observation and its run is expected to fail (see below).
 
 ### The hang the request named
 
@@ -235,9 +237,10 @@ below changed; the TSV has one row per run.
 | `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | 75959281 | not finished (stopped at the card's deadline) |
 | `S-firstkind` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 7054770 | pass |
 | `S-delay` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 5051198 | pass |
-| `F4-ephemeral` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | EphemeralErasedOutsideHandshake | 124 | fail as expected (F4) |
-| `F8-terminal` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | TerminalAbsorbing | 252 | fail as expected (F8) |
+| `F4-ephemeral` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | EphemeralErasedOutsideHandshake | 20 | pass |
+| `F8-terminal` | Timeout 2, MaxAttempts 2, Disconnects TRUE, ServerMute TRUE, KindLoss "none" | Spec | TerminalAbsorbing | 149 | pass |
 | `OBS-keys` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | KeysErasedWhenDown | 17569 | fail as expected (observation) |
+| `W-denied-keeps-keys` | Timeout 0, Deadline 0, OthersMayJoin TRUE, Disconnects FALSE, ServerPayloads FALSE, KindLoss "none" | SpecDeniedKeepsKeys | KeysErasedWhenDown | 250 | fail as expected |
 
 The small instance: `SendInterval = 1`, `MaxIds = 2`, `MaxSlots = 1`,
 `DisconnectCopies = 2`, `Capacity = 2`, `BurstStart = 1`, `BurstLen = 2`. Liveness runs
@@ -302,33 +305,30 @@ re-sends, and the establishing keep-alive is re-sent on its own clock until the 
 acknowledges one (`rocketnet_server_protocol_write_keep_alive_if_due`,
 `sdk/rocketnet_server_protocol.cpp`).
 
-### Findings in the code (each a line in the report, none a code change here)
+### The code, and the keys observation
 
-4. **F4, the ephemeral secret survives a failed attempt** (`F4-ephemeral`,
-   `EphemeralErasedOutsideHandshake`, 4 states): connect, two ticks with nothing heard,
-   state -2 with `cEph = TRUE`. Replayed: `rocketnet_client_protocol_connect` draws the
-   keypair (`sdk/rocketnet_client_protocol.cpp:188`); `rocketnet_client_check_deadlines`
-   sets the state and returns (`:201-221`); nothing on that path, nor on the denied
-   path (`:612-614`), calls `sodium_memzero` on `client_ephemeral_secret_key`. The
-   zeroing happens only at the challenge (`:509`), the integrity limit (`:66`) and
-   `disconnect` (`:1336`). S:1089-1092 is a MUST. The same trace reaches -7 and -1.
-5. **F8, `disconnect` rewrites a terminal state to 0** (`F8-terminal`,
-   `TerminalAbsorbing`, 5 states): -2, then `AppDisconnect`, then 0. Replayed:
-   `rocketnet_client_protocol_disconnect` (`:1332-1333`) sets `DISCONNECTED` from any
-   state but 0; the transport's state-change callback fires only across an `update`
-   (`sdk/rocketnet_client_transport.cpp:600-602`), so the change is never reported.
-   S:2046 says only `connect` leaves a terminal state. The inventory classes this as a
-   question; the invariant `DisconnectIsTerminal` (no way *up* from a non-positive
-   state but a connect) holds in every run, so the sideways move is the whole of it.
-6. **The session keys survive a failed or ended attempt** (`OBS-keys`,
-   `KeysErasedWhenDown`, 11 states): the challenge commits the keys (state 9); two
-   ticks later the client is -4 with `cKeys` still set. Replayed: `check_deadlines`
-   (`:214-220`), `process_denied` (`:612-614`) and `process_disconnect` (`:963`) each
-   set the state and nothing else; the keys are zeroed only at the integrity limit
-   (`:65`) and in `disconnect` (`:1335`). S:2186 and S:2216 say the client "releases
-   all connection state" on a denied and on a server disconnect. Not in the inventory;
-   an observation of the same shape as F4, with less exposure (the state gate refuses
-   every session packet below 3, so the keys cannot be used, only read from memory).
+4. **The ephemeral is erased outside the handshake** (`F4-ephemeral`,
+   `EphemeralErasedOutsideHandshake`, 20 distinct states, pass). A denial is
+   `rocketnet_client_set_state` of `CONNECTION_DENIED`, and a deadline or a timeout
+   is `rocketnet_client_check_deadlines` calling the same. A state at or below
+   `DISCONNECTED` runs `rocketnet_client_connection_reset`, which zeroes the
+   ephemeral. The model does the same. The old full environment does not finish
+   once the property holds, so the run is the silent-server timeout, which is
+   the old counterexample's trace.
+5. **A terminal state leaves by connect or disconnect** (`F8-terminal`,
+   `TerminalAbsorbing`, 149 distinct states, pass). `rocketnet_client_protocol_disconnect`
+   sets `DISCONNECTED` from any state that is not already `DISCONNECTED`, and
+   `sdk/rocketnet.h` documents that. The property allows that step, to 0, and a
+   connect, to 1. `DisconnectIsTerminal` still says the only way up from a
+   non-positive state is a fresh connect.
+6. **The session keys survive a timeout or a received disconnect** (`OBS-keys`,
+   `KeysErasedWhenDown`, 11 states): the challenge commits the keys; two ticks
+   later the client is down and `cKeys` is still set. A denial zeroes the keys,
+   matching `rocketnet_client_set_state`. A timeout (`rocketnet_client_check_deadlines`)
+   and a received disconnect (`rocketnet_client_process_disconnect`) also go
+   through `set_state`, which zeroes the keys, and this model does not. The run
+   stays the observation. The state gate refuses every session packet below 3,
+   so the keys cannot be used, only read from memory.
 
 ### Model errors, fixed
 
@@ -403,6 +403,7 @@ original parameters and is not a completed proof.
 | 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget |
 | 28 | `MCClientConnectionSFirstkind.cfg` | pass; debt: first-kind-latency-safety-over-budget |
 | 29 | `MCClientConnectionSDelay.cfg` | pass; debt: delayed-first-loss-safety-over-budget |
-| 30 | `MCClientConnectionF4Ephemeral.cfg` | invariant / EphemeralErasedOutsideHandshake |
-| 31 | `MCClientConnectionF8Terminal.cfg` | action / TerminalAbsorbing |
+| 30 | `MCClientConnectionF4Ephemeral.cfg` | pass |
+| 31 | `MCClientConnectionF8Terminal.cfg` | pass |
 | 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |
+| 33 | `MCClientConnectionBrokenDeniedKeepsKeys.cfg` | invariant / KeysErasedWhenDown |

@@ -33,7 +33,7 @@
 //
 // It exits nonzero, loudly, naming the first check that failed.
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
@@ -155,7 +155,7 @@ static void check_read_write()
     // protocol id, little-endian, exactly these bytes
     uint8_t ad[12];
     uint8_t * a = ad;
-    rocketnet_write_uint32( &a, ROCKETNET_VERSION );
+    rocketnet_write_uint32( &a, ROCKETNET_WIRE_VERSION );
     rocketnet_write_uint64( &a, 0x1122334455667788ULL );
     const uint8_t expected_ad[12] = { 0x93, 0x1a, 0x7c, 0x4e,
                                       0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 };
@@ -242,7 +242,7 @@ static void check_sealed_packet()
 {
     // a session packet sealed and opened in memory: the associated data,
     // the sequence on the wire, the AEAD, the clear header. Sockets are not
-    // involved and neither is any driver.
+    // involved and neither is any transport.
 
     const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
@@ -346,24 +346,25 @@ static void check_base64_and_config()
     CHECK( !rocketnet_config_parse_int_value( "12x", &value ) );
 
     int num_available = 0;
-    const int * available = rocketnet_server_driver_availability( &num_available );
-    struct rocketnet_driver_ladder_t ladder;
-    CHECK( rocketnet_driver_ladder_parse( "auto", available, num_available, &ladder ) );
-    CHECK( ladder.num_candidates == num_available );
-    CHECK( rocketnet_driver_ladder_parse( "portable", available, num_available, &ladder ) );
-    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_DRIVER_PORTABLE );
-    CHECK( !rocketnet_driver_ladder_parse( "rocket", available, num_available, &ladder ) );
+    const int * available = rocketnet_server_transport_io_availability( &num_available );
+    struct rocketnet_transport_ladder_t ladder;
+    CHECK( rocketnet_transport_ladder_parse( "auto", available, num_available, &ladder ) );
+    int auto_available = 0;
+    for ( int i = 0; i < num_available; i++ )
+        if ( !rocketnet_transport_pin_only( available[i] ) )
+            auto_available++;
+    CHECK( ladder.num_candidates == auto_available );
+    CHECK( rocketnet_transport_ladder_parse( "portable", available, num_available, &ladder ) );
+    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
+    CHECK( !rocketnet_transport_ladder_parse( "rocket", available, num_available, &ladder ) );
 
-    char env_name[64];
-    CHECK( rocketnet_config_env_var_name( "driver", env_name, sizeof( env_name ) ) );
-    CHECK( strcmp( env_name, "ROCKETNET_DRIVER" ) == 0 );
 }
 
 int main()
 {
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( !rocketnet_init() )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

@@ -1,5 +1,5 @@
 #!/bin/sh
-# rocketnet driver bench: the short pair (#98 item 7).
+# rocketnet transport bench: the short pair (#98 item 7).
 #
 #   ./smoke_pair.sh <binary> <port> [recv_core] [send_core] [sender-extra-arg]
 #

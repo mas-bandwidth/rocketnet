@@ -17,6 +17,7 @@
 #include ROCKETNET_XDP_FILTER_SOURCE
 
 #include "server_xdp_host.h"
+#include "rocketnet_xdp_limits.h"
 
 // the host allocator, declared here because the filter's translation unit is
 // freestanding
@@ -31,13 +32,37 @@ static int server_xdp_host_config_lookup_fails;
 static int server_xdp_host_redirects;
 static __u64 server_xdp_host_redirect_key;
 
-// bpf_map_lookup_elem on the filter's two arrays of one: key 0 is the one
-// element and any other key is out of range, NULL, as array_map_lookup_elem
-// in kernel/bpf/arraymap.c returns for an index at or past max_entries. The
-// stats map is per-CPU in the kernel; the host is one CPU.
+// The kernel never writes the replay table, so the shim declares no
+// bpf_map_update_elem and no bpf_map_delete_elem; the host owns the table
+// alone.
+
+static struct rocketnet_server_xdp_replay_key_t server_xdp_host_replay_keys[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+static struct rocketnet_server_xdp_replay_value_t server_xdp_host_replay_values[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+static int server_xdp_host_replay_count;
+
+static struct rocketnet_server_xdp_replay_value_t * server_xdp_host_replay_find( const void * key )
+{
+    const struct rocketnet_server_xdp_replay_key_t * k = (const struct rocketnet_server_xdp_replay_key_t*) key;
+    for ( int i = 0; i < server_xdp_host_replay_count; i++ )
+    {
+        if ( __builtin_memcmp( &server_xdp_host_replay_keys[i], k, sizeof(struct rocketnet_server_xdp_replay_key_t) ) == 0 )
+            return &server_xdp_host_replay_values[i];
+    }
+    return NULL;
+}
+
+// bpf_map_lookup_elem tests the map first. On the replay hash map the key is
+// the 20-byte source key and the result is its entry or NULL, as
+// htab_map_lookup_elem in kernel/bpf/hashtab.c returns. On the filter's two
+// arrays of one: key 0 is the one element and any other key is out of range,
+// NULL, as array_map_lookup_elem in kernel/bpf/arraymap.c returns for an
+// index at or past max_entries. The stats map is per-CPU in the kernel; the
+// host is one CPU.
 
 static void * bpf_map_lookup_elem( void * map, const void * key )
 {
+    if ( map == (void*) &server_xdp_replay_map )
+        return (void*) server_xdp_host_replay_find( key );
     const __u32 index = *(const __u32*) key;
     if ( index != 0 )
         return NULL;
@@ -87,6 +112,9 @@ void rocketnet_xdp_host_reset( void )
     server_xdp_host_config_lookup_fails = 0;
     server_xdp_host_redirects = 0;
     server_xdp_host_redirect_key = 0;
+    __builtin_memset( server_xdp_host_replay_keys, 0, sizeof(server_xdp_host_replay_keys) );
+    __builtin_memset( server_xdp_host_replay_values, 0, sizeof(server_xdp_host_replay_values) );
+    server_xdp_host_replay_count = 0;
 }
 
 void rocketnet_xdp_host_set_config( const struct rocketnet_server_xdp_config_t * config )
@@ -103,6 +131,34 @@ void rocketnet_xdp_host_set_socket_slot( uint32_t index, int populated )
 {
     if ( index < ROCKETNET_XDP_MAX_QUEUES )
         server_xdp_host_slots[index] = populated ? 1 : 0;
+}
+
+void rocketnet_xdp_host_set_replay_entry( const struct rocketnet_server_xdp_replay_key_t * key, uint32_t high_water )
+{
+    struct rocketnet_server_xdp_replay_value_t * entry = server_xdp_host_replay_find( key );
+    if ( entry )
+    {
+        entry->high_water = high_water;
+        return;
+    }
+    // the kernel's hash map refuses an insert past max_entries, so a full
+    // table ignores a new key
+    if ( server_xdp_host_replay_count >= ROCKETNET_XDP_REPLAY_MAX_ENTRIES )
+        return;
+    __builtin_memcpy( &server_xdp_host_replay_keys[server_xdp_host_replay_count], key, sizeof(struct rocketnet_server_xdp_replay_key_t) );
+    struct rocketnet_server_xdp_replay_value_t * value = &server_xdp_host_replay_values[server_xdp_host_replay_count];
+    value->high_water = high_water;
+    value->pad = 0;
+    server_xdp_host_replay_count++;
+}
+
+int rocketnet_xdp_host_get_replay_entry( const struct rocketnet_server_xdp_replay_key_t * key, uint32_t * high_water )
+{
+    struct rocketnet_server_xdp_replay_value_t * entry = server_xdp_host_replay_find( key );
+    if ( entry == NULL )
+        return 0;
+    *high_water = entry->high_water;
+    return 1;
 }
 
 int rocketnet_xdp_host_run( const uint8_t * frame, int frame_bytes, uint32_t rx_queue_index )

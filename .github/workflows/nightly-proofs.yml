@@ -1,0 +1,48 @@
+# Nightly CBMC proofs. This is not a per-commit job: the nightly proofs
+# take minutes to hours, and a failed property is a finding to read, not a
+# gate on a merge. The per-commit proofs remain in cbmc.yml.
+#
+# The reader directories under proofs/cbmc each contribute a proof.mk to
+# NIGHTLY; the nightly target runs every entry. The schedule is before
+# fuzz-nightly.yml, so a red night is on the estate when the morning starts.
+
+name: Nightly proofs
+
+on:
+  schedule:
+    - cron: "30 5 * * *"   # daily at 05:30 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly-proofs:
+    name: nightly CBMC proofs
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the pinned CBMC is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v cbmc >/dev/null 2>&1; then
+            echo "TOOL-MISSING cbmc (any) (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          cbmc --version
+
+      - name: Run the nightly proofs
+        run: |
+          set -o pipefail
+          make -C proofs/cbmc nightly 2>&1 | tee proofs/cbmc/nightly-output.txt
+
+      - name: Upload the proof output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-proofs
+          path: proofs/cbmc/nightly-output.txt
+          if-no-files-found: ignore

@@ -61,13 +61,31 @@ struct rocketnet_server_protocol_t
 
     struct rocketnet_encryption_map_t * encryption_map;
     struct rocketnet_used_token_history_t * used_token_history;
-    struct rocketnet_admitted_token_set_t * admitted_token_set;
     struct rocketnet_client_slots_t * client_slots;
     struct rocketnet_server_acks_t * acks;
     struct rocketnet_reassembly_set_t * reassembly;         // per-client fragment reassembly, one connection per slot
     struct rocketnet_counters_t * counters;
     struct rocketnet_signature_verify_budget_t signature_verify_budget;   // per-source failed-verify budget, before the verify
+
+    // the connection ids (docs/CHANNELS.md P9a, P9b). connection_ids holds one
+    // per client slot: nonzero and unique over the server's life while the
+    // slot is held (a counter from 1, taken when the slot is assigned), 0
+    // while it is free. acked_connection_ids parallels acks->acked_client_index
+    // and payload_connection_id is the tag of the payload process_packet last
+    // returned (0 when none): each is written when its entry is produced, so
+    // an entry names the connection it was received for even when its slot is
+    // released and reassigned later in the same update. A protocol built
+    // without the arrays (NULL) tags nothing and reads 0.
+    uint64_t next_connection_id;
+    uint64_t * connection_ids;
+    uint64_t * acked_connection_ids;
+    uint64_t payload_connection_id;
 };
+
+// The connection id held by client_index now (P9a): 0 for a free slot, an
+// index out of range, or a protocol without the connection id arrays.
+
+uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index );
 
 // Processes one connection request packet, full wire bytes including the
 // prefilter header, from this source address. current_timestamp is unix

@@ -12,19 +12,24 @@
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 
-// The two token structures from the standard, separate because they carry
-// two different guarantees and only one of them can tolerate eviction.
-//
-// The used-token history binds a token identifier to the first source address
-// that presented it. Fixed capacity, oldest-first eviction, entries expire
-// with their tokens. Lookup is constant time in the number of clients: an
-// open-addressed table over a per-run SipHash of the identifier, so an
-// attacker cannot craft identifiers that collide.
-//
-// The admitted-token set holds every token that has admitted a connection.
-// An unexpired entry is NEVER evicted -- which is sound because an expired
-// entry protects nothing the expire check does not -- and when full the
-// server refuses new connections, failing closed.
+// The used-token history from the standard uses two independent capacity
+// tables. The response-binding table binds a token identifier to the first
+// source address that opened a response under it; the binding lives until the
+// token expires. The request-claim table binds the same identifier to the
+// first source address that presented a valid request, before any asymmetric
+// work, and lives only until the handshake deadline or the response binding:
+// one token buys one half-open mapping, and a replay from a second address
+// waits until the first mapping dies. The two tables are independent, so
+// claim pressure cannot consume or evict response-binding capacity. Each
+// table is fixed-capacity with bound-first eviction for bindings, no
+// eviction of a live claim, and entries that expire with their deadlines.
+// Lookup is constant time in the number of clients: chained buckets under a
+// per-run SipHash of the identifier, so an attacker cannot craft identifiers
+// that collide. The one-live-connection rule needs no table of its own: the
+// claim and the history refuse a token from a second address before the
+// signature verify, a connected address is refused at the top of the request
+// path, and the client-id check refuses a second live connection for a
+// token's client id (sdk/rocketnet_server_protocol.cpp).
 
 struct rocketnet_used_token_history_t;
 
@@ -51,26 +56,30 @@ void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t 
                                           uint64_t expire_timestamp,
                                           uint64_t current_timestamp );
 
-struct rocketnet_admitted_token_set_t;
+// returns 1 when this token has no live claim, or is claimed for this same
+// address; 0 when another address holds the claim. The claim expires at the
+// handshake deadline, so the token is free again once that mapping is gone.
 
-struct rocketnet_admitted_token_set_t * rocketnet_admitted_token_set_create( void * context, int capacity );
+int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_history_t * history,
+                                              const uint8_t * token_identifier,
+                                              const struct rocketnet_address_t * address,
+                                              double current_time );
 
-void rocketnet_admitted_token_set_destroy( struct rocketnet_admitted_token_set_t * set );
+// records the request claim for this token until the handshake deadline,
+// before any signature, seal or keypair work. returns 0 when the claim table
+// has no free or expired slot; a live claim is never replaced or evicted.
 
-// returns 1 when this token has already admitted a connection and is not yet
-// expired
+int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_history_t * history,
+                                               const uint8_t * token_identifier,
+                                               const struct rocketnet_address_t * address,
+                                               double deadline,
+                                               double current_time );
 
-int rocketnet_admitted_token_set_contains( const struct rocketnet_admitted_token_set_t * set,
-                                           const uint8_t * token_identifier,
-                                           uint64_t current_timestamp );
+// releases this address's claim when a request past the claim fails the
+// signature; a request that proves nothing holds nothing.
 
-// returns 1 on success. returns 0 only when the set is full of unexpired
-// entries: unexpired entries are never evicted, so a full set refuses --
-// the caller denies the connection and counts ADMITTED_SET_FULL.
-
-int rocketnet_admitted_token_set_add( struct rocketnet_admitted_token_set_t * set,
-                                      const uint8_t * token_identifier,
-                                      uint64_t expire_timestamp,
-                                      uint64_t current_timestamp );
+void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_history_t * history,
+                                                 const uint8_t * token_identifier,
+                                                 const struct rocketnet_address_t * address );
 
 #endif // #ifndef ROCKETNET_TOKEN_TABLES_H

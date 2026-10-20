@@ -5,7 +5,7 @@
 
 #include "rocketnet_memory.h"
 #include "rocketnet_encryption_map.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -125,6 +125,12 @@ int rocketnet_encryption_map_find( const struct rocketnet_encryption_map_t * map
             return i;
     }
     return -1;
+}
+
+int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map )
+{
+    rocketnet_assert( map );
+    return map->free_head == -1;
 }
 
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,

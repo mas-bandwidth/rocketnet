@@ -19,7 +19,7 @@
     one test alone.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 #include "rocketnet_read_write.h"
 
@@ -31,10 +31,10 @@
 
 #include "rocketnet_counters.h"
 #include "rocketnet_allocator.h"
-#include "rocketnet_unreliable.h"
 #include "rocketnet_window_send.h"
 #include "rocketnet_window_receive.h"
 #include "rocketnet_window_ack.h"
+#include "rocketnet_channel.h"
 #include "rocketnet_network_simulator.h"
 
 #include <stdarg.h>
@@ -230,11 +230,11 @@ static void channels_test_vectors()
     // CONFIG, defaults, number 0
 
     {
-        static const uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x09, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+        static const uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
                                             0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
         struct rocketnet_message_config_body_t body;
         body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
-        body.enabled = 0x09;
+        body.enabled = 0xff;
         body.num_channels = 32;
         body.window_messages = 1024;
         body.receive_ring_bytes = 262144;
@@ -961,13 +961,12 @@ void operator delete[]( void * p, size_t ) noexcept
 static char rn_log_last[1024];
 static int rn_log_lines = 0;
 
-static void rn_test_log_function( int level, const char * format, ... )
+static void rn_test_log_function( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
+    (void) context;
+    (void) length;
     (void) level;
-    va_list args;
-    va_start( args, format );
-    vsnprintf( rn_log_last, sizeof(rn_log_last), format, args );
-    va_end( args );
+    snprintf( rn_log_last, sizeof(rn_log_last), "%s", message );
     rn_log_lines++;
 }
 
@@ -1015,6 +1014,7 @@ static void test_channels_allocator_layout()
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // test explicit headroom without a finite send budget
     check( config.num_channels == 32 );
     check( config.window_messages == 1024 );
     check( config.receive_ring_bytes == 262144 );
@@ -1025,7 +1025,7 @@ static void test_channels_allocator_layout()
     check( layout.formula_bytes == 1588480 );
     check( layout.region_bytes == 1588480 );
     check( rocketnet_message_connection_bytes( &config ) == 1588480 );
-    check( rocketnet_message_connection_bytes( NULL ) == 1588480 );
+    check( rocketnet_message_connection_bytes( NULL ) > 1588480 );
 
     const uint64_t C = 32, W = 1024, B = 262144, Q = 1024, S = 800000, P = 256, Du = 256, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
@@ -1110,9 +1110,8 @@ static void test_channels_allocator_validation()
         { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), 262144 + 16 },
         { "store too small for a maximal block",    (int) offsetof( rocketnet_message_config_t, send_buffer_bytes ), 12288 },
         { "queue below its minimum",                (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
-        { "rto_min above rto_max",                  (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 3000 },
-        { "rto_initial above rto_max",              (int) offsetof( rocketnet_message_config_t, rto_initial_ms ), 3000 },
-        { "rto_initial below rto_min",              (int) offsetof( rocketnet_message_config_t, rto_initial_ms ), 20 },
+        { "resend_delay_initial above resend_delay_max",              (int) offsetof( rocketnet_message_config_t, resend_delay_initial_ms ), 3000 },
+        { "resend_delay_min above resend_delay_max",                  (int) offsetof( rocketnet_message_config_t, resend_delay_min_ms ), 3000 },
     };
 
     for ( size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++ )
@@ -1131,6 +1130,15 @@ static void test_channels_allocator_validation()
         rn_region_layout_t layout;
         check( !rn_region_layout( &config, &layout ) );
     }
+
+    // resend_delay_initial below resend_delay_min needs two fields: the default initial (2000 ms)
+    // is above every single-field floor the range allows. Re-pinned for the
+    // RakNet default initial value.
+    rocketnet_message_default_config( &config );
+    config.resend_delay_initial_ms = 100;
+    config.resend_delay_min_ms = 150;
+    check( rocketnet_message_validate_config( &config ) == 0 );
+    check( rocketnet_message_connection_bytes( &config ) == 0 );
 
     // ceil( max_message_bytes / F ) above W: a 64-message window holds at most 64 fragments
 
@@ -1184,13 +1192,13 @@ static void test_channels_allocator_validation()
     config.send_buffer_bytes = 12288;
     config.send_queue_messages = 16;
     config.packets_in_flight = 16;
-    config.max_packets_per_update = 1;
+    config.packets_per_update = 1;
     config.unreliable_deliveries = 1;
     config.sequenced_holds = 0;
     config.receipt_ring = 16;
-    config.rto_min_ms = 1;
-    config.rto_initial_ms = 10;
-    config.rto_max_ms = 10;
+    config.resend_delay_min_ms = 1;
+    config.resend_delay_initial_ms = 10;
+    config.resend_delay_max_ms = 10;
     config.reliable_timeout_ms = 1000;
     check( rocketnet_message_validate_config( &config ) == 1 );
     check( rocketnet_message_connection_bytes( &config ) > 0 );
@@ -1202,6 +1210,7 @@ static void test_channels_allocator_send_store()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate headroom capacity
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
 
@@ -1400,6 +1409,7 @@ static void test_channels_allocator_descriptor_pool()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // test explicit headroom without a finite send budget
     config.send_queue_messages = 16;
 
     rocketnet_counters_t counters;
@@ -1552,6 +1562,7 @@ static void test_channels_allocator_sizing()
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate headroom capacity
 
     static char text[4096];
     rn_trap_phase = "sizing";
@@ -1580,11 +1591,11 @@ static void test_channels_allocator_sizing()
     // the print form logs the same lines at info level and returns the region bytes
 
     rocketnet_message_default_config( &config );
-    const int old_level = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const enum rocketnet_log_level_t old_level = rocketnet_get_log_level();
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
     const int lines_before = rn_log_lines;
-    check( rocketnet_message_print_connection_sizing( &config, 16 ) == 1588480 );
-    rocketnet_log_level( old_level );
+    check( rocketnet_message_print_connection_sizing( &config, 16 ) == rocketnet_message_connection_bytes( &config ) );
+    rocketnet_set_log_level( old_level );
     check( rn_log_lines - lines_before >= 10 );
     check( strstr( rn_log_last, "16 connections" ) != NULL );
 }
@@ -1757,7 +1768,7 @@ static void rn_soak_send( rn_soak_side_t * side )
         rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         check( descriptor->bytes == (uint32_t) bytes );
         descriptor->serial = ++side->serial;
-        descriptor->reliability = ROCKETNET_RELIABLE_ORDERED;
+        descriptor->reliability = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
         descriptor->priority = (uint8_t) ( rn_random() % 4 );
         descriptor->channel = (uint16_t) ( rn_random() % region->num_channels );
 
@@ -1877,7 +1888,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 check( !rd->live || rd->number == number );
                 rd->number = number;
                 rd->live = 1;
-                rd->code = ROCKETNET_RELIABLE_ORDERED;
+                rd->code = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
                 rd->channel = (uint16_t) c;
                 rd->ordering = descriptor->ordering;
                 rd->sequencing = 0;
@@ -1916,7 +1927,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
             delivery->data = receiver->receive_ring + ( ring % receiver->ring_bytes );
             delivery->bytes = (int32_t) descriptor->bytes;
             delivery->channel = (uint16_t) c;
-            delivery->code = ROCKETNET_RELIABLE_ORDERED;
+            delivery->code = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
             delivery->serial = descriptor->serial;
             check( rn_region_contains( receiver, delivery->data, descriptor->bytes ) );
             for ( uint32_t b = 0; b < descriptor->bytes; b += 97 )
@@ -1993,7 +2004,7 @@ static void rn_soak_ack( rn_soak_side_t * side, uint64_t tick, bool all )
                 }
                 rn_receipt_t * receipt = &region->receipts[( side->receipt_head + side->receipt_count ) % region->receipt_entries];
                 receipt->serial = descriptor->serial;
-                receipt->status = ROCKETNET_RECEIPT_ACKED;
+                receipt->status = ROCKETNET_RECEIPT_STATUS_ACKED;
                 side->receipt_count++;
                 rn_region_send_free( region, slot->descriptor );
             }
@@ -2051,6 +2062,7 @@ static void test_channels_allocator_no_live_allocation()
     const int num_slots = 16;
     rocketnet_message_config_t server_config;
     rocketnet_message_default_config( &server_config );
+    server_config.client_send_kbps = server_config.server_send_kbps = 0; // deliberate fixed-pool exhaustion
     rocketnet_message_config_t client_config = server_config;
     client_config.send_queue_messages = 64;
 
@@ -2201,6 +2213,7 @@ static void test_channels_allocator_no_live_allocation()
         server_store += sides[2 * s].refused_store;
         server_queue += sides[2 * s].refused_queue;
         client_store += sides[2 * s + 1].refused_store;
+        (void) client_store;
         client_queue += sides[2 * s + 1].refused_queue;
         check( sides[2 * s + 1].refused_store == rn_counter( &client_counters[s], ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) );
         check( sides[2 * s + 1].refused_queue == rn_counter( &client_counters[s], ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) );
@@ -2219,785 +2232,47 @@ static void test_channels_allocator_no_live_allocation()
 }
 
 // ----------------------------------------------------------------
-//            the UNRELIABLE path (docs/CHANNELS.md 5, 6.3, 6.4, 9.3,
-//          11.2): the pure module over layer 1's region and layer 2's
-//                                codec
+//     the SINGLE form (docs/CHANNELS.md 11.2): the codec reads a payload
+//     that is one message with the form byte last as one code-0 record.
+//     The send, receive-budget and drop behaviour of the unreliable path
+//     is tested on the shipped path (test_unit_message_objects.cpp,
+//     test_unit_channel_dispatch.cpp, functional/channel_unreliable_*.cpp).
 // ----------------------------------------------------------------
 
-// A small rig for the UNRELIABLE module: one region from one arena, a FIFO
-// the caller owns (nothing here allocates; R1/R4), and a delivered list big
-// enough for the unit cases. The trap is armed inside each case around the
-// send, fill and receive calls so a live malloc or free on those paths
-// aborts (R1; docs/CHANNELS.md 1).
-
-struct channels_unreliable_rig_t
-{
-    rocketnet_message_config_t config;
-    rocketnet_counters_t counters;
-    rn_arena_t * arena;
-    rn_region_t * region;
-    rn_unreliable_message_t queue[64];
-    rn_unreliable_t unreliable;
-    rn_delivery_t deliveries[64];
-};
-
-static void channels_unreliable_setup( channels_unreliable_rig_t * rig, int queue_capacity )
-{
-    memset( &rig->counters, 0, sizeof(rig->counters) );
-    rocketnet_message_default_config( &rig->config );
-    rig->arena = rn_arena_create( NULL, &rig->config, 1, &rig->counters );
-    check( rig->arena );
-    rig->region = rn_arena_region( rig->arena, 0 );
-    rn_region_carve( rig->region );
-    memset( rig->queue, 0, sizeof(rig->queue) );
-    rn_unreliable_init( &rig->unreliable, rig->region, rig->queue, (uint32_t) queue_capacity );
-    memset( rig->deliveries, 0, sizeof(rig->deliveries) );
-}
-
-static void channels_unreliable_teardown( channels_unreliable_rig_t * rig )
-{
-    rn_arena_destroy( rig->arena );
-}
-
-static void channels_unreliable_fill_pattern( uint8_t * data, int bytes, int salt )
+static void channels_single_fill_pattern( uint8_t * data, int bytes, int salt )
 {
     for ( int i = 0; i < bytes; i++ )
         data[i] = (uint8_t) ( i * 31 + salt );
 }
 
-// counts the code-0 records in a layer 2 payload, checking their bytes
-
-static int channels_unreliable_parse( const uint8_t * payload, int bytes, int expected_code,
-                                      const uint8_t * expect[], int expect_bytes[], int expect_count,
-                                      uint8_t * body )
+static void channels_single_expect_one_record( const uint8_t * payload, int bytes, const uint8_t * message, int message_bytes )
 {
     struct rocketnet_message_limits_t limits = channels_limits( 32, rocketnet_message_enabled_codes( 1 ) );
     struct rocketnet_message_reader_t reader;
-    const int violation = rocketnet_message_reader_begin( &reader, payload, bytes, &limits );
-    check( violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rocketnet_message_reader_begin( &reader, payload, bytes, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
     struct rocketnet_message_record_t record;
-    int count = 0;
-    while ( rocketnet_message_reader_next( &reader, &record ) )
-    {
-        check( count < expect_count );
-        check( record.code == expected_code );
-        if ( body )
-            body[count] = (uint8_t) record.bytes;
-        if ( expect[count] )
-            check( record.bytes == expect_bytes[count] && memcmp( record.data, expect[count], (size_t) record.bytes ) == 0 );
-        count++;
-    }
-    check( count == expect_count );
-    return count;
+    check( rocketnet_message_reader_next( &reader, &record ) );
+    check( record.code == ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+    check( record.bytes == message_bytes && memcmp( record.data, message, (size_t) message_bytes ) == 0 );
+    check( !rocketnet_message_reader_next( &reader, &record ) );
 }
 
-static void test_channels_unreliable_small_messages_share_one_frame()
+static void test_channels_single_form_parses_as_one_code0_record()
 {
-    // many small unreliable messages pack into one RECORDS payload (9.3 step
-    // 2) as code-0 records with the layer 2 writer, and each chunk is freed
-    // the moment it is written (9.3 step 3)
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-
-    uint8_t a[8], b[32], c[64];
-    channels_unreliable_fill_pattern( a, sizeof(a), 1 );
-    channels_unreliable_fill_pattern( b, sizeof(b), 2 );
-    channels_unreliable_fill_pattern( c, sizeof(c), 3 );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-send";
-    check( rn_unreliable_send( &rig.unreliable, a, sizeof(a), 0, 0 ) == 1 );
-    check( rn_unreliable_send( &rig.unreliable, b, sizeof(b), 0, 1 ) == 1 );
-    check( rn_unreliable_send( &rig.unreliable, c, sizeof(c), 0, 2 ) == 1 );
-
     alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
-    memset( frame, 0, sizeof(frame) );
-    const int length = rn_unreliable_fill( &rig.unreliable, frame, ROCKETNET_MAX_PAYLOAD_BYTES );
-    check( length > 0 && length <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    static uint8_t message[ROCKETNET_MESSAGE_SINGLE_BYTES];
 
-    // one packet carries all three; the FIFO is empty and the store is whole
-    // again (each chunk freed as written, R5 / 9.3 step 3)
-
-    check( rig.unreliable.count == 0 );
-    for ( int cl = 0; cl < RN_STORE_NUM_CLASSES; cl++ )
-        check( rn_send_store_free_chunks( &rig.region->store, cl ) == rn_send_store_total_chunks( &rig.region->store, cl ) );
-
-    const uint8_t * expect[3] = { a, b, c };
-    int expect_bytes[3] = { (int)sizeof(a), (int)sizeof(b), (int)sizeof(c) };
-    uint8_t body[3];
-    check( channels_unreliable_parse( frame, length, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect, expect_bytes, 3, body ) == 3 );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    channels_unreliable_teardown( &rig );
-}
-
-static void test_channels_unreliable_record_never_split_across_packets()
-{
-    // a record that does not fit ends the packet and stays queued; it is
-    // never split across packets (9.3 step 2). The head that fills the frame
-    // completely is written whole, the next waits for its own packet.
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-
-    uint8_t big[ROCKETNET_MAX_PAYLOAD_BYTES - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES - 1], rest[100];
-    channels_unreliable_fill_pattern( big, sizeof(big), 4 );
-    channels_unreliable_fill_pattern( rest, sizeof(rest), 5 );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-send";
-    check( rn_unreliable_send( &rig.unreliable, big, sizeof(big), 0, 0 ) == 1 );
-    check( rn_unreliable_send( &rig.unreliable, rest, sizeof(rest), 0, 0 ) == 1 );
-
-    // the message, its 3 record bytes and the form byte fill the
-    // ROCKETNET_MAX_PAYLOAD_BYTES frame to the last byte; the 100-byte
-    // tail cannot share it, so it waits whole
-
-    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
-    const int length = rn_unreliable_fill( &rig.unreliable, frame, ROCKETNET_MAX_PAYLOAD_BYTES );
-    check( length == ROCKETNET_MAX_PAYLOAD_BYTES );
-    const uint8_t * expect[1] = { big };
-    int expect_bytes[1] = { (int)sizeof(big) };
-    check( channels_unreliable_parse( frame, length, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect, expect_bytes, 1, NULL ) == 1 );
-    check( rig.unreliable.count == 1 );
-
-    // the tail travels whole in its own packet
-
-    alignas( 16 ) static uint8_t tail[ROCKETNET_MAX_PAYLOAD_BYTES];
-    const int tail_length = rn_unreliable_fill( &rig.unreliable, tail, ROCKETNET_MAX_PAYLOAD_BYTES );
-    check( tail_length > 0 );
-    const uint8_t * expect_tail[1] = { rest };
-    int expect_tail_bytes[1] = { (int)sizeof(rest) };
-    check( channels_unreliable_parse( tail, tail_length, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect_tail, expect_tail_bytes, 1, NULL ) == 1 );
-    check( rig.unreliable.count == 0 );
-
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-    channels_unreliable_teardown( &rig );
-}
-
-static void test_channels_unreliable_large_message_travels_alone()
-{
-    // a message longer than one packet is planned alone in its own large
-    // payload (L2.3; 9.3 step 1), capped by the record's u16 length; the
-    // small tail behind it waits for its own packet
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-
-    uint8_t large[4000], small[50];
-    channels_unreliable_fill_pattern( large, sizeof(large), 6 );
-    channels_unreliable_fill_pattern( small, sizeof(small), 7 );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-send";
-    check( rn_unreliable_send( &rig.unreliable, large, sizeof(large), 0, 0 ) == 1 );
-    check( rn_unreliable_send( &rig.unreliable, small, sizeof(small), 0, 0 ) == 1 );
-
-    check( rn_unreliable_next_packet_bytes( &rig.unreliable ) == (int) sizeof(large) + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 );
-
-    alignas( 16 ) static uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES * 8];
-    const int length = rn_unreliable_fill( &rig.unreliable, payload, (int) sizeof(large) + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 );
-    check( length == (int) sizeof(large) + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 );
-    const uint8_t * expect[1] = { large };
-    int expect_bytes[1] = { (int)sizeof(large) };
-    check( channels_unreliable_parse( payload, length, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect, expect_bytes, 1, NULL ) == 1 );
-
-    // the small message stayed behind, whole
-
-    check( rig.unreliable.count == 1 );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-    channels_unreliable_teardown( &rig );
-}
-
-static void test_channels_unreliable_single_zero_copy_at_payload_root()
-{
-    // the zero-copy SINGLE form (11.2): the message is written at the
-    // 16-aligned payload root, costs one byte (the form byte, last), and
-    // touches no module state
-
-    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
-    memset( frame, 0, sizeof(frame) );
-
-    check( rn_unreliable_single_capacity( ROCKETNET_MAX_PAYLOAD_BYTES ) == ROCKETNET_MESSAGE_SINGLE_BYTES );
-    check( rn_unreliable_single_begin( frame, ROCKETNET_MAX_PAYLOAD_BYTES, ROCKETNET_MESSAGE_SINGLE_BYTES ) == frame );
-    check( rn_unreliable_single_begin( frame, ROCKETNET_MAX_PAYLOAD_BYTES, ROCKETNET_MESSAGE_SINGLE_BYTES + 1 ) == NULL );
-    check( rn_unreliable_single_begin( frame, 0, 10 ) == NULL );
-
-    uint8_t message[300];
-    channels_unreliable_fill_pattern( message, sizeof(message), 8 );
-
-    // write at the root, finish writes the form byte last, one byte of cost
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-zero-copy";
-    uint8_t * root = rn_unreliable_single_begin( frame, ROCKETNET_MAX_PAYLOAD_BYTES, (int) sizeof(message) );
-    check( root == frame && ( ( (uintptr_t) root & 15 ) == 0 ) );
-    memcpy( root, message, sizeof(message) );
-    const int length = rn_unreliable_single_finish( frame, ROCKETNET_MAX_PAYLOAD_BYTES, (int) sizeof(message) );
-    check( length == (int) sizeof(message) + 1 );
-    check( frame[length - 1] == ROCKETNET_MESSAGE_FORM_SINGLE );
-
-    const uint8_t * expect[1] = { message };
-    int expect_bytes[1] = { (int)sizeof(message) };
-    check( channels_unreliable_parse( frame, length, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect, expect_bytes, 1, NULL ) == 1 );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    check( rn_unreliable_single_finish( frame, ROCKETNET_MAX_PAYLOAD_BYTES, ROCKETNET_MAX_PAYLOAD_BYTES ) == 0 );
-    check( rn_unreliable_single_finish( frame, ROCKETNET_MAX_PAYLOAD_BYTES, 0 ) == 0 );
-}
-
-static void test_channels_unreliable_store_full_drops_and_counts()
-{
-    // when the send store has no chunk of the class the message needs, the
-    // send is dropped and counted, never grown (R1: unreliable data is
-    // dropped and counted; docs/CHANNELS.md 1)
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-    rig.config.send_buffer_bytes = 12288;
-    rig.config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;      // the minimum, so the store's large class holds a whole maximal block (14)
-    rn_arena_destroy( rig.arena );
-    rig.arena = rn_arena_create( NULL, &rig.config, 1, &rig.counters );
-    check( rig.arena );
-    rig.region = rn_arena_region( rig.arena, 0 );
-    rn_region_carve( rig.region );
-    rn_unreliable_init( &rig.unreliable, rig.region, rig.queue, 64 );
-
-    const uint32_t small_chunks = rn_send_store_total_chunks( &rig.region->store, RN_STORE_SMALL );
-
-    uint8_t message[64];
-    channels_unreliable_fill_pattern( message, sizeof(message), 9 );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-send";
-    int accepted = 0;
-    for ( uint32_t i = 0; i < small_chunks + 4; i++ )
-        accepted += rn_unreliable_send( &rig.unreliable, message, sizeof(message), 0, 0 );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    check( accepted == (int) small_chunks );
-    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 4 );
-    check( rig.unreliable.count == small_chunks );
-
-    channels_unreliable_teardown( &rig );
-}
-
-static void test_channels_unreliable_delivery_budget_drops_and_counts()
-{
-    // when the delivered list (Du) is full the rest are dropped and counted
-    // (6.3 step 4), which unreliable semantics allow
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-
-    // a RECORDS payload of five code-0 records
-
-    alignas( 16 ) static uint8_t payload[128];
-    struct rocketnet_message_writer_t writer;
-    rocketnet_message_writer_begin( &writer, payload, (int) sizeof(payload) );
-    for ( int i = 0; i < 5; i++ )
-    {
-        struct rocketnet_message_record_t record;
-        memset( &record, 0, sizeof(record) );
-        record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
-        record.data = (const uint8_t*) "abc";
-        record.bytes = 3;
-        check( rocketnet_message_writer_add( &writer, &record ) == 1 );
-    }
-    const int length = rocketnet_message_writer_finish( &writer );
-    check( length > 0 );
-
-    struct rocketnet_message_limits_t limits = channels_limits( 32, rocketnet_message_enabled_codes( 1 ) );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-receive";
-    int out_count = 0;
-    const int violation = rn_unreliable_receive( &rig.unreliable, payload, length, &limits, rig.deliveries, 2, &out_count );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    check( violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
-    check( out_count == 2 );
-    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL ) == 3 );
+    // a message of 300 bytes and the largest the form carries: the message at
+    // the 16-aligned payload root, the form byte last
+    const int sizes[2] = { 300, ROCKETNET_MESSAGE_SINGLE_BYTES };
     for ( int i = 0; i < 2; i++ )
-        check( rig.deliveries[i].bytes == 3 && rig.deliveries[i].code == ROCKETNET_MESSAGE_CODE_UNRELIABLE );
-
-    channels_unreliable_teardown( &rig );
-}
-
-static void test_channels_unreliable_failed_send_drops_and_counts()
-{
-    // a packet whose finish_packet fails drops the unreliable records it
-    // carried and counts each (6.4, Failed send): the chunks were already
-    // freed at write, so only the count changes
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-
-    uint8_t a[16], b[16], c[16];
-    channels_unreliable_fill_pattern( a, sizeof(a), 11 );
-    channels_unreliable_fill_pattern( b, sizeof(b), 12 );
-    channels_unreliable_fill_pattern( c, sizeof(c), 13 );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-send";
-    check( rn_unreliable_send( &rig.unreliable, a, sizeof(a), 0, 0 ) == 1 );
-    check( rn_unreliable_send( &rig.unreliable, b, sizeof(b), 0, 0 ) == 1 );
-    check( rn_unreliable_send( &rig.unreliable, c, sizeof(c), 0, 0 ) == 1 );
-
-    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
-    const int length = rn_unreliable_fill( &rig.unreliable, frame, ROCKETNET_MAX_PAYLOAD_BYTES );
-    check( length > 0 );
-    check( rig.unreliable.count == 0 );
-
-    // the caller's finish_packet refused: drop and count the records it carried
-
-    rn_unreliable_packet_failed( &rig.unreliable, 3 );
-    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 3 );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    channels_unreliable_teardown( &rig );
-}
-
-static void test_channels_unreliable_chunk_freed_when_written()
-{
-    // the send store holds a message only until its record is written; the
-    // chunk is freed at that moment (9.3 step 3, R5), across the store's
-    // classes
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-
-    uint8_t small[64], medium[400];
-    channels_unreliable_fill_pattern( small, sizeof(small), 14 );
-    channels_unreliable_fill_pattern( medium, sizeof(medium), 15 );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-send";
-    check( rn_unreliable_send( &rig.unreliable, small, sizeof(small), 0, 0 ) == 1 );
-    check( rn_unreliable_send( &rig.unreliable, medium, sizeof(medium), 0, 0 ) == 1 );
-
-    uint32_t used_before[RN_STORE_NUM_CLASSES];
-    for ( int cl = 0; cl < RN_STORE_NUM_CLASSES; cl++ )
-        used_before[cl] = rn_send_store_total_chunks( &rig.region->store, cl )
-            - rn_send_store_free_chunks( &rig.region->store, cl );
-    check( used_before[RN_STORE_SMALL] == 1 && used_before[RN_STORE_MEDIUM] == 1 );
-
-    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
-    const int length = rn_unreliable_fill( &rig.unreliable, frame, ROCKETNET_MAX_PAYLOAD_BYTES );
-    check( length > 0 );
-
-    // both chunks are back the moment the records are written
-
-    for ( int cl = 0; cl < RN_STORE_NUM_CLASSES; cl++ )
-        check( rn_send_store_free_chunks( &rig.region->store, cl ) == rn_send_store_total_chunks( &rig.region->store, cl ) );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    channels_unreliable_teardown( &rig );
-}
-
-static void test_channels_unreliable_block_not_corrupted_across_fragmented_store()
-{
-    // a block (longer than one large chunk) travels alone, its record copied
-    // chunk-chain by chunk-chain (L2.3), never contiguously across a chunk
-    // boundary. Filling one block frees chunks 0 and 1, threading the class
-    // free list as 1 -> 0, so the next block lands on non-adjacent chunks;
-    // both blocks must come out byte-identical to what was sent.
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-
-    uint8_t big1[ROCKETNET_MAX_PAYLOAD_BYTES - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES - 1], big2[ROCKETNET_MAX_PAYLOAD_BYTES - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES - 1];
-    channels_unreliable_fill_pattern( big1, sizeof(big1), 16 );
-    channels_unreliable_fill_pattern( big2, sizeof(big2), 17 );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-send";
-    check( rn_unreliable_send( &rig.unreliable, big1, sizeof(big1), 0, 0 ) == 1 );
-
-    alignas( 16 ) static uint8_t frame1[ROCKETNET_MAX_PAYLOAD_BYTES];
-    const int len1 = rn_unreliable_fill( &rig.unreliable, frame1, ROCKETNET_MAX_PAYLOAD_BYTES );
-    check( len1 == ROCKETNET_MAX_PAYLOAD_BYTES );
-    const uint8_t * expect1[1] = { big1 };
-    int expect1_bytes[1] = { (int)sizeof(big1) };
-    check( channels_unreliable_parse( frame1, len1, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect1, expect1_bytes, 1, NULL ) == 1 );
-
-    // the second block now sits on chunks 1 then 0 (the free list reversed)
-
-    check( rn_unreliable_send( &rig.unreliable, big2, sizeof(big2), 0, 0 ) == 1 );
-    alignas( 16 ) static uint8_t frame2[ROCKETNET_MAX_PAYLOAD_BYTES];
-    const int len2 = rn_unreliable_fill( &rig.unreliable, frame2, ROCKETNET_MAX_PAYLOAD_BYTES );
-    check( len2 == ROCKETNET_MAX_PAYLOAD_BYTES );
-    const uint8_t * expect2[1] = { big2 };
-    int expect2_bytes[1] = { (int)sizeof(big2) };
-    check( channels_unreliable_parse( frame2, len2, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect2, expect2_bytes, 1, NULL ) == 1 );
-
-    check( rig.unreliable.count == 0 );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    channels_unreliable_teardown( &rig );
-}
-
-static void test_channels_unreliable_message_past_u16_length_refused()
-{
-    // a message longer than the record's u16 length can never be carried by an
-    // unreliable record: the send refuses and counts it (SEND_FAILED) instead of
-    // enqueuing it, so the FIFO never wedges on a message it can never send
-    // (R1: unreliable data is dropped and counted, never stuck)
-
-    channels_unreliable_rig_t rig;
-    channels_unreliable_setup( &rig, 16 );
-    rig.config.max_message_bytes = 65536;       // allowed by the config, past the u16 cap
-    rig.config.send_buffer_bytes = 1 << 20;     // the store's large class must hold that whole block (14)
-    rn_arena_destroy( rig.arena );
-    rig.arena = rn_arena_create( NULL, &rig.config, 1, &rig.counters );
-    check( rig.arena );
-    rig.region = rn_arena_region( rig.arena, 0 );
-    rn_region_carve( rig.region );
-    rn_unreliable_init( &rig.unreliable, rig.region, rig.queue, 16 );
-
-    static uint8_t too_large[65536];
-    channels_unreliable_fill_pattern( too_large, sizeof(too_large), 18 );
-    uint8_t small[50];
-    channels_unreliable_fill_pattern( small, sizeof(small), 19 );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-send";
-    check( rn_unreliable_send( &rig.unreliable, too_large, (int) sizeof(too_large), 0, 0 ) == 0 );
-    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 1 );
-    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
-    check( rig.unreliable.count == 0 );
-
-    // the FIFO is not wedged: a valid message behind it still sends and delivers
-
-    check( rn_unreliable_send( &rig.unreliable, small, sizeof(small), 0, 0 ) == 1 );
-    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
-    const int length = rn_unreliable_fill( &rig.unreliable, frame, ROCKETNET_MAX_PAYLOAD_BYTES );
-    check( length > 0 );
-    const uint8_t * expect[1] = { small };
-    int expect_bytes[1] = { (int)sizeof(small) };
-    check( channels_unreliable_parse( frame, length, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect, expect_bytes, 1, NULL ) == 1 );
-    check( rig.unreliable.count == 0 );
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    channels_unreliable_teardown( &rig );
-}
-
-// the lossy-simulator walk: a sender pushes small, packet-sized (zero-copy)
-// and larger-than-a-packet unreliable messages through
-// rocketnet_network_simulator at a loss and jitter, and the receiver parses
-// with layer 2's reader and delivers through rn_unreliable_receive. Every
-// delivered message is byte-identical to one sent; at 0 percent loss every
-// queued message is delivered, sent equals delivered plus lost plus counted
-// drops (R8), and no live allocation happens anywhere on the send or receive
-// path (R1).
-
-struct channels_unreliable_wire_t
-{
-    rocketnet_network_simulator_t * wire;
-    rocketnet_address_t address;
-    double time;
-};
-
-struct channels_unreliable_sent_t
-{
-    uint8_t data[4096];
-    int bytes;
-    int used;
-};
-
-static struct channels_unreliable_sent_t channels_unreliable_sent[4096];
-static int channels_unreliable_sent_count = 0;
-
-static void channels_unreliable_register_sent( const uint8_t * data, int bytes )
-{
-    check( channels_unreliable_sent_count < 4096 && bytes > 0 && bytes <= 4096 );
-    memcpy( channels_unreliable_sent[channels_unreliable_sent_count].data, data, (size_t) bytes );
-    channels_unreliable_sent[channels_unreliable_sent_count].bytes = bytes;
-    channels_unreliable_sent[channels_unreliable_sent_count].used = 1;
-    channels_unreliable_sent_count++;
-}
-
-// marks one sent message delivered; returns 1 when a byte-identical sent
-// message was found (and consumed), 0 when the delivery matched nothing
-
-static int channels_unreliable_delivered( const uint8_t * data, int bytes )
-{
-    for ( int i = 0; i < channels_unreliable_sent_count; i++ )
     {
-        if ( !channels_unreliable_sent[i].used )
-            continue;
-        if ( channels_unreliable_sent[i].bytes != bytes )
-            continue;
-        if ( memcmp( channels_unreliable_sent[i].data, data, (size_t) bytes ) != 0 )
-            continue;
-        channels_unreliable_sent[i].used = 0;
-        return 1;
+        memset( frame, 0, sizeof(frame) );
+        channels_single_fill_pattern( message, sizes[i], 8 + i );
+        memcpy( frame, message, (size_t) sizes[i] );
+        frame[sizes[i]] = ROCKETNET_MESSAGE_FORM_SINGLE;
+        channels_single_expect_one_record( frame, sizes[i] + 1, message, sizes[i] );
     }
-    return 0;
-}
-
-// counts the code-0 records in a layer 2 payload (SINGLE or RECORDS), the
-// wire-side measurement of how many messages a frame carried -- independent
-// of the delivery registry, so wire loss is never its complement
-
-static int channels_unreliable_count_code0( const uint8_t * payload, int bytes )
-{
-    struct rocketnet_message_limits_t limits = channels_limits( 32, rocketnet_message_enabled_codes( 1 ) );
-    struct rocketnet_message_reader_t reader;
-    const int violation = rocketnet_message_reader_begin( &reader, payload, bytes, &limits );
-    check( violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
-    int count = 0;
-    struct rocketnet_message_record_t record;
-    while ( rocketnet_message_reader_next( &reader, &record ) )
-    {
-        check( record.code == ROCKETNET_MESSAGE_CODE_UNRELIABLE );
-        count++;
-    }
-    return count;
-}
-
-static void test_channels_unreliable_over_the_lossy_simulator( float loss_percent )
-{
-    channels_unreliable_sent_count = 0;
-
-    // R8 conservation is measured on independent sides: attempted at the send
-    // calls, refused at the module's refusal (cross-checked against its
-    // store-full counter), delivered at the receive loop (each byte-verified
-    // against the sent registry), the FIFO remainder as the module's own
-    // count, wire loss as the gap between the code-0 records parsed into the
-    // frames this test sent and parsed out of the frames it received, and the
-    // receiver's full-budget drops as the module's counter. None is the
-    // complement of another, so the final equality is a real check.
-
-    int attempted = 0;
-    int refused = 0;
-    int delivered_count = 0;
-    int sent_messages = 0;
-    int received_messages = 0;
-    int packets_sent = 0;
-    int packets_received = 0;
-
-    struct channels_unreliable_rig_t sender, receiver;
-    channels_unreliable_setup( &sender, 16 );
-    channels_unreliable_setup( &receiver, 16 );
-
-    struct channels_unreliable_wire_t wire = { 0 };
-    wire.wire = rocketnet_network_simulator_create( NULL, 8192, 0xC0FFEE + (uint64_t)( loss_percent * 10.0f ) );
-    check( wire.wire );
-    wire.time = 0.0;
-    // a real address: an unset (NONE) address never equals another, itself
-    // included (rocketnet_address_equal), so the simulator would match nothing
-    check( rocketnet_address_parse( &wire.address, "127.0.0.1:40000" ) );
-    rocketnet_network_simulator_config( wire.wire, 0.02, 0.02, loss_percent, 0.0f );
-
-    rn_trap_armed = 1;
-    rn_trap_phase = "unreliable-wire";
-    channels_random_t random;
-    random.state = 0x9E3779B97F4A7C15ULL ^ (uint64_t)( loss_percent * 10.0f );
-
-    // the zero-copy path writes straight into a frame: the message at the
-    // 16-aligned root, the form byte last. The receive buffer is a frame of
-    // its own, sized for the large RECORDS payloads this walk also sends.
-
-    alignas( 16 ) static uint8_t zc_frame[ROCKETNET_MAX_PAYLOAD_BYTES];
-    alignas( 16 ) static uint8_t rx_frame[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
-    struct rocketnet_message_limits_t limits = channels_limits( 32, rocketnet_message_enabled_codes( 1 ) );
-
-    uint8_t small[80], big[ROCKETNET_MAX_PAYLOAD_BYTES + 8];       // larger than the payload capacity, still inside the receive payload
-
-    for ( uint64_t tick = 1; tick <= 120; tick++ )
-    {
-        wire.time += 1.0 / 60.0;
-
-        // small messages to aggregate
-
-        for ( int i = 0; i < 4; i++ )
-        {
-            const int bytes = channels_random_range( &random, 1, 80 );
-            channels_unreliable_fill_pattern( small, bytes, (int) ( tick * 7 + i ) );
-            attempted++;
-            if ( rn_unreliable_send( &sender.unreliable, small, bytes, 0, 0 ) )
-                channels_unreliable_register_sent( small, bytes );
-            else
-                refused++;
-        }
-
-        // a larger-than-a-packet message now and then
-
-        if ( tick % 5 == 0 )
-        {
-            channels_unreliable_fill_pattern( big, sizeof(big), (int) tick );
-            attempted++;
-            if ( rn_unreliable_send( &sender.unreliable, big, sizeof(big), 0, 0 ) )
-                channels_unreliable_register_sent( big, sizeof(big) );
-            else
-                refused++;
-        }
-
-        // a zero-copy packet-sized message now and then
-
-        if ( tick % 11 == 0 )
-        {
-            const int request = 1000;
-            uint8_t * root = rn_unreliable_single_begin( zc_frame, ROCKETNET_MAX_PAYLOAD_BYTES, request );
-            check( root == zc_frame );
-            channels_unreliable_fill_pattern( root, request, (int) ( tick * 13 ) );
-            const int zc_length = rn_unreliable_single_finish( zc_frame, ROCKETNET_MAX_PAYLOAD_BYTES, request );
-            check( zc_length == request + 1 );
-            attempted++;
-            channels_unreliable_register_sent( root, request );
-            check( channels_unreliable_count_code0( zc_frame, zc_length ) == 1 );
-            sent_messages++;
-            packets_sent++;
-            rocketnet_network_simulator_send( wire.wire, &wire.address, &wire.address, zc_frame, zc_length, wire.time );
-        }
-
-        // write up to the configured packets per update, each into one frame
-
-        for ( int p = 0; p < 4; p++ )
-        {
-            const int plan = rn_unreliable_next_packet_bytes( &sender.unreliable );
-            if ( plan == 0 )
-                break;
-            alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
-            const int length = rn_unreliable_fill( &sender.unreliable, frame, plan );
-            if ( length == 0 )
-                break;
-            sent_messages += channels_unreliable_count_code0( frame, length );
-            packets_sent++;
-            rocketnet_network_simulator_send( wire.wire, &wire.address, &wire.address, frame, length, wire.time );
-        }
-
-        // drain what is due on the receiver
-
-        for ( int got = rocketnet_network_simulator_receive( wire.wire, &wire.address, wire.time, &wire.address, rx_frame );
-              got > 0;
-              got = rocketnet_network_simulator_receive( wire.wire, &wire.address, wire.time, &wire.address, rx_frame ) )
-        {
-            packets_received++;
-            received_messages += channels_unreliable_count_code0( rx_frame, got );
-            int out_count = 0;
-            const int violation = rn_unreliable_receive( &receiver.unreliable, rx_frame, got, &limits,
-                                                         receiver.deliveries, 64, &out_count );
-            check( violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
-            for ( int d = 0; d < out_count; d++ )
-            {
-                check( channels_unreliable_delivered( receiver.deliveries[d].data, receiver.deliveries[d].bytes ) == 1 );
-                delivered_count++;
-            }
-        }
-    }
-
-    // drain: write what is left queued and keep the wire moving until every
-    // packet is delivered or lost
-
-    for ( int pass = 0; pass < 600; pass++ )
-    {
-        wire.time += 1.0 / 60.0;
-        for ( int p = 0; p < 4; p++ )
-        {
-            const int plan = rn_unreliable_next_packet_bytes( &sender.unreliable );
-            if ( plan == 0 )
-                break;
-            alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
-            const int length = rn_unreliable_fill( &sender.unreliable, frame, plan );
-            if ( length == 0 )
-                break;
-            sent_messages += channels_unreliable_count_code0( frame, length );
-            packets_sent++;
-            rocketnet_network_simulator_send( wire.wire, &wire.address, &wire.address, frame, length, wire.time );
-        }
-        int got = rocketnet_network_simulator_receive( wire.wire, &wire.address, wire.time, &wire.address, rx_frame );
-        while ( got > 0 )
-        {
-            packets_received++;
-            received_messages += channels_unreliable_count_code0( rx_frame, got );
-            int out_count = 0;
-            const int violation = rn_unreliable_receive( &receiver.unreliable, rx_frame, got, &limits,
-                                                         receiver.deliveries, 64, &out_count );
-            check( violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
-            for ( int d = 0; d < out_count; d++ )
-            {
-                check( channels_unreliable_delivered( receiver.deliveries[d].data, receiver.deliveries[d].bytes ) == 1 );
-                delivered_count++;
-            }
-            got = rocketnet_network_simulator_receive( wire.wire, &wire.address, wire.time, &wire.address, rx_frame );
-        }
-    }
-
-    // R8: every send attempt is refused, still in the FIFO, delivered, dropped
-    // for a full delivery budget, or lost on the wire. Each term is measured
-    // on its own side and none is the complement of another: refused is
-    // cross-checked against the module's store-full counter; delivered is
-    // counted on the receive side and each delivery byte-verified against the
-    // sent registry; the FIFO remainder is the module's own count; wire loss
-    // is the gap between the code-0 records parsed into the frames this test
-    // sent and parsed out of the frames it received (never
-    // accepted - delivered); and the budget drops are the module's counter.
-
-    const uint64_t store_full = rn_counter( &sender.counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
-    check( store_full == (uint64_t) refused );
-
-    const uint64_t delivery_full = rn_counter( &receiver.counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL );
-
-    const int fifo_remaining = (int) sender.unreliable.count;
-    check( fifo_remaining == 0 );
-
-    const int wire_lost = sent_messages - received_messages;
-    check( wire_lost >= 0 );
-
-    // every code-0 record the receiver parsed was delivered or dropped for a
-    // full budget (the module counts exactly those two outcomes)
-    check( (uint64_t) received_messages == (uint64_t) delivered_count + delivery_full );
-
-    check( (uint64_t) attempted == (uint64_t) refused + (uint64_t) fifo_remaining
-                                    + (uint64_t) delivered_count + delivery_full + (uint64_t) wire_lost );
-
-    // the wire's own packet accounting, independent of the message registry
-    check( packets_received <= packets_sent );
-
-    if ( loss_percent == 0.0f )
-    {
-        check( refused == 0 );
-        check( delivered_count == attempted );
-        check( delivery_full == 0 );
-        check( wire_lost == 0 );
-        check( packets_received == packets_sent );
-        check( sender.unreliable.count == 0 );
-    }
-    else
-    {
-        check( packets_received < packets_sent );
-        check( wire_lost > 0 );
-    }
-
-    rn_trap_armed = 0;
-    rn_trap_phase = "idle";
-
-    rocketnet_network_simulator_destroy( wire.wire );
-    channels_unreliable_teardown( &sender );
-    channels_unreliable_teardown( &receiver );
-}
-
-static void test_channels_unreliable_over_the_lossy_simulator_entry()
-{
-    // 0, 10 and 50 percent loss with reordering; allocation is trapped inside
-    // each leg (R1, docs/CHANNELS.md 1)
-
-    test_channels_unreliable_over_the_lossy_simulator( 0.0f );
-    test_channels_unreliable_over_the_lossy_simulator( 10.0f );
-    test_channels_unreliable_over_the_lossy_simulator( 50.0f );
 }
 
 // -----------------------------------------
@@ -3661,7 +2936,7 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator()
 }
 
 // ----------------------------------------------------------------
-//      Layer 3: the sent-packet map, resend FIFO, RTT, RTO (6.4)
+//      Layer 3: the sent-packet map, resend FIFO, RTT, resend delay (6.4)
 // ----------------------------------------------------------------
 
 static void test_channels_window_ack_of_an_unknown_id_is_ignored()
@@ -3690,8 +2965,8 @@ static void test_channels_window_ack_of_an_unknown_id_is_ignored()
     check( rn_window_ack_entries_in_flight( &ack ) == 1 );
     check( ack.resend_count == 1 );
     check( ack.has_rtt == 0 );
-    check( ack.rto == 1.0 );
-    check( ack.backoff == 1 );
+    check( ack.resend_delay == 2.0 );
+    check( rn_window_ack_resend_delay( &ack ) == 2.0 );
     const uint32_t free_desc_before = region->descriptors_free;
 
     // Unknown packet_id (keep-alive or pure-unreliable ack, or 0): ignored completely.
@@ -3703,8 +2978,8 @@ static void test_channels_window_ack_of_an_unknown_id_is_ignored()
     check( rn_window_ack_entries_in_flight( &ack ) == 1 );
     check( ack.resend_count == 1 );
     check( ack.has_rtt == 0 );
-    check( ack.rto == 1.0 );
-    check( ack.backoff == 1 );
+    check( ack.resend_delay == 2.0 );
+    check( rn_window_ack_resend_delay( &ack ) == 2.0 );
     check( send.U == 0 && send.U_prime == 0 );
     check( region->descriptors_free == free_desc_before );
 
@@ -3717,9 +2992,9 @@ static void test_channels_window_ack_of_an_unknown_id_is_ignored()
 
     // A duplicate ack of packet 10 is now unknown and ignored without altering RTT.
     const double srtt_after = ack.srtt;
-    const double rto_after = ack.rto;
+    const double resend_delay_after = ack.resend_delay;
     check( rn_window_ack_on_ack( &ack, 10, 1.50 ) == 0 );
-    check( ack.srtt == srtt_after && ack.rto == rto_after );
+    check( ack.srtt == srtt_after && ack.resend_delay == resend_delay_after );
 
     rn_arena_destroy( arena );
 }
@@ -3821,7 +3096,8 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 200;
+    config.resend_delay_initial_ms = 200;
+    config.resend_delay_max_ms = 3000;                                   // so the resend delay formula shows unclamped
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3850,8 +3126,8 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
         check( rn_window_ack_on_ack( &ack, 1, 1.30 ) == 1 );
         check( ack.has_rtt == 1 );
         check( ack.srtt > 0.299999 && ack.srtt < 0.300001 );
-        check( ack.rttvar > 0.149999 && ack.rttvar < 0.150001 );
-        check( ack.rto > 0.899999 && ack.rto < 0.900001 );
+        check( ack.rttvar > 0.299999 && ack.rttvar < 0.300001 );
+        check( ack.resend_delay > 1.829999 && ack.resend_delay < 1.830001 );     // 2 x 0.30 + 4 x 0.30 + 30 ms
         check( send.U == 1 && ack.resend_count == 0 );
 
         // Subsequent ack of packet 2 at t = 1.35 does not double-ack n0.
@@ -3880,8 +3156,8 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
         check( rn_window_ack_on_ack( &ack, 11, 2.33 ) == 1 );
         check( ack.has_rtt == 1 );
         check( ack.srtt > 0.079999 && ack.srtt < 0.080001 );
-        check( ack.rttvar > 0.039999 && ack.rttvar < 0.040001 );
-        check( ack.rto > 0.239999 && ack.rto < 0.240001 );
+        check( ack.rttvar > 0.079999 && ack.rttvar < 0.080001 );
+        check( ack.resend_delay > 0.509999 && ack.resend_delay < 0.510001 );     // 2 x 0.08 + 4 x 0.08 + 30 ms
         check( send.U == 1 && ack.resend_count == 0 );
     }
 
@@ -3893,7 +3169,7 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.packets_in_flight = 16; // P = 16, 16P = 256
-    config.rto_initial_ms = 200;
+    config.resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3924,7 +3200,7 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     for ( uint64_t id = 1; id <= 4; id++ )
         check( rn_window_ack_on_ack( &ack, id, 1.05 ) == 0 );
 
-    // Yet all 20 numbers remain in the resend FIFO and resend on RTO at t = 1.25!
+    // Yet all 20 numbers remain in the resend FIFO and resend on resend delay at t = 1.25!
     uint64_t next_pkt = 100;
     uint64_t resent[32];
     const uint32_t count = rn_window_ack_resend( &ack, 1.25, &next_pkt, resent, 32 );
@@ -3947,11 +3223,14 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     rn_arena_destroy( arena );
 }
 
-static void test_channels_window_backoff_doubles_to_eight_and_resets_on_ack()
+static void test_channels_window_resend_delay_never_backs_off()
 {
+    // tla/RNResendTiming.tla: every resend waits the adaptive resend delay, which does
+    // not back off; an ack updates the samples and therefore the resend delay
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 250;
+    config.resend_delay_initial_ms = 250;
+    config.resend_delay_max_ms = 2000;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3964,41 +3243,30 @@ static void test_channels_window_backoff_doubles_to_eight_and_resets_on_ack()
     rn_window_ack_t ack;
     rn_window_ack_init( &ack, &send, region, &config );
 
+    const double t0 = 1000.0;
     uint64_t n0 = 0, p0 = 0;
     check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
-    rn_window_ack_commit_packet( &ack, 1, &n0, 1, 0.0 );
-    check( ack.rto == 0.25 && ack.backoff == 1 );
+    rn_window_ack_commit_packet( &ack, 1, &n0, 1, t0 );
+    check( ack.resend_delay == 0.25 && rn_window_ack_resend_delay( &ack ) == 0.25 );     // configured initial resend delay
 
     uint64_t next_pkt = 2;
     uint64_t out[4];
 
-    // Pass 1: due at 0.0 + 0.25 * 1 = 0.25 -> backoff becomes 2
-    check( rn_window_ack_resend( &ack, 0.249, &next_pkt, out, 4 ) == 0 );
-    check( ack.backoff == 1 );
-    check( rn_window_ack_resend( &ack, 0.25, &next_pkt, out, 4 ) == 1 );
-    check( ack.backoff == 2 );
+    // four passes, each due 250 ms after the last: the delay does not grow
+    double last = t0;
+    for ( int pass = 0; pass < 4; pass++ )
+    {
+        check( rn_window_ack_resend( &ack, last + 0.2499, &next_pkt, out, 4 ) == 0 );
+        check( rn_window_ack_resend( &ack, last + 0.2501, &next_pkt, out, 4 ) == 1 );
+        check( out[0] == n0 );
+        last += 0.2501;
+        check( rn_window_ack_resend_delay( &ack ) == 0.25 ); // no fixed resend interval cap
+    }
 
-    // Pass 2: due at 0.25 + 0.25 * 2 = 0.75 -> backoff becomes 4
-    check( rn_window_ack_resend( &ack, 0.749, &next_pkt, out, 4 ) == 0 );
-    check( ack.backoff == 2 );
-    check( rn_window_ack_resend( &ack, 0.75, &next_pkt, out, 4 ) == 1 );
-    check( ack.backoff == 4 );
-
-    // Pass 3: due at 0.75 + 0.25 * 4 = 1.75 -> backoff becomes 8
-    check( rn_window_ack_resend( &ack, 1.749, &next_pkt, out, 4 ) == 0 );
-    check( ack.backoff == 4 );
-    check( rn_window_ack_resend( &ack, 1.75, &next_pkt, out, 4 ) == 1 );
-    check( ack.backoff == 8 );
-
-    // Pass 4: due at 1.75 + 0.25 * 8 = 3.75 -> backoff stays capped at 8
-    check( rn_window_ack_resend( &ack, 3.749, &next_pkt, out, 4 ) == 0 );
-    check( ack.backoff == 8 );
-    check( rn_window_ack_resend( &ack, 3.75, &next_pkt, out, 4 ) == 1 );
-    check( ack.backoff == 8 );
-
-    // Valid ack resets backoff to 1.
-    check( rn_window_ack_on_ack( &ack, next_pkt - 1, 3.80 ) == 1 );
-    check( ack.backoff == 1 );
+    // an ack of the latest send takes a sample and the delay follows the resend delay
+    check( rn_window_ack_on_ack( &ack, next_pkt - 1, last + 0.04 ) == 1 );
+    check( ack.has_rtt == 1 );
+    check( rn_window_ack_resend_delay( &ack ) == ack.resend_delay );
 
     rn_arena_destroy( arena );
 }
@@ -4007,7 +3275,7 @@ static void test_channels_window_resend_walk_stops_at_the_first_not_due()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 200;
+    config.resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -4029,7 +3297,7 @@ static void test_channels_window_resend_walk_stops_at_the_first_not_due()
     }
     check( ack.resend_head == 0 && ack.resend_tail == 4 && ack.resend_count == 5 );
 
-    // At t = 1.26 (rto = 0.20, backoff = 1):
+    // At t = 1.26 (resend_delay = 0.20, backoff = 1):
     // n = 0 (due 1.20) and n = 1 (due 1.25) are due; n = 2 (due 1.40) is not due.
     uint64_t next_pkt = 10;
     uint64_t resent[8];
@@ -4052,7 +3320,7 @@ static void test_channels_window_failed_send_marks_due_now()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 200;
+    config.resend_delay_initial_ms = 200;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -4090,12 +3358,12 @@ static void test_channels_window_failed_send_marks_due_now()
     check( region->resend_fifo[2].next == 0 );
     check( ack.resend_tail == 0 );
 
-    // At t = 1.02 (no RTO wait), resend immediately emits n = 1 and n = 2, and stops at n = 0.
+    // At t = 1.02 (no resend delay wait), resend immediately emits n = 1 and n = 2, and stops at n = 0.
     uint64_t next_pkt = 2;
     uint64_t out[4];
     check( rn_window_ack_resend( &ack, 1.02, &next_pkt, out, 4 ) == 2 );
     check( out[0] == 1 && out[1] == 2 );
-    check( ack.backoff == 1 );
+    check( rn_window_ack_resend_delay( &ack ) == 0.2 );        // a failed send leaves the configured initial resend delay alone
     check( ack.resend_head == 0 && ack.resend_tail == 2 );
     check( rn_window_ack_entries_in_flight( &ack ) == 3 );
 
@@ -4106,7 +3374,7 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 250;
+    config.resend_delay_initial_ms = 250;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -4124,7 +3392,7 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
     check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
     rn_window_ack_commit_packet( &ack, 1, &n0, 1, 5.00 );
 
-    // Resend across several RTO passes so last_send advances while first_send stays 5.00.
+    // Resend across several resend delay passes so last_send advances while first_send stays 5.00.
     uint64_t next_pkt = 2;
     uint64_t out[4];
     check( rn_window_ack_resend( &ack, 5.25, &next_pkt, out, 4 ) == 1 );
@@ -4138,11 +3406,11 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
 
     // Just before 15.00: still alive.
     check( rn_window_ack_check_timeout( &ack, 14.999 ) == 0 );
-    check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // At t = 15.00 (now - first_send == 10.0 == reliable_timeout): enters error state and stops resending.
     check( rn_window_ack_resend( &ack, 15.00, &next_pkt, out, 4 ) == 0 );
-    check( ack.error == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+    check( ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
     check( rn_window_ack_check_timeout( &ack, 15.00 ) == 1 );
 
     rn_arena_destroy( arena );
@@ -4252,9 +3520,9 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     config.send_buffer_bytes = 65536;
     config.send_queue_messages = 64;
     config.packets_in_flight = (int) P;
-    config.rto_min_ms = 20;
-    config.rto_initial_ms = 50;
-    config.rto_max_ms = 400;
+    config.resend_delay_min_ms = 20;
+    config.resend_delay_initial_ms = 50;
+    config.resend_delay_max_ms = 400;
     config.reliable_timeout_ms = 60000;
 
     rocketnet_counters_t counters;
@@ -4325,10 +3593,15 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
             rn_window_ack_on_acks( &ack, ack_ids, ack_count, now );
         }
 
-        // 2. Resend due numbers from the resend FIFO on the RTO.
+        // 2. Resend due numbers from the resend FIFO, one packet per tick: the
+        //    per-update packet limit the writers keep (packets_per_update),
+        //    so the packets written in one RTT stay under P and acks land on
+        //    live sent-map entries (docs/CHANNELS.md 14, "Sizing P"). With no
+        //    back-off an unbounded resend walk at P = 16 evicts every entry
+        //    before its ack returns, and the soak ends in RELIABLE_TIMEOUT.
         uint64_t resent_numbers[32];
-        const uint32_t resent_count = rn_window_ack_resend( &ack, now, &next_packet_id, resent_numbers, 32 );
-        check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+        const uint32_t resent_count = rn_window_ack_resend( &ack, now, &next_packet_id, resent_numbers, 1 );
+        check( ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
         for ( uint32_t i = 0; i < resent_count; i++ )
         {
             // rn_window_ack_resend assigned packet_ids [next_packet_id - resent_count + i]
@@ -4545,7 +3818,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     check( accepted_total == (int) send.next );
     check( receive.R == send.next && send.U == send.next && send.U_prime == send.next );
     check( ack.resend_count == 0 && ack.resend_head == RN_RESEND_NONE && ack.resend_tail == RN_RESEND_NONE );
-    check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
     check( receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
     check( source->descriptors_free == source->queue );
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
@@ -4564,11 +3837,201 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     rn_arena_destroy( arena );
 }
 
+// The same lossy soak on the walk the product runs: two rn_ordered_t over the
+// simulated wire, messages through rn_channels_start and rn_channels_finish,
+// packets from rn_ordered_write (its resend FIFO walk, sdk/rocketnet_channel.cpp),
+// transport ack ids fed to rn_ordered_acks. rn_window_ack_resend is not called
+// here: this leg goes red when the product's walk stops resending a sent number.
+static void test_channels_window_lossy_soak_product_leg( float loss_percent )
+{
+    const int total_messages = 140;
+    const int num_channels = 4;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.num_channels = num_channels;
+    config.window_messages = 64;
+    config.receive_ring_bytes = (int) ( 128 * F );
+    config.max_message_bytes = (int) ( 3 * F );
+    config.send_buffer_bytes = 262144;
+    config.send_queue_messages = 256;
+    config.packets_in_flight = 16;
+    config.resend_delay_min_ms = 20;
+    config.resend_delay_initial_ms = 50;
+    config.resend_delay_max_ms = 400;
+    config.reliable_timeout_ms = 60000;
+
+    rocketnet_counters_t counters[2];
+    memset( counters, 0, sizeof(counters) );
+    rn_arena_t * arenas[2];
+    static rn_ordered_t nodes[2];
+    for ( int i = 0; i < 2; i++ )
+    {
+        arenas[i] = rn_arena_create( NULL, &config, 1, &counters[i] );
+        check( arenas[i] );
+        rn_region_t * region = rn_arena_region( arenas[i], 0 );
+        rn_region_carve( region );
+        memset( &nodes[i], 0, sizeof(nodes[i]) );
+        check( rn_ordered_init( &nodes[i], region, &config, NULL, 4, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+    }
+    rn_ordered_t * sender = &nodes[0];
+    rn_ordered_t * receiver = &nodes[1];
+
+    rocketnet_network_simulator_t * wire = rocketnet_network_simulator_create(
+        NULL, 8192, 0x5EED1234ULL + (uint64_t) loss_percent );
+    check( wire );
+    rocketnet_network_simulator_config( wire, 0.02, 0.015, loss_percent, 25.0f );
+
+    rocketnet_address_t sender_addr, receiver_addr;
+    check( rocketnet_address_parse( &sender_addr, "127.0.0.1:41000" ) );
+    check( rocketnet_address_parse( &receiver_addr, "127.0.0.1:41001" ) );
+
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+    for ( int i = 0; i < ROCKETNET_PACKET_BUILDER_MAX_PACKETS; i++ )
+        pointers[i] = frames[i];
+
+    uint8_t wire_bytes[8 + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint64_t next_packet_id = 1;
+    int packets_written = 0;
+    int next_message = 0;
+    int delivered_total = 0;
+    uint64_t last_delivered[ROCKETNET_MAX_CHANNELS];
+    memset( last_delivered, 0, sizeof(last_delivered) );
+    int drained = 0;
+    double now = 1000.0;
+
+    for ( int tick = 0; tick < 20000 && drained < 16; tick++ )
+    {
+        now += 0.005;
+
+        // 1. the sender takes the transport's ack ids
+        rocketnet_address_t from_addr;
+        for ( int bytes = rocketnet_network_simulator_receive( wire, &sender_addr, now, &from_addr, wire_bytes );
+              bytes > 0;
+              bytes = rocketnet_network_simulator_receive( wire, &sender_addr, now, &from_addr, wire_bytes ) )
+        {
+            check( bytes >= 4 && ( ( bytes - 4 ) % 8 ) == 0 );
+            const uint8_t * q = wire_bytes;
+            const uint32_t ack_count = rocketnet_read_uint32( &q );
+            check( bytes == (int) ( 4 + 8 * ack_count ) && ack_count <= 64 );
+            uint64_t ack_ids[64];
+            for ( uint32_t i = 0; i < ack_count; i++ )
+                ack_ids[i] = rocketnet_read_uint64( &q );
+            rn_ordered_acks( sender, ack_ids, ack_count, now );
+        }
+
+        // 2. up to 2 new messages per tick, small and multi-chunk, over the channels
+        for ( int step = 0; step < 2 && next_message < total_messages; step++ )
+        {
+            const bool is_block = ( next_message % 6 == 0 );
+            const uint32_t msg_bytes = is_block ? 2 * F + 32 : ( ( next_message % 3 == 0 ) ? 256 : 48 );
+            const uint32_t channel = (uint32_t) ( next_message % num_channels );
+            uint8_t * p = rn_channels_start( &sender->channels, channel, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, msg_bytes );
+            if ( !p )
+                break;
+            const uint64_t id = (uint64_t) next_message + 1;
+            memcpy( p, &id, 8 );
+            for ( uint32_t b = 8; b < msg_bytes; b++ )
+                p[b] = (uint8_t) ( id * 37u + b * 13u + 1u );
+            check( rn_channels_finish( &sender->channels, msg_bytes ) );
+            next_message++;
+        }
+
+        // 3. the product's write: its resend FIFO walk and its new numbers, one
+        //    packet per tick, so the packets written in one RTT stay under P and
+        //    acks land on live sent-map entries (docs/CHANNELS.md 14, "Sizing
+        //    P"). With no back-off (6.4, RNResendTiming) a write of every due
+        //    number at P = 16 evicts each entry before its ack returns, and the
+        //    soak ends in RELIABLE_TIMEOUT. Every 23rd packet is a failed send
+        //    (resent first next update, 6.4).
+        const int written = rn_ordered_write( sender, now, pointers, 1 );
+        check( sender->ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+        for ( int p = 0; p < written; p++ )
+        {
+            if ( packets_written++ % 23 == 11 )
+            {
+                rn_ordered_packet_failed( sender, p, now );
+                continue;
+            }
+            const uint64_t packet_id = next_packet_id++;
+            const int payload_bytes = (int) sender->builder.packet[p].payload_bytes;
+            rn_ordered_commit( sender, p, packet_id, now );
+            uint8_t * w = wire_bytes;
+            rocketnet_write_uint64( &w, packet_id );
+            memcpy( w, frames[p], (size_t) payload_bytes );
+            rocketnet_network_simulator_send( wire, &sender_addr, &receiver_addr, wire_bytes, 8 + payload_bytes, now );
+        }
+
+        // 4. the receiver opens each packet, drains and checks its deliveries,
+        //    and sends back the transport's ack ids
+        uint64_t ack_out[64];
+        uint32_t ack_out_count = 0;
+        for ( int bytes = rocketnet_network_simulator_receive( wire, &receiver_addr, now, &from_addr, wire_bytes );
+              bytes > 0;
+              bytes = rocketnet_network_simulator_receive( wire, &receiver_addr, now, &from_addr, wire_bytes ) )
+        {
+            check( bytes > 8 );
+            const uint8_t * q = wire_bytes;
+            const uint64_t packet_id = rocketnet_read_uint64( &q );
+            if ( ack_out_count < 64 )
+                ack_out[ack_out_count++] = packet_id;
+            check( rn_ordered_receive( receiver, wire_bytes + 8, bytes - 8 ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+            const uint32_t n = rn_ordered_deliveries( receiver );
+            for ( uint32_t i = 0; i < n; i++ )
+            {
+                const rn_delivery_t & delivery = receiver->channels.region->deliveries[i];
+                check( delivery.bytes >= 48 );
+                uint64_t id;
+                memcpy( &id, delivery.data, 8 );
+                check( id >= 1 && id <= (uint64_t) total_messages && delivery.channel == ( id - 1 ) % (uint64_t) num_channels );
+                for ( int b = 8; b < delivery.bytes; b++ )
+                    check( delivery.data[b] == (uint8_t) ( id * 37u + (uint32_t) b * 13u + 1u ) );
+                check( id > last_delivered[delivery.channel] );     // ordered, once
+                last_delivered[delivery.channel] = id;
+                delivered_total++;
+            }
+            rn_ordered_end_update( receiver );
+        }
+        if ( ack_out_count > 0 )
+        {
+            uint8_t ack_frame[4 + 64 * 8];
+            uint8_t * w = ack_frame;
+            rocketnet_write_uint32( &w, ack_out_count );
+            for ( uint32_t i = 0; i < ack_out_count; i++ )
+                rocketnet_write_uint64( &w, ack_out[i] );
+            rocketnet_network_simulator_send( wire, &receiver_addr, &sender_addr, ack_frame, (int) ( 4 + 8 * ack_out_count ), now );
+        }
+
+        if ( next_message == total_messages && delivered_total == total_messages && sender->ack.resend_count == 0 )
+            drained++;
+        else
+            drained = 0;
+    }
+
+    check( next_message == total_messages && drained == 16 );
+    check( delivered_total == total_messages );
+    check( sender->send.U == sender->send.next && sender->ack.resend_head == RN_RESEND_NONE );
+    check( rn_ordered_decide( sender ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rn_ordered_decide( receiver ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( sender->channels.region->descriptors_free == sender->channels.region->queue );
+    if ( loss_percent >= 50.0f )
+        check( rn_counter( &counters[0], ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );
+
+    rocketnet_network_simulator_destroy( wire );
+    rn_arena_destroy( arenas[0] );
+    rn_arena_destroy( arenas[1] );
+}
+
 static void test_channels_window_lossy_soak()
 {
     test_channels_window_lossy_soak_leg( 0.0f );
     test_channels_window_lossy_soak_leg( 10.0f );
     test_channels_window_lossy_soak_leg( 50.0f );
+    test_channels_window_lossy_soak_product_leg( 0.0f );
+    test_channels_window_lossy_soak_product_leg( 10.0f );
+    test_channels_window_lossy_soak_product_leg( 50.0f );
 }
 
 // -----------------------------------------
@@ -4868,17 +4331,7 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_allocator_sizing", "ChannelsAllocatorSizing", test_channels_allocator_sizing },
     { "test_channels_allocator_trap_witness", "ChannelsAllocatorTrapWitness", test_channels_allocator_trap_witness },
     { "test_channels_allocator_no_live_allocation", "ChannelsAllocatorNoLiveAllocation", test_channels_allocator_no_live_allocation },
-    { "test_channels_unreliable_small_messages_share_one_frame", "ChannelsUnreliableSmallMessagesShareOneFrame", test_channels_unreliable_small_messages_share_one_frame },
-    { "test_channels_unreliable_record_never_split_across_packets", "ChannelsUnreliableRecordNeverSplitAcrossPackets", test_channels_unreliable_record_never_split_across_packets },
-    { "test_channels_unreliable_large_message_travels_alone", "ChannelsUnreliableLargeMessageTravelsAlone", test_channels_unreliable_large_message_travels_alone },
-    { "test_channels_unreliable_single_zero_copy_at_payload_root", "ChannelsUnreliableSingleZeroCopyAtPayloadRoot", test_channels_unreliable_single_zero_copy_at_payload_root },
-    { "test_channels_unreliable_store_full_drops_and_counts", "ChannelsUnreliableStoreFullDropsAndCounts", test_channels_unreliable_store_full_drops_and_counts },
-    { "test_channels_unreliable_delivery_budget_drops_and_counts", "ChannelsUnreliableDeliveryBudgetDropsAndCounts", test_channels_unreliable_delivery_budget_drops_and_counts },
-    { "test_channels_unreliable_failed_send_drops_and_counts", "ChannelsUnreliableFailedSendDropsAndCounts", test_channels_unreliable_failed_send_drops_and_counts },
-    { "test_channels_unreliable_chunk_freed_when_written", "ChannelsUnreliableChunkFreedWhenWritten", test_channels_unreliable_chunk_freed_when_written },
-    { "test_channels_unreliable_block_not_corrupted_across_fragmented_store", "ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore", test_channels_unreliable_block_not_corrupted_across_fragmented_store },
-    { "test_channels_unreliable_message_past_u16_length_refused", "ChannelsUnreliableMessagePastU16LengthRefused", test_channels_unreliable_message_past_u16_length_refused },
-    { "test_channels_unreliable_over_the_lossy_simulator", "ChannelsUnreliableOverTheLossySimulator", test_channels_unreliable_over_the_lossy_simulator_entry },
+    { "test_channels_single_form_parses_as_one_code0_record", "ChannelsSingleFormParsesAsOneCode0Record", test_channels_single_form_parses_as_one_code0_record },
     { "test_channels_window_send_numbers_late_never_at_send", "ChannelsWindowSendNumbersLateNeverAtSend", test_channels_window_send_numbers_late_never_at_send },
     { "test_channels_window_send_count_bound_stalls_at_u_prime_plus_w", "ChannelsWindowSendCountBoundStallsAtUPrimePlusW", test_channels_window_send_count_bound_stalls_at_u_prime_plus_w },
     { "test_channels_window_send_ring_pads_at_the_boundary", "ChannelsWindowSendRingPadsAtTheBoundary", test_channels_window_send_ring_pads_at_the_boundary },
@@ -4898,7 +4351,7 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_window_ack_frees_the_chunk_and_advances_u", "ChannelsWindowAckFreesTheChunkAndAdvancesU", test_channels_window_ack_frees_the_chunk_and_advances_u },
     { "test_channels_window_rtt_sample_is_unambiguous_across_resends", "ChannelsWindowRttSampleIsUnambiguousAcrossResends", test_channels_window_rtt_sample_is_unambiguous_across_resends },
     { "test_channels_window_eviction_keeps_numbers_resendable", "ChannelsWindowEvictionKeepsNumbersResendable", test_channels_window_eviction_keeps_numbers_resendable },
-    { "test_channels_window_backoff_doubles_to_eight_and_resets_on_ack", "ChannelsWindowBackoffDoublesToEightAndResetsOnAck", test_channels_window_backoff_doubles_to_eight_and_resets_on_ack },
+    { "test_channels_window_resend_delay_never_backs_off", "ChannelsWindowResendDelayNeverBacksOff", test_channels_window_resend_delay_never_backs_off },
     { "test_channels_window_resend_walk_stops_at_the_first_not_due", "ChannelsWindowResendWalkStopsAtTheFirstNotDue", test_channels_window_resend_walk_stops_at_the_first_not_due },
     { "test_channels_window_failed_send_marks_due_now", "ChannelsWindowFailedSendMarksDueNow", test_channels_window_failed_send_marks_due_now },
     { "test_channels_window_reliable_timeout_enters_the_error_state", "ChannelsWindowReliableTimeoutEntersTheErrorState", test_channels_window_reliable_timeout_enters_the_error_state },
@@ -4972,12 +4425,12 @@ void rocketnet_channels_prepare( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_allocator( rn_test_malloc_hook, rn_test_free_hook );
+    rocketnet_set_allocator( rn_test_malloc_hook, rn_test_free_hook );
 }
 
 void rocketnet_channels_prepare_log( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
         return;
-    rocketnet_log_function( rn_test_log_function );
+    rocketnet_set_log_callback( rn_test_log_function, NULL );
 }

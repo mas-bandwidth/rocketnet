@@ -11,27 +11,27 @@
 //
 // The four witnesses:
 //   F4  EphemeralErasedOutsideHandshake (ClientConnection): an attempt that
-//       fails from a waiting state leaves the client's ephemeral secret key
-//       and token scratch zeroed (S:1089-1092). Reversed: the failure exits
-//       in check_deadlines and process_denied never sodium_memzero them.
-//   F8  TerminalAbsorbing (ClientConnection): only connect leaves a terminal
-//       state (-7..-1); disconnect() from one leaves it alone (S:2042-2047).
-//       Reversed: disconnect rewrites every non-zero state to 0.
-//   OneConnectionPerToken with History "none" (ServerConnection, F9): the
-//       admitted-token set alone carries "a token admits one connection".
-//       Reversed: rocketnet_admitted_token_set_add returns success for a
-//       token already present, so the second response is seated.
-//       RefuseAdmittedAtResponse is the model's fix.
+//       fails from a waiting state leaves the client's ephemeral secret and
+//       the token keys zero. set_state of a state <= DISCONNECTED resets
+//       them. The four failure modes are denial and the three handshake
+//       timeouts.
+//   F8  TerminalAbsorbing (ClientConnection): a terminal state leaves only
+//       by connect (to 1) or by disconnect (to 0). disconnect() from a
+//       terminal state returns the client to DISCONNECTED.
+//   One client id, one live connection (ServerConnection F9, History
+//       "none"): two handshakes, each with its own token for one client id;
+//       the client-id check at the response refuses the second while the
+//       first lives, and seats it once the first closes. The same-token case
+//       is server_refuses_a_token_connected_now (test_unit_token_churn.cpp).
 //   RepeatKeepAlive = FALSE and KeepAliveClock = "anysend"
 //       (ClientConnection, ServerConnection): the establishing keep-alive is
 //       repeated on its own clock, and ordinary traffic does not suppress it.
 //       These two are the reversed witnesses; the code's behaviour is
 //       RepeatKeepAlive = TRUE, KeepAliveClock = "keepalive".
 //
-// F4, F8 and OneConnectionPerToken are still open on main, so each is
-// registered with the expected-fail marker naming its fix card and fails at
-// BASE. RepeatKeepAlive and KeepAliveClock assert the code's own behaviour
-// and pass today.
+// F4 and F8 assert the code's behaviour and are ordinary cases.
+// RepeatKeepAlive and KeepAliveClock assert the code's own behaviour and
+// pass today.
 
 #include "test_unit_registry.h"
 
@@ -72,7 +72,7 @@ static void rocketnet_handshake_fill_vector_fields( struct rocketnet_signed_conn
                                                     struct rocketnet_connect_token_private_t * private_fields )
 {
     memset( signed_fields, 0, sizeof(*signed_fields) );
-    signed_fields->version = ROCKETNET_VERSION;
+    signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
     signed_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -123,12 +123,11 @@ static void rocketnet_handshake_server_setup( struct rocketnet_handshake_server_
     server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
-    server->admitted_token_set = rocketnet_admitted_token_set_create( NULL, 16 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
     server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &test->counters;
-    rocketnet_unit_check( server->encryption_map && server->used_token_history && server->admitted_token_set &&
+    rocketnet_unit_check( server->encryption_map && server->used_token_history &&
                           server->client_slots && server->acks && server->reassembly );
     rocketnet_reassembly_set_begin_update( server->reassembly );
 
@@ -145,7 +144,6 @@ static void rocketnet_handshake_server_teardown( struct rocketnet_handshake_serv
     rocketnet_counters_assert_conserved( &test->counters );
     rocketnet_encryption_map_destroy( test->server.encryption_map );
     rocketnet_used_token_history_destroy( test->server.used_token_history );
-    rocketnet_admitted_token_set_destroy( test->server.admitted_token_set );
     rocketnet_client_slots_destroy( test->server.client_slots );
     rocketnet_server_acks_destroy( test->server.acks );
     rocketnet_reassembly_set_destroy( test->server.reassembly );
@@ -174,6 +172,30 @@ static void rocketnet_handshake_build_request( uint8_t * request, uint64_t clien
     struct rocketnet_connect_token_private_t private_fields;
     rocketnet_handshake_fill_vector_fields( &signed_fields, &private_fields );
     private_fields.client_id = client_id;
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_unit_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_connection_request_packet( request, tag, NULL, salt,
+                                               rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+}
+
+// builds the same request around a freshly minted token with a chosen create
+// timestamp, for the create-skew rung
+
+static void rocketnet_handshake_build_request_with_create( uint8_t * request, uint64_t client_id,
+                                                           const uint8_t * salt, uint64_t create )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_handshake_fill_vector_fields( &signed_fields, &private_fields );
+    private_fields.client_id = client_id;
+    signed_fields.create_timestamp = create;
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_unit_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
@@ -478,22 +500,20 @@ static int rocketnet_handshake_ephemeral_and_token_scratch_zero( const struct ro
     return 1;
 }
 
-static int rocketnet_handshake_disconnect_preserves( struct rocketnet_client_protocol_t * client )
+static int rocketnet_handshake_disconnect_returns_disconnected( struct rocketnet_client_protocol_t * client )
 {
     uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
     int burst_bytes = 0;
-    int before = client->state;
     rocketnet_client_protocol_disconnect( client, burst, &burst_count, &burst_bytes );
-    return client->state == before;
+    return client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
 }
 
 // ---------------------------------------------------------------------------
-// F4, EphemeralErasedOutsideHandshake (ClientConnection.tla). still open on
-// main: the failure exits leave the ephemeral secret and the token scratch in
-// memory. each of the four failure modes -- denial, request timeout, challenge
-// timeout and response timeout -- is a Tick (TimeoutPairing) or a
-// ClientRecvDenied that sets the state and nothing else.
+// F4, EphemeralErasedOutsideHandshake (ClientConnection.tla). a denial or a
+// handshake timeout is set_state of a state <= DISCONNECTED, which zeroes
+// the ephemeral secret and the token keys. the four failure modes are
+// denial, request timeout, challenge timeout and response timeout.
 // ---------------------------------------------------------------------------
 
 static void TestClientEphemeralErasedOutsideHandshake()
@@ -520,10 +540,9 @@ static void TestClientEphemeralErasedOutsideHandshake()
 }
 
 // ---------------------------------------------------------------------------
-// F8, TerminalAbsorbing (ClientConnection.tla). still open on main:
-// disconnect() rewrites a terminal state (-7..-1) to 0 (S:2042-2047, the only
-// way out of a terminal state is a fresh connect). the witness drives each
-// terminal state and asserts disconnect leaves it alone.
+// F8, TerminalAbsorbing (ClientConnection.tla). a terminal state leaves
+// only by connect or by disconnect. disconnect() from each terminal state
+// returns DISCONNECTED.
 // ---------------------------------------------------------------------------
 
 static void TestDisconnectAbsorbsTerminalState()
@@ -538,28 +557,29 @@ static void TestDisconnectAbsorbsTerminalState()
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED,                 // -1
     };
 
-    int absorbing = 0;
+    int returned = 0;
     for ( int i = 0; i < 7; i++ )
     {
         struct rocketnet_client_protocol_t client;
         struct rocketnet_counters_t counters;
         rocketnet_handshake_prepare_terminal( &client, &counters, terminal_states[i] );
-        if ( rocketnet_handshake_disconnect_preserves( &client ) )
-            absorbing++;
+        if ( rocketnet_handshake_disconnect_returns_disconnected( &client ) )
+            returned++;
         rocketnet_counters_assert_conserved( &counters );
     }
 
-    rocketnet_unit_check( absorbing == 7 );
+    rocketnet_unit_check( returned == 7 );
 }
 
 // ---------------------------------------------------------------------------
-// OneConnectionPerToken with History "none" (ServerConnection.tla, item 8,
-// F9). still open on main: two clients at two addresses present one token;
-// the used-token history is flushed between their requests, so the admitted
-// set alone must refuse the second admission. the model's fix is
-// RefuseAdmittedAtResponse, a contains check at the response before the slot
-// check; at BASE rocketnet_admitted_token_set_add returns success for a token
-// already present (sdk/rocketnet_token_tables.cpp:277-278).
+// OneTokenOneLiveConnection with History "none" (RNSecurityTables.tla;
+// ServerConnection.tla, item 8, F9): two clients at two addresses present
+// one client id (each handshake here mints its own token for that id); the
+// used-token history is flushed between their requests, so the client-id
+// check at the response alone refuses the second admission while the first
+// connection lives. once it closes, the second may connect: a slot is freed
+// when its connection closes, and the accepted residual risk is reuse inside
+// the short expiry (docs/SESSION.md 1.6).
 // ---------------------------------------------------------------------------
 
 static void TestOneConnectionPerTokenAfterHistoryFlush()
@@ -588,10 +608,10 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
     }
 
     // the second client's request, from another address, passes the history
-    // and the admitted check (nobody has connected yet) and gets a mapping
+    // (nobody has connected yet) and gets a mapping
     rocketnet_handshake_to_challenge( &test, &test.second_address, 0x5A0CULL, &keys_b );
 
-    // the first client's response is seated; its token enters the admitted set
+    // the first client's response is seated
     {
         uint8_t response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         rocketnet_handshake_client_build_response( response, &keys_a );
@@ -605,8 +625,25 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
         rocketnet_unit_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
     }
 
-    // the first connection is disconnected; the slot and mapping go, and the
-    // admitted set keeps the token, as it must
+    // the second client's response arrives while the first connection lives:
+    // its client id is connected now, so the client-id check refuses it
+    {
+        uint8_t response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+        rocketnet_handshake_client_build_response( response, &keys_b );
+        uint8_t out[ROCKETNET_RECEIVE_CEILING];
+        int out_bytes = 0;
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+        int payload_client_index = -1;
+        const uint64_t refused_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED];
+        int result = rocketnet_handshake_process_at( &test, &test.second_address, response, sizeof(response),
+                                                     out, &out_bytes, payload, &payload_bytes, &payload_client_index );
+        rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] == refused_before + 1 );
+        rocketnet_unit_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+    }
+
+    // the first connection is disconnected; the slot and mapping go
     {
         uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
         int burst_count = 0;
@@ -616,8 +653,8 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
     }
 
     // the second client's retransmitted response arrives within its mapping's
-    // handshake deadline. the token is already admitted, so the rule refuses
-    // it; at BASE the idempotent add seats it.
+    // handshake deadline. no connection holds the client id now, so it is
+    // seated: a slot is freed when its connection closes
     {
         uint8_t response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         rocketnet_handshake_client_build_response( response, &keys_b );
@@ -628,8 +665,8 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
         int payload_client_index = -1;
         int result = rocketnet_handshake_process_at( &test, &test.second_address, response, sizeof(response),
                                                      out, &out_bytes, payload, &payload_bytes, &payload_client_index );
-        rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
-        rocketnet_unit_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+        rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+        rocketnet_unit_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
     }
 
     rocketnet_handshake_server_teardown( &test );
@@ -723,8 +760,92 @@ static void TestKeepAliveClockCountsOnlyKeepAlives()
     rocketnet_handshake_server_teardown( &test );
 }
 
+// ---------------------------------------------------------------------------
+// Create-skew refusal: a connect token created more than five seconds in the
+// future is refused as CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, and only
+// while max_token_lifetime_seconds > 0
+// (sdk/rocketnet_server_protocol.cpp,
+// rocketnet_server_protocol_process_connection_request)
+// ---------------------------------------------------------------------------
+
+static void token_created_past_skew_is_refused()
+{
+    struct rocketnet_handshake_server_t test;
+    rocketnet_handshake_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 6 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE];
+
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                        response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE] == before + 1 );
+    rocketnet_unit_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+
+    rocketnet_handshake_server_teardown( &test );
+}
+
+static void token_created_within_skew_passes_the_rung()
+{
+    struct rocketnet_handshake_server_t test;
+    rocketnet_handshake_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 5 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
+
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                        response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before );
+
+    rocketnet_handshake_server_teardown( &test );
+}
+
+static void token_create_skew_unchecked_without_lifetime_cap()
+{
+    struct rocketnet_handshake_server_t test;
+    rocketnet_handshake_server_setup( &test );
+    test.server.max_token_lifetime_seconds = 0;
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 6 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
+
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                        response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before );
+
+    rocketnet_handshake_server_teardown( &test );
+}
+
 REGISTER_UNIT_TEST( TestClientEphemeralErasedOutsideHandshake );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestDisconnectAbsorbsTerminalState, "rnfix-client-terminal-state-absorbing" );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestOneConnectionPerTokenAfterHistoryFlush, "rnfix-refuse-admitted-token-at-response" );
+REGISTER_UNIT_TEST( token_created_past_skew_is_refused );
+REGISTER_UNIT_TEST( token_created_within_skew_passes_the_rung );
+REGISTER_UNIT_TEST( token_create_skew_unchecked_without_lifetime_cap );
+REGISTER_UNIT_TEST( TestDisconnectAbsorbsTerminalState );
+REGISTER_UNIT_TEST( TestOneConnectionPerTokenAfterHistoryFlush );
 REGISTER_UNIT_TEST( TestServerRepeatsKeepAliveWhileIdle );
 REGISTER_UNIT_TEST( TestKeepAliveClockCountsOnlyKeepAlives );

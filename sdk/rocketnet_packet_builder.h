@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_message.h"
@@ -34,7 +34,7 @@
 // reliable record must outlive the frame for resends and the transport encrypts
 // the frame in place.
 
-#define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets one builder call tracks, config max_packets_per_update at most this
+#define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets ONE builder call tracks; the endpoint asks for one packet per call and counts the update's packets against the config's packets_per_update (1 .. 1024), so this is not the per-update limit
 #define ROCKETNET_PACKET_BUILDER_MAX_NUMBERS            16      // the reliable numbers one packet carries (layer 3's reference ring takes 16 per packet)
 #define ROCKETNET_PACKET_BUILDER_MAX_RECORDS            16      // the records one packet carries: a packet's records are tracked to commit or to give back
 
@@ -63,7 +63,8 @@ struct rn_packet_item_t
     uint8_t priority;               // ROCKETNET_PRIORITY_*: 0 IMMEDIATE to 3 LOW; boosts the item's whole channel (9.2)
     uint8_t block;                  // nonzero: one fragment of a block (CHANNELS.md 8)
     uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
-    uint8_t resend;                 // nonzero: an RTO resend, counted and backed off by the caller
+    uint8_t resend;                 // nonzero: a resend, counted and backed off by the caller
+    uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3)
 };
 
 struct rn_packet_builder_t
@@ -72,7 +73,7 @@ struct rn_packet_builder_t
     rn_window_ack_t * ack;                      // layer 3, or NULL when nothing here is reliable
     rocketnet_send_budget_t * budget;           // R6's budget, or NULL when the caller budgets above
 
-    int max_packets_per_update;                 // 1 to ROCKETNET_PACKET_BUILDER_MAX_PACKETS
+    int packets_per_update;                 // 1 to ROCKETNET_PACKET_BUILDER_MAX_PACKETS
     int payload_capacity;                       // the bytes a frame's payload area holds
 
     uint32_t num_channels;                      // the round robin's modulus (17.3 item 4)
@@ -93,17 +94,17 @@ struct rn_packet_builder_t
     } packet[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
 };
 
-// Binds a builder to one connection. Allocates nothing. max_packets_per_update
+// Binds a builder to one connection. Allocates nothing. packets_per_update
 // is clamped to ROCKETNET_PACKET_BUILDER_MAX_PACKETS; payload_capacity outside
 // 1..ROCKETNET_MESSAGE_SINGLE_BYTES, or a NULL region, is refused and the
 // struct is left zeroed, so it writes no packet.
 
-bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int max_packets_per_update, int payload_capacity );
+bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int packets_per_update, int payload_capacity );
 
 // RNChannel!WritePacket with RNSendBudget!Send, !Wait and !Drop, taking items
 // in RNScheduler!Write's order.
 //
-// Writes at most max_packets_per_update packets into the caller's payload
+// Writes at most packets_per_update packets into the caller's payload
 // areas (each payload_capacity bytes; the caller owns the frames and passes
 // frame + payload_index). Items are taken in three nested orders
 // (tla/RNScheduler.tla, docs/CHANNELS.md 9.2):

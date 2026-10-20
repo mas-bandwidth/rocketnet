@@ -3,7 +3,7 @@
 #include "rocketnet_driver.h"
 struct dispatch_fixture
 {
-    rocketnet_server_driver_t driver;
+    rocketnet_server_transport_io_t transport;
     uint64_t starts, finishes, sum;
     uint8_t frame[16];
 };

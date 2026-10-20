@@ -1,0 +1,222 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#pragma once
+
+#ifndef ROCKETNET_SERVER_URING_H
+#define ROCKETNET_SERVER_URING_H
+
+#include "rocketnet_address.h"
+#include "rocketnet_constants.h"
+#include "rocketnet_wire.h"
+#include "rocketnet_packet_batch.h"
+
+// The io_uring server transport: one io_uring per transport, used only on the main
+// thread, and no worker thread. An SO_REUSEPORT socket group (bound the way
+// the gso transport binds its group) shards receives across queues; each queue
+// has a provided buffer ring and one multishot RECVMSG, so the kernel fills
+// receive buffers with no syscall per datagram, and send_packets submits one
+// SENDMSG per staged slot in chunks no larger than the free submission queue
+// space. each send_packets and receive_packets call reaps at most a fixed
+// completion budget, so a call returns under sustained traffic.
+// tla/RNUringDriver.tla models the send staging, the two receive banks, the
+// per-call budget and destroy; the functions that implement a model action
+// cite it.
+//
+// The transport is built only when the library is configured with liburing
+// (ROCKETNET_IO_URING, Linux). Without it, create logs the refusal and
+// returns NULL, and rocketnet_server_uring_available() is false.
+
+struct rocketnet_server_uring_t;
+
+// the transport's geometry, all compile time:
+
+#ifndef ROCKETNET_URING_DEFAULT_QUEUES
+#define ROCKETNET_URING_DEFAULT_QUEUES                                       4
+#endif
+
+#define ROCKETNET_URING_MAX_QUEUES                                          32
+
+// submission queue entries; the completion queue is twice this
+
+#define ROCKETNET_URING_ENTRIES                                           4096
+
+// send staging: one phase's worth of frame-stride slots, the gso transport's
+// budget
+
+#define ROCKETNET_URING_SEND_QUEUE_SIZE                                   2048
+
+// receive: per queue a provided buffer ring of this many buffers of this many
+// bytes. one buffer holds the multishot recvmsg header, the reserved name
+// area and the payload, so a buffer is larger than the receive ceiling.
+
+#define ROCKETNET_URING_RECV_BUFFERS                                      4096
+#define ROCKETNET_URING_RECV_BUFFER_BYTES                                 2048
+
+// the per-call completion budgets: receive_packets takes at most
+// ROCKETNET_URING_RECEIVE_BUDGET completions (one receive bank's worth) and
+// send_packets at most ROCKETNET_URING_SEND_BUDGET (a whole staging of sends
+// and a completion queue of receives besides), each from its own budget, so
+// a call returns under sustained traffic and receive_packets spending its
+// budget never stops send_packets reaping. completions past a budget stay
+// in the completion queue for the next call, counted REAP_DEFERRED. a
+// receive completion holds its ring buffer until it is reaped, so at most
+// queues * ROCKETNET_URING_RECV_BUFFERS receive completions are ever ahead
+// of a send's.
+
+#define ROCKETNET_URING_RECEIVE_BUDGET          ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+#define ROCKETNET_URING_SEND_BUDGET    ( ROCKETNET_URING_SEND_QUEUE_SIZE + ROCKETNET_URING_ENTRIES * 2 )
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "receive budget twice send: io_uring receive ring holds at least twice the send queue" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET,
+                         "receive budget twice send: one send reap fits the receive bank" );
+
+// counters, readable any time from the main thread; indexes into the array
+// rocketnet_server_uring_counters fills
+
+#define ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT                          0
+#define ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED                      1
+#define ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS                       2      // io_uring_enter calls: submits and waits
+#define ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED                          3      // a send CQE with a negative result, or a destination the socket family cannot carry
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE                  4      // datagram outside [server min, receive ceiling], or truncated in its buffer
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW              5      // the fill bank was full
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE                6      // source address the boundary could not convert
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS                    7      // the multishot ended because the buffer ring was empty (ENOBUFS)
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
+#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that spent its completion budget with completions left for the next call (deferred, not dropped)
+#define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, retired by a later call
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER            11      // a receive CQE with res >= 0 that names no provided buffer (no IORING_CQE_F_BUFFER, or an id outside the ring)
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 13
+
+// true when the library was built with liburing and this kernel accepts the
+// ring, the opcodes and the provided buffer ring the transport needs. the probe
+// runs once and its answer is kept.
+
+bool rocketnet_server_uring_available();
+
+// the bytes create allocates for a queue count, 0 for a count out of range
+
+uint64_t rocketnet_server_uring_allocation_bytes( int queues );
+
+// bind_address is read for family and port and written back when the port
+// was zero, the contract of rocketnet_platform_socket_create. an ipv6 bind is
+// dual stack: ipv4 senders arrive as native ipv4 addresses. num_queues <= 0
+// selects the default; a count past ROCKETNET_URING_MAX_QUEUES refuses.
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues );
+
+// destroy cancels every multishot receive and waits, bounded, for every
+// outstanding completion (the sends a send_packets left included) before
+// freeing. a destroy that gives up waiting
+// closes the ring and the sockets but leaks the memory the kernel may still
+// write, and counts it here: bytes, and transports so leaked, since the start.
+
+void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
+
+uint64_t rocketnet_server_uring_leaked_bytes();
+
+uint64_t rocketnet_server_uring_leaked_transports();
+
+// for tests: one completion that never arrives, so the next destroy counts
+// its rounds (without waiting) and takes the give-up path
+
+void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+// development library only. fail_receive cancels the queue's multishot
+// receive and hands its terminating CQE to the reap with error (negative
+// errno) in place of -ECANCELED, the path a kernel-side receive failure
+// takes. fail_sends prepares the next count send SQEs with no destination,
+// so the kernel completes each with a failed CQE.
+void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error );
+void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
+#endif
+
+#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+// unit suite only (the test hook library): a transport over a fake completion
+// source, with no kernel ring and no socket. the source stands in for the
+// completion queue: peek copies at most max completions, oldest first, and
+// consumes none; advance consumes the count peek returned; ready is how many
+// it holds. submitted is called with the user_data of every queued
+// submission entry when the transport submits (each send, each multishot arm,
+// each cancel). a receive completion names its buffer in flags the way the
+// kernel does (IORING_CQE_F_BUFFER, the id above IORING_CQE_BUFFER_SHIFT);
+// every buffer of a fake transport holds one datagram of
+// ROCKETNET_URING_TEST_PAYLOAD_BYTES from 127.0.0.1, which a completion with
+// res ROCKETNET_URING_RECV_BUFFER_BYTES delivers. a wait returns at once.
+// rocketnet_server_uring_destroy destroys a fake transport. NULL when the
+// transport is not built.
+
+#define ROCKETNET_URING_TEST_PAYLOAD_BYTES                                 100
+
+struct rocketnet_server_uring_test_completion_t
+{
+    uint64_t user_data;
+    int32_t res;
+    uint32_t flags;
+};
+
+struct rocketnet_server_uring_test_source_t
+{
+    void * context;
+    int ( *peek )( void * context, struct rocketnet_server_uring_test_completion_t * completions, int max );
+    void ( *advance )( void * context, int count );
+    int ( *ready )( void * context );
+    void ( *submitted )( void * context, uint64_t user_data );
+};
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * context, int num_queues, const struct rocketnet_server_uring_test_source_t * source );
+
+// the no-kernel-ring seam of the re-arm cases: a fake transport with queues and
+// no ring, whose receive_packets runs only the re-arm loop and whose next
+// count arm calls find no submission entry. destroy_wait_rounds runs the
+// end condition destroy's wait uses (rocketnet_server_uring_destroy_wait_over)
+// with every round completing or every round silent, stopped by guard.
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues );
+void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring );
+void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring_t * uring, int count );
+void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t * uring, int queue_index, bool arm_finds_no_sqe );
+bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
+uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
+int rocketnet_server_uring_test_destroy_wait_rounds( bool always_completes, int guard );
+#endif
+
+int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
+
+void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, uint64_t * counters );
+
+// send packets. the phase contract is the transport's: start, finish and
+// abort may run on any number of game threads strictly between one
+// send_packets call and the next; send_packets runs on the main thread,
+// submits the staged slots, reaps at most ROCKETNET_URING_SEND_BUDGET
+// completions after at most one wait of a millisecond, and returns. a send
+// without its completion keeps its slot, and the reservation index, until a
+// later call reaps it (SEND_DEFERRED counts each call that returns so).
+// the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
+// bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other transports.
+
+uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to, uint64_t * packet_id );
+
+void rocketnet_server_uring_finish_packet( struct rocketnet_server_uring_t * uring, uint64_t packet_id, uint8_t * packet_data, int packet_bytes );
+
+void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * uring, uint64_t packet_id, uint8_t * packet_data );
+
+void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * uring );
+
+// receive packets: receive_packets reaps at most
+// ROCKETNET_URING_RECEIVE_BUDGET completions without blocking into the fill
+// bank, then swaps the banks; process_packets exposes
+// the swapped bank, valid until the next receive_packets call.
+
+void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * uring );
+
+struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_process_packets( struct rocketnet_server_uring_t * uring );
+
+#endif // #ifndef ROCKETNET_SERVER_URING_H

@@ -2,7 +2,7 @@
 #
 # The per-commit sanitizers job in ci.yml runs ./bin/test and ./bin/functional
 # with ASAN_OPTIONS=detect_leaks=0 and enables LeakSanitizer only for
-# ./bin/test_lifecycle, ./bin/test_driver, and ./bin/test_sodium. This workflow
+# ./bin/test_lifecycle, ./bin/test_transport, and ./bin/test_sodium. This workflow
 # runs the full unit suite (default and portable-pinned) and the full
 # functional suite under ASAN_OPTIONS=detect_leaks=1 with
 # LSAN_OPTIONS=suppressions=tools/lsan.supp:print_suppressions=1.
@@ -23,23 +23,40 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: nightly-leaks-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   leaks:
     name: asan + ubsan + lsan (full suite)
     runs-on: [self-hosted, Linux, X64, fleet]
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-leaks-${{ matrix.ref }}
+      cancel-in-progress: true
     steps:
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'
+      - name: Check the fleet's build dependencies are present
+        shell: bash
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Configure
         run: >
@@ -60,12 +77,13 @@ jobs:
           set -o pipefail
           ./bin/test 2>&1 | tee test.log
 
-      - name: Run unit tests with the driver pin preserved under LSan
+      - name: Run unit tests with the transport pin preserved under LSan
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
           LSAN_OPTIONS: suppressions=tools/lsan.supp:print_suppressions=1
-          ROCKETNET_DRIVER: portable
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           set -o pipefail
           ./bin/test 2>&1 | tee test_portable.log
@@ -84,7 +102,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-leaks-logs
+          name: nightly-leaks-logs-${{ replace(matrix.ref, '/', '-') }}
           path: |
             test.log
             test_portable.log

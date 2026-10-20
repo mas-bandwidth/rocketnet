@@ -3,15 +3,16 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Functional suite. Each test is a process. Sibling binaries that open a
-    socket or start a real driver are tests of this suite, under the same
+    socket or start a real transport are tests of this suite, under the same
     60s warning and 120s failure limits.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "../test/suite_runner.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int rocketnet_functional_test_count();
 const char * rocketnet_functional_test_name( int index );
@@ -40,9 +41,16 @@ static int rocketnet_functional_worker( const char * name )
     if ( cleared != 0 )
         return 1;
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( !rocketnet_init() )
+    // the off run of a timing comparison: the library's network-thread
+    // priority calls off before init, so the timer period is skipped too
+    // (functional/thread_priority_timing.cpp)
+    const char * thread_priority = getenv( "ROCKETNET_FUNCTIONAL_THREAD_PRIORITY" );
+    if ( thread_priority && strcmp( thread_priority, "off" ) == 0 )
+        rocketnet_set_thread_priority( false );
+
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -55,8 +63,17 @@ static int rocketnet_functional_worker( const char * name )
     return result;
 }
 
+int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
+int rocketnet_posix_hard_killed_peer_test_group( const char * name );
+
 int main( int argc, char ** argv )
 {
+    // the child client of the hard-killed peer cases
+    // (functional/posix_hard_killed_peer.cpp), started by posix_spawn and
+    // ended by the case with SIGKILL
+    if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
+        return rocketnet_posix_hard_killed_child_main( argc, argv );
+
 #if defined(_WIN32)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },
@@ -66,15 +83,20 @@ int main( int argc, char ** argv )
     static const char * skip_lines[] = {
         "test_platform_batch_pump_refused_destination [SKIPPED on windows: posix raw-socket injector]",
         "test_platform_pump_zero_length_chaff [SKIPPED on windows: posix raw-socket injector]",
+        "test_posix_server_receive_weather [SKIPPED on windows: the posix socket-error injector is not built on this platform]",
+        "test_posix_client_receive_weather [SKIPPED on windows: the posix socket-error injector is not built on this platform]",
+        "test_posix_platform_send_seam [SKIPPED on windows: the posix socket-error injector is not built on this platform]",
+        "test_posix_transport_send_seam [SKIPPED on windows: the posix socket-error injector is not built on this platform]",
+        "test_posix_send_burst [SKIPPED on windows: the posix socket-error injector is not built on this platform]",
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, skip_lines, 2, false );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, skip_lines, 7, false );
 #elif defined(__APPLE__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },
         { "test_transport_control", "test_transport_control", true },
         { "test_msgx", "test_msgx", true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, 0, false, rocketnet_posix_hard_killed_peer_test_group );
 #elif defined(__linux__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },

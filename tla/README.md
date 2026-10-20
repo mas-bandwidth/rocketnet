@@ -100,16 +100,28 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
+| `rnuringdriver` | 3 | io_uring transport control (invariants and liveness) and two invariant witnesses |
+| `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |
+| `rnclientiodecrypt` | 5 | Decrypt on the client I/O thread: control (invariants and liveness) and four invariant witnesses |
+| `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
+| `rnxdpreplay` | 3 | Kernel replay high-water map control and two invariant witnesses |
+| `rnriodriver` | 3 | Windows RIO server transport design: control with two liveness properties and two invariant witnesses |
+| `rnlivefleetrun` | 3 | Live fleet run lifecycle (docs/LIVE-XDP.md): control with one liveness property and two invariant witnesses |
+| `rnoutgoingbuild` | 4 | The outgoing build (docs/OUTGOING-BUILD.md): control with one action property and three witnesses: the copy step (`NoCopy`), an allowance of its own for in-place packets (`PacketQuota`), and no packet kept for due reliable work (`ReliableSentWithinOneUpdate`) |
+| `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew (docs/DST.md section 7): control with one liveness and one action property, and two invariant witnesses |
+| `rnclientreceivequit` | 5 | The client receive thread's quit-and-wake handshake with destroy: controls for linux, macOS and Windows (two invariants, one action property, one liveness property) and two witnesses: the wake sent before quit (`WokenSeesQuit`) and a wait with no timeout and no wake (`DestroyCompletes`) |
+| `rnserversendfair` | 4 | The server send pass under a payload-frame cap: controls at N=3/K=1 and N=5/K=2 (bounded service within ceil(N/K) updates) and two reversed witnesses: the pass starts at index 0 every update (`MCRNServerSendFairBrokenFromZero.cfg`) and the first client consumes the cap (`MCRNServerSendFairBrokenInPlace.cfg`), both violating `FairService` |
+| `sendhandoff` | 3 | Send handoff generations: the control and reversed witnesses for reopening the front and accepting a stale pointer below the published base |
 
-The 47-case plan covers every root configuration. Other experiments described
+The 50-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh
 measurements for uncommitted variants or change their model semantics.
 
 ## Initial migration measurements
 
-All 47 cases were measured on Linux with the pinned runner and JAR above,
+All 50 cases were measured on Linux with the pinned runner and JAR above,
 using two workers for controls, one for witnesses, and 110 seconds per case.
-Thirty-eight matched their declared outcomes; nine exhausted the budget.
+Forty-one matched their declared outcomes; nine exhausted the budget.
 The three historically unfinished cases remain debt. Six formerly required
 cases also timed out and are now explicit debt under the same budget rule.
 Their original historical PASS rows remain unchanged in `RUNS-HISTORY.tsv`;

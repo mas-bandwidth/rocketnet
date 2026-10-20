@@ -1,11 +1,14 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
-// Driver-owned staging generations. The caller holds its publication mutex
+// Transport-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
 // before publish; the worker retires only after copying its final packet.
-// A full queue refuses new storage without overwriting either queued buffer.
+// tla/RNDriverSendStaging.tla Publish: retain producer storage until a replacement
+// is free; a later flush retries after the worker retires a generation.
+// reopen remains the defensive recovery for a preexisting fully queued state:
+// it hands back the newest generation, never the front.
 template<int NumBuffers> struct rocketnet_send_handoff_t
 {
     bool free[NumBuffers];
@@ -26,12 +29,28 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
             if (free[i]) { free[i] = false; return filling = i; }
         return -1;
     }
-    void publish()
+    bool publish()
     {
         rocketnet_assert(filling >= 0 && count < NumBuffers);
+        if (count == NumBuffers - 1) return false;
         queued[(head + count) % NumBuffers] = filling;
         ++count;
         filling = -1;
+        return true;
+    }
+    // tla/SendHandoff.tla: reopen takes the newest queued generation, never
+    // the front. The producer asks for storage while every generation is
+    // queued (two flushes inside one worker latency). The newest queued
+    // generation is not the front, so the worker has not started it: hand it
+    // back to the producer, which stages after its packets until the next
+    // publish. -1 when only the front is queued. The caller tries acquire
+    // first.
+    int reopen()
+    {
+        if (filling >= 0) return filling;
+        if (count < 2) return -1;
+        --count;
+        return filling = queued[(head + count) % NumBuffers];
     }
     int front() const { return count ? queued[head] : -1; }
     void retire()

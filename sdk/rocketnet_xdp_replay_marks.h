@@ -1,0 +1,121 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#pragma once
+
+#ifndef ROCKETNET_XDP_REPLAY_MARKS_H
+#define ROCKETNET_XDP_REPLAY_MARKS_H
+
+#include <stdint.h>
+#include <string.h>
+
+#include "rocketnet_address.h"
+#include "rocketnet_wire.h"
+#include "rocketnet_xdp_limits.h"
+
+// The userspace pending-marks buffer for the kernel replay map. The transport
+// fills it once per server update -- a FORGET per slot that held a mark and
+// is no longer connected or whose address changed, then a MARK per connected
+// slot whose replay high-water mark advanced -- and the transport applies every
+// forget, then every mark, in one commit, then resets. This is pure data: no
+// syscall, no allocation, no kernel program.
+
+// The key layout for one source address and port, in network order.
+
+static inline void rocketnet_xdp_replay_key_from_address( const struct rocketnet_address_t * address, struct rocketnet_server_xdp_replay_key_t * key )
+{
+    memset( key, 0, sizeof(*key) );
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        key->family = 4;
+        memcpy( key->address, address->data.ipv4, 4 );
+    }
+    else
+    {
+        key->family = 6;
+        for ( int i = 0; i < 8; i++ )
+        {
+            const uint16_t word = address->data.ipv6[i];
+            key->address[i * 2] = (uint8_t) ( word >> 8 );
+            key->address[i * 2 + 1] = (uint8_t) ( word & 0xff );
+        }
+    }
+
+    // the port is network order, the high byte first
+    uint8_t * port_bytes = (uint8_t *) &key->port;
+    port_bytes[0] = (uint8_t) ( address->port >> 8 );
+    port_bytes[1] = (uint8_t) ( address->port & 0xff );
+}
+
+struct rocketnet_xdp_replay_marks_t
+{
+    struct rocketnet_server_xdp_replay_key_t forgets[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    struct rocketnet_server_xdp_replay_key_t mark_keys[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    struct rocketnet_server_xdp_replay_value_t mark_values[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    uint32_t forget_count;
+    uint32_t mark_count;
+    uint32_t refused;
+};
+
+static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay_marks_t * marks )
+{
+    marks->forget_count = 0;
+    marks->mark_count = 0;
+    marks->refused = 0;
+}
+
+// Adds a forget for the source the address names. Returns false, and counts
+// the refusal, when the forget list is full.
+
+static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
+{
+    if ( marks->forget_count >= ROCKETNET_XDP_REPLAY_MAX_ENTRIES )
+    {
+        marks->refused++;
+        return false;
+    }
+    rocketnet_xdp_replay_key_from_address( address, &marks->forgets[marks->forget_count] );
+    marks->forget_count++;
+    return true;
+}
+
+// Adds a mark of the high-water value for the source the address names.
+// Returns false, and counts the refusal, when the mark list is full.
+
+static inline bool rocketnet_xdp_replay_marks_mark( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address, uint32_t high_water )
+{
+    if ( marks->mark_count >= ROCKETNET_XDP_REPLAY_MAX_ENTRIES )
+    {
+        marks->refused++;
+        return false;
+    }
+    rocketnet_xdp_replay_key_from_address( address, &marks->mark_keys[marks->mark_count] );
+    marks->mark_values[marks->mark_count].high_water = high_water;
+    marks->mark_values[marks->mark_count].pad = 0;
+    marks->mark_count++;
+    return true;
+}
+
+// The pending forgets, in insertion order.
+
+static inline void rocketnet_xdp_replay_marks_forgets( const struct rocketnet_xdp_replay_marks_t * marks, uint32_t * count )
+{
+    *count = marks->forget_count;
+}
+
+// The pending marks, in insertion order.
+
+static inline void rocketnet_xdp_replay_marks_marks( const struct rocketnet_xdp_replay_marks_t * marks,
+                                                     const struct rocketnet_server_xdp_replay_key_t ** keys,
+                                                     const struct rocketnet_server_xdp_replay_value_t ** values,
+                                                     uint32_t * count )
+{
+    *keys = marks->mark_keys;
+    *values = marks->mark_values;
+    *count = marks->mark_count;
+}
+
+#endif // #ifndef ROCKETNET_XDP_REPLAY_MARKS_H

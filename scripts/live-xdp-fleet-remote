@@ -1,0 +1,415 @@
+#!/usr/bin/env bash
+#
+# live-xdp-fleet-remote -- one host's steps of the live XDP fleet run.
+#
+# scripts/live-xdp-fleet copies this file to ~/rocketnet-live/live-xdp-fleet-remote
+# on each machine and runs it there. It is never pasted into an ssh command
+# string. Subcommands:
+#
+#   build <commit>
+#   skew
+#   preflight <commit> <nic> <queues> <address>
+#   arm <nic>
+#   start server <commit> <label> <address> <seed> <kbps> <max-clients> <update-hz> <counters-every> <queues> <results> <status>
+#   start client <commit> <label> <address> <duration> <cycles> <stagger> <seed> <kbps> <max-packets> <update-hz> <counters-every> <results>
+#   alive client <label>
+#   stop server <label>
+#   stop client <label>
+#   collect <results>
+#   restore <commit> <nic>
+#   watchdog <nic> <heartbeat>
+#
+# The server subcommands are root steps of RULINGS (c) and are invoked as
+# `sudo -n <this file> ...` on the host; --preserve-env=<list>, never -E.
+# build and the client steps run as the ordinary user.
+
+set -u
+
+REPO_URL="https://github.com/mas-bandwidth/rocketnet.git"
+HOME_DIR="${HOME:-/root}"
+BASE="$HOME_DIR/rocketnet-live"
+SELF=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/$( basename "${BASH_SOURCE[0]}" )
+
+fail()
+{
+    echo "live-xdp-fleet-remote: $*" >&2
+    exit 1
+}
+
+usage()
+{
+    cat >&2 <<'EOF'
+usage: live-xdp-fleet-remote <subcommand> ...
+  build <commit>
+  skew
+  preflight <commit> <nic> <queues> <address>
+  arm <nic>
+  start server|client ...
+  alive client <label>
+  stop server|client <label>
+  collect <results>
+  restore <commit> <nic>
+  watchdog <nic> <heartbeat>
+EOF
+    exit 2
+}
+
+require_root()
+{
+    [ "$( id -u )" -eq 0 ] || fail "$1 is a root step of RULINGS (c); run it with sudo -n"
+}
+
+is_number()
+{
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    return 0
+}
+
+# ------------------------------------------------------------------------
+# build: clone from GitHub at the named commit and build (section 12, step 2)
+# ------------------------------------------------------------------------
+
+cmd_build()
+{
+    local commit=$1
+    local dir="$BASE/$commit"
+
+    case "$commit" in
+        ''|*[!0-9a-fA-F]*) fail "build: '$commit' is not a hex commit" ;;
+    esac
+
+    mkdir -p "$BASE" || fail "build: cannot create $BASE"
+
+    if [ ! -d "$dir/.git" ]; then
+        git clone --quiet "$REPO_URL" "$dir" || fail "build: cannot clone $REPO_URL"
+    fi
+    git -C "$dir" fetch --quiet origin || fail "build: cannot fetch $REPO_URL"
+    git -C "$dir" checkout --quiet "$commit" || fail "build: commit $commit is not in the clone"
+
+    local head
+    head=$( git -C "$dir" rev-parse HEAD ) || fail "build: cannot read HEAD"
+    [ "$head" = "$commit" ] || fail "build: HEAD is $head, not $commit"
+
+    ( cd "$dir" && mkdir -p build && cd build && \
+      cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && \
+      nice make -j4 --no-print-directory ) || fail "build: cmake or make failed"
+
+    echo "$head"
+}
+
+# ------------------------------------------------------------------------
+# skew: one wall-clock sample (section 11)
+# ------------------------------------------------------------------------
+
+cmd_skew()
+{
+    date +%s.%N 2>/dev/null || python3 -c 'import time; print("%.9f" % time.time())'
+}
+
+# ------------------------------------------------------------------------
+# preflight: read-only checks before anything is attached (section 9, step 1;
+# XDP SAFETY 1 and 4). Mutates nothing.
+# ------------------------------------------------------------------------
+
+cmd_preflight()
+{
+    local commit=$1 nic=$2 queues=$3 address=$4
+
+    [ -n "$commit" ] || fail "preflight: no commit"
+    [ -n "$nic" ] && [ "$nic" != "-" ] || fail "preflight: no nic"
+    is_number "$queues" || fail "preflight: queues '$queues' is not a number"
+
+    command -v ip >/dev/null 2>&1 || fail "preflight: ip (iproute2) not found"
+    command -v ethtool >/dev/null 2>&1 || fail "preflight: ethtool not found"
+
+    echo "xdp-safety: read-only checks; nothing is attached"
+
+    ip -o link
+
+    local transport_line version kernel
+    transport_line=$( ethtool -i "$nic" 2>/dev/null ) || fail "preflight: ethtool -i $nic failed"
+    echo "nic transport: $( echo "$transport_line" | tr '\n' ' ' )"
+    version=$( echo "$transport_line" | awk '/^version:/ { print $2 }' )
+    kernel=$( uname -r )
+    if [ -n "$version" ] && [ "$version" = "$kernel" ]; then
+        fail "preflight: $nic runs the in-tree transport (version $version equals uname -r); XDP SAFETY 4 refuses the run"
+    fi
+
+    if ip -d link show dev "$nic" | grep -q 'prog/xdp'; then
+        fail "preflight: an XDP program is already attached to $nic"
+    fi
+    echo "ip -d link show dev $nic: no prog/xdp"
+
+    if command -v xdp-loader >/dev/null 2>&1; then
+        if xdp-loader status "$nic" 2>/dev/null | grep -q 'prog_id'; then
+            fail "preflight: xdp-loader status names a program on $nic"
+        fi
+        echo "xdp-loader status $nic: nothing attached"
+    else
+        echo "xdp-loader: not installed; ip -d link show is the check"
+    fi
+
+    local pin
+    for pin in /sys/fs/bpf/rocketnet_xdp_*; do
+        [ -e "$pin" ] && fail "preflight: leftover pin root $pin; run rocketnet-provision sweep as root"
+    done
+
+    # RULINGS (c) grants root only for load/unload, the dead-man timer and
+    # the server. rocketnet-provision verify itself requires root, so the run
+    # records it as not run rather than take a root step the ruling does not
+    # grant; the read-only checks above are what a user may do.
+    local provision="$BASE/$commit/scripts/rocketnet-provision"
+    if [ "$( id -u )" -eq 0 ] && [ -x "$provision" ]; then
+        "$provision" "$nic" "$queues" verify || fail "preflight: rocketnet-provision verify refused; the owner decides"
+    else
+        echo "preflight: rocketnet-provision verify not run (RULINGS (c) grants root only for load/unload, arm/cancel, start/stop server)"
+    fi
+
+    echo "preflight: ok for $nic ($address, $queues queues)"
+}
+
+# ------------------------------------------------------------------------
+# arm: the dead-man timer and the watchdog, before anything loads
+# (section 9, steps 2 and 3; XDP SAFETY 2)
+# ------------------------------------------------------------------------
+
+cmd_arm()
+{
+    local nic=$1
+    require_root "arm"
+    [ -n "$nic" ] && [ "$nic" != "-" ] || fail "arm: no nic"
+
+    mkdir -p "$BASE" || fail "arm: cannot create $BASE"
+    : > "$BASE/heartbeat"
+
+    # the timer command needs no file on the machine, so a missing script
+    # can never turn it into a no-op
+    systemd-run --unit=rn-live-deadman --on-active=15min /bin/sh -c \
+        "systemctl kill rn-live-server; ip link set dev $nic xdp off; ip link set dev $nic xdpgeneric off" \
+        || fail "arm: systemd-run rn-live-deadman failed"
+    systemctl list-timers rn-live-deadman || fail "arm: the dead-man timer is not listed"
+
+    # the watchdog is this landed script, so it too needs no inline command
+    systemd-run --unit=rn-live-watchdog "$SELF" watchdog "$nic" "$BASE/heartbeat" \
+        || fail "arm: systemd-run rn-live-watchdog failed"
+
+    echo "armed: rn-live-deadman (15 min) and rn-live-watchdog"
+}
+
+cmd_watchdog()
+{
+    local nic=$1 heartbeat=$2
+
+    [ -n "$nic" ] && [ "$nic" != "-" ] || fail "watchdog: no nic"
+
+    while :; do
+        sleep 2
+        local now age attached server_up
+        now=$( date +%s )
+        if [ -f "$heartbeat" ]; then
+            age=$(( now - $( stat -c %Y "$heartbeat" 2>/dev/null || echo 0 ) ))
+        else
+            age=999999
+        fi
+        attached=0
+        ip -d link show dev "$nic" 2>/dev/null | grep -q 'prog/xdp' && attached=1
+        server_up=0
+        systemctl is-active --quiet rn-live-server && server_up=1
+
+        if [ "$age" -gt 30 ] || { [ "$attached" -eq 1 ] && [ "$server_up" -eq 0 ]; }; then
+            systemctl kill rn-live-server 2>/dev/null
+            ip link set dev "$nic" xdp off 2>/dev/null
+            ip link set dev "$nic" xdpgeneric off 2>/dev/null
+            echo "watchdog: fired (heartbeat age $age s, attached $attached, server up $server_up)"
+            exit 0
+        fi
+    done
+}
+
+# ------------------------------------------------------------------------
+# start / stop the server (section 9, step 4 and 7; RULINGS (c))
+# ------------------------------------------------------------------------
+
+cmd_start_server()
+{
+    require_root "start server"
+    local commit=$1 label=$2 address=$3 seed=$4 kbps=$5 max_clients=$6 update_hz=$7 counters_every=$8 queues=$9
+    local results=${10} status=${11}
+    local bin="$BASE/$commit/bin/server"
+
+    [ -x "$bin" ] || fail "start server: no executable $bin (run build first)"
+
+    echo "xdp-safety: loading; the dead-man timer is armed"
+    systemd-run --unit=rn-live-server --collect \
+        --setenv=ROCKETNET_SERVER_TRANSPORT=xdp \
+        --setenv=ROCKETNET_SERVER_PRINT_COUNTERS=1 \
+        "$bin" --matrix --transport xdp --address "$address" --label "$label" \
+        --seed "$seed" --send-kbps "$kbps" --max-clients "$max_clients" \
+        --update-hz "$update_hz" --counters-every "$counters_every" \
+        --num-xdp-queues "$queues" --results "$results" --status "$status" \
+        || fail "start server: systemd-run rn-live-server failed"
+
+    echo "started: rn-live-server with transport pinned to xdp"
+}
+
+cmd_stop_server()
+{
+    require_root "stop server"
+
+    systemctl kill -s INT rn-live-server 2>/dev/null || true
+    local waited=0
+    while systemctl is-active --quiet rn-live-server && [ "$waited" -lt 30 ]; do
+        sleep 1
+        waited=$(( waited + 1 ))
+    done
+    systemctl stop rn-live-server 2>/dev/null || true
+    echo "stopped: rn-live-server"
+}
+
+# ------------------------------------------------------------------------
+# start / stop / alive a client (section 12, step 5)
+# ------------------------------------------------------------------------
+
+cmd_start_client()
+{
+    local commit=$1 label=$2 address=$3 duration=$4 cycles=$5 stagger=$6 seed=$7 kbps=$8
+    local max_packets=$9 update_hz=${10} counters_every=${11} results=${12}
+    local bin="$BASE/$commit/bin/client"
+
+    [ -x "$bin" ] || fail "start client: no executable $bin (run build first)"
+
+    local args=( --matrix --address "$address" --label "$label" --duration "$duration"
+                 --cycles "$cycles" --stagger "$stagger" --seed "$seed" --send-kbps "$kbps"
+                 --max-packets-per-update "$max_packets" --update-hz "$update_hz"
+                 --counters-every "$counters_every" --results "$results" )
+
+    case "$( uname -s )" in
+        Linux)
+            systemd-run --user --unit="rn-live-client-$label" --collect "$bin" "${args[@]}" \
+                || fail "start client: systemd-run --user failed for $label"
+            ;;
+        *)
+            # macOS and the Windows interop shell have no --user manager here
+            nohup "$bin" "${args[@]}" >"$BASE/$label.log" 2>&1 &
+            echo $! > "$BASE/$label.pid"
+            ;;
+    esac
+    echo "started: client $label"
+}
+
+cmd_stop_client()
+{
+    local label=$1
+
+    systemctl --user stop "rn-live-client-$label" 2>/dev/null || true
+    if [ -f "$BASE/$label.pid" ]; then
+        kill -INT "$( cat "$BASE/$label.pid" )" 2>/dev/null || true
+        rm -f "$BASE/$label.pid"
+    fi
+    echo "stopped: client $label"
+}
+
+cmd_alive_client()
+{
+    local label=$1
+
+    if systemctl --user is-active --quiet "rn-live-client-$label" 2>/dev/null; then
+        exit 0
+    fi
+    if [ -f "$BASE/$label.pid" ] && kill -0 "$( cat "$BASE/$label.pid" )" 2>/dev/null; then
+        exit 0
+    fi
+    exit 1
+}
+
+# ------------------------------------------------------------------------
+# collect: print the result file to stdout, data flows inward only
+# ------------------------------------------------------------------------
+
+cmd_collect()
+{
+    local results=$1
+    [ -f "$results" ] || fail "collect: no result file $results"
+    echo "# collect: $results"
+    cat "$results"
+}
+
+# ------------------------------------------------------------------------
+# restore: the teardown of section 9, step 7, for the program and its timers
+# (XDP SAFETY 5). The server is stopped separately.
+# ------------------------------------------------------------------------
+
+cmd_restore()
+{
+    local commit=$1 nic=$2
+
+    if [ "$nic" = "-" ]; then
+        echo "restore: no XDP on this host"
+        return 0
+    fi
+    require_root "restore"
+
+    echo "xdp-safety: detach, then confirm and record"
+    ip link set dev "$nic" xdp off 2>/dev/null || true
+    ip link set dev "$nic" xdpgeneric off 2>/dev/null || true
+
+    if ip -d link show dev "$nic" | grep -q 'prog/xdp'; then
+        fail "restore: an XDP program is still attached to $nic"
+    fi
+    echo "ip link show dev $nic:"
+    ip link show dev "$nic"
+
+    local provision="$BASE/$commit/scripts/rocketnet-provision"
+    if [ -x "$provision" ]; then
+        "$provision" sweep || true
+    fi
+
+    systemctl stop rn-live-watchdog.service 2>/dev/null || true
+    # cancel the dead-man timer only after the detach above is confirmed
+    systemctl stop rn-live-deadman.timer 2>/dev/null || true
+    systemctl stop rn-live-deadman.service 2>/dev/null || true
+    systemctl reset-failed rn-live-deadman.service 2>/dev/null || true
+
+    echo "restore: no program attached to $nic; watchdog stopped; dead-man cancelled"
+}
+
+# ------------------------------------------------------------------------
+
+if [ $# -lt 1 ]; then
+    usage
+fi
+
+command=$1
+shift
+
+case "$command" in
+    build)      [ $# -eq 1 ] || usage; cmd_build "$1" ;;
+    skew)       [ $# -eq 0 ] || usage; cmd_skew ;;
+    preflight)  [ $# -eq 4 ] || usage; cmd_preflight "$1" "$2" "$3" "$4" ;;
+    arm)        [ $# -eq 1 ] || usage; cmd_arm "$1" ;;
+    watchdog)   [ $# -eq 2 ] || usage; cmd_watchdog "$1" "$2" ;;
+    start)
+        [ $# -ge 1 ] || usage
+        kind=$1; shift
+        case "$kind" in
+            server) [ $# -eq 11 ] || usage; cmd_start_server "$@" ;;
+            client) [ $# -eq 12 ] || usage; cmd_start_client "$@" ;;
+            *) usage ;;
+        esac
+        ;;
+    alive)
+        [ $# -eq 2 ] && [ "$1" = "client" ] || usage; cmd_alive_client "$2" ;;
+    stop)
+        [ $# -eq 2 ] || usage
+        case "$1" in
+            server) cmd_stop_server "$2" ;;
+            client) cmd_stop_client "$2" ;;
+            *) usage ;;
+        esac
+        ;;
+    collect)    [ $# -eq 1 ] || usage; cmd_collect "$1" ;;
+    restore)    [ $# -eq 2 ] || usage; cmd_restore "$1" "$2" ;;
+    *)          usage ;;
+esac

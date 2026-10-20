@@ -103,7 +103,7 @@ builder admission, fair oldest-number retransmission including attempts that
 survive the Link loss pattern, fair packet opening, application drain, update
 turnover, and packet ACK transmission/reception. Infinitely many ACK sends
 must yield useful ACKs before sent-map eviction. This last assumption stands
-for appropriate RTO/map sizing; the model does not prove RTT measurement.
+for appropriate resend delay/map sizing; the model does not prove RTT measurement.
 The normal liveness case uses deterministic alternating packet loss in both
 directions. Safety does not use fairness and permits arbitrary forward loss,
 duplication and reordering. The safety configuration uses a TLC `SafetyView` that omits Link send counters
@@ -217,3 +217,30 @@ output directory per shard. Merge the eight `RUNS.tsv` files with `--keep`,
 and check `groups --stale`. No C++ changes, Go/C++ tests, sequenced wire types,
 allocator proof, rate scheduler proof, or full-width wrap proof are part of
 this card.
+
+## Mid-scale instance
+
+`MCRNChannelMid.cfg` is the safety configuration with a larger send window and
+packet map: `W = 4` (from 2), `P = 2` (from 1) and `MaxPid = 2` so two live
+packet references can leave room for a fresh retransmission ID. It keeps every
+invariant the committed case lists: ordered exactly-once delivery, whole
+messages, indexed chunk placement, unreliable at-most-once, bounded buffers,
+no slot collision and the sequenced-reset trace. It uses the same alternating
+loss pattern, with `SendCapacity = 1` so one reliable message is outstanding
+at a time. It passes: 723,930 generated / 281,764 distinct states in 33.015 s,
+exit 0, and is a required case.
+
+The deployed channel window is `window_messages` per channel, not `W = 4`.
+The checked properties split into two kinds. The ordering, chunk-placement and
+at-most-once rules are local to each accepted message, number and ring slot,
+and their statements do not mention the window size; the mid instance changes
+which reliable numbers share a ring position and still checks the same
+predicates. Ring reuse and the send window's admission rule
+(`n < UPrime + W`) are size-dependent: a wider window admits more numbers
+before the oldest is delivered, and the mid instance exercises that wider
+admission but not the deployed `window_messages`. With `SendCapacity = 1` the
+mid instance does not cover several reliable messages outstanding at once in
+a `W = 4` window; `MCRNChannelSafety.cfg` covers `W = 4` with
+`SendCapacity = 2` under arbitrary loss, so that dimension is checked in a
+separate required case rather than in this one. Packet-ID wrap and half-range
+sequence reconstruction remain outside this module, as recorded above.

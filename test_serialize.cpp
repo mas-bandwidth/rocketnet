@@ -2,15 +2,15 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Compiles and exercises the serialize read of rocketnet.h: serialize.h
-    is included first, so the C++ stream surface appears, and a client and
-    server exchange a bit-packed payload through WriteStream and ReadStream
-    bound directly over acquired frames. This is the only build that sees
-    that surface, which is exactly why it exists.
+    Functional test: it reads a real clock and sleeps with rocketnet_sleep, so
+    it is a functional sibling binary, never a ./bin/test case.
+
+    Exercises serialize::WriteStream and serialize::ReadStream bound directly
+    over frames acquired and received through the C transport API.
 */
 
 #include "serialize.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -29,7 +29,7 @@ do                                                                              
 
 int main()
 {
-    check( rocketnet_init( NULL ) );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
 
     struct rocketnet_server_transport_config_t server_config;
@@ -43,7 +43,7 @@ int main()
     snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
     check( client );
@@ -64,13 +64,16 @@ int main()
     {
         serialize::WriteStream stream;
         struct rocketnet_packet_context_t context;
-        check( rocketnet::client_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, stream, context ) );
+        uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        check( frame != NULL );
+        stream.Initialize( frame + context.payload_index, context.payload_capacity );
 
         check( stream.SerializeBits( 0xdecafbad, 32 ) );
         check( stream.SerializeInteger( -17, -100, 100 ) );
         check( stream.SerializeInteger64( (int64_t) 0x123456789abcdefLL, 0, (int64_t) 0x7fffffffffffffffLL ) );
 
-        rocketnet::client_finish_packet( client, stream, context );
+        stream.Flush();
+        check( rocketnet_client_transport_finish_packet( client, &context, (int) stream.GetBytesProcessed() ) != 0 );
         rocketnet_client_transport_send_packets( client );
     }
 
@@ -86,7 +89,10 @@ int main()
         {
             serialize::ReadStream stream;
             int client_index = -1;
-            check( rocketnet::server_payload( server, i, stream, client_index ) );
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &client_index, &payload_bytes );
+            check( payload != NULL );
+            stream.Initialize( payload, payload_bytes );
             check( client_index == 0 );
 
             uint32_t magic = 0;
@@ -110,9 +116,12 @@ int main()
     {
         serialize::WriteStream stream;
         struct rocketnet_packet_context_t context;
-        check( rocketnet::server_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, stream, context ) );
+        uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        check( frame != NULL );
+        stream.Initialize( frame + context.payload_index, context.payload_capacity );
         check( stream.SerializeBits( 0xabad1dea, 32 ) );
-        rocketnet::server_finish_packet( server, stream, context );
+        stream.Flush();
+        check( rocketnet_server_transport_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) != 0 );
         rocketnet_server_transport_send_packets( server );
     }
 
@@ -127,7 +136,10 @@ int main()
         for ( int i = 0; i < num_payloads; i++ )
         {
             serialize::ReadStream stream;
-            check( rocketnet::client_payload( client, i, stream ) );
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_client_transport_payload( client, i, &payload_bytes );
+            check( payload != NULL );
+            stream.Initialize( payload, payload_bytes );
             uint32_t reply = 0;
             check( stream.SerializeBits( reply, 32 ) );
             check( reply == 0xabad1dea );

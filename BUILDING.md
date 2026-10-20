@@ -8,16 +8,33 @@ archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. `ROCKETNET_ABI_VERSION` identifies SDK calling/layout
 compatibility separately from the wire version; see the ABI rules below.
 
-rocketnet builds on Linux, macOS and Windows with CMake 3.20 or later. On Linux and macOS the
-Makefile is the front door:
+Deploying a server on Linux: [docs/LINUX.md](docs/LINUX.md) covers the build, the `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host.
+
+rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
+CMake 4.2 or later (the Windows block below says why). On Linux the build is
+tested with gcc 13.3.0 and 15.2.0 and with clang 18.1.3 and 21.1.8, in Debug and
+Release: with each compiler the static and shared libraries, `./bin/test` and
+`./bin/functional` build, and the unit suite passes. Functional results are
+recorded per compiler and configuration: the matrix also exposes outstanding
+receive-weather counter failures and an intermittent io_uring lifecycle
+failure; an isolated rerun is not a full-suite pass. The `linux / clang` job in
+`.github/workflows/nightly.yml` builds and runs both suites with clang; the
+Linux build-and-test rows in `.github/workflows/ci.yml` build the library and
+both suites with the default compiler (gcc), and ci.yml uses clang only for the
+fuzz-smoke legs and the embedded XDP program. On Linux and macOS the Makefile is
+the front door:
 
     make
 
-Binaries and libraries land in `bin/`. Run the unit suite with:
+Binaries and libraries land in `bin/`. On macOS, [docs/MACOS.md](docs/MACOS.md)
+is the guide: the build, the two transports and how to pin them, the client's
+threads and App Nap, socket errors, the file-descriptor limit, the application
+firewall prompt, lldb, fuzz corpus replay, and the commands that verify a Mac.
+Run the unit suite with:
 
     ./bin/test
 
-`./bin/test` does not open a socket and does not start a driver. It drives the
+`./bin/test` does not open a socket and does not start a transport. It drives the
 state machines and the in-memory network simulator. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). A test over
 60 seconds prints a warning line. A test over 120 seconds is killed and the
@@ -27,8 +44,8 @@ accepts only test-name lines on a passing `./bin/test` run, and that checker
 is shared with the unit suite.
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
-IOCP, or AF_XDP, or that starts a real driver (`rocketnet_server_transport_create`,
-`rocketnet_client_transport_create`, `rocketnet_platform_socket_create`, or a
+IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,
+`rocketnet_client_create`, `rocketnet_platform_socket_create`, or a
 sibling binary that does), belongs in the functional suite:
 
     ./bin/functional
@@ -37,29 +54,237 @@ The functional suite is its own target. It runs in parallel under the same
 60 second warning and 120 second failure limits, and it prints the ten
 slowest as a table. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`
-when the assertion is about a real socket or a real driver. A test that
+when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
+The functional-only sibling binaries are `test_serialize` (a real clock and
+`rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
+`usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
+`test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and
 ACK behavior already has protocol tests in the unit suite. The keyless-config
 create is functional; `test_server_keyless_config_has_no_keys` checks the
-config the gate reads, without creating a driver.
+config the gate reads, without creating a transport.
+
+The functional suite takes its loopback ports from the OS. Every loopback
+server and socket it opens binds port 0 and reads back the port the OS gave,
+except the restart case, which reserves a port below the kernel's ephemeral
+range so a sibling's port-0 bind cannot take it between rebinds. An address
+that must carry a real port takes a free one from the OS through
+`rocketnet_test_free_port`, which binds a scratch socket to
+`127.0.0.1:0`, reads the port, and closes it; its callers hand that port to
+an xdp create the commit barrier refuses before any bind. Two
+`./bin/functional` runs may share a machine at the same time. What holds then:
+
+- The lifecycle cases read their after counts with `posix_settled_counts`,
+  which polls until the counts equal the before counts or 10 seconds pass, so
+  a joined thread the kernel has not yet reaped is not counted as a leak, and
+  a thread, descriptor or umem really left still fails the case.
+- `posix_server_create_destroy_1000` runs 250 cycles on the gso and io_uring
+  cells and 1000 on the others, so two suites at once stay under the 120
+  second case limit; the counts are compared after the first cycle and the
+  last, so a leak per cycle still fails.
+- `posix_server_restart_same_port_100` reserves a port below the kernel's
+  ephemeral range in a slice its cell alone scans and binds it again 100
+  times, so a sibling suite's port-0 binds cannot take it between rebinds.
+- A server create on a free loopback port is retried up to three times on
+  address-in-use, so a sibling process that takes the granted port in the gap
+  between the free-port proof and the bind does not fail the create.
+- The root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`) makes a fixed
+  namespace and veth pair and binds port 40411 on it; it skips without root.
+
+Two `tools/run_examples.py` runs may also share a machine: each example
+pair runs in its own temporary directory on its own free port, the client
+starts only after the server has written its keys, and a server that cannot
+bind before then is retried on a new port, at most three tries
+(tools/run_examples.py).
+
+Many-client load runs use the dedicated load harness:
+
+    ./bin/load <clients> <seconds> [drop-one]
+
+The load tool runs the public API (`rocketnet_server_t` and `rocketnet_client_t`
+from `rocketnet.h`) under the light profile (10 Hz updates, one message per client
+per update in each direction: the client-to-server message rotates through all
+eight reliability modes, and the server-to-client message is reliable-ordered),
+verifying loopback scale up to 1000 concurrent clients across five pass criteria
+(`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
+`unreliable_integrity`, and `counters_agree`).
+
+The soak test runs the public API under load until stopped, or for a bound:
+
+    ./bin/soak --seconds 60
+    ./bin/soak 10000
+
+The examples build into `bin/` with everything else. Check and run them from
+the repository root ([examples/README.md](examples/README.md) lists them):
+
+    python3 tools/check_examples.py
+    python3 tools/run_examples.py --build build
+
+### Test binaries and their tiers
+
+Every test binary is in exactly one tier. A unit binary opens no socket,
+starts no thread, never sleeps and reads time only as an argument (the test
+clock starts at 1000.0). A binary that opens a real socket, starts a thread,
+sleeps or reads the wall clock is functional, and CI runs it only in a step
+named functional, never as a unit step.
+
+| Binary | Tier | Why | Where it runs |
+| --- | --- | --- | --- |
+| `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
+| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt) | by hand |
+| `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
+| `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
+| `functional` | functional | real sockets and transports | CI `Run functional suite` |
+| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
+| `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
+| `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
+| `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
+| `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp:31-44,59) | `./bin/functional` on macOS |
+| `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp:96,293,360) | `functional.exe` on Windows |
+| `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp:155,546,590,618) | CI `Functional: lifecycle binary` |
+| `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native transport contract` |
+
+The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
+`rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
+simulator and the test clock, with no socket and no sleep.
 
 Dependencies, per platform, as CI installs them:
 
-    # Linux -- the build links the XDP dataplane, and liburing is the bench
-    # harness's io_uring rung
-    sudo apt install cmake build-essential libbpf-dev libxdp-dev liburing-dev xxd
+    # Linux -- the build links the XDP dataplane, liburing is the bench
+    # harness's io_uring rung; clang with the BPF target compiles the XDP
+    # program at build time (the server host needs no compiler)
+    sudo apt install cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
 
     # macOS
     brew install cmake
 
-Windows has no Makefile path; CMake is driven directly, and the binaries land under `bin/<config>/`:
+The macOS default build is the host's native slice. `CMakeLists.txt:5-6` sets
+`CMAKE_OSX_DEPLOYMENT_TARGET` to 12.0 when the caller does not: the Xcode 27
+build system refuses 11.0 (its supported range starts at 12.0) while the
+Command Line Tools accept it, so 12.0 is the lowest target both toolchains
+build for both slices of a universal library. Override it with `-D` for
+another minimum.
+To build a universal (arm64 and x86_64) library and the suites:
+
+    cmake -B build-universal -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-universal --clean-first --parallel 4
+    lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
+
+Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
+every build tree land in the checkout's `bin/` (`CMakeLists.txt:59-64`), so `--clean-first` relinks
+them against the universal objects when a native build ran first; without it
+CMake sees the newer native files and skips the link. To read the deployment
+target on
+each slice:
+
+    otool -l -arch arm64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
+    otool -l -arch x86_64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
+
+Both print `minos 12.0`; the static archive carries the same load command in
+each member, read after `lipo -thin <arch>` and `ar -x`. CMake compiles each
+architecture in its own clang pass, so the vendored sodium builds its x86 asm
+into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
+is embedded once with the host `xxd` and the generated header is
+architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
+the compiler-flag check (`CMakeLists.txt:210`, `CMakeLists.txt:213`) drops it for a fat compile while the stack protector
+and the other Release flags stay on both slices.
+
+Against a universal build, `tools/check_package.py build-universal` passes the
+build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py:125`)
+and `tools/check_dll_consumer.py --build build-universal` adds one `-arch` per
+library slice (`tools/check_dll_consumer.py:184`); each refuses a consumer
+executable whose `lipo -archs` lacks a slice (`tools/check_package.py:140`,
+`tools/check_dll_consumer.py:255`).
+
+The Xcode generator needs Xcode installed, and its license accepted once by an
+administrator (`sudo xcodebuild -license`); until then `xcodebuild` refuses and
+the configure step stops with "No CMAKE_C_COMPILER could be found". The
+Command Line Tools alone have no `xcodebuild`. `DEVELOPER_DIR` selects Xcode
+for one command without changing `xcode-select`:
+
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+    cmake -B build-xcode -G Xcode
+    cmake --build build-xcode --config Release --parallel 4
+    ./bin/Release/test
+
+`CMakeLists.txt:59-64` sets the output directories to `bin/` with no
+configuration in the path, and a multi-config generator such as Xcode appends
+the configuration to them, so its executables and libraries land in
+`bin/Release/`. The unit suite opens the development library by its absolute
+build path (`CMakeLists.txt:533-534`), and the release library by
+`bin/librocketnet.dylib`, then by the bare name
+(`sdk/rocketnet_tests.cpp:14700-14701`), which the executable's run path
+resolves in `bin/Release/` (`CMakeLists.txt:538`).
+
+Windows has no Makefile path; CMake is driven directly, and the binaries land
+under `bin\<config>\`. It needs, installed once:
+
+- Visual Studio 18 (Visual Studio 2026) with the **Desktop development with C++**
+  workload, which carries the MSVC x64 toolchain and the Windows SDK.
+- CMake 4.2 or later. 4.2 is the first CMake with the `Visual Studio 18 2026`
+  generator (CMake 4.2 release notes,
+  https://cmake.org/cmake/help/latest/release/4.2.html: "The Visual Studio 18
+  2026 generator was added"), and an older CMake does not generate for Visual
+  Studio 18.
+- Python 3 for `tools/*.py`, from python.org, which also installs the `py`
+  launcher. On a fresh Windows a bare `python` or `python3` is the Microsoft
+  Store stub: it prints `Python was not found; run without arguments to install from the Microsoft Store, ...` and exits 9009. `py -3` runs the installed Python.
+
+libsodium is vendored under `sodium/`; nothing else is installed. From the
+checkout, in PowerShell or cmd.exe:
 
     cmake -B build -A x64
-    cmake --build build --config Release --parallel
-    ./bin/Release/test.exe
+    cmake --build build --config Release --parallel 4
+    bin\Release\test.exe
+    bin\Release\functional.exe
+    py -3 tools\check_xdp_archive.py --committed-only
+
+`bin\Release\test.exe` is the unit suite and `bin\Release\functional.exe` the
+loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
+takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`
+line continuation, so on Windows write each command on one line.
+
+Configure with `-DROCKETNET_SANITIZE_ADDRESS=ON` (default `OFF`) to build every
+target with AddressSanitizer: `/fsanitize=address` and `/Zi` with
+`/INCREMENTAL:NO` at link under MSVC, and `-fsanitize=address` elsewhere. On
+Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
+`cmake --build build --config Release --parallel 4`), the build copies the MSVC
+AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
+into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
+
+`py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
+executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
+Memory, TLS, Threadpool and Leak) with every stop logged and no debugger
+attached (a stop ends the run once it is logged), exports the verifier log of
+every process it starts with that image name (the suite runners start one child
+per case), and exits non-zero naming each stop's layer, stop code and top frames; it disables
+verification for the executable again on every exit path. It needs Application Verifier for x64 from
+the Windows SDK and an elevated prompt, and runs a Debug build so the frames
+carry symbols; arguments after the executable and the environment
+(`ROCKETNET_SERVER_TRANSPORT` and the rest) pass through to it, and `--xml <file>` keeps the exported logs.
+
+The examples are an echo server and a client that connects to it with a
+development token. Run each in its own window:
+
+    bin\Release\server.exe
+    bin\Release\client.exe
+
+The server's public address, the one the client dials, is `127.0.0.1:40000`;
+either takes another address as its argument
+(`bin\Release\server.exe 192.0.2.10:40000`). The client logs its change
+to the `connected` state once the handshake completes, then counts the echoed
+payloads. Ctrl+C stops either. For a first loopback try from your own project,
+see the development-token note under "Installing and embedding the SDK" below.
+
+Every rocketnet server binds the wildcard address (`0.0.0.0:40000` for the
+example server), so on an interactive desktop the first run of `server.exe`,
+`functional.exe` or a game server raises the Windows Defender Firewall dialog.
+Loopback traffic works whatever is chosen there; allow access only on the
+networks remote clients connect from.
 
 The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
@@ -75,7 +300,9 @@ checks. The fixed-vector test is `bin/test_sodium`.
 
 For integration testing against an independently supplied libsodium, configure
 with `-DROCKETNET_USE_SYSTEM_SODIUM=ON`. That opt-in uses pkg-config on POSIX,
-or `ROCKETNET_SODIUM_INCLUDE_DIR` and `ROCKETNET_SODIUM_LIBRARY` on Windows.
+or `ROCKETNET_SODIUM_INCLUDE_DIR` and `ROCKETNET_SODIUM_LIBRARY` on Windows,
+and configure fails unless that libsodium is 1.0.20 or later
+(`cmake/RocketNetDependencies.cmake`).
 A Windows caller must select a library for its configuration and CRT. Packages
 built in this mode retain that external dependency. The default vendor is built
 with the same compiler and Debug/Release runtime as RocketNet.
@@ -89,20 +316,41 @@ Build and install both libraries without examples, tests or tools:
     cmake --build build-sdk --parallel
     cmake --install build-sdk --prefix /your/sdk/prefix
 
+On Windows, write each command on one line, and pass `--config Release` to the
+build and the install. The Visual Studio generator is multi-config: it ignores
+`CMAKE_BUILD_TYPE`, a build without `--config` makes Debug, and the install then
+fails with `file INSTALL cannot find ".../build-sdk/Release/rocketnet.lib"`. In
+PowerShell or cmd.exe:
+
+    cmake -S . -B build-sdk -A x64 -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+    cmake --build build-sdk --config Release --parallel 4
+    cmake --install build-sdk --config Release --prefix C:\your\sdk\prefix
+
 An independent CMake project (enable CXX for the static library's C++ runtime)
 can then use:
 
 ```cmake
-find_package(RocketNet 1.0.0 EXACT CONFIG REQUIRED)
+find_package(RocketNet 1.0 CONFIG REQUIRED)
 target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 # Or: target_link_libraries(game PRIVATE RocketNet::rocketnet_shared)
 ```
+
+When linking the static archive (`librocketnet.a`) directly in a C project
+without CMake, link against the C++ standard library runtime (`-lstdc++` on
+Linux, `-lc++` on macOS) and the required platform libraries (on Linux:
+`-lbpf -lxdp -luring -lstdc++ -lpthread -lm`; on macOS: `-lc++ -lpthread -lm`).
 
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
 Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
 is compiled into each SDK library with private symbol names; no sodium header,
 DLL or package is required by consumers. Dependency metadata contains no
 producer paths. Shared consumers inherit the Windows DLL import definition.
+The package accepts a request for any earlier or equal version of the same major
+version (`COMPATIBILITY SameMajorVersion`), so `find_package(RocketNet 1.0)`
+finds every later 1.x patch. The imported targets
+hand a consumer no floating-point option and no memory-budget definition: the
+only compile definition they carry is `ROCKETNET_SHARED` on
+`RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
 The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
@@ -117,16 +365,30 @@ Examples, tests and tools default off when embedded, and the parent's
 `BUILD_SHARED_LIBS` does not change the static target. Explicit
 `ROCKETNET_BUILD_*` options override those defaults.
 
+The installed SDK is the production library, and it has no development token
+minting by design: a client that calls `rocketnet_write_dev_connect_token`
+against it fails to link (on MSVC, `unresolved external symbol rocketnet_write_dev_connect_token`). For a first loopback try, embed the
+checkout and link both the server and the client to the development library,
+`rocketnet_dev`, which mints development tokens and accepts the published
+development keys. It is a build-tree aid, never installed and never shipped:
+
+```cmake
+add_subdirectory(path/to/rocketnet rocketnet)
+target_link_libraries(game_server PRIVATE rocketnet_dev)
+target_link_libraries(game PRIVATE rocketnet_dev)
+```
+
 `python3 tools/check_package.py build --config Release --embedded` installs and
 moves the package, then builds and runs separate C/C++ consumers against both
 libraries. It also checks an embedded build with `BUILD_SHARED_LIBS=ON` and
-verifies that the XDP archive contains the current sources. These checks are in CI.
+verifies that the generated header embeds exactly the `server_xdp.o` the build
+compiled. These checks are in CI.
 
 ## ABI compatibility
 
 The current public layouts are preserved. New allocation-free `rocketnet_abi_*`
 queries expose the SDK revision, compiler-derived struct sizes, field counts,
-offsets and widths for both configs, packet context and all four stats structs.
+offsets and widths for both configs and packet context.
 They are safe before init and write no caller-owned struct. Unknown names return
 `SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
 these before calling struct-writing functions.
@@ -136,8 +398,7 @@ An incompatible layout or calling-contract change must increment
 do not require a revision change. Changes to public fields must also update the
 ABI metadata and native regression checks. The existing unsized C entry points still
 require matching headers and library; this does not make an old native binary
-safe to use with an arbitrary newer library. Sized evolution APIs remain a
-separate compatibility project.
+safe to use with an arbitrary newer library.
 
 ## History memory budget
 
@@ -159,22 +420,22 @@ Oversized geometry is refused with required and permitted byte counts before
 allocation. These bounds are not an available-RAM check: reserve additional
 memory for ACK history, other transport objects, allocator overhead, stacks,
 kernel buffers and your application. The default seven-queue XDP geometry alone
-still requires roughly 3.5 GiB; select fewer queues or provision that explicitly.
+still requires roughly 4.2 GiB; select fewer queues or provision that explicitly.
 
 ## Pre-allocation server resource plans
 
-`rocketnet_server_transport_required_memory(config, driver)` returns the planned
-constructor storage in bytes for one concrete built-in driver. It works before
+`rocketnet_server_required_memory(config)` returns the bytes of the caller memory
+block the server needs for `config` at its `max_clients`. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
-Pass `NULL` config for defaults. A zero result means invalid geometry or a driver
-that has no built-in plan on this build; `auto`, candidate lists and custom drivers
-need separate policy. The query uses the supplied numeric configuration only:
-it does not apply environment overrides, check keys, probe hardware or approve a
-configuration against the component budgets. Create reports each candidate's plan
-at INFO level before allocating the transport, using its effective configuration.
+Pass `NULL` config for defaults. The query reads the supplied configuration and
+applies environment overrides (matching create), but does not check keys, probe
+hardware or approve a configuration against the component budgets. `rocketnet_client_required_memory` is
+the client form. The detailed per-transport plan and the kernel-facing host memory
+estimate are internal to the transport layer (`sdk/rocketnet_layers.h`), not part
+of the public client and server API.
 
 The plan includes the transport, protocol tables and ACK history, reassembly and
-its delivered mirror, send arena, native driver queues and SDK worker allocations,
+its delivered mirror, send arena, native transport queues and SDK worker allocations,
 plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
@@ -182,6 +443,35 @@ socket/ring storage, libbpf/libxdp allocations, libc bookkeeping, loader and
 application memory are outside this count. Provision room for those costs; a
 plan is not an available-RAM check or a whole-host peak estimate. Existing
 component budgets, queue defaults and history limits are unchanged.
+
+The internal transport layer's host memory estimate adds the kernel-facing
+memory a transport requests to the plan, under the same config and transport
+rules, with no allocation, socket or thread. Each field is a
+request, never what the kernel grants: `allocator_bytes` (the plan without
+UMEM), `umem_bytes` (XDP frame memory, the plan's UMEM), `socket_send_buffer_bytes`
+and `socket_receive_buffer_bytes` (the `SO_SNDBUF` and `SO_RCVBUF` sizes asked of
+every socket the transport opens), `xdp_ring_bytes` (the AF_XDP RX and TX
+descriptor rings of every queue) and `thread_stack_bytes` (`worker_threads` x
+`thread_stack_bytes_per_thread`; transports create threads with the platform
+default stack, so on POSIX this is the default thread attribute's stack size,
+set by `ulimit -s` on glibc, and on Windows the executable's 1 MiB default
+reserve). `total_bytes` is their sum and is never below `required_memory`.
+`exclusions` names what is not counted: kernel socket accounting beyond the
+requests (Linux doubles each buffer request), the AF_XDP fill and completion
+rings (the server asks for 2048 entries each, `XSK_RING_PROD__DEFAULT_NUM_DESCS`
+and `XSK_RING_CONS__DEFAULT_NUM_DESCS`, in `rocketnet_xdp_umem_config`,
+sdk/rocketnet_xdp_socket_config.h), libbpf/libxdp and the XDP program's maps, the io_uring
+submission, completion and provided buffer rings, thread guard pages
+and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
+allocator, and application memory. Stacks count reserved address space, not
+resident pages. With default configuration and an 8 MiB default stack, on Linux:
+
+| transport | required_memory | sockets | socket buffers | XDP rings | threads x stack | estimate total |
+| --- | --- | --- | --- | --- | --- | --- |
+| portable | 688,206,108 | 1 | 2,000,000 | 0 | 0 | 690,206,108 |
+| gso | 830,413,923 | 4 | 8,000,000 | 0 | 4 x 8 MiB | 871,968,355 |
+| io_uring | 799,247,707 | 4 | 8,000,000 | 0 | 0 | 807,247,707 |
+| xdp | 4,473,629,517 (UMEM 1,879,048,192) | 7 | 0 | 3,670,016 | 7 x 8 MiB | 4,536,019,789 |
 
 Build tools normally, then use the resource probe:
 
@@ -193,8 +483,8 @@ Build tools normally, then use the resource probe:
 python3 tools/check_memory.py
 ```
 
-Arguments are clients, maximum payload bytes, reassembly slots, concrete driver
-and queue/worker count (zero selects that driver's default). `--plan-only` emits
+Arguments are clients, maximum payload bytes, reassembly slots, concrete transport
+and queue/worker count (zero selects that transport's default). `--plan-only` emits
 a component breakdown, worker/socket counts and an explicit unknown OS/application
 cost, then exits before initialization. Without it, the probe creates a loopback
 server, compares independent allocator live/peak observations against the plan,
@@ -218,71 +508,153 @@ These are target-specific constructor measurements, not deployment limits. The
 maximum legal numeric reassembly geometry plans roughly 146 GiB and can be queried
 without allocating it; the default reassembly component budget refuses its create.
 `test_transport_control` also exercises six maintenance passes over 1000 mixed
-ACK/keepalive clients while the buffered driver accepts only 256 controls per send
+ACK/keepalive clients while the buffered transport accepts only 256 controls per send
 batch. Its elapsed time is a diagnostic for that synthetic workload, not a packet
 rate or a frame/send/ACK cadence requirement.
 
-## Server transport drivers
+## Runtime environment inventory
 
-Driver selection is runtime (#106): one build carries every driver its platform
-has — on Linux the AF_XDP driver (privileged), the GSO driver (SO_REUSEPORT +
-sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and the portable UDP driver; on macOS
+These are the environment variables read by the SDK. Each setting has one name;
+the client and server forms are separate settings. The unit inventory checks this
+list in both directions against the SDK reads and the public header.
+
+* Environment: ROCKETNET_CLIENT_FILTER_VALUE
+* Environment: ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES
+* Environment: ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS
+* Environment: ROCKETNET_CLIENT_STEP_DRIVEN
+* Environment: ROCKETNET_CLIENT_TRANSPORT
+* Environment: ROCKETNET_CLIENT_SEND_KBPS
+* Environment: ROCKETNET_CLIENT_NUM_CHANNELS
+* Environment: ROCKETNET_CLIENT_WINDOW_MESSAGES
+* Environment: ROCKETNET_CLIENT_RECEIVE_RING_BYTES
+* Environment: ROCKETNET_CLIENT_MAX_MESSAGE_BYTES
+* Environment: ROCKETNET_CLIENT_SEND_BUFFER_BYTES
+* Environment: ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES
+* Environment: ROCKETNET_CLIENT_PACKETS_IN_FLIGHT
+* Environment: ROCKETNET_CLIENT_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES
+* Environment: ROCKETNET_CLIENT_SEQUENCED_HOLDS
+* Environment: ROCKETNET_CLIENT_RECEIPT_RING
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_INITIAL_MS
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_MIN_MS
+* Environment: ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS
+* Environment: ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT
+* Environment: ROCKETNET_CLIENT_SIMULATED_LATENCY_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_JITTER_MS
+* Environment: ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT
+* Environment: ROCKETNET_SERVER_PROTOCOL_ID
+* Environment: ROCKETNET_SERVER_MAX_CLIENTS
+* Environment: ROCKETNET_SERVER_FILTER_VALUE
+* Environment: ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
+* Environment: ROCKETNET_SERVER_SERVER_PUBLIC_KEY
+* Environment: ROCKETNET_SERVER_SERVER_SECRET_KEY
+* Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES
+* Environment: ROCKETNET_SERVER_NUM_OS_CPUS
+* Environment: ROCKETNET_SERVER_MAX_PAYLOAD_BYTES
+* Environment: ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS
+* Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
+* Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS
+* Environment: ROCKETNET_SERVER_TRANSPORT
+* Environment: ROCKETNET_SERVER_PUBLIC_ADDRESS
+* Environment: ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS
+* Environment: ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS
+* Environment: ROCKETNET_SERVER_NUM_CHANNELS
+* Environment: ROCKETNET_SERVER_WINDOW_MESSAGES
+* Environment: ROCKETNET_SERVER_RECEIVE_RING_BYTES
+* Environment: ROCKETNET_SERVER_MAX_MESSAGE_BYTES
+* Environment: ROCKETNET_SERVER_SEND_BUFFER_BYTES
+* Environment: ROCKETNET_SERVER_SEND_QUEUE_MESSAGES
+* Environment: ROCKETNET_SERVER_PACKETS_IN_FLIGHT
+* Environment: ROCKETNET_SERVER_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_SERVER_UNRELIABLE_DELIVERIES
+* Environment: ROCKETNET_SERVER_SEQUENCED_HOLDS
+* Environment: ROCKETNET_SERVER_RECEIPT_RING
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_INITIAL_MS
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_MIN_MS
+* Environment: ROCKETNET_SERVER_RESEND_DELAY_MAX_MS
+* Environment: ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT
+* Environment: ROCKETNET_SERVER_SIMULATED_LATENCY_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_JITTER_MS
+* Environment: ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT
+* Environment: ROCKETNET_LOG_LEVEL
+* Environment: ROCKETNET_CLIENT_GAME_CLOCK_EPOCH
+* Environment: ROCKETNET_SERVER_GAME_CLOCK_EPOCH
+* Environment: ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH
+* Environment: ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH
+* Environment: ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW
+* Environment: ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW
+* Environment: ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES
+* Environment: ROCKETNET_SERVER_MEMORY_BUDGET_BYTES
+* Environment: ROCKETNET_GATEWAY_ETHERNET_ADDRESS
+
+## Server transports
+
+Transport selection is runtime (#106): one build carries every transport its
+platform has — on Linux the AF_XDP transport (privileged), the GSO transport
+(SO_REUSEPORT + sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and the portable UDP
+transport; on macOS
 the Darwin batch pump and portable — and the transport walks an ordered candidate
-list at create. The list rides the config's `driver` field or the
-`ROCKETNET_DRIVER` environment variable (precedence: default < struct < env):
+list at create. The list rides the config's transport field or the
+per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
+environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended ladder
-                                                #   (linux: xdp,gso,portable — falls on refusal)
-    ROCKETNET_DRIVER=portable ./bin/functional  # a one-element list is a pin: that driver
+                                                #   (linux: xdp,gso,io_uring,portable — falls on refusal)
+    ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
+                                                # a one-element list is a pin: that transport
                                                 #   or loud failure, never a silent fall
-    ROCKETNET_DRIVER=gso,portable ./bin/functional  # exactly these, exactly this order
+    ROCKETNET_SERVER_TRANSPORT=gso,portable ./bin/functional  # exactly these, exactly this order
 
 Names known but absent on a platform — or not applicable to an endpoint, like
 `gso` for a client — are skipped with a log line, so one fleet-wide value deploys
 everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
-Unknown names refuse loudly at create. The granted driver is reported by
-`rocketnet_server_transport_driver` / `rocketnet_client_transport_driver` and the
-create log line. Queue-count bounds are per driver, refused loudly and never
-clamped: the xdp driver takes any `num_xdp_queues` from 1, the gso driver refuses
-past its 32-queue geometry. The GSO driver still probes UDP_SEGMENT and UDP_GRO at
+Unknown names refuse loudly at create. The granted transport is reported by
+the transport name query on each client and server, and the create log line. Queue-count bounds are per transport, refused loudly and never
+clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport refuses
+past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
-that degradation is internal to the driver, below the ladder; likewise the Darwin
-batch pump's live-refusal pause. The pre-#106 `ROCKETNET_PUMP=portable` override is
-absorbed into this system with its exact old meaning — the msgx pump off —
-honored and named in the logs, with `ROCKETNET_DRIVER=portable` as its successor;
-`ROCKETNET_SERVER_NUM_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS` likewise keep
-working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
-`ROCKETNET_NUM_OS_CPUS`. Run `./bin/functional` against each rung. The unit
-suite, `./bin/test`, does not start a driver, so a driver pin does not change
+that degradation is internal to the transport, below the ladder; likewise the Darwin
+batch pump's live-refusal pause. Select the portable pump through
+`ROCKETNET_SERVER_TRANSPORT=portable` and `ROCKETNET_CLIENT_TRANSPORT=portable`.
+Run `./bin/functional`
+against each rung. The unit
+suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
-config tables and their legacy aliases, then restores them on return.
-`ROCKETNET_DRIVER` remains an intentional test pin; `ROCKETNET_TEST_VERBOSE`
+config tables, then restores them on return.
+`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` remain intentional
+test pins; `ROCKETNET_TEST_VERBOSE`
 keeps its diagnostic meaning. Passing ordinary runs print test names and
 explicitly named platform skips. Failures retain the captured diagnostic log.
 
 ### Windows IOCP server
 
-Native driver authors: [DRIVERS.md](DRIVERS.md) describes registration,
+Native transport authors: [TRANSPORTS.md](TRANSPORTS.md) describes registration,
 capabilities, ownership and the independently built extension example.
 
-Select `driver = "iocp"` in the existing server config, or set
-`ROCKETNET_DRIVER=iocp`. The driver uses overlapped UDP with completion batches;
+Select `transport = "iocp"` in the existing server config, or set
+`ROCKETNET_SERVER_TRANSPORT=iocp`. The transport uses overlapped UDP with completion batches;
 send buffers are recycled only after completion, and stop cancels and drains
 outstanding operations. IPv6 binds accept both address families. The client
 continues to use the portable path.
 
 The existing `num_xdp_queues` field selects IOCP workers, following the GSO
-driver's reuse of this field: zero selects four workers; 1 through 32 are valid.
+transport's reuse of this field: zero selects one worker; 1 through 32 are valid.
+Workers dequeue completions from the one port and each publishes its own receive
+buffer, so more than one worker can reorder a client's datagrams, across workers
+and across ticks, and the reliable layer answers the reordering with resends; one
+worker is the default for that reason.
 There are 128 posted receives per worker, 1024 receive staging slots per worker
 per buffer, and 16384 send frames across all workers. These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
 IOCP is currently an explicit selection; Windows `auto` keeps portable first
-while this new driver is reviewed. Windows CI runs both configurations, plus
+while this new transport is reviewed. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
@@ -290,16 +662,16 @@ The current implementation shares one UDP socket between completion workers.
 Its receive-queue contention must be measured before choosing whether Windows
 needs RSS-sharded sockets or a different native backend for the line-rate tier.
 
-## Deploying the XDP driver: provision, then verify-and-bind
+## Deploying the XDP transport: provision, then verify-and-bind
 
-The library never mutates machine state. `rocketnet_server_transport_create()`
-with the xdp driver is verify-and-bind only: a non-mutating pre-flight checks
+The library never mutates machine state. `rocketnet_server_start( server )`
+with the xdp transport is verify-and-bind only: a non-mutating pre-flight checks
 that the machine is provisioned and refuses by name — each unmet condition logs
 the knob, the wanted value, and the script that sets it — and the library's own
 acts stay per-socket (its BPF program built, loaded and attached, AF_XDP binds,
-the memlock rlimit). Provisioning is `scripts/rocketnet-provision`, a shipped
-deliverable: the setup was hand-run once for the game and no game that uses
-rocketnet with XDP reconstructs it. The script's header carries the authoritative
+the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
+step that has been hand-run once; no application using XDP reconstructs it. The
+script's header carries the authoritative
 condition list; the pre-flight checks exactly those conditions.
 
 Cold, on a fresh box, as root:
@@ -346,8 +718,8 @@ Cold, on a fresh box, as root:
     #  the enforcement paths can drift silently.)
 
 This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
-the busy-poll pair — is the 10 Gbps point, as measured on the game's Linux
-server; the magnitude belongs to that machine, and the claim attaches to a
+the busy-poll pair — is the 10 Gbps point, as measured on a provisioned 10 GbE
+Linux host; the magnitude belongs to that machine, and the claim attaches to a
 verified-provisioned box, never to the library alone. The isolated-core mask, the
 queue count and the IRQ pinning scale together with NIC bandwidth: one queue
 wants one isolated core, and higher-bandwidth NICs need more cores (the script
@@ -389,7 +761,10 @@ for correct wire bytes today. The strict build is the family floor: contraction 
 architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-64 one), so
 float arithmetic near a wire diverges bit-wise between architectures without it. If you
 compile rocketnet's sources into your own build rather than linking the library, carry the same
-flag. The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
+flag. The flag is private to rocketnet's own targets: neither the installed
+package nor `add_subdirectory` passes it to your targets, whose floating-point
+flags stay your own.
+The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
 (one rounding of `a*b+c` would change `0x00000000` to `0x33800000` / `0x3C90000000000000`),
 and `tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
 omits `-ffp-contract=off` or `/fp:precise`.
@@ -405,3 +780,67 @@ acquire it without requiring an extra update or flush. The ordinary fill path
 adds an acquire load of the producer-buffer index; only recovery after both
 buffers were queued takes the publication mutex. Hardware throughput and
 pressure measurements are required for this changed XDP path.
+
+## Fuzzing on macOS
+
+Apple clang ships no libFuzzer runtime, so `-fsanitize=fuzzer` fails there with
+`libclang_rt.fuzzer_osx.a not found`. Fuzz on a Mac with an LLVM toolchain that
+carries it; the official LLVM macOS ARM64 release unpacked at
+`$HOME/sdk/llvm` is one. Name that compiler once in `ROCKETNET_FUZZ_CC` and
+`ROCKETNET_FUZZ_CXX` and both the library build and `fuzz/Makefile` pick it
+up. Apple silicon (arm64) is the supported macOS host.
+
+```
+export ROCKETNET_FUZZ_CC="$HOME/sdk/llvm/bin/clang"
+export ROCKETNET_FUZZ_CXX="$HOME/sdk/llvm/bin/clang++"
+export CC="$ROCKETNET_FUZZ_CC" CXX="$ROCKETNET_FUZZ_CXX"
+
+cmake -B build -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_COMPILER="$ROCKETNET_FUZZ_CC" \
+  -DCMAKE_CXX_COMPILER="$ROCKETNET_FUZZ_CXX" \
+  -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+cmake --build build --target rocketnet_dev --parallel 4
+
+make -C fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
+```
+
+That builds `rocketnet_fuzz`, `rocketnet_fuzz_message`,
+`rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` in
+`fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
+`-ffp-contract=off` floor as the library. On macOS the link adds
+`-framework CoreFoundation -framework SystemConfiguration`, which the platform
+layer's interface lookup uses, as `CMakeLists.txt` does. Run one for fifteen
+minutes from its seed corpus and the persisted corpus, with the wire
+dictionary, and keep leak detection off: libFuzzer starts its own RSS-polling
+thread and never joins it, so LeakSanitizer reports that frame on macOS
+whatever the product does.
+
+```
+mkdir -p corpus/rocketnet_fuzz
+ASAN_OPTIONS=detect_leaks=0 ./fuzz/rocketnet_fuzz corpus/rocketnet_fuzz fuzz/corpus \
+  -dict=fuzz/rocketnet.dict -max_total_time=900 -print_final_stats=1
+```
+
+The other three take `corpus/rocketnet_fuzz_message` with
+`fuzz/corpus_message`, `corpus/rocketnet_fuzz_connect_token` with
+`fuzz/corpus_connect_token`, and `corpus/rocketnet_fuzz_receive_structured`
+with `fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
+(`crash-*`, `oom-*`, `timeout-*`, `leak-*`) names the bug; a minimized input
+belongs in the target's seed corpus as `regress_<name>` together with its
+pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
+workflow's `fuzz-macos` job runs this same build for each target; it fails fast
+with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when
+`$HOME/sdk/llvm` carries no libFuzzer runtime, before any build runs.
+`ci.yml`'s
+`Replay the fuzz corpora without libFuzzer` step stays the gate for the four
+committed corpora: build `fuzz_replay_rocketnet_fuzz`,
+`fuzz_replay_rocketnet_fuzz_message`,
+`fuzz_replay_rocketnet_fuzz_connect_token` and
+`fuzz_replay_rocketnet_fuzz_receive_structured` and run each against its
+`fuzz/corpus*` inputs, which executes every committed file exactly once. The
+`ROCKETNET_FUZZ_CC`/`ROCKETNET_FUZZ_CXX` variable mechanism is not Apple
+silicon specific: building the instrumented library with LLVM clang and
+running `make -C fuzz ROCKETNET_FUZZ_CXX=...` produces the four harnesses with
+`-fsanitize=fuzzer,address,undefined` on any host that carries a libFuzzer
+runtime.

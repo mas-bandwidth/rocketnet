@@ -1,5 +1,5 @@
 /*
-    rocketnet driver bench: portable sendto/recvfrom (#81)
+    rocketnet transport bench: portable sendto/recvfrom (#81)
 
     The negative control. One unconnected UDP socket per side, one
     syscall per packet by construction, everywhere-buildable. Every

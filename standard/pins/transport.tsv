@@ -1,0 +1,81 @@
+# The rows of RN-1 t2.3 and t3 (TRANSPORT.md) this skeleton wrote: document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10. Section cards add rows to
+# standard/pins/<section id>.tsv, never to this file.
+#include "rocketnet_constants.h"
+replay window depth minimum	ROCKETNET_HISTORY_PACKETS_MIN	4096
+replay window depth maximum	ROCKETNET_HISTORY_PACKETS_MAX	32768
+version	ROCKETNET_WIRE_VERSION	0x4E7C1A93
+connection request packet	ROCKETNET_CONNECTION_REQUEST_PACKET	0
+connection denied packet	ROCKETNET_CONNECTION_DENIED_PACKET	1
+connection challenge packet	ROCKETNET_CONNECTION_CHALLENGE_PACKET	2
+connection response packet	ROCKETNET_CONNECTION_RESPONSE_PACKET	3
+connection keep-alive packet	ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET	4
+connection payload packet	ROCKETNET_CONNECTION_PAYLOAD_PACKET	5
+connection disconnect packet	ROCKETNET_CONNECTION_DISCONNECT_PACKET	6
+connection cookie packet	ROCKETNET_CONNECTION_COOKIE_PACKET	7
+connection ack packet	ROCKETNET_CONNECTION_ACK_PACKET	8
+connection payload fragment packet	ROCKETNET_CONNECTION_FRAGMENT_PACKET	9
+first reserved packet type	ROCKETNET_CONNECTION_FRAGMENT_PACKET + 1	10
+unkeyed filter epoch	ROCKETNET_FILTER_EPOCH_UNKEYED	0
+handshake client to server label	ROCKETNET_KDF_CONTEXT_HANDSHAKE_C2S	"RKTNHNDC"
+handshake server to client label	ROCKETNET_KDF_CONTEXT_HANDSHAKE_S2C	"RKTNHNDS"
+session client to server label	ROCKETNET_KDF_CONTEXT_SESSION_C2S	"RKTNSESC"
+session server to client label	ROCKETNET_KDF_CONTEXT_SESSION_S2C	"RKTNSESS"
+Ed25519 public key	crypto_sign_PUBLICKEYBYTES	32
+Ed25519 secret key	crypto_sign_SECRETKEYBYTES	64
+Ed25519 signature	crypto_sign_BYTES	64
+X25519 public key	crypto_box_PUBLICKEYBYTES	32
+X25519 secret key	crypto_box_SECRETKEYBYTES	32
+sealed box overhead	crypto_box_SEALBYTES	48
+AEAD key	crypto_aead_chacha20poly1305_ietf_KEYBYTES	32
+AEAD nonce	crypto_aead_chacha20poly1305_ietf_NPUBBYTES	12
+AEAD tag	crypto_aead_chacha20poly1305_ietf_ABYTES	16
+BLAKE2b key	crypto_generichash_KEYBYTES	32
+SipHash key	crypto_shorthash_KEYBYTES	16
+prefilter header	ROCKETNET_PREFILTER_BYTES	6
+filter value	ROCKETNET_FILTER_VALUE_BYTES	4
+sequence	ROCKETNET_SEQUENCE_BYTES	4
+per-packet overhead	ROCKETNET_PACKET_OVERHEAD_BYTES	26
+associated data	ROCKETNET_AD_BYTES	21
+associated data with ephemeral key	ROCKETNET_AD_WITH_EPHEMERAL_BYTES	53
+connection salt	ROCKETNET_CONNECTION_SALT_BYTES	8
+session nonce	ROCKETNET_SESSION_NONCE_BYTES	8
+connect token	ROCKETNET_CONNECT_TOKEN_BYTES	768
+signed connect data	ROCKETNET_SIGNED_CONNECT_DATA_BYTES	576
+sealed block	ROCKETNET_SEALED_BLOCK_BYTES	432
+private block	ROCKETNET_PRIVATE_BLOCK_BYTES	384
+user data	ROCKETNET_USER_DATA_BYTES	256
+token key	ROCKETNET_KEY_BYTES	32
+token identifier	ROCKETNET_TOKEN_IDENTIFIER_BYTES	16
+ack block minimum	ROCKETNET_ACK_BLOCK_MIN_BYTES	7
+fragment header	ROCKETNET_FRAGMENT_HEADER_BYTES	6
+fragments per payload maximum	ROCKETNET_MAX_FRAGMENTS	256
+link MTU	ROCKETNET_LINK_MTU_BYTES	1500
+receive ceiling	ROCKETNET_MAX_PACKET_BYTES	1472
+maximum packet size limit	ROCKETNET_MAX_PACKET_BYTES	1472
+payload capacity	ROCKETNET_MAX_PAYLOAD_BYTES	1416
+received payload maximum	ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES	1439
+fragment stride	ROCKETNET_MAX_FRAGMENT_BYTES	1413
+received fragment stride maximum	ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES	1433
+maximum packet size	ROCKETNET_SEND_BUDGET	1452
+send rate	ROCKETNET_DEFAULT_SEND_RATE	10
+cookie lifetime	ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS	3
+cookie key rotation	ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS	60
+server redundant disconnect packets	ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS	10
+client redundant disconnect packets	ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS	10
+ack debt threshold	ROCKETNET_ACK_DEBT_THRESHOLD	1
+used-token history per slot	ROCKETNET_USED_TOKEN_HISTORY_RATIO	8
+# RN-1 t2.3, the connection layer's configuration fields
+server protocol_id	rn_pin_server_default_protocol_id	0
+server max_clients	rn_pin_server_default_max_clients	1000
+server max_clients limit	ROCKETNET_MAX_CLIENTS	1000
+server max_payload_bytes	ROCKETNET_MAX_PAYLOAD_BYTES	1416
+server num_reassembly_slots	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
+server transport	rn_pin_server_default_transport	"auto"
+server public_address	rn_pin_server_default_public_address	""
+server max_timeout_seconds	rn_pin_server_default_max_timeout_seconds	60
+server handshake_deadline_seconds	rn_pin_server_default_handshake_deadline_seconds	5
+client max_payload_bytes	ROCKETNET_MAX_PAYLOAD_BYTES	1416
+client num_reassembly_slots	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
+client transport	rn_pin_client_default_transport	"auto"
+fragmented payload maximum	ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES	361728

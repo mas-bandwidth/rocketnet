@@ -16,23 +16,23 @@
 // arguments must fail loudly instead of depending on the production library.
 void rocketnet_api_misuse_record() { abort(); }
 static void fixture_assert( const char *, const char *, const char *, int ) { abort(); }
-void (*rocketnet_assert_function_pointer)( const char *, const char *, const char *, int ) = fixture_assert;
+void (*rn_assert_function)( const char *, const char *, const char *, int ) = fixture_assert;
 
 static bool mode(const char * name)
 {
     const char * value = getenv("ROCKETNET_ABI_TEST_MODE");
     return value && strcmp(value, name) == 0;
 }
-ROCKETNET_EXPORT_FUNC uint32_t rocketnet_abi_version(void)
+extern "C" ROCKETNET_EXPORT uint32_t rocketnet_abi_version(void)
 { return real_abi_version() + (mode("revision") ? 1 : 0); }
-ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_type_size(const char * type)
+extern "C" ROCKETNET_EXPORT size_t rocketnet_abi_type_size(const char * type)
 { return real_abi_type_size(type) + (mode("size") ? 8 : 0); }
-ROCKETNET_EXPORT_FUNC int rocketnet_abi_field_count(const char * type)
+extern "C" ROCKETNET_EXPORT int rocketnet_abi_field_count(const char * type)
 { return real_abi_field_count(type) + (mode("field count") ? 1 : 0); }
-ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_offset(const char * type, const char * field)
+extern "C" ROCKETNET_EXPORT size_t rocketnet_abi_field_offset(const char * type, const char * field)
 { return real_abi_field_offset(type, field) + (mode("offset") ? 1 : 0); }
-ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_size(const char * type, const char * field)
+extern "C" ROCKETNET_EXPORT size_t rocketnet_abi_field_size(const char * type, const char * field)
 { return real_abi_field_size(type, field) + (mode("width") ? 1 : 0); }
 
 // If a guard disappears, the test dies here instead of accepting a fake success.
-ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config(rocketnet_client_transport_config_t *) { abort(); }
+extern "C" ROCKETNET_EXPORT void rocketnet_client_transport_default_config(rocketnet_client_transport_config_t *) { abort(); }

@@ -16,7 +16,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_constants.h"
@@ -74,7 +74,7 @@ static void rcr_mint_token( uint8_t * token_data, uint64_t client_id )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof(signed_fields) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -110,12 +110,11 @@ static void rcr_server_setup( struct rocketnet_server_protocol_t * server, struc
     server->handshake_deadline_seconds = 5.0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
-    server->admitted_token_set = rocketnet_admitted_token_set_create( NULL, 16 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
     server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = counters;
-    check( server->encryption_map && server->used_token_history && server->admitted_token_set &&
+    check( server->encryption_map && server->used_token_history &&
            server->client_slots && server->acks && server->reassembly );
     rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
@@ -125,7 +124,6 @@ static void rcr_server_teardown( struct rocketnet_server_protocol_t * server )
 {
     rocketnet_encryption_map_destroy( server->encryption_map );
     rocketnet_used_token_history_destroy( server->used_token_history );
-    rocketnet_admitted_token_set_destroy( server->admitted_token_set );
     rocketnet_client_slots_destroy( server->client_slots );
     rocketnet_server_acks_destroy( server->acks );
     rocketnet_reassembly_set_destroy( server->reassembly );
@@ -717,6 +715,21 @@ static void client_handshake_receive_counters_move_exactly()
         RCR_EXPECT( "denied to a client that is not connecting", &before, &pair.client_counters,
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED, 1 },
                       { ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_STATE, 1 } } );
+
+        // wrong-size challenge and denied are refused before the state gate
+        bytes = rcr_header_only( &pair, ROCKETNET_CONNECTION_CHALLENGE_PACKET, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES - 1, packet );
+        before = pair.client_counters;
+        check( !rcr_to_client( &pair, packet, bytes ) );
+        RCR_EXPECT( "wrong-size challenge to a client that is not connecting", &before, &pair.client_counters,
+                    { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED, 1 },
+                      { ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_SIZE, 1 } } );
+
+        bytes = rcr_header_only( &pair, ROCKETNET_CONNECTION_DENIED_PACKET, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES - 1, packet );
+        before = pair.client_counters;
+        check( !rcr_to_client( &pair, packet, bytes ) );
+        RCR_EXPECT( "wrong-size denied to a client that is not connecting", &before, &pair.client_counters,
+                    { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED, 1 },
+                      { ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_SIZE, 1 } } );
     }
     rcr_pair_teardown( &pair );
 
@@ -1131,3 +1144,4 @@ static void session_end_races_move_only_expected_counters()
 }
 
 REGISTER_UNIT_TEST( session_end_races_move_only_expected_counters );
+

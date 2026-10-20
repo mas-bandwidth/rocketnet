@@ -7,12 +7,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "driver check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
+#define CHECK(x) do { if (!(x)) { fprintf(stderr, "transport check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
 #include "route_checks.h"
 
 struct lifecycle_t { bool fail; int creates; int destroys; int stops; };
-static void * create( void * context, const rocketnet_server_driver_config_t *, rocketnet_address_t * bind )
+static void * create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 {
     lifecycle_t * state = (lifecycle_t*) context;
     ++state->creates;
@@ -24,58 +24,58 @@ static bool stop( void * instance ) { return ++((lifecycle_t*) instance)->stops 
 static void send( void *, const rocketnet_platform_send_t *, int ) {}
 static int receive( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) { return 0; }
 
-static void test_driver_lifecycle()
+static void test_transport_lifecycle()
 {
-    rocketnet_server_driver_operations_t operations = {};
+    rocketnet_server_transport_io_operations_t operations = {};
     operations.create = create;
     operations.destroy = destroy;
     operations.stop = stop;
     operations.send_batch = send;
     operations.receive_batch = receive;
-    rocketnet_server_driver_t driver = {};
+    rocketnet_server_transport_io_t transport = {};
     rocketnet_address_t bind;
     CHECK(rocketnet_address_parse(&bind, "127.0.0.1:0"));
     const rocketnet_address_t original = bind;
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
-    const rocketnet_server_driver_config_t setup = { "fixture", &config, "127.0.0.1:0" };
+    const rocketnet_server_transport_io_config_t setup = { "fixture", &config, "127.0.0.1:0" };
     lifecycle_t state = {};
 
     // A malformed extension is refused before invoking its factory.
-    operations.flags = ROCKETNET_DRIVER_STAGED;
-    CHECK(!rocketnet_server_driver_open(&operations, &state, &setup, &bind, &driver));
+    operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    CHECK(!rocketnet_server_transport_io_open(&operations, &state, &setup, &bind, &transport));
     CHECK(state.creates == 0);
     operations.flags = 0;
     operations.destroy = NULL;
-    CHECK(!rocketnet_server_driver_open(&operations, &state, &setup, &bind, &driver));
+    CHECK(!rocketnet_server_transport_io_open(&operations, &state, &setup, &bind, &transport));
     CHECK(state.creates == 0);
     operations.destroy = destroy;
 
     // A factory may modify its tentative address then refuse. The next
     // candidate must still see the original port, with no live handle.
     state.fail = true;
-    CHECK(!rocketnet_server_driver_open(&operations, &state, &setup, &bind, &driver));
+    CHECK(!rocketnet_server_transport_io_open(&operations, &state, &setup, &bind, &transport));
     CHECK(rocketnet_address_equal(&bind, &original));
-    CHECK(!driver.instance && !driver.operations);
-    rocketnet_server_driver_close(&driver);
+    CHECK(!transport.instance && !transport.operations);
+    rocketnet_server_transport_io_close(&transport);
     CHECK(state.destroys == 0);
 
     state.fail = false;
-    CHECK(rocketnet_server_driver_open(&operations, &state, &setup, &bind, &driver));
-    CHECK(driver.instance == &state && bind.port == 12345);
-    CHECK(!rocketnet_server_driver_open(&operations, &state, &setup, &bind, &driver));
+    CHECK(rocketnet_server_transport_io_open(&operations, &state, &setup, &bind, &transport));
+    CHECK(transport.instance == &state && bind.port == 12345);
+    CHECK(!rocketnet_server_transport_io_open(&operations, &state, &setup, &bind, &transport));
     CHECK(state.creates == 2); // An existing instance is never overwritten.
-    CHECK(!rocketnet_server_driver_stop(&driver));
-    CHECK(!rocketnet_server_driver_stop(&driver));
-    CHECK(rocketnet_server_driver_stop(&driver));
-    rocketnet_server_driver_close(&driver);
-    rocketnet_server_driver_close(&driver);
-    CHECK(state.destroys == 1 && !driver.instance && !driver.operations);
-    CHECK(rocketnet_server_driver_stop(&driver));
-    printf("test_driver_lifecycle\n");
+    CHECK(!rocketnet_server_transport_io_stop(&transport));
+    CHECK(!rocketnet_server_transport_io_stop(&transport));
+    CHECK(rocketnet_server_transport_io_stop(&transport));
+    rocketnet_server_transport_io_close(&transport);
+    rocketnet_server_transport_io_close(&transport);
+    CHECK(state.destroys == 1 && !transport.instance && !transport.operations);
+    CHECK(rocketnet_server_transport_io_stop(&transport));
+    printf("test_transport_lifecycle\n");
 }
 
-static void test_driver_registry()
+static void test_transport_registry()
 {
     int field_count;
     const auto * fields = rocketnet_server_transport_config_fields(&field_count);
@@ -87,65 +87,111 @@ static void test_driver_registry()
             found_queues = true;
         }
     CHECK(found_queues); // The BPF map must cover every admitted queue index.
-    CHECK(ROCKETNET_DRIVER_PORTABLE == 0 && ROCKETNET_DRIVER_GSO == 1 &&
-          ROCKETNET_DRIVER_XDP == 2 && ROCKETNET_DRIVER_MSGX == 3 && ROCKETNET_DRIVER_IOCP == 4);
-    for ( int i = 0; i < ROCKETNET_NUM_DRIVERS; ++i )
+    CHECK(ROCKETNET_TRANSPORT_PORTABLE == 0 && ROCKETNET_TRANSPORT_GSO == 1 &&
+          ROCKETNET_TRANSPORT_XDP == 2 && ROCKETNET_TRANSPORT_MSGX == 3 && ROCKETNET_TRANSPORT_IOCP == 4 &&
+          ROCKETNET_TRANSPORT_LOOPBACK == 5 && ROCKETNET_TRANSPORT_IO_URING == 6 && ROCKETNET_TRANSPORT_RIO == 7);
+    for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; ++i )
     {
-        const rocketnet_driver_definition_t * definition = rocketnet_driver_definition(i);
+        const rocketnet_transport_definition_t * definition = rocketnet_transport_definition(i);
         CHECK(definition && definition->name[0]);
-        CHECK(strstr(rocketnet_driver_names(), definition->name));
-        for ( int j = 0; j < i; ++j ) CHECK(strcmp(definition->name, rocketnet_driver_name(j)) != 0);
-        CHECK(rocketnet_driver_discovers_bound_port(i) == definition->discovers_bound_port);
+        CHECK(strstr(rocketnet_transport_names(), definition->name));
+        for ( int j = 0; j < i; ++j ) CHECK(strcmp(definition->name, rocketnet_transport_name(j)) != 0);
+        CHECK(rocketnet_transport_discovers_bound_port(i) == definition->discovers_bound_port);
     }
-    CHECK(!rocketnet_driver_definition(-1) && !rocketnet_driver_definition(ROCKETNET_NUM_DRIVERS));
+    CHECK(!rocketnet_transport_definition(-1) && !rocketnet_transport_definition(ROCKETNET_NUM_TRANSPORTS));
     int count;
-    const int * servers = rocketnet_server_driver_availability(&count);
+    const int * servers = rocketnet_server_transport_io_availability(&count);
     CHECK(count > 0);
     for ( int i = 0; i < count; ++i )
     {
-        const rocketnet_driver_definition_t * definition = rocketnet_driver_definition(servers[i]);
+        const rocketnet_transport_definition_t * definition = rocketnet_transport_definition(servers[i]);
         CHECK(definition->backend && definition->backend->server);
-        if (i) CHECK(rocketnet_driver_definition(servers[i-1])->server_preference <= definition->server_preference);
+        if (i) CHECK(rocketnet_transport_definition(servers[i-1])->server_preference <= definition->server_preference);
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    CHECK(count == 3 && servers[0] == ROCKETNET_DRIVER_XDP && servers[1] == ROCKETNET_DRIVER_GSO && servers[2] == ROCKETNET_DRIVER_PORTABLE);
+    if (rocketnet_transport_definition(ROCKETNET_TRANSPORT_IO_URING)->backend) // built with liburing
+        CHECK(count == 5 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
+              servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_PORTABLE && servers[4] == ROCKETNET_TRANSPORT_LOOPBACK);
+    else
+        CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO && servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    CHECK(count == 2 && servers[0] == ROCKETNET_DRIVER_MSGX && servers[1] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 3 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_PORTABLE && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK);
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    CHECK(count == 2 && servers[0] == ROCKETNET_DRIVER_PORTABLE && servers[1] == ROCKETNET_DRIVER_IOCP);
+    CHECK(count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
+          servers[2] == ROCKETNET_TRANSPORT_RIO && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK);
 #else
-    CHECK(count == 1 && servers[0] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 2 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK);
 #endif
-    const int * clients = rocketnet_client_driver_availability(&count);
+    const int * clients = rocketnet_client_transport_io_availability(&count);
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    CHECK(count == 2 && clients[0] == ROCKETNET_DRIVER_MSGX && clients[1] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 3 && clients[0] == ROCKETNET_TRANSPORT_MSGX && clients[1] == ROCKETNET_TRANSPORT_PORTABLE && clients[2] == ROCKETNET_TRANSPORT_LOOPBACK);
 #else
-    CHECK(count == 1 && clients[0] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 2 && clients[0] == ROCKETNET_TRANSPORT_PORTABLE && clients[1] == ROCKETNET_TRANSPORT_LOOPBACK);
 #endif
-    for ( int i = 0; i < count; ++i ) CHECK(rocketnet_driver_definition(clients[i])->backend->client);
-    printf("test_driver_registry\n");
+    for ( int i = 0; i < count; ++i ) CHECK(rocketnet_transport_definition(clients[i])->backend->client);
+    printf("test_transport_registry\n");
 }
 
-static void test_buffered_driver()
+static void test_transport_pin_only()
 {
-    const rocketnet_driver_backend_t * backend = rocketnet_driver_definition(ROCKETNET_DRIVER_PORTABLE)->backend;
+    CHECK(rocketnet_transport_pin_only(ROCKETNET_TRANSPORT_LOOPBACK));
+    for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; ++i )
+        if ( i != ROCKETNET_TRANSPORT_LOOPBACK ) CHECK(!rocketnet_transport_pin_only(i));
+
+    int num;
+    const int * servers = rocketnet_server_transport_io_availability(&num);
+    struct rocketnet_transport_ladder_t ladder;
+    int auto_count = 0;
+    for ( int i = 0; i < num; ++i )
+        if ( !rocketnet_transport_pin_only(servers[i]) ) ++auto_count;
+
+    CHECK(rocketnet_transport_ladder_parse("auto", servers, num, &ladder));
+    CHECK(ladder.num_candidates == auto_count);
+    for ( int i = 0; i < ladder.num_candidates; ++i ) CHECK(!rocketnet_transport_pin_only(ladder.candidates[i]));
+    int ai = 0;
+    for ( int i = 0; i < num; ++i )
+        if ( !rocketnet_transport_pin_only(servers[i]) )
+            CHECK(ladder.candidates[ai++] == servers[i]);
+
+    CHECK(rocketnet_transport_ladder_parse(NULL, servers, num, &ladder));
+    CHECK(ladder.num_candidates == auto_count);
+
+    CHECK(rocketnet_transport_ladder_parse("loopback", servers, num, &ladder));
+    CHECK(ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_LOOPBACK);
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    CHECK(rocketnet_transport_ladder_parse("gso,loopback", servers, num, &ladder));
+    CHECK(ladder.num_candidates == 2 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO && ladder.candidates[1] == ROCKETNET_TRANSPORT_LOOPBACK);
+    CHECK(rocketnet_transport_ladder_parse("iocp", servers, num, &ladder));
+    CHECK(ladder.num_candidates == auto_count);
+#endif
+
+    const int * clients = rocketnet_client_transport_io_availability(&num);
+    CHECK(rocketnet_transport_ladder_parse("auto", clients, num, &ladder));
+    for ( int i = 0; i < ladder.num_candidates; ++i ) CHECK(!rocketnet_transport_pin_only(ladder.candidates[i]));
+    printf("test_transport_pin_only\n");
+}
+
+static void test_buffered_transport()
+{
+    const rocketnet_transport_backend_t * backend = rocketnet_transport_definition(ROCKETNET_TRANSPORT_PORTABLE)->backend;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config(&server_config);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
-    const rocketnet_server_driver_config_t server_setup = { "portable", &server_config, "127.0.0.1:0" };
-    const rocketnet_client_driver_config_t client_setup = { "portable", &client_config };
+    const rocketnet_server_transport_io_config_t server_setup = { "portable", &server_config, "127.0.0.1:0" };
+    const rocketnet_client_transport_io_config_t client_setup = { "portable", &client_config };
     rocketnet_address_t server_address, client_address;
     CHECK(rocketnet_address_parse(&server_address, "127.0.0.1:0"));
     client_address = server_address;
-    rocketnet_server_driver_t server = {};
-    rocketnet_client_driver_t client = {};
-    rocketnet_client_driver_operations_t incomplete = *backend->client;
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_client_transport_io_t client = {};
+    rocketnet_client_transport_io_operations_t incomplete = *backend->client;
     incomplete.receive = NULL;
-    CHECK(!rocketnet_client_driver_open(&incomplete, NULL, &client_setup, &client_address, &client));
+    CHECK(!rocketnet_client_transport_io_open(&incomplete, NULL, &client_setup, &client_address, &client));
     CHECK(!client.instance && client_address.port == 0);
-    CHECK(rocketnet_server_driver_open(backend->server, NULL, &server_setup, &server_address, &server));
-    CHECK(rocketnet_client_driver_open(backend->client, NULL, &client_setup, &client_address, &client));
+    CHECK(rocketnet_server_transport_io_open(backend->server, NULL, &server_setup, &server_address, &server));
+    CHECK(rocketnet_client_transport_io_open(backend->client, NULL, &client_setup, &client_address, &client));
     CHECK(server_address.port && client_address.port);
     const uint8_t data[] = { 10, 20, 30, 40 };
     client.operations->send(client.instance, &server_address, data, sizeof(data));
@@ -172,23 +218,24 @@ static void test_buffered_driver()
     }
     CHECK(received == sizeof(data) && memcmp(packets[0], data, sizeof(data)) == 0);
     CHECK(rocketnet_address_equal(from, &server_address));
-    CHECK(rocketnet_server_driver_stop(&server));
-    rocketnet_client_driver_close(&client);
-    rocketnet_server_driver_close(&server);
-    printf("test_buffered_driver\n");
+    CHECK(rocketnet_server_transport_io_stop(&server));
+    rocketnet_client_transport_io_close(&client);
+    rocketnet_server_transport_io_close(&server);
+    printf("test_buffered_transport\n");
 }
 
 int main()
 {
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init());
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    CHECK(rocketnet_init( NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     test_route_prefixes();
 #if defined(__linux__)
     test_route_netlink();
 #endif
-    test_driver_registry();
-    test_driver_lifecycle();
-    test_buffered_driver();
+    test_transport_registry();
+    test_transport_pin_only();
+    test_transport_lifecycle();
+    test_buffered_transport();
     rocketnet_term();
 }
