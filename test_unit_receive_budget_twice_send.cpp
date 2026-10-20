@@ -16,7 +16,7 @@
 
 #include "rocketnet_constants.h"
 #ifndef ROCKETNET_SERVER_MAX_SEND_PACKETS
-#define ROCKETNET_SERVER_MAX_SEND_PACKETS 256
+#define ROCKETNET_SERVER_MAX_SEND_PACKETS ROCKETNET_MAX_CLIENTS // BASE keeps this constant in the transport source
 #endif
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_server_gso.h"
