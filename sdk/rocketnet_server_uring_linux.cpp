@@ -484,7 +484,10 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
 
     const int buffer_id = rocketnet_uring_buffer_id( cqe->flags );
     if ( buffer_id < 0 || buffer_id >= ROCKETNET_URING_RECV_BUFFERS )
+    {
+        uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE]++;
         return;
+    }
 
     const uint8_t * buffer = queue->buffers[buffer_id];
 
@@ -787,7 +790,11 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     uring->ring_ready = true;
 
     if ( ( params.features & IORING_FEAT_NODROP ) == 0 )
-        rocketnet_warn( "io_uring transport: this kernel drops completions on overflow (no IORING_FEAT_NODROP)" );
+    {
+        rocketnet_error( "io_uring transport: this kernel drops completions on overflow (no IORING_FEAT_NODROP)" );
+        rocketnet_server_uring_destroy( uring );
+        return NULL;
+    }
 
     // per queue: the provided buffer ring (bgid = queue), filled, and the
     // multishot RECVMSG armed over it

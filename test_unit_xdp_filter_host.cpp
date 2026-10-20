@@ -40,6 +40,9 @@
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_address.h"
 #include "sdk/rocketnet_xdp_replay_marks.h"
+#include "sdk/rocketnet_xdp_frame.h"
+#include "sdk/rocketnet_memory.h"
+#include "sdk/rocketnet_config.h"
 
 // The XDP verdicts, from the kernel's uapi enum xdp_action.
 
@@ -93,6 +96,7 @@ struct xdp_host_frame_t
     uint32_t sequence = 0;                  // the 4 little-endian bytes after the prefilter header
     uint16_t source_port = xdp_host_client_port;
     int truncate_to = -1;                   // >= 0: cut the frame to this many bytes
+    int override_udp_len = -1;              // >= 0: override UDP header length field
 };
 
 static void xdp_host_put16( std::vector<uint8_t> & out, uint16_t value )
@@ -176,7 +180,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
 
     xdp_host_put16( out, f.source_port );
     xdp_host_put16( out, f.port );
-    xdp_host_put16( out, (uint16_t) udp_bytes );
+    xdp_host_put16( out, (uint16_t) ( f.override_udp_len >= 0 ? f.override_udp_len : udp_bytes ) );
     xdp_host_put16( out, 0x0000 );
 
     // the prefilter header (type, epoch, filter value), the sequence little
@@ -1363,6 +1367,61 @@ static void xdp_host_every_counter_has_a_case()
     rocketnet_unit_check( missing == 0 );
 }
 
+
+static void xdp_host_udp_length_drops()
+{
+    std::vector<xdp_host_row_t> rows;
+    const int families[2] = { 4, 6 };
+    for ( int f = 0; f < 2; f++ )
+    {
+        xdp_host_row_t short_len = xdp_host_row( "UDP header length field below 8 bytes", families[f] );
+        short_len.frame.override_udp_len = 7;
+        rows.push_back( xdp_host_expect( short_len, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+
+        xdp_host_row_t zero_len = xdp_host_row( "UDP header length field is 0", families[f] );
+        zero_len.frame.override_udp_len = 0;
+        rows.push_back( xdp_host_expect( zero_len, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+
+        xdp_host_row_t past_end = xdp_host_row( "UDP header length field exceeds frame end", families[f] );
+        past_end.frame.override_udp_len = 8 + past_end.frame.payload_bytes + 20;
+        rows.push_back( xdp_host_expect( past_end, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+    }
+    xdp_host_run_rows( rows );
+    // Also verify the host frame parser refuses corrupt/short UDP length
+    {
+        xdp_host_frame_t f;
+        f.override_udp_len = 7;
+        std::vector<uint8_t> frame = xdp_host_frame_bytes( f );
+        rocketnet_address_t from;
+        const uint8_t * payload = NULL;
+        int payload_len = 0;
+        rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame.data(), frame.size(), &from, &payload, &payload_len ) );
+
+        f.override_udp_len = 0;
+        frame = xdp_host_frame_bytes( f );
+        rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame.data(), frame.size(), &from, &payload, &payload_len ) );
+    }
+
+}
+
+static void xdp_queue_default_matches_memory_plan()
+{
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+
+    rocketnet_server_memory_plan_t plan;
+
+    config.num_xdp_queues = 0;
+    rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
+    rocketnet_unit_check( plan.worker_threads == 7 );
+    rocketnet_unit_check( plan.sockets == 7 );
+
+    config.num_xdp_queues = -1;
+    rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "xdp", plan ) );
+    rocketnet_unit_check( plan.worker_threads == 7 );
+    rocketnet_unit_check( plan.sockets == 7 );
+}
+
 #else // #if ROCKETNET_XDP_FILTER_HOST
 
 // The host filter target is built for GCC or Clang on a little-endian,
@@ -1403,6 +1462,9 @@ XDP_HOST_SKIPPED( xdp_host_every_counter_has_a_case )
 XDP_HOST_SKIPPED( xdp_host_replay_drops_behind_the_window )
 XDP_HOST_SKIPPED( xdp_host_replay_never_writes_the_map )
 
+XDP_HOST_SKIPPED( xdp_host_udp_length_drops )
+XDP_HOST_SKIPPED( xdp_queue_default_matches_memory_plan )
+
 #endif // #if ROCKETNET_XDP_FILTER_HOST
 
 REGISTER_UNIT_TEST( xdp_host_ipv4_rocketnet_packet_redirects );
@@ -1431,3 +1493,6 @@ REGISTER_UNIT_TEST( xdp_host_type_and_size_sweep_matches_the_standard );
 REGISTER_UNIT_TEST( xdp_host_every_counter_has_a_case );
 REGISTER_UNIT_TEST( xdp_host_replay_drops_behind_the_window );
 REGISTER_UNIT_TEST( xdp_host_replay_never_writes_the_map );
+
+REGISTER_UNIT_TEST( xdp_host_udp_length_drops );
+REGISTER_UNIT_TEST( xdp_queue_default_matches_memory_plan );
