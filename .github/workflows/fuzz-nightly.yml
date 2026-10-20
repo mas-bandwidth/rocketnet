@@ -311,7 +311,7 @@ jobs:
             mkdir -p "corpus-win/${target}"
             echo "fuzzing fuzz_${target} for ${T}s with the wire dictionary"
             # the Ninja build writes the executables to bin/, not build-fuzz/:
-            # CMakeLists.txt:64-65 sets CMAKE_RUNTIME_OUTPUT_DIRECTORY to bin/ for a top-level build
+            # CMakeLists.txt sets CMAKE_RUNTIME_OUTPUT_DIRECTORY to bin/ for a top-level build
             ./"bin/fuzz_${target}.exe" \
               "corpus-win/${target}" "${seeds}" \
               -dict=fuzz/rocketnet.dict \
