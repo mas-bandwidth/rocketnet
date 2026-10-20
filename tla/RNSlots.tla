@@ -175,6 +175,26 @@ Kick(s) ==
           !.pendingConn = IF st.pending = s THEN 0 ELSE @]
     /\ UNCHANGED <<wire, sent, pulse>>
 
+\* The application ends a slot between updates (rocketnet_server_disconnect_client
+\* and rocketnet_server_disconnect_all_clients, sdk/rocketnet_api.cpp). A slot
+\* the message layer holds Connected goes through Kick's path
+\* (rn_message_object_kick, sdk/rocketnet_message_server.cpp:373): the message
+\* layer cancels a start pending on the slot, marks it ended with reason NONE
+\* and the transport's disconnect runs through the link; ResetFree resets it at
+\* the next update. A slot only the transport holds is disconnected at the
+\* transport. Broken "disconnectbypasseskick" ends the slot at the transport
+\* only, leaving the message layer Connected until the next Observe.
+PublicDisconnect(s) ==
+    /\ ~Stable /\ st.phase = "application"
+    /\ st.owner[s] # 0 \/ st.state[s] = "Connected"
+    /\ IF st.state[s] = "Connected" /\ "disconnectbypasseskick" \notin Broken
+          THEN st' = [st EXCEPT !.state[s] = "Disconnected", !.owner[s] = 0,
+                      !.bound[s] = 0, !.reason[s] = "NONE",
+                      !.pending = IF @ = s THEN 0 ELSE @,
+                      !.pendingConn = IF st.pending = s THEN 0 ELSE @]
+          ELSE st' = [st EXCEPT !.owner[s] = 0]
+    /\ UNCHANGED <<wire, sent, pulse>>
+
 CarryOn(s) ==
     /\ "carryon" \in Broken /\ st.state[s] = "Exhausted"
     /\ st' = [st EXCEPT !.state[s] = "Connected", !.badKick = TRUE]
@@ -238,7 +258,7 @@ Next == IF st.error # "NONE" THEN FALSE
         ELSE IF Exhausted # {}
         THEN \E s \in Exhausted : Kick(s) \/ CarryOn(s)
         ELSE \/ \E s \in Slots : Connect(s) \/ Disconnect(s) \/ ResetFree(s)
-                    \/ StartPending(s) \/ FinishPending(s)
+                    \/ PublicDisconnect(s) \/ StartPending(s) \/ FinishPending(s)
              \/ \E s \in Slots, m \in 1..MaxMessages : Request(s, m)
              \/ \E p \in Packets : Send(p) \/ TransportOpen(p)
                     \/ TransportAck(p, TRUE) \/ TransportAck(p, FALSE)
@@ -292,6 +312,15 @@ ReleasedRecordsReusable == \A s \in Slots :
 ExhaustionOnlyLeadsToDisconnect ==
     [][\A s \in Slots : st.state[s] = "Exhausted" =>
          st'.state[s] = "Disconnected" /\ st'.reason[s] = "MESSAGE_MEMORY_EXHAUSTED"]_vars
+\* Between updates the message layer reports a slot connected
+\* (rocketnet_server_client_connected) and accepts a start on it
+\* (rn_message_object_start, sdk/rocketnet_message_server.cpp:616) from one
+\* field, the connection state Connected; a slot the transport has ended
+\* (owner 0) is neither.
+ReportedConnected(s) == st.state[s] = "Connected"
+AcceptsSend(s) == st.state[s] = "Connected"
+TransportEndedSlotEndedAtOnce == st.phase = "application" =>
+    \A s \in Slots : st.owner[s] = 0 => ~ReportedConnected(s) /\ ~AcceptsSend(s)
 UpdateRequiresReleasedViews == ~st.badLifetime
 \* No start stays pending across a reset of its slot: a pending start belongs
 \* to the connection its slot is bound to, so no start on any slot is refused
