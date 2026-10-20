@@ -98,7 +98,7 @@ static void windows_connreset_server_address( struct rocketnet_server_transport_
 static struct rocketnet_client_transport_t * windows_connreset_client( const char * server_address )
 {
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    windows_connreset_require( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    windows_connreset_require( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.driver, sizeof( config.driver ), "%s", "portable" );
