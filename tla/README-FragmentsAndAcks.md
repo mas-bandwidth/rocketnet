@@ -282,7 +282,7 @@ once), re-measured after the three bitmap invariants were added to every cfg wit
 `INVARIANTS` section. Every case reaches its declared result except the six `bench`
 rows that time out (exit 124), which is a failed measurement, not a proof.
 `MCFragmentsAndAcksPatAlternate.cfg` is a required check, not bench debt. With the bitmap state it
-is 1,422,444 distinct states and the recorded run finishes in 41.0 s, inside the budget, so a
+is 1,422,444 distinct states and the recorded run finishes in 52.181 s, inside the budget, so a
 regression to exit 124 fails the gate. A saturated bench can still reach that budget with no
 counterexample. The
 required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
@@ -295,7 +295,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 | `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 8.6 s |
 | `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt |  |  | 110.3 s |
 | `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt |  |  | 110.3 s |
-| `MCFragmentsAndAcksPatAlternate.cfg` | pass | 5,924,703 | 1,422,444 | 41.0 s |
+| `MCFragmentsAndAcksPatAlternate.cfg` | pass | 5,924,703 | 1,422,444 | 52.181 s |
 | `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt |  |  | 110.2 s |
 | `MCFragmentsAndAcksFindStale.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 205,517 | 73,495 | 4.0 s |
 | `MCFragmentsAndAcksFindStaleSmall.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 62,405 | 23,863 | 2.1 s |
@@ -438,7 +438,7 @@ states in 138.2 s; with `bitsChecked` collapsed to a caught-up flag (the reconci
 starting at `WindowLow` every time, which is equivalent because the reconcile is
 idempotent) and the ghosts kept it is 1,147,728 in 117.8 s. No encoding of the bitmap
 state keeps that instance inside 110 s on a loaded bench, but on an idle bench its recorded
-run, with the three invariants, finishes in 41.0 s, inside the gate budget, so
+run, with the three invariants, finishes in 52.181 s, inside the gate budget, so
 `MCFragmentsAndAcksPatAlternate.cfg` is a required check (its CASES.tsv row gates) rather than
 `bench` debt; the other three pattern rows stay over budget and remain bench debt.
 
