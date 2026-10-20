@@ -411,14 +411,14 @@ static void live_matrix_receive( struct live_matrix_t * m )
 {
     const uint8_t * data = NULL;
     int bytes = 0;
-    for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
+    int channel = 0;
     {
-        while ( rocketnet_message_server_receive( m->server, 0, channel, &data, &bytes ) )
+        while ( rocketnet_message_server_receive( m->server, NULL, &channel, &data, &bytes ) )
         {
             live_matrix_arrival( m, 0, channel, data, bytes );
-            rocketnet_message_server_release( m->server, 0, data );
+            rocketnet_message_server_release( m->server, data );
         }
-        while ( rocketnet_message_client_receive( m->client, channel, &data, &bytes ) )
+        while ( rocketnet_message_client_receive( m->client, &channel, &data, &bytes ) )
         {
             live_matrix_arrival( m, 1, channel, data, bytes );
             rocketnet_message_client_release( m->client, data );
@@ -762,11 +762,11 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
         live_matrix_flush( m );
         live_matrix_pump( m );
         live_matrix_check( live_matrix_up( m ) );
-        for ( int c = 0; c < LIVE_MATRIX_CHANNELS; c++ )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( direction == 0 ? rocketnet_message_server_receive( m->server, 0, c, &data, &bytes ) : rocketnet_message_client_receive( m->client, c, &data, &bytes ) )
+            int c = 0;
+            while ( direction == 0 ? rocketnet_message_server_receive( m->server, NULL, &c, &data, &bytes ) : rocketnet_message_client_receive( m->client, &c, &data, &bytes ) )
             {
                 const int result = rocketnet_live_check( &m->live, data, bytes, direction, mode, channel, m->cycle, -1, NULL );
                 if ( result != ROCKETNET_LIVE_OK || rocketnet_live_sequence( data, bytes ) != sequence )
@@ -775,7 +775,7 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
                     live_matrix_fail( m, "edge", direction, mode, channel, sequence, "receive-channel", bytes );
                 else
                     arrived = 1;
-                if ( direction == 0 ) rocketnet_message_server_release( m->server, 0, data ); else rocketnet_message_client_release( m->client, data );
+                if ( direction == 0 ) rocketnet_message_server_release( m->server, data ); else rocketnet_message_client_release( m->client, data );
             }
         }
         live_matrix_take_receipts( m, 0 );

@@ -1592,8 +1592,10 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // waits for budget and is never dropped; an unreliable one over budget is
 // dropped and counted (MESSAGE_UNRELIABLE_OVER_BUDGET).
 //
-// Receiving: receive hands out the next message of the update on a channel as
-// a const view and its length, valid until the next update. Every received
+// Receiving: receive hands out the next message of the update from the one
+// receive queue (every channel's, and on a server every slot's; the queue is
+// rn_message_object_next in sdk/rocketnet_message_server.cpp) as a const view
+// and its length, valid until the next update. Every received
 // message is released before the next update; update with one still held
 // asserts in a debug build and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED in
 // a release build. Copy what is kept past the update.
@@ -1683,8 +1685,18 @@ void rocketnet_message_client_abort( struct rocketnet_message_client_t * client 
 // record: start, write in place and finish do not. a NULL client or data is a counted no-op that returns 0.
 uint32_t rocketnet_message_client_send( struct rocketnet_message_client_t * client, int channel, int reliability, const uint8_t * data, int bytes );
 
-// 1 with the next message on channel, 0 when there is none. a NULL client, data or bytes is a counted no-op that returns 0.
-int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
+// 1 with the next message of the update from the one receive queue, every
+// channel's in delivery order (sdk/rocketnet_message_server.cpp,
+// rn_message_object_next), the channel it was delivered on in *channel (NULL:
+// not reported); 0 when there is none. a NULL client, data or bytes is a
+// counted no-op that returns 0.
+int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int * channel, const uint8_t ** data, int * bytes );
+
+// The pumped batch form of the same queue: fills messages with up to
+// ROCKETNET_RECEIVE_BATCH_MESSAGES next messages and returns how many; views
+// valid until the next receive or update, which releases them. a NULL client
+// or messages is a counted no-op that returns 0.
+int rocketnet_message_client_receive_messages( struct rocketnet_message_client_t * client, struct rocketnet_message_batch_t * messages );
 
 // Copies this update's receipt list into out, up to capacity entries; returns
 // the copied count. Repeated calls see the same list until the next update.
@@ -1790,14 +1802,21 @@ uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * serv
 // a NULL server or data is a counted no-op that returns 0.
 int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );
 
-// a NULL server, data or bytes is a counted no-op that returns 0.
-int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
+// 1 with the next message of the update from the one receive queue across
+// every client slot, its sender's slot in *client_index and the channel it
+// was delivered on in *channel (either NULL: not reported); 0 when there is
+// none. a NULL server, data or bytes is a counted no-op that returns 0.
+int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int * client_index, int * channel, const uint8_t ** data, int * bytes );
+
+// The pumped batch form of the same queue, each entry naming its sender's
+// slot. a NULL server or messages is a counted no-op that returns 0.
+int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * messages );
 
 // As rocketnet_message_client_receipts for one connected client slot. Invalid inputs return zero.
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity );
 
 // a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-void rocketnet_message_server_release( struct rocketnet_message_server_t * server, int client_index, const uint8_t * data );
+void rocketnet_message_server_release( struct rocketnet_message_server_t * server, const uint8_t * data );
 
 // a NULL server is a counted no-op that returns 0.
 int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, int32_t kbps );

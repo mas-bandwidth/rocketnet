@@ -505,9 +505,8 @@ static void reset_loopback_slot_reuse_scenario()
     check( b_stats.bytes_received != 0xA5A5A5A5A5A5A5A5ULL );
     const uint8_t * stale = NULL;
     int stale_bytes = 0;
-    check( !rocketnet_message_server_receive( f.server, b_slot, 0, &stale, &stale_bytes ) );
-    check( !rocketnet_message_server_receive( f.server, b_slot, 1, &stale, &stale_bytes ) );
-    check( !rocketnet_message_client_receive( f.clients[1], 0, &stale, &stale_bytes ) );
+    check( !rocketnet_message_server_receive( f.server, NULL, NULL, &stale, &stale_bytes ) );
+    check( !rocketnet_message_client_receive( f.clients[1], NULL, &stale, &stale_bytes ) );
     rocketnet_message_receipt_t stale_receipts[8];
     check( rocketnet_message_client_receipts( f.clients[1], stale_receipts, 8 ) == 0 );
 
@@ -525,14 +524,18 @@ static void reset_loopback_slot_reuse_scenario()
         reset_loopback_step( &f );
         const uint8_t * data = NULL;
         int bytes = 0;
-        if ( rocketnet_message_server_receive( f.server, b_slot, 0, &data, &bytes ) )
+        int from = -1;
+        int channel = -1;
+        if ( rocketnet_message_server_receive( f.server, &from, &channel, &data, &bytes ) )
         {
+            check( from == b_slot && channel == 0 );
             check( bytes == (int) sizeof(c2s) && memcmp( data, c2s, sizeof(c2s) ) == 0 );
-            rocketnet_message_server_release( f.server, b_slot, data );
+            rocketnet_message_server_release( f.server, data );
             got_c2s = 1;
         }
-        if ( rocketnet_message_client_receive( f.clients[1], 1, &data, &bytes ) )
+        if ( rocketnet_message_client_receive( f.clients[1], &channel, &data, &bytes ) )
         {
+            check( channel == 1 );
             check( bytes == (int) sizeof(s2c) && memcmp( data, s2c, sizeof(s2c) ) == 0 );
             rocketnet_message_client_release( f.clients[1], data );
             got_s2c = 1;
@@ -570,10 +573,13 @@ static void reset_loopback_other_slot_scenario()
         reset_loopback_step( &f );
         const uint8_t * data = NULL;
         int bytes = 0;
-        if ( rocketnet_message_server_receive( f.server, b, 2, &data, &bytes ) )
+        int from = -1;
+        int channel = -1;
+        if ( rocketnet_message_server_receive( f.server, &from, &channel, &data, &bytes ) )
         {
+            check( from == b && channel == 2 );
             check( bytes == (int) sizeof(payload) && memcmp( data, payload, sizeof(payload) ) == 0 );
-            rocketnet_message_server_release( f.server, b, data );
+            rocketnet_message_server_release( f.server, data );
             delivered = 1;
         }
     }
@@ -699,15 +705,17 @@ static void reset_loopback_server_sweep_timeout_scenario()
         reset_loopback_step( &f );
         const uint8_t * data = NULL;
         int bytes = 0;
-        for ( int channel = 0; channel < 2; channel++ )
         {
-            if ( rocketnet_message_server_receive( f.server, b_slot, channel, &data, &bytes ) )
+            int from = -1;
+            int channel = -1;
+            if ( rocketnet_message_server_receive( f.server, &from, &channel, &data, &bytes ) )
             {
+                check( from == b_slot );
                 check( channel == 1 && bytes == (int) sizeof(c2s) && memcmp( data, c2s, sizeof(c2s) ) == 0 );
-                rocketnet_message_server_release( f.server, b_slot, data );
+                rocketnet_message_server_release( f.server, data );
                 got_c2s = 1;
             }
-            if ( rocketnet_message_client_receive( f.clients[1], channel, &data, &bytes ) )
+            if ( rocketnet_message_client_receive( f.clients[1], &channel, &data, &bytes ) )
             {
                 check( channel == 1 && bytes == (int) sizeof(s2c) && memcmp( data, s2c, sizeof(s2c) ) == 0 );
                 rocketnet_message_client_release( f.clients[1], data );

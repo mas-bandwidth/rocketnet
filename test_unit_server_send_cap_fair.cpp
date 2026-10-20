@@ -237,21 +237,27 @@ static void fair_run_case( int num_clients, int capacity = 1 )
 
         for ( int c = 0; c < num_clients; c++ )
         {
-            const uint8_t * data = NULL;
-            int bytes = 0;
-            while ( rocketnet_client_receive_message( world.clients[c], FAIR_CHANNEL_RELIABLE, &data, &bytes ) )
+            rocketnet_message_batch_t batch;
+            while ( rocketnet_client_receive_messages( world.clients[c], &batch ) )
             {
-                check( bytes == 2 );
-                const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
-                check( value == (uint16_t) client_reliable[c] );
-                client_reliable[c]++;
-                last_reliable_tick[c] = tick;
-                rocketnet_client_release_message( world.clients[c], data );
-            }
-            while ( rocketnet_client_receive_message( world.clients[c], FAIR_CHANNEL_UNRELIABLE, &data, &bytes ) )
-            {
-                client_unreliable[c]++;
-                rocketnet_client_release_message( world.clients[c], data );
+                for ( int i = 0; i < batch.num_messages; i++ )
+                {
+                    check( batch.client_index[i] == 0 );
+                    if ( batch.channel[i] == FAIR_CHANNEL_RELIABLE )
+                    {
+                        check( batch.bytes[i] == 2 );
+                        const uint8_t * data = batch.data[i];
+                        const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
+                        check( value == (uint16_t) client_reliable[c] );
+                        client_reliable[c]++;
+                        last_reliable_tick[c] = tick;
+                    }
+                    else
+                    {
+                        check( batch.channel[i] == FAIR_CHANNEL_UNRELIABLE );
+                        client_unreliable[c]++;
+                    }
+                }
             }
         }
 
@@ -278,22 +284,28 @@ static void fair_run_case( int num_clients, int capacity = 1 )
         fair_send_clients( &world );
         fair_server_update( &world );
 
-        for ( int c = 0; c < num_clients; c++ )
+        rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( world.server, &batch ) )
         {
-            const uint8_t * data = NULL;
-            int bytes = 0;
-            while ( rocketnet_server_receive_message( world.server, world.server_index[c], FAIR_CHANNEL_RELIABLE, &data, &bytes ) )
+            for ( int i = 0; i < batch.num_messages; i++ )
             {
-                check( bytes == 2 );
-                const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
-                check( value == (uint16_t) server_reliable[c] );
-                server_reliable[c]++;
-                rocketnet_server_release_message( world.server, world.server_index[c], data );
-            }
-            while ( rocketnet_server_receive_message( world.server, world.server_index[c], FAIR_CHANNEL_UNRELIABLE, &data, &bytes ) )
-            {
-                server_unreliable[c]++;
-                rocketnet_server_release_message( world.server, world.server_index[c], data );
+                int c = 0;
+                while ( c < num_clients && world.server_index[c] != (uint64_t) batch.client_index[i] )
+                    c++;
+                check( c < num_clients );
+                if ( batch.channel[i] == FAIR_CHANNEL_RELIABLE )
+                {
+                    check( batch.bytes[i] == 2 );
+                    const uint8_t * data = batch.data[i];
+                    const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
+                    check( value == (uint16_t) server_reliable[c] );
+                    server_reliable[c]++;
+                }
+                else
+                {
+                    check( batch.channel[i] == FAIR_CHANNEL_UNRELIABLE );
+                    server_unreliable[c]++;
+                }
             }
         }
         if ( tick < FAIR_DATA_TICKS )
@@ -314,15 +326,23 @@ static void fair_run_case( int num_clients, int capacity = 1 )
     fair_update_clients( &world );
     for ( int c = 0; c < num_clients; c++ )
     {
-        const uint8_t * data = NULL;
-        int bytes = 0;
-        while ( rocketnet_client_receive_message( world.clients[c], FAIR_CHANNEL_RELIABLE, &data, &bytes ) )
+        rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( world.clients[c], &batch ) )
         {
-            check( bytes == 2 );
-            const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
-            check( value == (uint16_t) client_reliable[c] );
-            client_reliable[c]++;
-            rocketnet_client_release_message( world.clients[c], data );
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                check( batch.client_index[i] == 0 );
+                if ( batch.channel[i] != FAIR_CHANNEL_RELIABLE )
+                {
+                    check( batch.channel[i] == FAIR_CHANNEL_UNRELIABLE );
+                    continue;
+                }
+                check( batch.bytes[i] == 2 );
+                const uint8_t * data = batch.data[i];
+                const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
+                check( value == (uint16_t) client_reliable[c] );
+                client_reliable[c]++;
+            }
         }
     }
 
@@ -398,10 +418,15 @@ static void server_send_cap_two_multi_packet_service()
         fair_update_clients( &world );
         for ( int c = 0; c < 3; c++ )
         {
-            const uint8_t * data;
-            int bytes;
-            while ( rocketnet_client_receive_message( world.clients[c], FAIR_CHANNEL_RELIABLE, &data, &bytes ) )
-                rocketnet_client_release_message( world.clients[c], data );
+            rocketnet_message_batch_t batch;
+            while ( rocketnet_client_receive_messages( world.clients[c], &batch ) )
+            {
+                for ( int i = 0; i < batch.num_messages; i++ )
+                {
+                    check( batch.client_index[i] == 0 );
+                    check( batch.channel[i] == FAIR_CHANNEL_RELIABLE );
+                }
+            }
         }
         fair_send_clients( &world );
         fair_server_update( &world );

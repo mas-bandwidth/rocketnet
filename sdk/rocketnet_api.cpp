@@ -753,25 +753,15 @@ void rocketnet_client_abort_message( struct rocketnet_client_t * client )
     rocketnet_message_client_abort( client->connection );
 }
 
-int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes )
-{
-    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
-        return 0;
-    if ( !client->connection )
-        return 0;
-    return rocketnet_message_client_receive( client->connection, channel, data, bytes );
-}
 
-void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data )
+bool rocketnet_client_receive_messages( struct rocketnet_client_t * client, struct rocketnet_message_batch_t * messages )
 {
-    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) )
-        return;
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( messages ) )
+        return false;
+    messages->num_messages = 0;
     if ( !client->connection )
-    {
-        rocketnet_api_misuse_record();
-        return;
-    }
-    rocketnet_message_client_release( client->connection, data );
+        return false;
+    return rocketnet_message_client_receive_messages( client->connection, messages ) > 0;
 }
 
 int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity )
@@ -1501,27 +1491,14 @@ void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_
     rocketnet_message_server_abort( rn_server( server ), slot );
 }
 
-int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t client_index, int channel, const uint8_t ** data, int * bytes )
+bool rocketnet_server_receive_messages( struct rocketnet_server_t * server, struct rocketnet_message_batch_t * messages )
 {
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
-        return 0;
-    int slot;
-    if ( !rn_server_slot( server, client_index, &slot ) )
-        return 0;
-    return rocketnet_message_server_receive( rn_server( server ), slot, channel, data, bytes );
-}
-
-void rocketnet_server_release_message( struct rocketnet_server_t * server, uint64_t client_index, const uint8_t * data )
-{
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) )
-        return;
-    int slot;
-    if ( !rn_server_slot( server, client_index, &slot ) )
-    {
-        rocketnet_api_misuse_record();
-        return;
-    }
-    rocketnet_message_server_release( rn_server( server ), slot, data );
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( messages ) )
+        return false;
+    messages->num_messages = 0;
+    if ( !server->running )
+        return false;
+    return rocketnet_message_server_receive_messages( rn_server( server ), messages ) > 0;
 }
 
 int rocketnet_server_receipts( struct rocketnet_server_t * server, uint64_t client_index, struct rocketnet_receipt_t * out, int capacity )

@@ -966,11 +966,11 @@ struct rocketnet_server_config_t
 /// is never dropped; an unreliable one over budget is dropped and counted
 /// (the BUDGET_DROPS counters).
 ///
-/// Receiving: receive hands out the next message of the update on a channel
-/// as a const view and its length, valid until the next update. Release every
-/// received message before the next update; update with one still held
-/// asserts in a debug build and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED
-/// in a release build. Copy what is kept past the update.
+/// Receiving is RakPeer::Receive, pumped: each receive fills the caller's batch,
+/// struct rocketnet_message_batch_t (the receive section at the end of this
+/// header), from one queue per client, or one per server across all clients.
+/// Its data pointers are valid until the next receive or update.
+struct rocketnet_message_batch_t;
 
 /// @brief One outcome for a send's nonzero receipt serial.
 /// Receipts are copied into caller storage after an update. A full receipt ring
@@ -1214,11 +1214,8 @@ ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_clie
 /// A NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
 
-/// 1 with the next message on channel, 0 when there is none. A NULL client, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_client_receive_message( struct rocketnet_client_t * client, int channel, const uint8_t ** data, int * bytes );
-
-/// A NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-ROCKETNET_EXPORT void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data );
+/// The client's receive, RakPeer::Receive pumped: fills messages with up to ROCKETNET_RECEIVE_BATCH_MESSAGES next messages of the client's one receive queue, every channel's, in RakNet's order, each naming its sender as index = 0, the server, with the count in num_messages; true when it filled at least one, false when none is pending. Pump it until it returns false: there is no per-update cap. The data pointers point into the library's storage, never copied, and are valid until the next call of this function or of rocketnet_client_update on this client, whichever comes first. A NULL client or messages is a counted no-op that returns false.
+ROCKETNET_EXPORT bool rocketnet_client_receive_messages( struct rocketnet_client_t * client, struct rocketnet_message_batch_t * messages );
 
 /// @brief Copy this update's client receipt outcomes into caller storage.
 /// Call after update and before the next update, without a concurrent update.
@@ -1420,11 +1417,8 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// A NULL server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_t destination_id );
 
-/// 1 with the next message on channel, 0 when there is none. A NULL server, data or bytes is a counted no-op that returns 0.
-ROCKETNET_EXPORT int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t client_index, int channel, const uint8_t ** data, int * bytes );
-
-/// A NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
-ROCKETNET_EXPORT void rocketnet_server_release_message( struct rocketnet_server_t * server, uint64_t client_index, const uint8_t * data );
+/// The server's receive, RakPeer::Receive pumped: fills messages with up to ROCKETNET_RECEIVE_BATCH_MESSAGES next messages of the server's one receive queue across all clients, each naming its sender's client index in client_index[], in RakNet's order, with the count in num_messages; true when it filled at least one, false when none is pending or the server is stopped. Pump it until it returns false: there is no per-update cap. The data pointers point into the library's storage, never copied, and are valid until the next call of this function or of rocketnet_server_update on this server, whichever comes first. A NULL server or messages is a counted no-op that returns false.
+ROCKETNET_EXPORT bool rocketnet_server_receive_messages( struct rocketnet_server_t * server, struct rocketnet_message_batch_t * messages );
 
 /// @brief Copy one connected server client's receipt outcomes.
 /// Call after update and before the next update, without a concurrent update.
@@ -1453,6 +1447,70 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_client_counter( const struct rocketne
 
 /// One client slot's stat by its enum; 0 for a free slot or a value outside the enum. A NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT double rocketnet_server_client_stat( const struct rocketnet_server_t * server, uint64_t client_index, enum rocketnet_server_client_stat_t stat );
+
+/// -----------------------------------------
+///             Receiving messages
+/// -----------------------------------------
+
+/// The send's channel is RakNet's ordering channel: RELIABLE_ORDERED,
+/// RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered
+/// or sequenced within it, and a channel at or past the config's num_channels
+/// refuses those sends. UNRELIABLE, RELIABLE, UNRELIABLE_WITH_ACK_RECEIPT and
+/// RELIABLE_WITH_ACK_RECEIPT ignore it, as RakNet's ReliabilityLayer::Send
+/// does: any channel value is accepted for them, never refused, and the
+/// message travels with no channel on the wire (standard/MESSAGES.md, codes 0
+/// and 2).
+///
+/// Receiving is RakPeer::Receive, pumped and zero copy: one queue per client,
+/// and one per server across all its clients. Each receive fills the caller's
+/// struct rocketnet_message_batch_t with the queue's next messages, up to
+/// its capacity ROCKETNET_RECEIVE_BATCH_MESSAGES, one array per field: each
+/// message's sender (on a client, index = 0, the server), the channel it was delivered on, its wire type, its
+/// length and a pointer to its bytes in the library's storage (delivered and
+/// reassembled, never copied), with the count in num_messages. It returns true
+/// when it filled at least one and false when nothing is pending; pump it until
+/// it returns false. There is no per-update cap: what
+/// one call does not return waits for the next call in the same update, in
+/// order. The queue holds every channel's messages: ordered and sequenced
+/// messages keep their order within their channel and sender, and on a server
+/// the queue holds the update's messages client by client in index order:
+///
+///     struct rocketnet_message_batch_t batch;
+///     while ( rocketnet_server_receive_messages( server, &batch ) )
+///     {
+///         for ( int i = 0; i < batch.num_messages; i++ )
+///             handle( batch.client_index[i], batch.data[i], batch.bytes[i] );
+///     }
+///
+/// The data pointers of one call are valid until the next receive call or the
+/// next update of the same client or server, whichever comes first; that call
+/// releases them, and there is no release call. Copy what is kept longer.
+
+/// The messages one receive hands out at most
+#define ROCKETNET_RECEIVE_BATCH_MESSAGES                               256
+
+/// @brief One batch of received messages, one array per field, entry i of
+/// every array describing message i, in receive order.
+struct rocketnet_message_batch_t
+{
+    /// @brief The entries filled, 0 when the queue is empty.
+    int num_messages;
+    /// @brief The sender's index: on a server, the sending client's client_index; on
+    /// a client, index = 0, the server, which sends every message a client
+    /// receives.
+    int client_index[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    /// @brief The channel the message was delivered on: its ordering channel
+    /// for an ordered or sequenced type, 0 for the types that carry none.
+    int channel[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    /// @brief The wire type the message arrived as, 0 to 4: a receipt type
+    /// arrives as its twin (UNRELIABLE, RELIABLE or RELIABLE_ORDERED), and a
+    /// promoted unreliable send as its reliable twin.
+    enum rocketnet_reliability_t reliability[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    /// @brief The message's length in bytes.
+    int bytes[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+    /// @brief The message's bytes in the library's storage, valid until the next receive call or update.
+    const uint8_t * data[ROCKETNET_RECEIVE_BATCH_MESSAGES];
+};
 
 #ifdef __cplusplus
 }

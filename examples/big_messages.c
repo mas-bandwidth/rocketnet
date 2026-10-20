@@ -83,14 +83,24 @@ int main( void )
         // (2) receive and release every received message, checking each byte
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
-        for ( int i = 0; i < max_clients; i++ )
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( client, &batch ) )
         {
-            if ( !rocketnet_server_client_connected( server, i ) )
-                continue;
-            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
+            for ( int i = 0; i < batch.num_messages; i++ )
             {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+            }
+        }
+        uint64_t sender = 0;
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_server_receive_messages( server, &incoming ) )
+        {
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+                sender = incoming.client_index[i];
                 if ( bytes == BIG_BYTES )
                 {
                     CHECK( memcmp( data, expected, BIG_BYTES ) == 0 );
@@ -98,7 +108,6 @@ int main( void )
                     printf( "server received the %d-byte reliable message intact after %.3f s\n",
                             bytes, rocketnet_time() - start - big_sent_at );
                 }
-                rocketnet_server_release_message( server, i, data );
             }
         }
         // (3) run the game simulation for the frame: nothing to simulate here

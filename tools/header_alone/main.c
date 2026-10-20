@@ -103,11 +103,20 @@ int main( void )
         const uint8_t * data = NULL;
         int bytes = 0;
 
-        while ( rocketnet_server_receive_message( server, 0, 0, &data, &bytes ) )
+        uint64_t sender = 1;
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( server, &batch ) )
         {
-            CHECK( bytes == (int) sizeof( client_message ) && memcmp( data, client_message, sizeof( client_message ) ) == 0 );
-            rocketnet_server_release_message( server, 0, data );
-            server_got = 1;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+                sender = batch.client_index[i];
+                CHECK( sender == 0 );
+                CHECK( bytes == (int) sizeof( client_message ) && memcmp( data, client_message, sizeof( client_message ) ) == 0 );
+
+                server_got = 1;
+            }
         }
 
         if ( server_got && !server_sent )
@@ -119,11 +128,17 @@ int main( void )
             server_sent = 1;
         }
 
-        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_client_receive_messages( client, &incoming ) )
         {
-            CHECK( bytes == (int) sizeof( server_message ) && memcmp( data, server_message, sizeof( server_message ) ) == 0 );
-            rocketnet_client_release_message( client, data );
-            client_got = 1;
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+                CHECK( bytes == (int) sizeof( server_message ) && memcmp( data, server_message, sizeof( server_message ) ) == 0 );
+
+                client_got = 1;
+            }
         }
 
         rocketnet_client_send_packets( client );
