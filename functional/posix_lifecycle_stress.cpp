@@ -19,6 +19,7 @@
 
 #if !defined(_WIN32)
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,9 @@
 #include <chrono>
 #include <thread>
 #include <vector>
+
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #if defined(__APPLE__)
 #include <libproc.h>
@@ -163,6 +167,35 @@ static double posix_now_seconds()
     return duration<double>( steady_clock::now().time_since_epoch() ).count();
 }
 
+static void posix_require_loopback_bind( const char * name )
+{
+    const int fd = (int) socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    if ( fd < 0 )
+    {
+        const int error = errno;
+        printf( "%s: socket() failed (errno=%d %s); the real-socket cases cannot run here\n", name, error, strerror( error ) );
+        fflush( stdout );
+        exit( 1 );
+    }
+
+    struct sockaddr_in address;
+    memset( &address, 0, sizeof( address ) );
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    address.sin_port = 0;
+
+    if ( bind( fd, (const struct sockaddr*) &address, sizeof( address ) ) != 0 )
+    {
+        const int error = errno;
+        printf( "%s: this process cannot bind a loopback UDP socket (errno=%d %s); the real-socket cases cannot run here\n", name, error, strerror( error ) );
+        fflush( stdout );
+        close( fd );
+        exit( 1 );
+    }
+
+    close( fd );
+}
+
 static const int posix_cell_count = (int) ( sizeof( posix_cells ) / sizeof( posix_cells[0] ) );
 
 struct posix_env_guard_t
@@ -213,7 +246,10 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
     snprintf( config.driver, sizeof( config.driver ), "%s", cell->server_driver );
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, address, &config );
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, rocketnet_platform_time(), &status );
+    if ( !server )
+        printf( "server create [%s] at %s failed: %s\n", cell->name, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
     posix_check( server != NULL );
     posix_check( strcmp( rocketnet_server_transport_driver( server ), cell->server_granted ) == 0 );
     return server;
@@ -228,7 +264,10 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.driver, sizeof( config.driver ), "%s", cell->client_driver );
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &config, rocketnet_platform_time() );
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( NULL, token, &config, rocketnet_platform_time(), &status );
+    if ( !client )
+        printf( "client create [%s] to %s failed: %s\n", cell->name, server_address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
     posix_check( client != NULL );
     posix_check( strcmp( rocketnet_client_transport_driver( client ), cell->client_granted ) == 0 );
     return client;
@@ -316,6 +355,8 @@ void rocketnet_test_posix_init_term_1000()
 
 void rocketnet_test_posix_server_create_destroy_1000()
 {
+    posix_require_loopback_bind( "posix_server_create_destroy_1000" );
+
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
@@ -339,6 +380,8 @@ void rocketnet_test_posix_server_create_destroy_1000()
 
 void rocketnet_test_posix_client_create_destroy_1000()
 {
+    posix_require_loopback_bind( "posix_client_create_destroy_1000" );
+
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
@@ -362,6 +405,8 @@ void rocketnet_test_posix_client_create_destroy_1000()
 
 void rocketnet_test_posix_server_restart_same_port_100()
 {
+    posix_require_loopback_bind( "posix_server_restart_same_port_100" );
+
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
@@ -404,6 +449,8 @@ void rocketnet_test_posix_server_restart_same_port_100()
 
 void rocketnet_test_posix_connect_disconnect_1000()
 {
+    posix_require_loopback_bind( "posix_connect_disconnect_1000" );
+
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
@@ -451,6 +498,8 @@ static void posix_sender_thread( posix_sender_t * sender )
 
 void rocketnet_test_posix_destroy_under_traffic_100()
 {
+    posix_require_loopback_bind( "posix_destroy_under_traffic_100" );
+
     const int client_count = 8;
 
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
