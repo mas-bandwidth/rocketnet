@@ -19,8 +19,11 @@
 // has a provided buffer ring and one multishot RECVMSG, so the kernel fills
 // receive buffers with no syscall per datagram, and send_packets submits one
 // SENDMSG per staged slot in chunks no larger than the free submission queue
-// space. tla/RNUringDriver.tla models the send staging, the two receive banks
-// and destroy; the functions that implement a model action cite it.
+// space. each send_packets and receive_packets call reaps at most a fixed
+// completion budget, so a call returns under sustained traffic.
+// tla/RNUringDriver.tla models the send staging, the two receive banks, the
+// per-call budget and destroy; the functions that implement a model action
+// cite it.
 //
 // The driver is built only when the library is configured with liburing
 // (ROCKETNET_IO_URING, Linux). Without it, create logs the refusal and
@@ -55,9 +58,13 @@ struct rocketnet_server_uring_t;
 // the per-call completion budgets: receive_packets takes at most
 // ROCKETNET_URING_RECEIVE_BUDGET completions (one receive bank's worth) and
 // send_packets at most ROCKETNET_URING_SEND_BUDGET (a whole staging of sends
-// and a completion queue of receives besides), each budget its own, so a
-// call returns under sustained traffic. completions past a budget stay in
-// the completion queue for the next call, counted REAP_DEFERRED.
+// and a completion queue of receives besides), each from its own budget, so
+// a call returns under sustained traffic and receive_packets spending its
+// budget never stops send_packets reaping. completions past a budget stay
+// in the completion queue for the next call, counted REAP_DEFERRED. a
+// receive completion holds its ring buffer until it is reaped, so at most
+// queues * ROCKETNET_URING_RECV_BUFFERS receive completions are ever ahead
+// of a send's.
 
 #define ROCKETNET_URING_RECEIVE_BUDGET          ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
 #define ROCKETNET_URING_SEND_BUDGET    ( ROCKETNET_URING_SEND_QUEUE_SIZE + ROCKETNET_URING_ENTRIES * 2 )
@@ -96,7 +103,8 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues );
 struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues );
 
 // destroy cancels every multishot receive and waits, bounded, for every
-// outstanding completion before freeing. a destroy that gives up waiting
+// outstanding completion (the sends a send_packets left included) before
+// freeing. a destroy that gives up waiting
 // closes the ring and the sockets but leaks the memory the kernel may still
 // write, and counts it here: bytes, and drivers so leaked, since the start.
 
@@ -164,8 +172,11 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 // send packets. the phase contract is the transport's: start, finish and
 // abort may run on any number of game threads strictly between one
 // send_packets call and the next; send_packets runs on the main thread,
-// submits every staged slot and returns once every one of its sends has
-// completed. the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
+// submits the staged slots, reaps at most ROCKETNET_URING_SEND_BUDGET
+// completions after at most one wait of a millisecond, and returns. a send
+// without its completion keeps its slot, and the reservation index, until a
+// later call reaps it (SEND_DEFERRED counts each call that returns so).
+// the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
 // bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other drivers.
 
 uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to, uint64_t * packet_id );
@@ -176,8 +187,9 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
 
 void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * uring );
 
-// receive packets: receive_packets drains the completion queue without
-// blocking into the fill bank, then swaps the banks; process_packets exposes
+// receive packets: receive_packets reaps at most
+// ROCKETNET_URING_RECEIVE_BUDGET completions without blocking into the fill
+// bank, then swaps the banks; process_packets exposes
 // the swapped bank, valid until the next receive_packets call.
 
 void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * uring );
