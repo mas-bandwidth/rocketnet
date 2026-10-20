@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+#
+# soak's argument validation, wall-clock --seconds bound, counter summary, and
+# verify-failure negative control, in the style of scripts/soak-sim-selftest.
+#
+#   bash scripts/soak-args-selftest
+#
+# Needs ./bin/soak built (make). Prints one line per leg and nothing else on
+# success; any leg that misbehaves prints why and the script exits nonzero.
+#
+# Negative control hook documented here:
+#   ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default in soak.c) flips the first
+#   byte of the first received payload before verify_payload(), proving that a
+#   verify failure prints PAYLOAD VERIFY FAILED, still emits the counter
+#   summary, and exits nonzero (1).
+#
+# The legs:
+#
+#   1  arg refusals     -- missing/zero/negative/non-numeric --seconds S,
+#                          unknown flag, and second positional argument each
+#                          print a one-line reason naming both usage forms on
+#                          stderr and exit 2 without starting a run.
+#   2  --seconds 3      -- exits 0 in 3 to 15 s of wall time with every summary
+#                          line present and verified > 0 in both directions.
+#   3  soak 2000        -- positional iteration count (alone and beside
+#                          --seconds) exits 0 with its existing output and
+#                          summary lines.
+#   4  verify fault     -- ROCKETNET_SOAK_FAULT_VERIFY=1 plants one verify
+#                          failure and proves soak goes red (exits nonzero).
+
+set -u
+
+cd "$( dirname "${BASH_SOURCE[0]}" )/.." || exit 1
+
+SOAK=./bin/soak
+if [ ! -x "$SOAK" ] && [ -x ./bin/Release/soak.exe ]; then
+    SOAK=./bin/Release/soak.exe
+fi
+if [ ! -x "$SOAK" ]; then
+    echo "soak-args-selftest: $SOAK not built -- run make first" >&2
+    exit 1
+fi
+
+WORK="$( mktemp -d "${TMPDIR:-/tmp}/soak-args-selftest.XXXXXX" )"
+trap 'rm -rf "$WORK"' EXIT
+
+failures=0
+
+fail()
+{
+    echo "FAIL: $*" >&2
+    failures=$(( failures + 1 ))
+}
+
+summary_value()
+{
+    awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { print $4; found=1; exit } END { if (!found) print "" }' "$1"
+}
+
+check_refusal()
+{
+    local label="$1"
+    shift
+    "$SOAK" "$@" > "$WORK/refusal.out" 2> "$WORK/refusal.err"
+    local status=$?
+    local err_lines
+    err_lines=$( wc -l < "$WORK/refusal.err" | tr -d ' ' )
+    if [ "$status" -ne 2 ]; then
+        fail "refusal case ($label) exited $status, expected 2"
+        return 1
+    fi
+    if [ -s "$WORK/refusal.out" ]; then
+        fail "refusal case ($label) wrote to stdout instead of refusing before run"
+        return 1
+    fi
+    if [ "$err_lines" -ne 1 ]; then
+        fail "refusal case ($label) printed $err_lines lines on stderr, expected 1"
+        return 1
+    fi
+    if ! grep -q -- '--seconds' "$WORK/refusal.err" || ! grep -q 'iteration' "$WORK/refusal.err"; then
+        fail "refusal case ($label) stderr did not name both usage forms: $( cat "$WORK/refusal.err" )"
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# 1. argument refusals exit 2 with a one-line reason on stderr, never a run
+
+refusal_ok=1
+check_refusal "missing S"            --seconds              || refusal_ok=0
+check_refusal "zero S"               --seconds 0            || refusal_ok=0
+check_refusal "negative S"           --seconds -5           || refusal_ok=0
+check_refusal "non-numeric S"        --seconds abc          || refusal_ok=0
+check_refusal "trailing-junk S"      --seconds 3s           || refusal_ok=0
+check_refusal "duplicate --seconds"  --seconds 2 --seconds 3 || refusal_ok=0
+check_refusal "unknown flag"         --unknown              || refusal_ok=0
+check_refusal "unknown short flag"   -x                     || refusal_ok=0
+check_refusal "second positional"    100 200                || refusal_ok=0
+check_refusal "second positional+S"  --seconds 3 100 200    || refusal_ok=0
+check_refusal "zero positional"      0                      || refusal_ok=0
+check_refusal "negative positional"  -10                    || refusal_ok=0
+check_refusal "non-numeric pos"      notanumber             || refusal_ok=0
+
+if [ "$refusal_ok" -eq 1 ]; then
+    echo "leg 1  argument refusals: each invalid invocation exits 2 with one-line stderr reason and never runs"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. --seconds 3 exits 0 in 3..15 s with every summary line and verified > 0 both ways
+
+t0=$( date +%s )
+"$SOAK" --seconds 3 > "$WORK/sec3.txt" 2>&1
+status=$?
+t1=$( date +%s )
+elapsed=$(( t1 - t0 ))
+
+if [ "$status" -ne 0 ]; then
+    fail "--seconds 3 exited $status, expected 0"
+    tail -20 "$WORK/sec3.txt" >&2
+elif [ "$elapsed" -lt 3 ] || [ "$elapsed" -gt 15 ]; then
+    fail "--seconds 3 took ${elapsed}s, expected between 3 and 15 seconds"
+else
+    sent=$( summary_value "$WORK/sec3.txt" "sent" )
+    received=$( summary_value "$WORK/sec3.txt" "received" )
+    verified=$( summary_value "$WORK/sec3.txt" "verified" )
+    client_verified=$( summary_value "$WORK/sec3.txt" "client_verified" )
+    server_verified=$( summary_value "$WORK/sec3.txt" "server_verified" )
+    reconnects=$( summary_value "$WORK/sec3.txt" "reconnects" )
+    disc_clean=$( summary_value "$WORK/sec3.txt" "ROCKETNET_CLIENT_STATE_DISCONNECTED" )
+    cli_pkt=$( summary_value "$WORK/sec3.txt" "client_PACKETS_RECEIVED" )
+    srv_pkt=$( summary_value "$WORK/sec3.txt" "server_PACKETS_RECEIVED" )
+
+    if [ -z "$sent" ] || [ -z "$received" ] || [ -z "$verified" ] ||        [ -z "$client_verified" ] || [ -z "$server_verified" ] ||        [ -z "$reconnects" ] || [ -z "$disc_clean" ] ||        [ -z "$cli_pkt" ] || [ -z "$srv_pkt" ]; then
+        fail "--seconds 3 missing required soak summary lines"
+        cat "$WORK/sec3.txt" >&2
+    elif [ "$client_verified" -le 0 ] || [ "$server_verified" -le 0 ] || [ "$verified" -le 0 ]; then
+        fail "--seconds 3 did not verify > 0 payloads in both directions (client=$client_verified server=$server_verified)"
+    else
+        echo "leg 2  --seconds 3: exited 0 in ${elapsed}s, client_verified=$client_verified server_verified=$server_verified"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3. positional iteration count (soak 2000, and beside --seconds)
+
+if "$SOAK" 2000 > "$WORK/iter2000.txt" 2>&1 && "$SOAK" --seconds 30 500 > "$WORK/both.txt" 2>&1; then
+    c_ver=$( summary_value "$WORK/iter2000.txt" "client_verified" )
+    s_ver=$( summary_value "$WORK/iter2000.txt" "server_verified" )
+    if ! grep -q '^soak finished: 2000 iterations,' "$WORK/iter2000.txt"; then
+        fail "soak 2000 did not print its expected soak finished line"
+    elif ! grep -q '^soak finished: 500 iterations,' "$WORK/both.txt"; then
+        fail "soak --seconds 30 500 did not stop at whichever bound came first (500 iterations)"
+    elif [ -z "$c_ver" ] || [ -z "$s_ver" ] || [ "$c_ver" -le 0 ] || [ "$s_ver" -le 0 ]; then
+        fail "soak 2000 did not verify payloads in both directions"
+    else
+        echo "leg 3  soak 2000 (and beside --seconds): exited 0 with expected output and summary"
+    fi
+else
+    fail "soak 2000 or soak --seconds 30 500 exited nonzero"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. negative control: planted verify failure (ROCKETNET_SOAK_FAULT_VERIFY=1) must go red
+
+ROCKETNET_SOAK_FAULT_VERIFY=1 "$SOAK" 200 > "$WORK/fault.txt" 2>&1
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "ROCKETNET_SOAK_FAULT_VERIFY=1 exited 0 -- verify-failure check is decoration"
+elif ! grep -q 'PAYLOAD VERIFY FAILED' "$WORK/fault.txt"; then
+    fail "ROCKETNET_SOAK_FAULT_VERIFY=1 exited $status but never printed PAYLOAD VERIFY FAILED"
+elif ! grep -q '^soak summary: verified ' "$WORK/fault.txt"; then
+    fail "ROCKETNET_SOAK_FAULT_VERIFY=1 exited $status without printing the soak summary"
+else
+    echo "leg 4  verify-failure negative control (ROCKETNET_SOAK_FAULT_VERIFY=1): red, exit $status, $( grep -m1 'PAYLOAD VERIFY FAILED' "$WORK/fault.txt" )"
+fi
+
+# ---------------------------------------------------------------------------
+
+if [ "$failures" -ne 0 ]; then
+    echo "soak-args-selftest: $failures leg(s) failed" >&2
+    exit 1
+fi
+
+exit 0
