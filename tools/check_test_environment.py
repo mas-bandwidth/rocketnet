@@ -81,12 +81,60 @@ def _table_names(path):
     return all_names, paired_names
 
 
+LINUX_GUARD_RE = re.compile(
+    r"^\s*#\s*if\s+(?:defined\s*\(\s*__linux__\s*\)|defined\s+__linux__|__linux__)\s*$"
+)
+
+
+def _without_linux_guarded_blocks(text):
+    # Unit registrations inside __linux__ guards exist only in the Linux
+    # registry. Select that branch on Linux and its #else branch elsewhere;
+    # nested unrelated conditions remain conservatively inventoried in both
+    # branches, as they were before this platform-aware filtering.
+    is_linux = sys.platform.startswith("linux")
+    output = []
+    active = True
+    stack = []
+    for line in text.splitlines(keepends=True):
+        if IF_RE.match(line):
+            parent_active = active
+            if LINUX_GUARD_RE.match(line):
+                stack.append(("linux", parent_active))
+                active = parent_active and is_linux
+                continue
+            stack.append(("other", parent_active))
+            if active:
+                output.append(line)
+            continue
+        if ELSE_RE.match(line) or ELIF_RE.match(line):
+            if stack and stack[-1][0] == "linux":
+                active = stack[-1][1] and not is_linux
+                continue
+            if active:
+                output.append(line)
+            continue
+        if ENDIF_RE.match(line):
+            if stack:
+                kind, parent_active = stack.pop()
+                if kind == "linux":
+                    active = parent_active
+                    continue
+                active = parent_active
+            if active:
+                output.append(line)
+            continue
+        if active:
+            output.append(line)
+    return "".join(output)
+
+
 def _register_names(path):
     names = []
     try:
         text = path.read_text()
     except OSError:
         return names
+    text = _without_linux_guarded_blocks(text)
     for m in REGISTER_RE.finditer(text):
         names.append(m.group(1))
     return names
