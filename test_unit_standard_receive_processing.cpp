@@ -373,6 +373,11 @@ static void standard_server_process( struct standard_server_t * fixture, const u
                                               response, &response_bytes, payload, &payload_bytes, &payload_client_index );
 }
 
+// Each block's fixture is static: an unoptimised MSVC build gives every block
+// its own stack slot, and fifteen protocol fixtures at once overflow the
+// default 1 MB stack. Each setup resets its fixture in full, so a block never
+// sees another's state.
+
 static void standard_receive_processing_counters()
 {
     uint8_t packet[RN_STANDARD_VECTOR_MAX_BYTES];
@@ -397,7 +402,7 @@ static void standard_receive_processing_counters()
 
     // the type gates before decryption, at the server and at the client
     {
-        struct standard_server_t server;
+        static struct standard_server_t server;
         standard_server_setup( &server, false, false );
         int bytes = standard_receive_processing_generate( "t10.reserved-type", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
@@ -405,7 +410,7 @@ static void standard_receive_processing_counters()
         standard_server_teardown( &server );
     }
     {
-        struct standard_server_t server;
+        static struct standard_server_t server;
         standard_server_setup( &server, false, false );
         int bytes = standard_receive_processing_generate( "t10.server-wrong-direction", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
@@ -413,7 +418,7 @@ static void standard_receive_processing_counters()
         standard_server_teardown( &server );
     }
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.client-wrong-direction", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -423,7 +428,7 @@ static void standard_receive_processing_counters()
 
     // the wire size precedes the state gate and the mapping lookup
     {
-        struct standard_server_t server;
+        static struct standard_server_t server;
         standard_server_setup( &server, false, false );
         int bytes = standard_receive_processing_generate( "t10.server-no-mapping", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
@@ -431,7 +436,7 @@ static void standard_receive_processing_counters()
         standard_server_teardown( &server );
     }
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.client-session-wrong-size", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -443,7 +448,7 @@ static void standard_receive_processing_counters()
 
     // the connection-cookie state gate precedes its exact-size check
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.client-cookie-state-before-size", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -454,7 +459,7 @@ static void standard_receive_processing_counters()
 
     // the state gate, before the sequence
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
         int bytes = standard_receive_processing_generate( "t10.client-wrong-state", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -464,7 +469,7 @@ static void standard_receive_processing_counters()
 
     // the server slot gate, after the open and before the replay mark
     {
-        struct standard_server_t server;
+        static struct standard_server_t server;
         standard_server_setup( &server, true, false );
         int bytes = standard_receive_processing_generate( "t10.server-not-connected", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
@@ -475,7 +480,7 @@ static void standard_receive_processing_counters()
     // the sequence reconstruction, the replay mark, the open, the ack block,
     // the opened size and the type data, at the client end
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.zero-sequence", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -484,7 +489,7 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.already-received", packet, (int) sizeof( packet ) );
         rocketnet_unit_check( standard_client_process( &client, packet, bytes ) );
@@ -493,7 +498,7 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.did-not-open", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -502,7 +507,7 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.bad-ack-block", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -510,7 +515,7 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.wrong-opened-size", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -518,7 +523,7 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.keep-alive-invalid-index", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
@@ -527,7 +532,7 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
     {
-        struct standard_client_t client;
+        static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         int bytes = standard_receive_processing_generate( "t10.fragment-zero-payload-id", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
