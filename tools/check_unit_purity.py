@@ -30,42 +30,28 @@ PATTERNS = [
 
 
 def strip_comments(text):
-    """Remove /* */ and // comments from source text."""
-    out = []
-    i = 0
-    n = len(text)
-    in_block = False
-    while i < n:
-        if in_block:
-            end = text.find("*/", i)
-            if end == -1:
-                break
-            in_block = False
-            i = end + 2
-            continue
-        if text[i] == "/" and i + 1 < n and text[i + 1] == "*":
-            in_block = True
-            i += 2
-            continue
-        if text[i] == "/" and i + 1 < n and text[i + 1] == "/":
-            end = text.find("\n", i)
-            if end == -1:
-                break
-            i = end
-            continue
-        out.append(text[i])
-        i += 1
-    return "".join(out)
+    """Mask comments and literals while preserving source line positions."""
+    # Raw strings must precede normal strings. The delimiter backreference
+    # prevents embedded quotes or comment markers from ending a raw literal.
+    tokens = re.compile(
+        r'R"(?P<delimiter>[^ ()\\\t\r\n]{0,16})\(.*?\)(?P=delimiter)"'
+        r'|"(?:\\.|[^"\\])*"'
+        r"|'(?:\\.|[^'\\])*'"
+        r'|/\*.*?\*/|//[^\n]*',
+        re.DOTALL,
+    )
+    return tokens.sub(lambda match: ''.join('\n' if c == '\n' else ' '
+                                           for c in match.group()), text)
 
 
 def scan_lines(lines, prefix):
+    source = strip_comments(''.join(lines))
     findings = []
-    for lineno, line in enumerate(lines, 1):
-        stripped = strip_comments(line)
-        for name, regex in PATTERNS:
-            if regex.search(stripped):
-                findings.append((lineno, name))
-    return findings
+    for name, regex in PATTERNS:
+        for match in regex.finditer(source):
+            lineno = source.count('\n', 0, match.start()) + 1
+            findings.append((lineno, name))
+    return sorted(findings)
 
 
 def main():
