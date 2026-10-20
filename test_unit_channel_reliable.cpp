@@ -312,15 +312,6 @@ static void reliable_no_allocation_after_create()
 
 REGISTER_UNIT_TEST( reliable_no_allocation_after_create );
 
-// Other unit files also register the general name. The distinct registration
-// above guarantees this code-2 path runs whichever alias the registry selects.
-static void no_allocation_after_create()
-{
-    reliable_no_allocation_after_create();
-}
-
-REGISTER_UNIT_TEST( no_allocation_after_create );
-
 // A control record frees its number's descriptor and is never an application
 // view (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp).
 static void reliable_control_record_frees_its_number()
