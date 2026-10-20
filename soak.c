@@ -41,7 +41,7 @@
     the injection and are reported, not failed. On the xdp server the kernel
     replay window drops a session packet 16 or more sequences behind the
     newest from its source (ROCKETNET_XDP_REPLAY_WINDOW,
-    sdk/rocketnet_xdp_limits.h:8; server_xdp/server_xdp.c:220): a duplicate
+    sdk/rocketnet_xdp_limits.h:8; server_xdp/server_xdp.c:291): a duplicate
     the simulator holds back, or a packet its jitter reorders that far, is
     counted XDP_KERNEL_DROPPED_REPLAYED, so when the client's
     SIMULATED_DUPLICATE_PERCENT or SIMULATED_JITTER_MS is non-zero that
