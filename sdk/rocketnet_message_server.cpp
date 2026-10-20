@@ -355,6 +355,21 @@ static void rn_message_object_close_in_place( rn_message_object_t * object )
     rn_message_connection_cancel_pending( object, object->pending_connection );
 }
 
+// RNSlots ResetCancel: a queued-path start still pending on a connection its
+// update resets is cancelled before that reset, as kick cancels it, so the
+// recarved region holds none of it and later starts on every connection are
+// not refused by it. Counted in MESSAGE_SEND_REFUSED; its finish then returns
+// 0 (rn_message_object_finish: pending_connection is -1).
+
+static void rn_message_connection_cancel_at_reset( rn_message_object_t * object, int index )
+{
+    if ( object->pending_connection != index )
+        return;
+    rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    rocketnet_info( "message start pending on connection %d at its reset: the start is cancelled", index );
+    rn_message_connection_cancel_pending( object, index );
+}
+
 void rn_message_object_kick( struct rn_message_object_t * object, int index, int reason )
 {
     // RNSlots Kick, RNConnectionMemory Kick: the transport ends the connection
@@ -456,6 +471,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // slots machine sees the slot free until Observe reads the transport
         if ( connection->state == RN_MESSAGE_CONNECTION_KICKED )
         {
+            rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel (kick cancelled it already)
             if ( object->is_server )
                 rocketnet_server_connection_reset( object, i );
             else
@@ -480,6 +496,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // the server's disconnect) is recorded before the reset, which keeps it
         if ( object->link.end_reason )
             object->connections[0].disconnect_reason = object->link.end_reason( object->link.transport );
+        rn_message_connection_cancel_at_reset( object, 0 );         // RNSlots ResetCancel
         rocketnet_client_connection_reset( object );
         rn_slots_observe( &object->slots, 0, 0 );
     }
@@ -497,6 +514,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
             if ( action == RN_SLOTS_NONE )
                 continue;
 
+            rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel
             rocketnet_server_connection_reset( object, i );
 
             if ( action == RN_SLOTS_RESET )
@@ -598,6 +616,9 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
         return NULL;
     }
+    // one start pending per object: a second is refused until the first is
+    // finished or aborted, or a reset of its connection cancels it
+    // (rn_message_connection_cancel_at_reset, RNSlots ResetCancel)
     if ( object->pending_connection >= 0 )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
@@ -696,7 +717,9 @@ int rn_message_server_send_fits( struct rocketnet_message_server_t * server, int
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes )
 {
     // RNChannel Enqueue's second half: the message joins its channel's queue
-    // in FIFO order and takes its receipt serial (7.4: nonzero for every send)
+    // in FIFO order and takes its receipt serial (7.4: nonzero for every send).
+    // 0 when no start is pending on this connection, a start a reset of the
+    // connection cancelled included (rn_message_connection_cancel_at_reset)
     if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
         return 0;
 
