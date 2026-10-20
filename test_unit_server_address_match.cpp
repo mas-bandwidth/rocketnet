@@ -160,9 +160,10 @@ void rocketnet_test_server_address_match_v4_mapped()
 
 // A token naming both families (rocketnet_write_production_connect_token
 // with two addresses) is accepted by a server that serves either one: an
-// IPv4 server matches the IPv4 address although the IPv6 flag is set, an
-// IPv6 server matches the IPv6 address, and a token whose two addresses are
-// both foreign is still refused (rocketnet_server_token_address_is_advertised
+// IPv4 server matches the IPv4 address of a request arriving over IPv4
+// although the IPv6 flag is set, an IPv6 server matches the IPv6 address of
+// a request arriving over IPv6, and a token whose two addresses are both
+// foreign is still refused (rocketnet_server_token_address_is_advertised
 // in sdk/rocketnet_server_protocol.cpp).
 
 void rocketnet_test_server_address_match_two_address_token()
@@ -191,9 +192,11 @@ void rocketnet_test_server_address_match_two_address_token()
                                                                                response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[addr_counter] == before_ipv4 );
 
-    // an IPv6 server at [::1]:40000, no IPv4
+    // an IPv6 server at [::1]:40000, no IPv4; the request arrives over IPv6,
+    // so the token's IPv6 address is the one checked (TokenAddressAdvertised)
     memset( &test.server.advertised_ipv4, 0, sizeof(test.server.advertised_ipv4) );
     rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "[2001:db8::7]:56789" ) );
 
     rocketnet_server_address_match_mint_request( request, both, loopback_ipv4, loopback_ipv6 );
     const uint64_t before_ipv6 = test.counters.values[addr_counter];

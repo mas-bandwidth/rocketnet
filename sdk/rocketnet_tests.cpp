@@ -3502,9 +3502,11 @@ void rocketnet_test_request_path_config_branches()
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     // the ipv6 advertised branch: a token naming a DIFFERENT server's ipv4
-    // but THIS server's ipv6 is accepted -- either advertised address, not
-    // only the first
+    // but THIS server's ipv6 is accepted when the request arrives over IPv6
+    // -- the arrival family's token address is the one checked
+    // (TokenAddressAdvertised), not only the first
     rocketnet_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[2001:db8::1]:40000" ) );
+    rocketnet_check( rocketnet_address_parse( &test.client_address, "[2001:db8::7]:56789" ) );
     {
         struct rocketnet_signed_connect_data_t signed_fields;
         struct rocketnet_connect_token_private_t private_fields;
