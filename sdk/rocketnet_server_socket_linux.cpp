@@ -2473,27 +2473,42 @@ bool rocketnet_server_socket_test_inactive_generation()
         valid &= socket->send_buffer[generation].packet_info[1].packet_bytes == 0;
         rocketnet_server_socket_send_packets(server);
     }
-    valid &= socket->send_flow_index.load() == -1;
-    if (valid)
+    // After both flushes the producer is already staging the newest reopened
+    // generation (never the front); finish_base refuses a pointer from before
+    // the reopen so it cannot rewrite a published packet.
+    const int newest = socket->send_flow_index.load();
+    if (newest >= 0)
     {
-        // Both generations belong to the worker. The sanitizer negative control
-        // detects inactive-buffer pointer formation; the length assertions
-        // below separately check preservation of published packet metadata.
-        uint64_t refused_id;
-        valid &= rocketnet_server_socket_start_packet(server, &to, &refused_id) == NULL;
-        rocketnet_server_socket_finish_packet(server, ids[0], packets[0], 17);
+        valid &= newest == 1; // the newest generation, never the front
+        valid &= socket->send_buffer[1].base == 2;
+        // A finish or abort through a pointer from before the reopen sits below
+        // base and is refused, leaving published packet_bytes intact.
+        rocketnet_server_socket_finish_packet(server, ids[1], packets[1], 17);
         rocketnet_server_socket_abort_packet(server, ids[1], packets[1]);
-        for (int generation = 0; generation < ROCKETNET_XDP_NUM_BUFFERS; ++generation)
-            valid &= socket->send_buffer[generation].packet_info[0].packet_bytes == size_t(64 + generation);
-        rocketnet_server_socket_send_packets(server);
-        valid &= socket->send_flow_index.load() == -1;
-        socket->send_handoff.retire(); // No worker exists; retire one copied generation.
+        valid &= socket->send_buffer[1].packet_info[0].packet_bytes == size_t(65);
+        // The front generation was never reopened; a cross-buffer pointer is
+        // safely out of range and changes nothing either.
+        rocketnet_server_socket_finish_packet(server, ids[0], packets[0], 17);
+        valid &= socket->send_buffer[0].packet_info[0].packet_bytes == size_t(64);
+        // A fresh packet stages past the reopened generation's published count.
         uint64_t id;
         uint8_t * packet = rocketnet_server_socket_start_packet(server, &to, &id);
-        valid &= packet == packets[0];
+        valid &= packet == socket->send_buffer[1].packet_data[2];
         if (packet)
+            rocketnet_server_socket_finish_packet(server, id, packet, 90);
+        valid &= socket->send_buffer[1].packet_info[2].packet_bytes == size_t(90);
+        // Flush again: the reopened generation publishes and reopens as the
+        // newest; then retiring the front frees it for the next acquire.
+        rocketnet_server_socket_send_packets(server);
+        valid &= socket->send_flow_index.load() == 1;
+        socket->send_handoff.retire(); // No worker exists; retire one copied generation.
+        rocketnet_server_socket_send_packets(server);
+        valid &= socket->send_flow_index.load() == 0; // the retired front, acquired fresh
+        uint8_t * fresh = rocketnet_server_socket_start_packet(server, &to, &id);
+        valid &= fresh == packets[0];
+        if (fresh)
         {
-            rocketnet_server_socket_finish_packet(server, id, packet, 100);
+            rocketnet_server_socket_finish_packet(server, id, fresh, 100);
             valid &= socket->send_buffer[0].packet_info[0].packet_bytes == 100;
         }
     }
