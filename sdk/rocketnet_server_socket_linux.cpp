@@ -6,6 +6,21 @@
 
 #include "rocketnet_internal.h"
 
+// Finish one AF_XDP RX pass after peeking num_packets descriptors and
+// consuming num_consumed of them while the staging buffer had room: cancel the
+// peeked descriptors not consumed before releasing num_consumed (modelled in
+// tla/RNXdpReceiveRing.tla, Finish).
+void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consumed,
+    void (*cancel)( void * ring, uint32_t count ),
+    void (*release)( void * ring, uint32_t count ),
+    void * ring )
+{
+    rocketnet_assert( num_consumed <= num_packets );
+    if ( num_consumed < num_packets )
+        cancel( ring, num_packets - num_consumed );
+    release( ring, num_consumed );
+}
+
 #if ROCKETNET_XDP
 
 #include "rocketnet_server_socket.h"
@@ -2705,9 +2720,13 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             // LIVE frame, which is the packet corruption the shouty comment at
             // rocketnet_constants.h:22 warns about.
             //
-            // Descriptors left unconsumed stay in the ring and come back on the
-            // next peek, which is the correct AF_XDP behaviour when a consumer
-            // cannot keep up.
+            // The peek above advanced the ring's cached consumer past all
+            // num_packets descriptors; rocketnet_xdp_receive_ring_finish
+            // cancels the num_packets - num_consumed descriptors not taken
+            // (xsk_ring_cons__cancel) before releasing num_consumed
+            // (xsk_ring_cons__release), so the next peek returns the skipped
+            // descriptors first. The frame ownership is modelled in
+            // tla/RNXdpReceiveRing.tla.
             uint32_t num_consumed = 0;
 
             uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
@@ -2754,7 +2773,10 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
             rocketnet_platform_mutex_release( &socket->receive_mutex );
 
-            xsk_ring_cons__release( &socket->receive_queue, num_consumed );
+            rocketnet_xdp_receive_ring_finish( num_packets, num_consumed,
+                []( void * r, uint32_t n ) { xsk_ring_cons__cancel( (struct xsk_ring_cons *) r, n ); },
+                []( void * r, uint32_t n ) { xsk_ring_cons__release( (struct xsk_ring_cons *) r, n ); },
+                &socket->receive_queue );
 
             // The peek was bounded by available pending storage, so every
             // consumed frame remains owned until a full fill reservation.
