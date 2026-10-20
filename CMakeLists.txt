@@ -118,6 +118,30 @@ if(MSVC)
 else()
     add_compile_options(-ffp-contract=off)
 endif()
+# The warning floor, at the same directory scope so every target this tree
+# builds carries it, the vendored sodium source included (sodium/NOTES.md):
+# a customer compiles these sources inside their game with their own warning
+# flags, so the tree ships with no warning at the floor and the floor fails
+# the build. ROCKETNET_STRICT_WARNINGS adds the strict set a game is likely
+# to use (CI builds the library with it); ROCKETNET_WARNINGS_AS_ERRORS=OFF
+# keeps the warnings and drops only the failure, for a compiler newer than
+# the ones the tree is checked on.
+option(ROCKETNET_WARNINGS_AS_ERRORS "Fail the build on any compiler warning" ON)
+option(ROCKETNET_STRICT_WARNINGS "Add the strict warning set (conversion, shadow, sign, format, undef)" OFF)
+if(MSVC)
+    add_compile_options(/W4)
+    if(ROCKETNET_WARNINGS_AS_ERRORS)
+        add_compile_options(/WX)
+    endif()
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic)
+    if(ROCKETNET_STRICT_WARNINGS)
+        add_compile_options(-Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion)
+    endif()
+    if(ROCKETNET_WARNINGS_AS_ERRORS)
+        add_compile_options(-Werror)
+    endif()
+endif()
 add_compile_definitions(
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
     ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
@@ -256,15 +280,11 @@ if(ROCKETNET_HARDEN)
     endif()
 endif()
 
-# The warning floor for the tree's library and test targets: the host
-# compiler's standard warnings, never fatal. A target's options stay PRIVATE,
-# so neither the installed package nor a parent project inherits them.
+# The warning floor is directory-wide (the add_compile_options above the
+# dependencies), so it reaches every target, named here or not. The function
+# stays as the place a target names the floor it is checked against; it adds
+# nothing the directory scope has not already given the target.
 function(rocketnet_warning_floor target)
-    if(MSVC)
-        target_compile_options(${target} PRIVATE /W4)
-    else()
-        target_compile_options(${target} PRIVATE -Wall -Wextra)
-    endif()
 endfunction()
 
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
