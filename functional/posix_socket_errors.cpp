@@ -336,7 +336,7 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
-                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ),
+                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
                                                     token, sizeof(token) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
@@ -1765,7 +1765,7 @@ static void posix_xdp_weather( int ipv6 )
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
-                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ),
+                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
                                                     token, sizeof(token) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;

@@ -561,7 +561,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     posix_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(),
-                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, posix_client_clock_now( clock ) ),
+                                                    rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
                                                     token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t config;
