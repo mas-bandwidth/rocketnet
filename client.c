@@ -696,7 +696,7 @@ static void run_matrix( opts_t * o )
         r_event( res, o->label, window, "clock", "mint" );
 
         uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        if ( !rocketnet_write_dev_connect_token( o->address, rocketnet_random_uint64(), (uint64_t) now, connect_token ) )
+        if ( rocketnet_write_dev_connect_token( o->address, rocketnet_random_uint64(), (uint64_t) now, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         {
             r_fail( res, o->label, window, 0, 0, 0, 0, "token-mint-failed", 0, 0, "client", "-", "mint" );
             st.fails++;
@@ -916,8 +916,8 @@ static void run_matrix( opts_t * o )
         /* the disconnect: alternating clean and silent drop, final clean */
         if ( is_final || ( window % 2 ) == 0 )
         {
-            const int reason = !aborted ? rocketnet_client_disconnect_reason( client ) : ROCKETNET_MESSAGE_ERROR_NONE;
-            if ( !aborted && reason != ROCKETNET_MESSAGE_ERROR_NONE )
+            const int reason = !aborted ? rocketnet_client_disconnect_reason( client ) : ROCKETNET_DISCONNECT_REASON_NONE;
+            if ( !aborted && reason != ROCKETNET_DISCONNECT_REASON_NONE )
             {
                 char excerpt[96];
                 snprintf( excerpt, sizeof(excerpt), "disconnect reason=%d before clean close", reason );
@@ -990,7 +990,7 @@ int main( int argc, char ** argv )
         return 0;
     }
 
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -1011,7 +1011,7 @@ int main( int argc, char ** argv )
     // development keys. a production client is handed its token by a backend.
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( !rocketnet_write_dev_connect_token( connect_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) )
+    if ( rocketnet_write_dev_connect_token( connect_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to write dev connect token\n" );
         rocketnet_term();

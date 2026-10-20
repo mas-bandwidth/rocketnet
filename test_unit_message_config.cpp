@@ -8,7 +8,7 @@
 // each end queues one CONFIG control record at connection reset, at the head
 // of IMMEDIATE, taking the connection's first reliable number; the receiver
 // compares it field by field with its own, and a difference ends the
-// connection with ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH. The objects run
+// connection with ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH. The objects run
 // over the same in-memory transport pair test_unit_message_objects.cpp uses
 // (copied here, renamed mc_): frames handed out at start_packet, opened once
 // on the far side, opened ids reported back as the transport's acks. Time is
@@ -496,9 +496,9 @@ static void mc_drain_client( rocketnet_message_client_t * client, std::vector<mc
 static void mc_step( mc_pair_t * pair, std::vector<mc_received_t> * server_got = NULL, std::vector<mc_received_t> * client_got = NULL, double dt = 0.01 )
 {
     pair->time += dt;
-    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
     for ( int i = 0; i < pair->num_clients; i++ )
-        check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_UPDATE_OK );
     mc_drain_server( pair, server_got );
     for ( int i = 0; i < pair->num_clients; i++ )
         mc_drain_client( pair->clients[i], client_got );
@@ -550,8 +550,8 @@ static void mc_step_client_first( mc_pair_t * pair, double dt = 0.01 )
 {
     pair->time += dt;
     for ( int i = 0; i < pair->num_clients; i++ )
-        check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_MESSAGE_OK );
-    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
     mc_drain_server( pair, NULL );
     for ( int i = 0; i < pair->num_clients; i++ )
         mc_drain_client( pair->clients[i], NULL );
@@ -564,7 +564,7 @@ static void mc_step_client_first( mc_pair_t * pair, double dt = 0.01 )
 static int g_mc_mismatch_lines = 0;
 static char g_mc_mismatch_line[2][512];
 
-static void mc_capture( void * context, int level, const char * message, size_t length )
+static void mc_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_ERROR || !strstr( message, "CONFIG mismatch" ) )
@@ -606,8 +606,8 @@ static void message_config_mismatch_ends_both_connections()
     mc_net_connect( pair.net, 0 );
     pair.time = MC_T0;
 
-    const int saved_level = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     g_mc_mismatch_lines = 0;
     rocketnet_set_log_callback( mc_capture, NULL );
 
@@ -615,10 +615,10 @@ static void message_config_mismatch_ends_both_connections()
         mc_step_client_first( &pair );
 
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( saved_level );
+    rocketnet_set_log_level( saved_level );
 
-    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH );
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
     check( pair.net->clients[0]->disconnects == 1 );           // the client disconnected itself
     check( pair.net->server->disconnects == 1 );               // the server kicked the slot
     check( !pair.net->clients[0]->connected );
@@ -708,7 +708,7 @@ static void message_config_equal_connects_and_verifies()
     // queued before the client's first packet: it travels behind CONFIG
     uint8_t data[64];
     mc_fill( data, 7, sizeof( data ) );
-    check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABLE_ORDERED, data, sizeof( data ) ) != 0 );
+    check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, sizeof( data ) ) != 0 );
 
     std::vector<mc_received_t> server_got;
     for ( int i = 0; i < 10; i++ )
@@ -718,8 +718,8 @@ static void message_config_equal_connects_and_verifies()
     rn_message_connection_t * client = mc_client_connection( pair.clients[0] );
     check( server_slot->ordered.config_received );
     check( client->ordered.config_received );
-    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( pair.net->clients[0]->disconnects == 0 );
     check( pair.net->server->disconnects == 0 );
 
@@ -776,8 +776,8 @@ static void message_config_first_loss_still_verifies()
 
     check( server_slot->ordered.config_received );
     check( client->ordered.config_received );
-    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( pair.net->clients[0]->disconnects == 0 );
     check( pair.net->server->disconnects == 0 );
 
@@ -816,17 +816,17 @@ static void message_config_never_received_is_reliable_timeout()
     check( !client->ordered.config_received );
     check( client->ordered.send.U >= client->ordered.send.next );
     check( client->ordered.send.next >= 1 );
-    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( pair.net->clients[0]->disconnects == 0 );
 
     // past reliable_timeout: the client ends it
     for ( int i = 0; i < 5; i++ )
         mc_step( &pair, NULL, NULL, 0.1 );
-    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
     check( pair.net->clients[0]->disconnects == 1 );
 
     // the server's CONFIG was never acked: it times out too (RNEndpoint Tick)
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT );
 
     mc_pair_teardown( &pair );
 }

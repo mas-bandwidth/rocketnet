@@ -827,11 +827,11 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     rocketnet_channel_capture_begin();
     rocketnet_term();
     rocketnet_channel_allocator_calls = 0;
-    if ( !rocketnet_allocator( rocketnet_channel_counting_malloc, rocketnet_channel_counting_free ) )
+    if ( rocketnet_set_allocator( rocketnet_channel_counting_malloc, rocketnet_channel_counting_free ) != ROCKETNET_STATUS_OK )
         return 0;
-    if ( !rocketnet_init( NULL ) )
+    if ( rocketnet_init( NULL ) != ROCKETNET_STATUS_OK )
     {
-        rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
+        rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
         rocketnet_init( NULL );
         return 0;
     }
@@ -872,7 +872,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // client protocol
     rocketnet_client_protocol_init( &h->client, &h->client_counters );
 
-    if ( !rocketnet_write_dev_connect_token( "203.0.113.10:40000", 0xA11CE, h->unix_ts, token ) )
+    if ( rocketnet_write_dev_connect_token( "203.0.113.10:40000", 0xA11CE, h->unix_ts, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         goto failed;
     if ( !rocketnet_client_protocol_connect( &h->client, token, h->now, h->unix_ts ) )
         goto failed;
@@ -999,8 +999,8 @@ static inline int rocketnet_channel_harness_set_budgets( rocketnet_channel_harne
 static inline int rocketnet_channel_harness_pump( rocketnet_channel_harness_t * h, double dt )
 {
     h->now += dt;
-    if ( rocketnet_message_client_update( h->message_client, h->now ) != ROCKETNET_MESSAGE_OK ||
-         rocketnet_message_server_update( h->message_server, h->now ) != ROCKETNET_MESSAGE_OK )
+    if ( rocketnet_message_client_update( h->message_client, h->now ) != ROCKETNET_UPDATE_OK ||
+         rocketnet_message_server_update( h->message_server, h->now ) != ROCKETNET_UPDATE_OK )
         return 0;
 
     for ( int channel = 0; channel < h->message_config.num_channels; channel++ )
@@ -1083,7 +1083,7 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->counting_allocator_installed )
     {
         rocketnet_term();
-        rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
+        rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
         rocketnet_init( NULL );
     }
     rocketnet_channel_seed_state().live = 0;

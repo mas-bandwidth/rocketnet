@@ -19,8 +19,8 @@ extern bool external_test_replay_has_forgotten;
 
 int main()
 {
-    rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init(NULL));
+    rocketnet_set_log_level(ROCKETNET_LOG_LEVEL_NONE);
+    CHECK(rocketnet_init(NULL) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config(&server_config);
@@ -31,7 +31,7 @@ int main()
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token));
+    CHECK(rocketnet_write_dev_connect_token(address, 1234, (uint64_t)time(NULL), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     strcpy(client_config.driver, "external_test");

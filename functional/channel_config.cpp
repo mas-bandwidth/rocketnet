@@ -86,8 +86,8 @@ void config_mismatch_over_loopback()
 
     const double timeout = (double) h.message_config.reliable_timeout_ms / 1000.0;
     const double start = h.now;
-    int client_reason = ROCKETNET_MESSAGE_ERROR_NONE;
-    int server_reason = ROCKETNET_MESSAGE_ERROR_NONE;
+    int client_reason = ROCKETNET_DISCONNECT_REASON_NONE;
+    int server_reason = ROCKETNET_DISCONNECT_REASON_NONE;
     int updates = 0;
 
     // Hold the payload packets both ways while the transport connects, so the
@@ -124,8 +124,8 @@ void config_mismatch_over_loopback()
     }
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_PASS, ROCKETNET_CHANNEL_WIRE_PASS );
 
-    while ( ( client_reason != ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH ||
-              server_reason != ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH ) &&
+    while ( ( client_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH ||
+              server_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH ) &&
             h.now - start <= timeout && updates < (int) ( timeout * 60.0 ) + 60 )
     {
         rocketnet_channel_harness_pump( &h, rocketnet_config_step );
@@ -135,13 +135,13 @@ void config_mismatch_over_loopback()
     }
 
     const double elapsed = h.now - start;
-    if ( client_reason != ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH ||
-         server_reason != ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH )
+    if ( client_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH ||
+         server_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH )
         rocketnet_config_print_failure( "config_mismatch_over_loopback", &h, elapsed,
                                         client_reason, server_reason, 0, 0 );
 
-    rocketnet_config_check( client_reason == ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH );
-    rocketnet_config_check( server_reason == ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH );
+    rocketnet_config_check( client_reason == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
+    rocketnet_config_check( server_reason == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
     rocketnet_config_check( elapsed <= timeout );
     rocketnet_config_check( rocketnet_channel_harness_overflows( &h ) == 0 );
 
@@ -214,14 +214,14 @@ void config_equal_over_lossy_loopback()
         while ( sent_to_server < rocketnet_config_message_count )
         {
             rocketnet_config_fill( payload, sent_to_server );
-            if ( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABLE_ORDERED, payload, rocketnet_config_payload_bytes ) == 0 )
+            if ( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, rocketnet_config_payload_bytes ) == 0 )
                 break;
             sent_to_server++;
         }
         while ( sent_to_client < rocketnet_config_message_count )
         {
             rocketnet_config_fill( payload, sent_to_client );
-            if ( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABLE_ORDERED, payload, rocketnet_config_payload_bytes ) == 0 )
+            if ( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, rocketnet_config_payload_bytes ) == 0 )
                 break;
             sent_to_client++;
         }
@@ -257,7 +257,7 @@ void config_equal_over_lossy_loopback()
     const int server_reason = rocketnet_message_server_disconnect_reason( h.message_server, h.client_slot );
     const int ok = h.connected && held_to_server > 0 && held_to_client > 0 &&
                    client_verified && server_verified &&
-                   client_reason == ROCKETNET_MESSAGE_ERROR_NONE && server_reason == ROCKETNET_MESSAGE_ERROR_NONE &&
+                   client_reason == ROCKETNET_DISCONNECT_REASON_NONE && server_reason == ROCKETNET_DISCONNECT_REASON_NONE &&
                    sent_to_server == rocketnet_config_message_count && sent_to_client == rocketnet_config_message_count &&
                    delivered_server == rocketnet_config_message_count && delivered_client == rocketnet_config_message_count &&
                    !order_error && rocketnet_channel_harness_overflows( &h ) == 0;
@@ -271,8 +271,8 @@ void config_equal_over_lossy_loopback()
     rocketnet_config_check( held_to_client > 0 );
     rocketnet_config_check( client_verified );
     rocketnet_config_check( server_verified );
-    rocketnet_config_check( client_reason == ROCKETNET_MESSAGE_ERROR_NONE );
-    rocketnet_config_check( server_reason == ROCKETNET_MESSAGE_ERROR_NONE );
+    rocketnet_config_check( client_reason == ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_config_check( server_reason == ROCKETNET_DISCONNECT_REASON_NONE );
     rocketnet_config_check( sent_to_server == rocketnet_config_message_count );
     rocketnet_config_check( sent_to_client == rocketnet_config_message_count );
     rocketnet_config_check( delivered_server == rocketnet_config_message_count );

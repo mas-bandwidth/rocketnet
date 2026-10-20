@@ -11,7 +11,7 @@
 
     Build modes:
       - Default (uses proofs/cbmc/esbmc_shim.h): VERIFICATION SUCCESSFUL
-      - -DTEST_LEGACY_ESBMC_R_OK (maps __CPROVER_r_ok to undeclared builtin
+      - -DTEST_PRE_FIX_ESBMC_R_OK (maps __CPROVER_r_ok to undeclared builtin
         bool __ESBMC_r_ok(void *, unsigned long)): VERIFICATION FAILED
       - -DTEST_LIBC_CPROVER_R_OK (uses ESBMC 8.5 builtin_libs.c __CPROVER_r_ok
         which calls __ESBMC_get_object_size(p) == 8 on malloc(n)): VERIFICATION FAILED
@@ -21,7 +21,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#if defined(TEST_LEGACY_ESBMC_R_OK)
+#if defined(TEST_PRE_FIX_ESBMC_R_OK)
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {

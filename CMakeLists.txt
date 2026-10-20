@@ -522,6 +522,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
         functional/server_receive_backlog.cpp
+        functional/macos_client_timing.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
@@ -542,8 +543,8 @@ if(ROCKETNET_BUILD_TESTS)
     target_compile_features(rocketnet_abi_mismatch PRIVATE cxx_std_11)
     set_target_properties(rocketnet_abi_mismatch PROPERTIES
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
-    add_library(rocketnet_abi_legacy SHARED EXCLUDE_FROM_ALL tools/abi_legacy.cpp)
-    target_compile_definitions(rocketnet_abi_legacy PRIVATE ROCKETNET_SHARED ROCKETNET_BUILDING_DLL)
+    add_library(rocketnet_abi_pre_introspection SHARED EXCLUDE_FROM_ALL tools/abi_pre_introspection.cpp)
+    target_compile_definitions(rocketnet_abi_pre_introspection PRIVATE ROCKETNET_SHARED ROCKETNET_BUILDING_DLL)
 endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
