@@ -7798,10 +7798,26 @@ static uint64_t rocketnet_xdp_icmp_unreachables_sent( bool far, bool ipv6 )
     return (uint64_t) strtoull( lines[0].c_str(), NULL, 10 );
 }
 
+// a far client's token carries a connection timeout that outlasts the
+// runtime build of server_xdp.o: a cold build in the guest can take longer
+// than the development token's ten second cookie timeout, and a client
+// minted before it would time out while the server is still being created.
+// sixty seconds covers the build, and the token still names the same dev
+// server and protocol the dev config accepts.
+
+static void rocketnet_xdp_hard_killed_token( const char * server_address, uint8_t * connect_token )
+{
+    const char * addresses[1] = { server_address };
+    const uint64_t now = (uint64_t) time( NULL );
+    rocketnet_check( rocketnet_write_production_connect_token( rocketnet_dev_backend_secret_key, rocketnet_dev_server_public_key,
+                                                               ROCKETNET_DEV_PROTOCOL_ID, addresses, 1, rocketnet_random_uint64(),
+                                                               now, now + 120, 60, NULL, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+}
+
 static struct rocketnet_client_transport_t * rocketnet_xdp_far_client( const char * server_address )
 {
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    rocketnet_xdp_hard_killed_token( server_address, connect_token );
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.driver, sizeof(config.driver), "portable" );
