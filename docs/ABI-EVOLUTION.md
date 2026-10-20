@@ -136,11 +136,11 @@ public header and in `rocketnet_abi_type_size`, which is the
 authority for a given build; this document does not repeat the numbers.
 
 The client and server configs have one revision. Revision 1 is the whole
-struct, through the four development link-simulator controls; its
+struct, through the four development link-simulator controls. Its
 `ROCKETNET_CLIENT_CONFIG_BYTES_1` and `ROCKETNET_SERVER_CONFIG_BYTES_1`
-formulas end at `simulated_duplicate_percent` (`sdk/rocketnet.h:773`, `:829`)
-and stay frozen when a later revision grows the struct. A `static_assert`
-requires each to equal the struct's `sizeof` (`sdk/rocketnet_abi.cpp:6-7`).
+formulas end at `simulated_duplicate_percent` (`sdk/rocketnet.h:773`, `:829`).
+A `static_assert` requires each to equal the struct's `sizeof`
+(`sdk/rocketnet_abi.cpp:6-7`).
 
 Revision 1 is the layout of the first release that carries the sized entry
 points. `time_callback` and the `simulated_*` controls join the configs before

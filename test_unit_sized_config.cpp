@@ -138,8 +138,9 @@ static void sized_config_accepts_every_known_size()
         check( memcmp( &read, &caller, sizeof( read ) ) == 0 );
     }
 
-    // the creates accept every known size: each one reaches its own NULL
-    // guard (the token or address), a counted no-op, so no socket opens
+    // These size-acceptance checks pass NULL tokens or addresses, so they
+    // exercise the create guards without opening sockets. The plain-create
+    // simulation regression below uses an in-memory loopback connection.
 
     void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( sized_config_quiet_assert );
