@@ -26,15 +26,43 @@
 extern const rocketnet_driver_backend_t rocketnet_loopback_driver;
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static size_t loopback_rss_allocations;
+static size_t loopback_rss_requested_bytes;
+static size_t loopback_rss_live_bytes;
+static size_t loopback_rss_peak_bytes;
+static size_t loopback_rss_sizes[64];
+static size_t loopback_rss_size_counts[64];
+
 static void * loopback_rss_malloc( void *, size_t bytes )
 {
-    return HeapAlloc( GetProcessHeap(), 0, bytes );
+    void * memory = HeapAlloc( GetProcessHeap(), 0, bytes );
+    if ( memory )
+    {
+        loopback_rss_allocations++;
+        for ( int i = 0; i < 64; ++i )
+        {
+            if ( loopback_rss_size_counts[i] == 0 || loopback_rss_sizes[i] == bytes )
+            {
+                loopback_rss_sizes[i] = bytes;
+                loopback_rss_size_counts[i]++;
+                break;
+            }
+        }
+        loopback_rss_requested_bytes += bytes;
+        loopback_rss_live_bytes += HeapSize( GetProcessHeap(), 0, memory );
+        if ( loopback_rss_live_bytes > loopback_rss_peak_bytes )
+            loopback_rss_peak_bytes = loopback_rss_live_bytes;
+    }
+    return memory;
 }
 
 static void loopback_rss_free( void *, void * memory )
 {
     if ( memory )
+    {
+        loopback_rss_live_bytes -= HeapSize( GetProcessHeap(), 0, memory );
         HeapFree( GetProcessHeap(), 0, memory );
+    }
 }
 
 // Each loopback endpoint allocates its whole packet queue at create, and the
@@ -45,6 +73,12 @@ static void loopback_rss_free( void *, void * memory )
 // Every queue keeps its size.
 static void loopback_rss_allocator_begin()
 {
+    loopback_rss_allocations = 0;
+    loopback_rss_requested_bytes = 0;
+    loopback_rss_live_bytes = 0;
+    loopback_rss_peak_bytes = 0;
+    memset( loopback_rss_sizes, 0, sizeof( loopback_rss_sizes ) );
+    memset( loopback_rss_size_counts, 0, sizeof( loopback_rss_size_counts ) );
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_allocator_ex( loopback_rss_malloc, loopback_rss_free ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
@@ -53,6 +87,20 @@ static void loopback_rss_allocator_begin()
 static void loopback_rss_allocator_end()
 {
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( loopback_rss_live_bytes == 0 );
+    // Opt-in allocation receipt for a directly selected case, never normal
+    // suite output. HeapSize measures allocated bytes, not resident pages.
+    if ( getenv( "ROCKETNET_TEST_RSS_PROFILE" ) )
+    {
+        printf( "loopback allocations=%llu requested_bytes=%llu peak_heap_bytes=%llu\n",
+                (unsigned long long) loopback_rss_allocations,
+                (unsigned long long) loopback_rss_requested_bytes,
+                (unsigned long long) loopback_rss_peak_bytes );
+        for ( int i = 0; i < 64 && loopback_rss_size_counts[i]; ++i )
+            printf( "loopback allocation_bytes=%llu calls=%llu\n",
+                    (unsigned long long) loopback_rss_sizes[i],
+                    (unsigned long long) loopback_rss_size_counts[i] );
+    }
     rocketnet_unit_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 }
