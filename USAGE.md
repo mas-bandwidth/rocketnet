@@ -346,11 +346,23 @@ A send the connection's region has no room for ends the connection with
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects that
 client, and the client disconnects itself. The send budget governs the wire,
 never the queue. A reliable message waits for budget and is never dropped; an
-unreliable message over budget is dropped and counted. A start refused for a
-full send ring, arena or lease table spends its session sequence and sends
-nothing; this is harmless: no ack block names it, nothing resends, and the
-receiver takes every packet after it. The one trace is the client's packet
-loss stat, which counts a sequence the server spent this way as a gap.
+unreliable message over budget is dropped and counted.
+
+### Not every NULL from start_packet spends one
+
+A client start refused for a full send ring, arena or lease table spends its
+session sequence and sends nothing. An aborted client start and a refused client
+finish also leave a sequence gap. The server assigns its session sequence only
+when finish accepts the payload and reserves every wire frame. A refused server
+start or finish and an aborted server start spend no sequence, including a full
+lease table or a ring or arena that cannot reserve the output frames. For a
+fragmented server payload, the sequence block is reserved after every fragment
+frame is ready.
+
+The client's packet loss stat counts gaps in the server's session sequence. A
+packet the server sends and the path loses leaves a gap; a server refusal or
+abort does not. The server's per-client packet loss stat counts packets it sent
+that the client never acknowledged.
 
 ```c
 #include "rocketnet.h"
