@@ -211,7 +211,7 @@ def main():
 
     # Preserve any caller's explicit ROCKETNET_SERVER_TRANSPORT and
     # ROCKETNET_CLIENT_TRANSPORT pins. Other values exercise
-    # exact names, legacy aliases, an invalid key and a long value without ever
+    # exact names, older aliases, an invalid key and a long value without ever
     # printing their contents. The suite derives its cleanup list from the tables.
     env.update({
         "ROCKETNET_LOG_LEVEL": "4",

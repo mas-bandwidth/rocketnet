@@ -37,6 +37,73 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
 
+// -----------------------------------------
+//          status-returning lifecycle forms
+// -----------------------------------------
+
+// The int-status forms of rocketnet_init, rocketnet_term and
+// rocketnet_set_allocator, which the public calls wrap: the public calls
+// return the same code as enum rocketnet_status_t.
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Initializes RocketNet and optionally returns the exact status code.
+ *
+ * This has the same lifecycle and logging behavior as rocketnet_init, which is
+ * this call with a NULL status. It writes the exact section-2.1 code to status
+ * on every return path when status is non-NULL; a failure logs one error line.
+ * No client or server may be created until initialization succeeds.
+ *
+ * @param context Opaque allocator context retained for platform allocations; NULL is allowed.
+ * @param status Optional writable int receiving a ROCKETNET_STATUS_* value; NULL skips the write.
+ * @return true on success; false on an existing transition or platform/crypto failure.
+ * @code
+ * int status;
+ * if (!rocketnet_init_ex(NULL, &status)) {
+ *     fprintf(stderr, "init failed: %s\n", rocketnet_status_name(status));
+ * }
+ * @endcode
+ */
+bool rocketnet_init_ex( void * context, int * status );
+
+/**
+ * @brief Terminates the library and returns why termination did or did not occur.
+ *
+ * Call after every client and server is destroyed and every SDK allocation is
+ * released. A failure logs one error line. Do not race termination with other
+ * SDK work.
+ *
+ * @return The section-2.1 code: ROCKETNET_STATUS_OK on termination,
+ * ROCKETNET_STATUS_NOT_INITIALIZED if the library is not initialized (nothing
+ * to terminate) or is transitioning, or ROCKETNET_STATUS_LIVE_ALLOCATIONS while
+ * SDK allocations remain and the term refuses.
+ */
+int rocketnet_term_ex( void );
+
+/** @brief Replaces allocator callbacks and returns the refusal reason. @param malloc_function Non-NULL allocator callback. @param free_function Non-NULL matching deallocator. @return The section-2.1 code: ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a partial pair, ALREADY_INITIALIZED after init or during the transition, or LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line. Install before init with no live allocations. */
+int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
+
+// The connection a public client holds (NULL while DISCONNECTED) and the
+// running message server a public server holds (NULL while stopped), for
+// tests and tools that read the layers underneath.
+struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client );
+struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
+
+// For tests that build the layers by hand: a public client holding an
+// existing connection, and a public server holding an existing running
+// message server; destroy destroys what was adopted. The adopted object has
+// no block of its own, so a connect or start after the adopted one ends
+// allocates its own, with default configs.
+struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection );
+struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running );
+
+#ifdef __cplusplus
+}
+#endif
+
 /** @brief Connection classification when the type is unknown. */
 #define ROCKETNET_CONNECTION_TYPE_UNKNOWN                              0
 /** @brief Connection classification for wired access. */
@@ -133,7 +200,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
         || defined(_M_AMD64)    || defined(__x86_64)    || defined(__x86_64__)  \
         || defined(_M_X64)      || defined(__bfin__)
     #define ROCKETNET_LITTLE_ENDIAN 1
-  #elif defined(_MSC_VER) && defined(_M_ARM)
+  #elif defined(_MSC_VER) && ( defined(_M_ARM) || defined(_M_ARM64) )
     #define ROCKETNET_LITTLE_ENDIAN 1
   #else
     #error Unknown machine endianess detected. Please define ROCKETNET_LITTLE_ENDIAN or ROCKETNET_BIG_ENDIAN.
@@ -199,13 +266,24 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
     #endif
 #endif
 
+// The process-wide assert callback the rocketnet_assert macro calls. It is internal
+// and never exported: a caller installs a callback with rocketnet_set_assert_callback,
+// the only way in, and NULL there restores the default.
+#if defined( __GNUC__ ) || defined( __clang__ )
+    #define ROCKETNET_INTERNAL __attribute__((visibility("hidden")))
+#else
+    #define ROCKETNET_INTERNAL
+#endif
+
+extern ROCKETNET_INTERNAL rocketnet_assert_callback_t rn_assert_function;
+
 #if ROCKETNET_ASSERTS
 #define rocketnet_assert( condition )                                                            \
 do                                                                                          \
 {                                                                                           \
     if ( !(condition) )                                                                     \
     {                                                                                       \
-        rocketnet_assert_function_pointer( #condition, __FUNCTION__, __FILE__, __LINE__ );       \
+        rn_assert_function( #condition, __FUNCTION__, __FILE__, __LINE__ );                 \
     }                                                                                       \
 } while(0)
 #else
@@ -357,9 +435,14 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
     INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            0 )                          \
     INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )
 
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
+    INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
+
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
-    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
 
 #define ROCKETNET_CONFIG_STRUCT_INT( name, def, min, max, flags )       int name;
 #define ROCKETNET_CONFIG_STRUCT_UINT64( name, def, flags )              uint64_t name;
@@ -388,15 +471,17 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
 /** @brief Size in bytes of the client transport config before game_clock_epoch. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
 /** @brief Size in bytes of client transport config revision 1: with game_clock_epoch and step_driven, before the public link simulator fields. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ), sizeof( uint64_t ) )
-/** @brief Current known client transport config size, in bytes: the public link simulator fields. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+/** @brief Size in bytes of the client transport config with the public link simulator fields, before the deterministic drop and reverse patterns. */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_PATTERNS ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
+/** @brief Current known client transport config size, in bytes: the deterministic drop and reverse patterns. */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, simulated_reverse_window ) + sizeof( int ), sizeof( void * ) )
 /** @brief Current known client transport config size, in bytes. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
 /** @brief Current known client transport config size, in bytes. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_LEGACY, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_PATTERNS, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
 
 // The server transport config table -- the single declaration everything
 // derives from, per the config system comment above. num_xdp_queues' range
@@ -423,16 +508,20 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    simulated_loss_percent,      0,                         0, 100,                                              0 )                          \
     INT_FIELD(    simulated_latency_ms,        0,                         0, 60000,                                            0 )                          \
     INT_FIELD(    simulated_jitter_ms,         0,                         0, 60000,                                            0 )                          \
-    INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )
+    INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              0 )                          \
+    INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
 
 /** @brief Size in bytes of the server transport config before game_clock_epoch. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_LEGACY ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Size in bytes of server transport config revision 1: before the public link simulator fields. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, game_clock_epoch ) + sizeof( uint64_t ), sizeof( uint64_t ) )
-/** @brief Current known server transport config size, in bytes: the public link simulator fields. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Size in bytes of the server transport config with the public link simulator fields, before the deterministic drop and reverse patterns. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Current known server transport config size, in bytes: the deterministic drop and reverse patterns. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_reverse_window ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Current known server transport config size, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_LEGACY, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
 #error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
@@ -454,7 +543,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( send_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( max_packets_per_update,      4,      1, 256,                    0 )                                         \
+    INT_FIELD( max_packets_per_update,    256,      1, 1024,                   0 )                                         \
     INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
     INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \

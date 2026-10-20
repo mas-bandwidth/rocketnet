@@ -13,8 +13,9 @@
 // The wire constants shared by every reader of raw packets: the sdk, the
 // tests, and the server_xdp kernel program, which is compiled as BPF C on
 // the target machine and cannot include anything else from the sdk. Only
-// preprocessor definitions live here, so the one file serves all three --
-// the kernel filter and the userspace prefilter can never drift apart.
+// preprocessor definitions and plain inline helpers live here, so the one
+// file serves all three -- the kernel filter and the userspace prefilter
+// can never drift apart.
 
 // packet types
 
@@ -62,6 +63,20 @@
 #define ROCKETNET_IPV4_HEADER_BYTES             20
 #define ROCKETNET_IPV6_HEADER_BYTES             40
 #define ROCKETNET_UDP_HEADER_BYTES              8
+
+// The IP and UDP header bytes on one datagram, from the peer's address family:
+// 28 for IPv4 and 48 for IPv6. The values are the rocketnet_address_t.type
+// families from rocketnet_layers.h (1 IPv4, 2 IPv6); an address with no family
+// has no headers.
+
+static inline int rocketnet_wire_header_bytes( int address_type )
+{
+    if ( address_type == 1 )    // ROCKETNET_ADDRESS_IPV4
+        return ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+    if ( address_type == 2 )    // ROCKETNET_ADDRESS_IPV6
+        return ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+    return 0;
+}
 
 // the receive ceiling: fixed for every receiver, whatever its send budget --
 // anything one 1500-MTU IPv4 datagram can carry, 1472 bytes
@@ -192,7 +207,7 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 // and read back by userspace -- the same counter discipline as the rest of
 // the library, running through the kernel. The map is per-CPU; userspace
 // sums across CPUs. For packets on the server's port,
-// received == redirected + the six drop reasons. DROPPED_REPLAYED counts
+// received == redirected + the seven drop reasons. DROPPED_REPLAYED counts
 // the session packets dropped because their sequence is
 // ROCKETNET_XDP_REPLAY_WINDOW or more behind the replay map's high-water for
 // their source address and port. PASSED_IPV6_EXTENSION
@@ -200,7 +215,19 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 // next header is an extension header (hop-by-hop, routing, fragment,
 // destination options, AH, ESP): the program never walks that chain, so it
 // cannot say whether such a frame was for this server, and it counts them on
-// any port.
+// any port. RocketNet assumes a 1500-byte MTU path, so an IP fragment for
+// the server is hostile or misconfigured. DROPPED_FIRST_FRAGMENT counts the
+// first fragments the program drops: IPv4 with more-fragments set and
+// offset 0 (ihl 5, protocol UDP), or IPv6 whose next header is a fragment
+// header at offset 0 with more-fragments set and UDP behind it, whose UDP
+// header is in the frame and names the configured address and port.
+// Without its first fragment the kernel never reassembles the datagram and
+// drops the rest at its reassembly timeout. PASSED_FRAGMENT counts every
+// other IP fragment, which the program hands to the kernel stack for
+// reassembly: non-first fragments on any port, and first fragments to
+// another port or address, to an unconfigured program, or whose UDP header
+// is not in the frame. Both checks run before the size, epoch, filter and
+// replay checks, so a fragment never counts as any other drop.
 
 #define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                 0
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL          1
@@ -210,7 +237,9 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH        5
 #define ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION      6
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED           7
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       8
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT            8
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT     9
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       10
 
 struct rocketnet_server_xdp_stats_t
 {

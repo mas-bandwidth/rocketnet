@@ -9,6 +9,13 @@
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <atomic>
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#include <pthread.h>
+#include <sched.h>
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
@@ -62,6 +69,261 @@ bool rocketnet_platform_sleep_tail_yields( double remaining )
 {
     return remaining > 0.0 && remaining <= ROCKETNET_PLATFORM_SLEEP_TAIL_SECONDS;
 }
+
+// test seam for the client bind-family choice: true unless a test turns it
+// off, in which case an IPv6 socket create behaves as it does on a host with
+// no IPv6 stack. the client's availability probe reads the same flag.
+static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
+
+// Network-thread priority (docs/CLIENT-IO.md, DRIVERS.md). The calls and their
+// values are the flow library's (flow_platform.cpp), unchanged; each platform
+// block below fills the real call table. A unit test replaces the table
+// (test_unit_thread_priority.cpp). A refused call is counted process-wide and
+// logged once per call kind; it never fails the caller.
+
+static std::atomic<bool> rocketnet_platform_thread_priority_on{ true };
+static std::atomic<uint64_t> rocketnet_platform_thread_priority_refusal_count{ 0 };
+static std::atomic<bool> rocketnet_platform_thread_priority_logged[ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT];
+static std::atomic<const rocketnet_platform_priority_calls_t *> rocketnet_platform_priority_calls_override{ NULL };
+
+static const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls()
+{
+    const rocketnet_platform_priority_calls_t * calls = rocketnet_platform_priority_calls_override.load( std::memory_order_acquire );
+    return calls ? calls : rocketnet_platform_priority_calls_real();
+}
+
+void rocketnet_platform_set_priority_calls_for_testing( const rocketnet_platform_priority_calls_t * calls )
+{
+    rocketnet_platform_priority_calls_override.store( calls, std::memory_order_release );
+}
+
+void rocketnet_platform_thread_priority_reset_logged_for_testing()
+{
+    for ( int i = 0; i < ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT; ++i )
+        rocketnet_platform_thread_priority_logged[i].store( false, std::memory_order_relaxed );
+}
+
+void rocketnet_platform_set_thread_priority_enabled( bool enabled )
+{
+    rocketnet_platform_thread_priority_on.store( enabled, std::memory_order_relaxed );
+}
+
+bool rocketnet_platform_thread_priority_enabled()
+{
+    return rocketnet_platform_thread_priority_on.load( std::memory_order_relaxed );
+}
+
+void rocketnet_platform_thread_priority_refused( int kind, const char * prefix, const char * call, const char * reason, const char * effect )
+{
+    rocketnet_platform_thread_priority_refusal_count.fetch_add( 1, std::memory_order_relaxed );
+    if ( kind < 0 || kind >= ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT )
+        return;
+    if ( rocketnet_platform_thread_priority_logged[kind].exchange( true, std::memory_order_relaxed ) )
+        return;
+    rocketnet_warn( "%s: %s refused (%s); %s", prefix, call, reason, effect );
+}
+
+uint64_t rocketnet_platform_thread_priority_refusals()
+{
+    return rocketnet_platform_thread_priority_refusal_count.load( std::memory_order_relaxed );
+}
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// POSIX: the one call, pthread_setschedparam( thread, SCHED_RR,
+// sched_get_priority_min( SCHED_RR ) ), on the created thread
+static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
+{
+    struct sched_param param;
+    param.sched_priority = priority;
+    return pthread_setschedparam( thread->handle, policy, &param );
+}
+
+static int rocketnet_platform_real_set_thread_priority( rocketnet_platform_thread_t * thread, int priority )
+{
+    (void) thread;
+    (void) priority;
+    return 1;
+}
+
+static unsigned int rocketnet_platform_real_time_period( unsigned int period )
+{
+    (void) period;
+    return 0;
+}
+
+static void rocketnet_platform_real_timer_frequency( void * frequency )
+{
+    (void) frequency;
+}
+
+static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table =
+{
+    rocketnet_platform_real_set_sched,
+    rocketnet_platform_real_set_thread_priority,
+    rocketnet_platform_real_time_period,
+    rocketnet_platform_real_time_period,
+    rocketnet_platform_real_timer_frequency,
+};
+
+const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real()
+{
+    return &rocketnet_platform_priority_calls_real_table;
+}
+
+static void rocketnet_platform_network_thread_priority( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+    const int priority = sched_get_priority_min( SCHED_RR );
+    const int result = rocketnet_platform_priority_calls()->set_sched( thread, SCHED_RR, priority );
+    if ( result != 0 )
+    {
+        char call[64];
+        snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+    }
+}
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// A POSIX send that answers -1 drops its datagram: the drop is counted on the
+// socket that made it, so a caller can price what the kernel refused (ENOBUFS
+// from a full interface queue, EAGAIN from a full send buffer, a refused
+// destination). Atomic: the client's I/O thread and the main thread both read.
+
+static inline void rocketnet_platform_note_send_failure( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_platform_atomic_add_u64( &socket->send_failures, 1 );
+}
+
+uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_assert( socket );
+    return __atomic_load_n( &socket->send_failures, __ATOMIC_RELAXED );
+}
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// Test-only send-failure seam, compiled into the development library only.
+// The next N sendto and sendmsg_x calls on one socket report the chosen errno
+// without reaching the kernel, so a functional case can drive the send error
+// arms. A registry of live sockets lets a case find a transport's socket. The
+// send path pays one relaxed load while nothing is armed.
+
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#define ROCKETNET_PLATFORM_SEND_SEAM 1
+#define ROCKETNET_PLATFORM_TEST_SOCKETS 256
+
+struct rocketnet_platform_test_socket_t
+{
+    rocketnet_platform_socket_t * socket;
+    int fail_remaining;
+    int fail_error;
+};
+
+static rocketnet_platform_test_socket_t rocketnet_platform_test_sockets[ROCKETNET_PLATFORM_TEST_SOCKETS];
+static int rocketnet_platform_test_num_sockets = 0;
+static int rocketnet_platform_test_armed = 0;
+static int rocketnet_platform_test_lock = 0;
+
+static void rocketnet_platform_test_acquire()
+{
+    while ( __atomic_exchange_n( &rocketnet_platform_test_lock, 1, __ATOMIC_ACQUIRE ) != 0 ) {}
+}
+
+static void rocketnet_platform_test_release()
+{
+    __atomic_store_n( &rocketnet_platform_test_lock, 0, __ATOMIC_RELEASE );
+}
+
+static void rocketnet_platform_test_recount_armed()
+{
+    int armed = 0;
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+        armed += rocketnet_platform_test_sockets[i].fail_remaining;
+    __atomic_store_n( &rocketnet_platform_test_armed, armed, __ATOMIC_RELAXED );
+}
+
+static void rocketnet_platform_test_register( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_platform_test_acquire();
+    if ( rocketnet_platform_test_num_sockets < ROCKETNET_PLATFORM_TEST_SOCKETS )
+    {
+        rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[rocketnet_platform_test_num_sockets++];
+        entry->socket = socket;
+        entry->fail_remaining = 0;
+        entry->fail_error = 0;
+    }
+    rocketnet_platform_test_release();
+}
+
+static void rocketnet_platform_test_unregister( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_platform_test_acquire();
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+    {
+        if ( rocketnet_platform_test_sockets[i].socket != socket )
+            continue;
+        for ( int j = i + 1; j < rocketnet_platform_test_num_sockets; j++ )
+            rocketnet_platform_test_sockets[j - 1] = rocketnet_platform_test_sockets[j];
+        rocketnet_platform_test_num_sockets--;
+        break;
+    }
+    rocketnet_platform_test_recount_armed();
+    rocketnet_platform_test_release();
+}
+
+int rocketnet_platform_sockets_for_testing( rocketnet_platform_socket_t ** sockets, int max_sockets )
+{
+    rocketnet_platform_test_acquire();
+    int count = 0;
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets && count < max_sockets; i++ )
+        sockets[count++] = rocketnet_platform_test_sockets[i].socket;
+    rocketnet_platform_test_release();
+    return count;
+}
+
+void rocketnet_platform_socket_fail_next_sends( rocketnet_platform_socket_t * socket, int count, int error )
+{
+    rocketnet_platform_test_acquire();
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+    {
+        if ( rocketnet_platform_test_sockets[i].socket != socket )
+            continue;
+        rocketnet_platform_test_sockets[i].fail_remaining = count > 0 ? count : 0;
+        rocketnet_platform_test_sockets[i].fail_error = error;
+    }
+    rocketnet_platform_test_recount_armed();
+    rocketnet_platform_test_release();
+}
+
+static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_socket_t * socket, int * error )
+{
+    if ( __atomic_load_n( &rocketnet_platform_test_armed, __ATOMIC_RELAXED ) == 0 )
+        return false;
+    bool inject = false;
+    rocketnet_platform_test_acquire();
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+    {
+        rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
+        if ( entry->socket != socket || entry->fail_remaining <= 0 )
+            continue;
+        entry->fail_remaining--;
+        *error = entry->fail_error;
+        inject = true;
+        break;
+    }
+    rocketnet_platform_test_recount_armed();
+    rocketnet_platform_test_release();
+    return inject;
+}
+
+#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
@@ -294,6 +556,14 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     socket->type = socket_type;
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
+    socket->send_failures = 0;
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, socket );
+        return NULL;
+    }
 
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -471,12 +741,19 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     }
 #endif // #if defined(__linux__)
 
+#if defined(ROCKETNET_PLATFORM_SEND_SEAM)
+    rocketnet_platform_test_register( socket );
+#endif
+
     return socket;
 }
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
+#if defined(ROCKETNET_PLATFORM_SEND_SEAM)
+    rocketnet_platform_test_unregister( socket );
+#endif
     if ( socket->handle != 0 )
     {
         close( socket->handle );
@@ -491,6 +768,19 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     rocketnet_assert( to_input->type == ROCKETNET_ADDRESS_IPV6 || to_input->type == ROCKETNET_ADDRESS_IPV4 );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
+
+#if defined(ROCKETNET_PLATFORM_SEND_SEAM)
+    int injected_error = 0;
+    if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
+    {
+        errno = injected_error;
+        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+        rocketnet_address_to_string( to_input, address_string );
+        rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+        rocketnet_platform_note_send_failure( socket );
+        return;
+    }
+#endif
 
     rocketnet_address_t to = *to_input;
 
@@ -517,6 +807,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( &to, address_string );
             rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+            rocketnet_platform_note_send_failure( socket );
         }
     }
     else
@@ -531,6 +822,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                 rocketnet_address_to_string( &to, address_string );
                 rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+                rocketnet_platform_note_send_failure( socket );
             }
         }
         else
@@ -870,6 +1162,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
                     const rocketnet_platform_send_t * send = &sends[map[i]];
                     rocketnet_address_to_string( send->to, address_string );
                     rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( errno ) );
+                    rocketnet_platform_note_send_failure( socket );
                 }
                 sent = count;
                 break;
@@ -883,6 +1176,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
             const rocketnet_platform_send_t * send = &sends[map[sent]];
             rocketnet_address_to_string( send->to, address_string );
             rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+            rocketnet_platform_note_send_failure( socket );
             sent += 1;
         }
 
@@ -923,7 +1217,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         }
 
         errno = 0;
-        int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT, NULL );
+        // MSG_TRUNC: each msg_len is the datagram's true size, as the
+        // per-packet path reports it
+        int result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT | MSG_TRUNC, NULL );
         if ( result < 0 )
         {
             if ( errno == EINTR )
@@ -940,27 +1236,28 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         if ( result == 0 )
             return total;
 
-        // walk the chunk in place. a truncated datagram or a family the
+        // walk the chunk in place. a zero-length datagram or a family the
         // transport does not speak (the per-packet path delivers neither)
         // is compacted out: the next kept message's bytes move down to the
-        // gap. rare by nature and bounded by the chunk.
+        // gap. rare by nature and bounded by the chunk. an oversize
+        // datagram is kept with its true size and the prefix the kernel
+        // wrote, so the transport's prefilter counts it PREFILTER_TOO_LARGE.
 
         int kept = 0;
         for ( int i = 0; i < result; i++ )
         {
-            if ( msg[i].msg_hdr.msg_flags & MSG_TRUNC )
-                continue;
             rocketnet_address_t parsed;
             if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
                 continue;
             const int bytes = (int) msg[i].msg_len;
             if ( bytes <= 0 )
                 continue;
+            const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
             const uint8_t * source = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) ( chunk_base + kept ) * (size_t) packet_stride;
             if ( target != source )
             {
-                memmove( target, source, (size_t) bytes );
+                memmove( target, source, (size_t) copy_bytes );
             }
             from[chunk_base + kept] = parsed;
             packet_bytes[chunk_base + kept] = bytes;
@@ -985,7 +1282,12 @@ struct thread_shim_data_t
     void * context;
     void * real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function;
+    rocketnet_platform_thread_t * thread;
 };
+
+// the platform thread the calling thread runs as, for thread_wait; NULL on a
+// thread that thread_create did not start
+static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
 
 static void* thread_function_shim( void * data )
 {
@@ -994,9 +1296,34 @@ static void* thread_function_shim( void * data )
     void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
+    rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return NULL;
+}
+
+static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * thread )
+{
+    // thread_wait's deadline is on CLOCK_MONOTONIC, so the wait is immune to
+    // wall-clock steps
+    pthread_condattr_t attr;
+    if ( pthread_condattr_init( &attr ) != 0 )
+        return false;
+    if ( pthread_condattr_setclock( &attr, CLOCK_MONOTONIC ) != 0 )
+    {
+        pthread_condattr_destroy( &attr );
+        return false;
+    }
+    const int cond_result = pthread_cond_init( &thread->wake_cond, &attr );
+    pthread_condattr_destroy( &attr );
+    if ( cond_result != 0 )
+        return false;
+    if ( pthread_mutex_init( &thread->wake_mutex, NULL ) != 0 )
+    {
+        pthread_cond_destroy( &thread->wake_cond );
+        return false;
+    }
+    return true;
 }
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
@@ -1017,9 +1344,20 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
+    shim_data->thread = thread;
+
+    thread->woken = false;
+    if ( !rocketnet_platform_thread_wake_init( thread ) )
+    {
+        rocketnet_free( context, thread );
+        rocketnet_free( context, shim_data );
+        return NULL;
+    }
 
     if ( pthread_create( &thread->handle, NULL, thread_function_shim, shim_data ) != 0 )
     {
+        pthread_cond_destroy( &thread->wake_cond );
+        pthread_mutex_destroy( &thread->wake_mutex );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
         return NULL;
@@ -1037,23 +1375,67 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
+    pthread_cond_destroy( &thread->wake_cond );
+    pthread_mutex_destroy( &thread->wake_mutex );
     rocketnet_free( thread->context, thread );
+}
+
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
+    if ( !thread )
+    {
+        rocketnet_platform_sleep( time );
+        return;
+    }
+    // the condition variable runs on CLOCK_MONOTONIC (thread_wake_init)
+    // whole seconds and nanoseconds converted apart, clamped to a day, so no
+    // conversion overflows a 32-bit long
+    if ( !( time > 0.0 ) )
+        time = 0.0;
+    if ( time > 86400.0 )
+        time = 86400.0;
+    const long whole_seconds = (long) time;
+    const long nanoseconds = (long) ( ( time - (double) whole_seconds ) * 1000000000.0 );
+    struct timespec deadline;
+    clock_gettime( CLOCK_MONOTONIC, &deadline );
+    deadline.tv_sec += whole_seconds;
+    deadline.tv_nsec += nanoseconds;
+    if ( deadline.tv_nsec >= 1000000000L )
+    {
+        deadline.tv_sec += 1;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    pthread_mutex_lock( &thread->wake_mutex );
+    while ( !thread->woken )
+    {
+        if ( pthread_cond_timedwait( &thread->wake_cond, &thread->wake_mutex, &deadline ) != 0 )
+            break;
+    }
+    pthread_mutex_unlock( &thread->wake_mutex );
+}
+
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    pthread_mutex_lock( &thread->wake_mutex );
+    thread->woken = true;
+    pthread_cond_broadcast( &thread->wake_cond );
+    pthread_mutex_unlock( &thread->wake_mutex );
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you have linux clients, you can adjust the priority of the client thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
+    // SCHED_RR at sched_get_priority_min( SCHED_RR ), as flow sets it (flow_platform.cpp:537-543)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you have linux servers, you can adjust the priority of the server thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
+    // SCHED_RR at sched_get_priority_min( SCHED_RR ), as flow sets it (flow_platform.cpp:545-551)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 // ---------------------------------------------------
@@ -1568,6 +1950,7 @@ static int get_connection_type()
 #include <SystemConfiguration/SystemConfiguration.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <TargetConditionals.h>
+#include <pthread/qos.h>
 #include <dlfcn.h>
 #include <sys/event.h>
 #include <time.h>
@@ -1852,12 +2235,20 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     socket->context = context;
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
+    socket->send_failures = 0;
 
     socket->msgx = false;
 
     socket->msgx_down_until = 0.0;
 
     // create socket
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, socket );
+        return NULL;
+    }
 
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -2046,12 +2437,20 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
 #endif // #if TARGET_OS_OSX
 
+#if defined(ROCKETNET_PLATFORM_SEND_SEAM)
+    rocketnet_platform_test_register( socket );
+#endif
+
     return socket;
 }
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
+
+#if defined(ROCKETNET_PLATFORM_SEND_SEAM)
+    rocketnet_platform_test_unregister( socket );
+#endif
 
     if ( socket->handle != 0 )
     {
@@ -2068,6 +2467,19 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     rocketnet_assert( input_to->type == ROCKETNET_ADDRESS_IPV6 || input_to->type == ROCKETNET_ADDRESS_IPV4 );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
+
+#if defined(ROCKETNET_PLATFORM_SEND_SEAM)
+    int injected_error = 0;
+    if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
+    {
+        errno = injected_error;
+        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+        rocketnet_address_to_string( input_to, address_string );
+        rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+        rocketnet_platform_note_send_failure( socket );
+        return;
+    }
+#endif
 
     rocketnet_address_t to = *input_to;
 
@@ -2094,6 +2506,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( &to, address_string );
             rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+            rocketnet_platform_note_send_failure( socket );
         }
     }
     else
@@ -2110,6 +2523,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                 rocketnet_address_to_string( &to, address_string );
                 rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+                rocketnet_platform_note_send_failure( socket );
             }
         }
         else
@@ -2400,7 +2814,21 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
         while ( offset < count )
         {
             errno = 0;
-            ssize_t result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
+            ssize_t result;
+#if defined(ROCKETNET_PLATFORM_SEND_SEAM)
+            int injected_error = 0;
+            if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
+            {
+                errno = injected_error;
+                result = -1;
+            }
+            else
+            {
+                result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
+            }
+#else
+            result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
+#endif
             if ( result > 0 )
             {
                 offset += (int) result;
@@ -2584,7 +3012,12 @@ struct thread_shim_data_t
     void * context;
     void * real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function;
+    rocketnet_platform_thread_t * thread;
 };
+
+// the platform thread the calling thread runs as, for thread_wait; NULL on a
+// thread that thread_create did not start
+static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
 
 static void * thread_function_shim( void * data )
 {
@@ -2593,9 +3026,26 @@ static void * thread_function_shim( void * data )
     void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
+    rocketnet_platform_thread_self = shim_data->thread;
     rocketnet_free( context, data );
+
+    // An explicit class at thread start, before the thread's loop: the
+    // library's threads never run below the class the receive cadence needs,
+    // whatever class the creating thread has (docs/CLIENT-IO.md, macOS timing
+    // and App Nap).
+    pthread_set_qos_class_self_np( QOS_CLASS_USER_INTERACTIVE, 0 );
+
     real_thread_function( real_thread_data );
     return NULL;
+}
+
+static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * thread )
+{
+    semaphore_t semaphore = MACH_PORT_NULL;
+    if ( semaphore_create( mach_task_self(), &semaphore, SYNC_POLICY_FIFO, 0 ) != KERN_SUCCESS )
+        return false;
+    thread->wake_semaphore = semaphore;
+    return true;
 }
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
@@ -2616,9 +3066,19 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
+    shim_data->thread = thread;
+
+    thread->woken = 0;
+    if ( !rocketnet_platform_thread_wake_init( thread ) )
+    {
+        rocketnet_free( context, thread );
+        rocketnet_free( context, shim_data );
+        return NULL;
+    }
 
     if ( pthread_create( &thread->handle, NULL, thread_function_shim, shim_data ) != 0 )
     {
+        semaphore_destroy( mach_task_self(), (semaphore_t) thread->wake_semaphore );
         rocketnet_free( context, thread );
         rocketnet_free( context, shim_data );
         return NULL;
@@ -2636,23 +3096,54 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
+    semaphore_destroy( mach_task_self(), (semaphore_t) thread->wake_semaphore );
     rocketnet_free( thread->context, thread );
+}
+
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
+    if ( !thread )
+    {
+        rocketnet_platform_sleep( time );
+        return;
+    }
+    // woken is stored before the semaphore is signalled: a wake that lands
+    // before this check ends the wait here, one that lands after it ends the
+    // semaphore wait
+    if ( __atomic_load_n( &thread->woken, __ATOMIC_ACQUIRE ) )
+        return;
+    // whole seconds and nanoseconds converted apart, clamped to a day
+    if ( !( time > 0.0 ) )
+        time = 0.0;
+    if ( time > 86400.0 )
+        time = 86400.0;
+    const unsigned int whole_seconds = (unsigned int) time;
+    mach_timespec_t relative;
+    relative.tv_sec = whole_seconds;
+    relative.tv_nsec = (clock_res_t) ( ( time - (double) whole_seconds ) * 1000000000.0 );
+    semaphore_timedwait( (semaphore_t) thread->wake_semaphore, relative );
+}
+
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    __atomic_store_n( &thread->woken, 1, __ATOMIC_RELEASE );
+    semaphore_signal( (semaphore_t) thread->wake_semaphore );
 }
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you are developing for mac or ios you can adjust the affinity and priority for the client thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
+    // SCHED_RR at sched_get_priority_min( SCHED_RR ) and nothing else, as flow sets it (flow_platform.cpp:1630-1636)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you are developing for mac or ios you can adjust the affinity and priority for the server thread here.
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_min( SCHED_RR );
-    pthread_setschedparam( thread->handle, SCHED_RR, &param );
+    // SCHED_RR at sched_get_priority_min( SCHED_RR ) and nothing else, as flow sets it (flow_platform.cpp:1638-1644)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 // ---------------------------------------------------
@@ -2867,22 +3358,114 @@ extern void rocketnet_free( void * context, void * p );
 
 static int get_connection_type();
 
-static int timer_initialized = 0;
 static LARGE_INTEGER timer_frequency;
 static LARGE_INTEGER timer_start;
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+
+// Windows: SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL ) on the
+// network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
+// from platform init to platform term (game/Libraries/platform/platform.cpp:154 and :173 in the game that carried flow)
+
+static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
+{
+    (void) thread;
+    (void) policy;
+    (void) priority;
+    return 0;
+}
+
+static int rocketnet_platform_real_set_thread_priority( rocketnet_platform_thread_t * thread, int priority )
+{
+    return SetThreadPriority( thread->handle, priority ) ? 1 : 0;
+}
+
+static unsigned int rocketnet_platform_real_time_begin_period( unsigned int period )
+{
+    return (unsigned int) timeBeginPeriod( period );
+}
+
+static unsigned int rocketnet_platform_real_time_end_period( unsigned int period )
+{
+    return (unsigned int) timeEndPeriod( period );
+}
+
+static void rocketnet_platform_real_timer_frequency( void * frequency )
+{
+    QueryPerformanceFrequency( (LARGE_INTEGER*) frequency );
+}
+
+static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table =
+{
+    rocketnet_platform_real_set_sched,
+    rocketnet_platform_real_set_thread_priority,
+    rocketnet_platform_real_time_begin_period,
+    rocketnet_platform_real_time_end_period,
+    rocketnet_platform_real_timer_frequency,
+};
+
+const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real()
+{
+    return &rocketnet_platform_priority_calls_real_table;
+}
+
+static void rocketnet_platform_network_thread_priority( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    if ( !rocketnet_platform_thread_priority_enabled() )
+        return;
+    if ( !rocketnet_platform_priority_calls()->set_thread_priority( thread, THREAD_PRIORITY_TIME_CRITICAL ) )
+    {
+        char reason[32];
+        snprintf( reason, sizeof( reason ), "error %lu", (unsigned long) GetLastError() );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_THREAD_PRIORITY, "thread priority", "SetThreadPriority THREAD_PRIORITY_TIME_CRITICAL", reason, "the thread runs at its default priority" );
+    }
+}
+
+// true from a granted timeBeginPeriod( 1 ) at init to its timeEndPeriod( 1 )
+// at term; a refused or skipped begin has no end
+static bool timer_period_begun = false;
+
+static void rocketnet_platform_timer_period_end()
+{
+    if ( !timer_period_begun )
+        return;
+    timer_period_begun = false;
+    const unsigned int result = rocketnet_platform_priority_calls()->time_end_period( 1 );
+    if ( result != TIMERR_NOERROR )
+    {
+        char reason[32];
+        snprintf( reason, sizeof( reason ), "error %u", result );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_END_PERIOD, "timer period", "timeEndPeriod 1", reason, "the timer period request stays until the process exits" );
+    }
+}
 
 // init
 
 bool rocketnet_platform_init()
 {
-    QueryPerformanceFrequency( &timer_frequency );
+    timer_period_begun = false;
+    if ( rocketnet_platform_thread_priority_enabled() )
+    {
+        const unsigned int result = rocketnet_platform_priority_calls()->time_begin_period( 1 );
+        if ( result == TIMERR_NOERROR )
+        {
+            timer_period_begun = true;
+        }
+        else
+        {
+            char reason[32];
+            snprintf( reason, sizeof( reason ), "error %u", result );
+            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_BEGIN_PERIOD, "timer period", "timeBeginPeriod 1", reason, "the timer keeps its default period" );
+        }
+    }
+    rocketnet_platform_priority_calls()->timer_frequency( &timer_frequency );
     QueryPerformanceCounter( &timer_start );
 
     WSADATA WsaData;
     if ( WSAStartup( MAKEWORD(2,2), &WsaData ) != NO_ERROR )
     {
         rocketnet_error( "WSAStartup failed" );
+        rocketnet_platform_timer_period_end();
         return false;
     }
 
@@ -2894,6 +3477,7 @@ bool rocketnet_platform_init()
 void rocketnet_platform_term()
 {
     WSACleanup();
+    rocketnet_platform_timer_period_end();
 }
 
 int rocketnet_platform_connection_type()
@@ -2971,18 +3555,26 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_free( thread->context, thread );
 }
 
+// Windows keeps the receive thread's sleep: no per-thread event or timer, so
+// the wake is a no-op and the thread observes quit within one sleep period
+void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
+{
+    rocketnet_assert( thread );
+    (void) thread;
+}
+
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If your client runs on windows, you can set the thread priority and affinity of the client thread here
-    rocketnet_assert( thread );
-    SetThreadPriority( thread->handle, THREAD_PRIORITY_TIME_CRITICAL );
+    // THREAD_PRIORITY_TIME_CRITICAL, as flow sets it (flow_platform.cpp:1839-1844)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
     // IMPORTANT: If you have a server that runs on windows, you can set the priority and affinity of the server thread here
-    rocketnet_assert( thread );
-    SetThreadPriority( thread->handle, THREAD_PRIORITY_TIME_CRITICAL );
+    // THREAD_PRIORITY_TIME_CRITICAL, as flow sets it (flow_platform.cpp:1846-1851)
+    rocketnet_platform_network_thread_priority( thread );
 }
 
 bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
@@ -3109,6 +3701,11 @@ void rocketnet_platform_sleep( double time )
     timeEndPeriod( 1 );
 }
 
+void rocketnet_platform_thread_wait( double time )
+{
+    rocketnet_platform_sleep( time );
+}
+
 double rocketnet_platform_time()
 {
     LARGE_INTEGER now;
@@ -3233,6 +3830,13 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     // create socket
 
     s->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
+        rocketnet_error( "failed to create socket" );
+        rocketnet_free( context, s );
+        return NULL;
+    }
 
     s->handle = socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -3593,7 +4197,7 @@ static int get_connection_type()
     IP_ADAPTER_ADDRESSES * address = addresses;
     while ( address )
     {
-        if ( address->IfType == IF_TYPE_IEEE80211 && address->OperStatus == NET_IF_OPER_STATUS_UP )
+        if ( address->IfType == IF_TYPE_IEEE80211 && address->OperStatus == IfOperStatusUp )
         {
             result = ROCKETNET_CONNECTION_TYPE_WIFI;
             break;
@@ -3720,6 +4324,48 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 #endif // #if ROCKETNET_UNREAL_ENGINE
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// ----------------------------------------------------------------
+
+void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available )
+{
+    rocketnet_platform_ipv6_socket_available_for_testing = available;
+}
+
+bool rocketnet_platform_client_ipv6_available()
+{
+    if ( !rocketnet_platform_ipv6_socket_available_for_testing )
+        return false;
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe == INVALID_SOCKET )
+        return false;
+    closesocket( probe );
+    return true;
+#else
+    int probe = (int) ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe < 0 )
+        return false;
+    ::close( probe );
+    return true;
+#endif
+}
+
+int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_available, bool dual_stack )
+{
+    if ( !ipv6_available )
+    {
+        if ( server_address_type == ROCKETNET_ADDRESS_IPV6 )
+            return ROCKETNET_ADDRESS_NONE;
+        return ROCKETNET_ADDRESS_IPV4;
+    }
+
+    if ( server_address_type == ROCKETNET_ADDRESS_IPV6 || dual_stack )
+        return ROCKETNET_ADDRESS_IPV6;
+
+    return ROCKETNET_ADDRESS_IPV4;
+}
 
 // ----------------------------------------------------------------
 

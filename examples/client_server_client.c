@@ -9,6 +9,9 @@
     message, receives the echo, prints its state changes and disconnect
     reason, and disconnects.
 
+    The server address is 127.0.0.1 at the port from --port <n>, else the
+    ROCKETNET_EXAMPLE_PORT environment variable, else the default 40000.
+
     --wrong-protocol mints the token for another protocol id; the server
     refuses it, which shows the token is bound to the title. That refusal is
     the expected result. Run the server first, then this program. See
@@ -18,13 +21,41 @@
 #include "rocketnet.h"
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
 #define PROTOCOL_ID 0x636c69656e747331ull
-#define SERVER_ADDRESS "127.0.0.1:40000"
+#define DEFAULT_PORT 40000
 #define KEY_FILE "client_server.keys"
+
+// the port comes from --port <n>, else ROCKETNET_EXAMPLE_PORT, else the
+// default; returns 0 for a value that is not 1 to 65535
+
+static int example_port( int argc, char ** argv, int * port )
+{
+    const char * text = getenv( "ROCKETNET_EXAMPLE_PORT" );
+    for ( int i = 1; i < argc; i++ )
+    {
+        if ( strcmp( argv[i], "--port" ) == 0 )
+        {
+            if ( i + 1 >= argc ) return 0;
+            text = argv[++i];
+        }
+    }
+    if ( !text )
+    {
+        *port = DEFAULT_PORT;
+        return 1;
+    }
+    char * end = NULL;
+    const long value = strtol( text, &end, 10 );
+    if ( end == text || *end != 0 || value < 1 || value > 65535 )
+        return 0;
+    *port = (int) value;
+    return 1;
+}
 static int hex_value( char c )
 {
     if ( c >= '0' && c <= '9' ) return c - '0';
@@ -55,7 +86,7 @@ static const char * reason_name( int reason )
                                     "reliable timeout", "message memory exhausted" };
     return reason >= 0 && reason < 6 ? names[reason] : "unknown";
 }
-static void state_changed( void * context, int previous, int current )
+static void state_changed( void * context, enum rocketnet_client_state_t previous, enum rocketnet_client_state_t current )
 {
     (void) context;
     printf( "client state: %s -> %s\n", rocketnet_client_state_name( previous ), rocketnet_client_state_name( current ) );
@@ -63,13 +94,24 @@ static void state_changed( void * context, int previous, int current )
 
 int main( int argc, char ** argv )
 {
-    const int wrong_protocol = argc > 1 && strcmp( argv[1], "--wrong-protocol" ) == 0;
+    int wrong_protocol = 0;
+    for ( int i = 1; i < argc; i++ )
+        if ( strcmp( argv[i], "--wrong-protocol" ) == 0 )
+            wrong_protocol = 1;
+    int port = 0;
+    char address[32];
+    if ( !example_port( argc, argv, &port ) )
+    {
+        printf( "FAIL: the port is not 1 to 65535 (--port <n> or ROCKETNET_EXAMPLE_PORT)\n" );
+        return 1;
+    }
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", port );
     struct rocketnet_client_config_t config;
     struct rocketnet_client_t * client = NULL;
     uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    const char * server_addresses[1] = { SERVER_ADDRESS };
+    const char * server_addresses[1] = { address };
     int result = 1;
     int sent = 0;
     int received = 0;
@@ -80,7 +122,7 @@ int main( int argc, char ** argv )
     CHECK( read_hex( keys, "backend_secret", backend_secret_key, ROCKETNET_BACKEND_SECRET_KEY_BYTES ) );
     CHECK( read_hex( keys, "server_public", server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES ) );
     fclose( keys );
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // the matchmaker stub: a real backend runs this on its own server, keeps
     // the secret key, and returns the token to the game client. The fixed
@@ -93,7 +135,12 @@ int main( int argc, char ** argv )
     rocketnet_client_default_config( &config );
     config.transport = "portable";
     config.state_change_callback = state_changed;
-    client = rocketnet_client_create( NULL, connect_token, &config, NULL, 0 );
+    client = rocketnet_client_create( NULL, &config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
     const double start = rocketnet_time();
 
@@ -102,15 +149,15 @@ int main( int argc, char ** argv )
         const double now = 1000.0 + ( rocketnet_time() - start );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK ) break;
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK ) break;
 
         // (2) receive and release every received message
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive( client, 0, &data, &bytes ) )
+        while ( rocketnet_client_receive_message( client, 0, &data, &bytes ) )
         {
             printf( "client received: %.*s\n", bytes, (const char*) data );
-            rocketnet_client_release( client, data );
+            rocketnet_client_release_message( client, data );
             received = 1;
         }
 
@@ -122,15 +169,15 @@ int main( int argc, char ** argv )
         {
             const char message[] = "hello from the client";
             const int message_bytes = (int) sizeof( message ) - 1;
-            uint8_t * out = rocketnet_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_bytes );
             if ( out )
             {
                 memcpy( out, message, (size_t) message_bytes );
-                sent = rocketnet_client_finish( client, message_bytes ) != 0;
+                sent = rocketnet_client_finish_message( client, message_bytes ) != 0;
             }
         }
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so they leave this frame
 
         rocketnet_client_send_packets( client );
@@ -148,11 +195,14 @@ int main( int argc, char ** argv )
     CHECK( wrong_protocol ? refused : received );
     rocketnet_client_disconnect( client );
     printf( "client disconnect reason: %s\n", reason_name( rocketnet_client_disconnect_reason( client ) ) );
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

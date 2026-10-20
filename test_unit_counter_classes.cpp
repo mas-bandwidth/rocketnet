@@ -307,6 +307,10 @@ static const char * const counters_appended_names[] =
     "MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED",
     "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
     "MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK",
+    "SEND_FAILED",
+    "XDP_KERNEL_PASSED_FRAGMENT",
+    "XDP_KERNEL_DROPPED_FIRST_FRAGMENT",
+    "MESSAGE_SEND_NOT_CONNECTED",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
@@ -411,7 +415,9 @@ static void counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED ) == ROCKETNET_COUNTER_CLASS_ARRIVAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_FAILED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 }
 
 REGISTER_UNIT_TEST( counters_every_counter_has_a_class );
@@ -850,13 +856,13 @@ static void counters_conservation_reports_the_first_unbalanced_family()
     // a NULL block is not conserved
     const uint64_t misuse_before = rocketnet_api_misuse_count();
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     counters_expected_null_asserts = 0;
-    rocketnet_assert_function( counters_expected_null_assert );
+    rocketnet_set_assert_callback( counters_expected_null_assert );
 #endif
     check( rocketnet_counters_conserved( NULL, report, sizeof(report) ) == 0 );
 #if ROCKETNET_ASSERTS
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
     check( counters_expected_null_asserts == 1 );
 #endif
     check( rocketnet_api_misuse_count() == misuse_before + 1 );

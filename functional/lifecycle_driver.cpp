@@ -23,6 +23,9 @@
 #include <string.h>
 #include <time.h>
 
+// defined in functional/harness.inc: the connect token timestamp from the clock that judges it
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
 #define check(c) do { if (!(c)) { fprintf(stderr, "lifecycle driver check failed: %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
 
 struct allocator_state
@@ -65,9 +68,9 @@ void rocketnet_test_lifecycle_driver()
     rocketnet_term();
 
     allocator_state state;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_allocator( allocate, release );
-    check( rocketnet_init( &state ) );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_allocator( allocate, release );
+    check( rocketnet_init( &state ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     const int baseline = state.live;
 
@@ -99,7 +102,7 @@ void rocketnet_test_lifecycle_driver()
     check( state.live == baseline );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time(NULL), token ) );
+    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, rocketnet_functional_token_timestamp( 0, 0.0 ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     strcpy( client_config.driver, "portable" );

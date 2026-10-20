@@ -5,7 +5,9 @@
     Client/server server: real UDP on loopback with production keys. The
     server generates the backend signing keypair and its own server keypair
     through the public keygen calls, writes the backend secret and its server
-    public key to one small key file, and listens on 127.0.0.1:40000. The
+    public key to one small key file, and listens on 127.0.0.1 at the port
+    from --port <n>, else the ROCKETNET_EXAMPLE_PORT environment variable,
+    else the default 40000. The
     separate client process plays the backend, reads that file, mints a
     production connect token, connects, and sends one reliable-ordered
     message. The server echoes it and exits after its first client
@@ -18,12 +20,41 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
 #define PROTOCOL_ID 0x636c69656e747331ull
 #define KEY_FILE "client_server.keys"
+#define DEFAULT_PORT 40000
+
+// the port comes from --port <n>, else ROCKETNET_EXAMPLE_PORT, else the
+// default; returns 0 for a value that is not 1 to 65535
+
+static int example_port( int argc, char ** argv, int * port )
+{
+    const char * text = getenv( "ROCKETNET_EXAMPLE_PORT" );
+    for ( int i = 1; i < argc; i++ )
+    {
+        if ( strcmp( argv[i], "--port" ) == 0 )
+        {
+            if ( i + 1 >= argc ) return 0;
+            text = argv[++i];
+        }
+    }
+    if ( !text )
+    {
+        *port = DEFAULT_PORT;
+        return 1;
+    }
+    char * end = NULL;
+    const long value = strtol( text, &end, 10 );
+    if ( end == text || *end != 0 || value < 1 || value > 65535 )
+        return 0;
+    *port = (int) value;
+    return 1;
+}
 
 static void write_hex( FILE * file, const char * label, const uint8_t * bytes, int count )
 {
@@ -44,7 +75,7 @@ static const char * reason_name( int reason )
     return reason >= 0 && reason < 6 ? names[reason] : "unknown";
 }
 
-int main( void )
+int main( int argc, char ** argv )
 {
     struct rocketnet_server_config_t config;
     struct rocketnet_server_t * server = NULL;
@@ -55,8 +86,17 @@ int main( void )
     int result = 1;
     int had_client = 0;
     int echoed = 0;
+    int port = 0;
+    char address[32];
 
-    CHECK( rocketnet_init( NULL ) );
+    if ( !example_port( argc, argv, &port ) )
+    {
+        printf( "FAIL: the port is not 1 to 65535 (--port <n> or ROCKETNET_EXAMPLE_PORT)\n" );
+        return 1;
+    }
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", port );
+
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // a deployment mints the backend keypair in the backend and gives servers
     // only the public half; here the server bootstraps it so the separate
@@ -73,7 +113,12 @@ int main( void )
     memcpy( config.server_public_key, server_public_key, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
 
-    server = rocketnet_server_create( NULL, "127.0.0.1:40000", &config, NULL, 0 );
+    server = rocketnet_server_create( NULL, address, &config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     FILE * keys = fopen( KEY_FILE, "w" );
@@ -93,7 +138,7 @@ int main( void )
         const int max_clients = rocketnet_server_max_clients( server );
 
         // (1) update pumps the transport and takes in what arrived
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             break;
 
         // (2) receive and release every received message
@@ -101,17 +146,17 @@ int main( void )
         {
             const uint8_t * data = NULL;
             int bytes = 0;
-            while ( rocketnet_server_receive( server, i, 0, &data, &bytes ) )
+            while ( rocketnet_server_receive_message( server, i, 0, &data, &bytes ) )
             {
                 printf( "server received: %.*s\n", bytes, (const char*) data );
-                uint8_t * out = rocketnet_server_start( server, i, 0, ROCKETNET_RELIABLE_ORDERED, bytes );
+                uint8_t * out = rocketnet_server_start_message( server, i, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
                 if ( out )
                 {
                     memcpy( out, data, (size_t) bytes );
-                    if ( rocketnet_server_finish( server, i, bytes ) )
+                    if ( rocketnet_server_finish_message( server, i, bytes ) )
                         echoed = 1;
                 }
-                rocketnet_server_release( server, i, data );
+                rocketnet_server_release_message( server, i, data );
             }
         }
 
@@ -119,7 +164,7 @@ int main( void )
 
         // (4) this frame's echo is queued above, as each message arrives
 
-        // (5) send_packets (send_messages after the lifecycle rename) is last,
+        // (5) send_packets is last,
         // after this frame's messages are queued, so they leave this frame
 
         rocketnet_server_send_packets( server );
@@ -136,11 +181,14 @@ int main( void )
     }
 
     CHECK( had_client && echoed );
-    printf( "PASS\n" );
     result = 0;
 
 cleanup:
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

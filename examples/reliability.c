@@ -28,9 +28,9 @@ struct mode_stats_t {
 };
 int main( void ) {
     static const int modes[NUM_MODES] = {
-        ROCKETNET_UNRELIABLE, ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE,
-        ROCKETNET_RELIABLE_ORDERED, ROCKETNET_RELIABLE_SEQUENCED, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT,
-        ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT
+        ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_RELIABLE,
+        ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
+        ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT
     };
     static const char * const names[NUM_MODES] = {
         "unreliable", "unreliable_sequenced", "reliable", "reliable_ordered",
@@ -43,20 +43,30 @@ int main( void ) {
     memset( stats, 0, sizeof( stats ) );
     for ( int m = 0; m < NUM_MODES; m++ ) stats[m].monotonic = stats[m].strict = 1;
 
-    CHECK( rocketnet_init( NULL ) );
-    CHECK( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == 1 );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.transport = "loopback"; server_config.num_channels = NUM_MODES;
     server_config.simulated_loss_percent = 25; server_config.simulated_latency_ms = 20; server_config.simulated_jitter_ms = 35;
     server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
     CHECK( server != NULL );
 
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
-    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token ) );
+    CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
-    client_config.transport = "loopback"; client_config.num_channels = NUM_MODES; client_config.step_driven = 1;
+    CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    client_config.transport = "loopback"; client_config.num_channels = NUM_MODES; client_config.step_driven = true;
     client_config.simulated_loss_percent = 25; client_config.simulated_latency_ms = 20; client_config.simulated_jitter_ms = 35;
-    client = rocketnet_client_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), NULL, 0 );
+    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
     CHECK( client != NULL );
 
     const double wall_start = rocketnet_time();
@@ -64,14 +74,14 @@ int main( void ) {
     {
         const double now = 1000.0 + (double) frame * 0.010;
         // (1) update pumps the transport and takes in what arrived
-        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
-        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
 
         // (2) receive and release every message, and read resolved ack receipts
         const uint8_t * data = NULL;
         int bytes = 0;
         for ( int ch = 0; ch < NUM_MODES; ch++ )
-            while ( rocketnet_client_receive( client, ch, &data, &bytes ) )
+            while ( rocketnet_client_receive_message( client, ch, &data, &bytes ) )
             {
                 CHECK( bytes == 2 && data[0] < NUM_MODES && data[1] >= 1 && data[1] <= NUM_MSGS );
                 struct mode_stats_t * s = &stats[data[0]];
@@ -81,18 +91,18 @@ int main( void ) {
                 if ( s->seen[seq] ) s->dups++; else s->seen[seq] = 1;
                 if ( s->arrived < NUM_MSGS * 2 ) s->order[s->arrived] = seq;
                 s->arrived++;
-                rocketnet_client_release( client, data );
+                rocketnet_client_release_message( client, data );
             }
         const int slot = rocketnet_client_index( client );
-        while ( slot >= 0 && rocketnet_server_receive( server, slot, 0, &data, &bytes ) )
-            rocketnet_server_release( server, slot, data );
+        while ( slot >= 0 && rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+            rocketnet_server_release_message( server, slot, data );
         struct rocketnet_receipt_t receipts[32];
         const int n_rec = slot >= 0 ? rocketnet_server_receipts( server, slot, receipts, 32 ) : 0;
         for ( int r = 0; r < n_rec; r++ )
             for ( int m = 5; m < NUM_MODES; m++ )
                 for ( int i = 0; i < NUM_MSGS; i++ )
                     if ( stats[m].serials[i] == receipts[r].serial )
-                        receipts[r].status == ROCKETNET_RECEIPT_ACKED ? stats[m].acked++ : stats[m].lost++;
+                        receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ? stats[m].acked++ : stats[m].lost++;
 
         // (3) run the game simulation for the frame
         // (4) queue this frame's outgoing messages with start and finish
@@ -102,15 +112,15 @@ int main( void ) {
             if ( sent < NUM_MODES * NUM_MSGS )
             {
                 const int m = sent / NUM_MSGS, seq = sent % NUM_MSGS + 1;
-                uint8_t * out = rocketnet_server_start( server, slot, m, modes[m], 2 );
+                uint8_t * out = rocketnet_server_start_message( server, slot, m, modes[m], 2 );
                 CHECK( out != NULL );
                 out[0] = (uint8_t) m; out[1] = (uint8_t) seq;
-                stats[m].serials[seq - 1] = rocketnet_server_finish( server, slot, 2 );
+                stats[m].serials[seq - 1] = rocketnet_server_finish_message( server, slot, 2 );
                 CHECK( stats[m].serials[seq - 1] != 0 );
                 sent++;
             }
-            uint8_t * tick = rocketnet_client_start( client, 0, ROCKETNET_UNRELIABLE, 1 );
-            if ( tick ) { tick[0] = 0; CHECK( rocketnet_client_finish( client, 1 ) != 0 ); }
+            uint8_t * tick = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1 );
+            if ( tick ) { tick[0] = 0; CHECK( rocketnet_client_finish_message( client, 1 ) != 0 ); }
         }
 
         // (5) send_packets is last so this frame's messages leave this frame
@@ -137,11 +147,14 @@ int main( void ) {
         if ( m == 3 || m == 7 ) CHECK( s->strict );
         if ( m >= 5 ) CHECK( s->acked + s->lost == NUM_MSGS && s->acked == s->arrived );
     }
-    printf( "PASS\n" );
     result = 0;
 cleanup:
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     rocketnet_term();
+    // destroy ends a live connection and logs it, so PASS is printed after
+    // the cleanup to stay the last line
+    if ( result == 0 )
+        printf( "PASS\n" );
     return result;
 }

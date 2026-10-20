@@ -128,6 +128,9 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
 
 void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
+// the current-size creates with the section-2.1 code written to *status (NULL skips it)
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, int * status );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_driver_operations_t * operations, void * driver_context );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
@@ -203,14 +206,6 @@ struct rocketnet_driver_ladder_t
 // list longer than ROCKETNET_MAX_DRIVER_CANDIDATES.
 
 bool rocketnet_driver_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_driver_ladder_t * ladder );
-
-// the AF_XDP transport serves IPv4: for an IPv6 public address (address_type
-// ROCKETNET_ADDRESS_IPV6) every xdp candidate leaves the list, the rest keep
-// their order, so "auto" falls to the next transport and a pin of xdp alone
-// leaves the list empty. any other address type leaves the list untouched.
-// returns how many candidates left.
-
-int rocketnet_driver_ladder_drop_ipv4_only( struct rocketnet_driver_ladder_t * ladder, int address_type );
 
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from:

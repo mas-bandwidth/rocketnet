@@ -136,23 +136,27 @@ static void server_transport_create_ex_reports_every_status()
     // before init (the public NULL guard runs first)
     status = -1;
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     server_create_ex_expected_null_asserts = 0;
-    rocketnet_assert_function( server_create_ex_expected_null_assert );
+    rocketnet_set_assert_callback( server_create_ex_expected_null_assert );
 #endif
     check( rocketnet_server_transport_create_ex( NULL, NULL, NULL, 1000.0, &status ) == NULL );
 #if ROCKETNET_ASSERTS
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
     check( server_create_ex_expected_null_asserts == 1 );
 #endif
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+
+    // install the fault-injecting allocator while uninitialized, so every
+    // allocation below goes through allocate and release
+    check( rocketnet_allocator_ex( allocate, release ) == ROCKETNET_STATUS_OK );
 
     // not initialized: a non-NULL create before rocketnet_init is refused
     status = -1;
     check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_NOT_INITIALIZED );
 
-    // init with the fault-injecting allocator in context
+    // init with the fault-injecting allocator's state as the context
     status = -1;
     check( rocketnet_init_ex( &state, &status ) );
     check( status == ROCKETNET_STATUS_OK );
@@ -286,7 +290,8 @@ static void server_transport_create_ex_reports_every_status()
         strcpy( config.driver, "loopback" );
 
         int reached_success = 0;
-        for ( int k = 1; k <= 20 && !reached_success; k++ )
+        int out_of_memory = 0;
+        for ( int k = 1; k <= 64 && !reached_success; k++ )
         {
             state.fail_at = state.calls + k;
             status = -1;
@@ -303,11 +308,18 @@ static void server_transport_create_ex_reports_every_status()
             {
                 check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
                 check( state.live == 0 );
+                out_of_memory++;
             }
         }
+        check( out_of_memory > 0 );
         check( reached_success );
         state.fail_at = 0;
     }
+
+    // a clean term, then restore the default allocator for the worker's term
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( state.live == 0 );
+    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 
     env_pin_put_back( &pin );
 }

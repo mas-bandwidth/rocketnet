@@ -36,7 +36,7 @@ static int g_dev_warn_lines = 0;
 static int g_dev_warn_level = -1;
 static char g_dev_warn_buf[4096];
 
-static void capture_callback( void * context, int level, const char * message, size_t length )
+static void capture_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
     (void) context;
     g_total_lines++;
@@ -59,14 +59,14 @@ static void start_capture()
     g_dev_warn_level = -1;
     g_dev_warn_buf[0] = '\0';
     g_level = -1;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     rocketnet_set_log_callback( capture_callback, NULL );
 }
 
 static void stop_capture()
 {
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_NONE );
 }
 
 // A connect token whose signed server key is the given 32 bytes. The client
@@ -140,14 +140,19 @@ static int test_unset_environment( const char * name )
 static void dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a release
-    // build (the unit suite's build) the published keys are refused
+    // build (the unit suite's build) the published keys are refused.
+    // The create pins the loopback driver on port 0: the development-keys
+    // warn is raised before the driver ladder
+    // (sdk/rocketnet_server_transport.cpp), so the WARN line, level and
+    // DEV_KEY_WARN_PHRASE checks are unaffected by the driver choice, and
+    // the unit suite stays free of any real socket bind.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
-        strcpy( config.driver, "portable" );
+        strcpy( config.driver, "loopback" );
         int status = -1;
         start_capture();
-        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
+        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         check( g_dev_warn_lines == 1 );
         check( g_dev_warn_level == ROCKETNET_LOG_LEVEL_WARN );
         check( strstr( g_dev_warn_buf, DEV_KEY_WARN_PHRASE ) != NULL );
@@ -173,7 +178,7 @@ static void dev_keys_warn_on_every_start()
         check( test_set_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1" ) == 0 );
         int status = -1;
         start_capture();
-        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
+        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         stop_capture();
         check( srv == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );

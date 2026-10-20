@@ -62,17 +62,17 @@ static void default_assert_function( const char * condition, const char * functi
     #endif
 }
 
-void (*rocketnet_assert_function_pointer)( const char * condition, const char * function, const char * file, int line ) = default_assert_function;
+rocketnet_assert_callback_t rn_assert_function = default_assert_function;
 
-void rocketnet_assert_function( void (*function)( const char * condition, const char * function, const char * file, int line ) )
+void rocketnet_set_assert_callback( rocketnet_assert_callback_t callback )
 {
-    if ( function )
+    if ( callback )
     {
-        rocketnet_assert_function_pointer = function;
+        rn_assert_function = callback;
     }
     else
     {
-        rocketnet_assert_function_pointer = default_assert_function;
+        rn_assert_function = default_assert_function;
     }
 }
 
@@ -80,14 +80,14 @@ void rocketnet_assert_function( void (*function)( const char * condition, const 
 
 static std::atomic<bool> log_quiet{ false };
 
-void rocketnet_quiet( bool flag )
+void rocketnet_set_quiet( bool flag )
 {
    log_quiet.store( flag, std::memory_order_relaxed );
 }
 
 static std::atomic<int> log_level{ ROCKETNET_LOG_LEVEL_INFO };
 
-void rocketnet_log_level( int level )
+void rocketnet_set_log_level( enum rocketnet_log_level_t level )
 {
     // the defined levels are NONE (0) through SPAM (5): a value outside that
     // range is refused, leaving the level already in force. a caller that
@@ -156,31 +156,44 @@ void rocketnet_log_level_override_apply( const char * value )
                     value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level.load( std::memory_order_relaxed ) );
 }
 
-int rocketnet_get_log_level( void )
+void rocketnet_set_thread_priority( bool enabled )
 {
-    return log_level.load( std::memory_order_relaxed );
+    rocketnet_platform_set_thread_priority_enabled( enabled );
 }
 
-const char * rocketnet_log_level_string( int level )
+bool rocketnet_get_thread_priority( void )
 {
-    if ( level == ROCKETNET_LOG_LEVEL_SPAM )
-        return "spam";
-    else if ( level == ROCKETNET_LOG_LEVEL_DEBUG )
-        return "debug";
-    else if ( level == ROCKETNET_LOG_LEVEL_INFO )
-        return "info";
-    else if ( level == ROCKETNET_LOG_LEVEL_ERROR )
-        return "error";
-    else if ( level == ROCKETNET_LOG_LEVEL_WARN )
-        return "warning";
-    else
-        return "???";
+    return rocketnet_platform_thread_priority_enabled();
+}
+
+uint64_t rocketnet_get_thread_priority_refusals( void )
+{
+    return rocketnet_platform_thread_priority_refusals();
+}
+
+enum rocketnet_log_level_t rocketnet_get_log_level( void )
+{
+    return (enum rocketnet_log_level_t) log_level.load( std::memory_order_relaxed );
+}
+
+const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
+{
+    switch ( (int) level )
+    {
+        case ROCKETNET_LOG_LEVEL_NONE:  return "none";
+        case ROCKETNET_LOG_LEVEL_ERROR: return "error";
+        case ROCKETNET_LOG_LEVEL_WARN:  return "warn";
+        case ROCKETNET_LOG_LEVEL_INFO:  return "info";
+        case ROCKETNET_LOG_LEVEL_DEBUG: return "debug";
+        case ROCKETNET_LOG_LEVEL_SPAM:  return "spam";
+        default:                        return "unknown";
+    }
 }
 
 // docs/ERRORS-AND-LOGGING.md 2.1 item 4: the count includes the success value.
 int rocketnet_num_status_codes( void )
 {
-    return ROCKETNET_NUM_STATUS_CODES;
+    return ROCKETNET_STATUS_COUNT;
 }
 
 // One row per code, in the enum's order. The array is unsized so the static
@@ -210,27 +223,31 @@ static const char * const rocketnet_status_names[] =
     "MUTEX_CREATE_FAILED",
     "THREAD_CREATE_FAILED",
     "TIMER_CREATE_FAILED",
+    "CLIENT_NOT_DISCONNECTED",
+    "SERVER_NOT_STOPPED",
+    "FLOW_ID_RESERVED",
 };
 
-static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_NUM_STATUS_CODES,
+static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_STATUS_COUNT,
                "every status code has exactly one name" );
 
-// docs/ERRORS-AND-LOGGING.md 2.1 item 4: the identifier without the
-// ROCKETNET_STATUS_ prefix, and NULL (without asserting) out of range.
-const char * rocketnet_status_string( int status )
+// the identifier without the ROCKETNET_STATUS_ prefix, and "unknown" (never
+// NULL, without asserting) for a value that is not a code.
+const char * rocketnet_status_name( enum rocketnet_status_t status )
 {
-    if ( status < 0 || status >= ROCKETNET_NUM_STATUS_CODES )
-        return NULL;
-    return rocketnet_status_names[status];
+    const int value = (int) status;
+    if ( value < 0 || value >= ROCKETNET_STATUS_COUNT )
+        return "unknown";
+    return rocketnet_status_names[value];
 }
 
-static void default_log_callback( void * context, int level, const char * message, size_t length )
+static void default_log_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
 #if !ROCKETNET_UNREAL_ENGINE     // IMPORTANT: Unreal doesn't like printf
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_NONE )
     {
-        const char * level_string = rocketnet_log_level_string( level );
+        const char * level_string = rocketnet_log_level_name( level );
         printf( "%.6f: %s: %.*s\n", rocketnet_platform_time(), level_string, (int) length, message );
     }
     else
@@ -244,35 +261,22 @@ static void default_log_callback( void * context, int level, const char * messag
 static volatile uint64_t rocketnet_log_sink_lock = 0;
 static rocketnet_log_callback_t rocketnet_log_callback = NULL;
 static void * rocketnet_log_callback_context = NULL;
-static void (*rocketnet_log_legacy)( int level, const char * format, ... ) = NULL;
 
-// docs/ERRORS-AND-LOGGING.md 3.2 and 3.3: a non-NULL callback on either entry
-// point replaces the active sink; NULL restores the default sink. the
-// (callback, context, legacy) tuple is guarded by the spin lock so it is never
-// observed torn.
+// docs/ERRORS-AND-LOGGING.md 3.2 and 3.3: the one sink. a non-NULL callback
+// replaces the active sink; NULL restores the default sink. the (callback,
+// context) pair is guarded by the spin lock so it is never observed torn.
 void rocketnet_set_log_callback( rocketnet_log_callback_t callback, void * context )
 {
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
     rocketnet_log_callback = callback;
-    rocketnet_log_callback_context = context;
-    rocketnet_log_legacy = NULL;
-    rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
-}
-
-void rocketnet_log_function( void (*function)( int level, const char * format, ... ) )
-{
-    rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
-    rocketnet_log_legacy = function ? function : NULL;
-    rocketnet_log_callback = NULL;
-    rocketnet_log_callback_context = NULL;
+    rocketnet_log_callback_context = callback ? context : NULL;
     rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
 }
 
 // docs/ERRORS-AND-LOGGING.md 3.3: filter before formatting (quiet and level are
 // relaxed atomics read before vsnprintf), format once into the 1024-byte
 // buffer, clamp length to 1023 (message[length] == '\0' is guaranteed by
-// vsnprintf), then dispatch to the preformatted callback, the legacy varargs
-// function, or the default sink.
+// vsnprintf), then dispatch to the installed callback or the default sink.
 static void rocketnet_log_v( int level, const char * format, va_list args )
 {
     if ( log_quiet.load( std::memory_order_relaxed ) )
@@ -289,21 +293,12 @@ static void rocketnet_log_v( int level, const char * format, va_list args )
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
     rocketnet_log_callback_t cb = rocketnet_log_callback;
     void * ctx = rocketnet_log_callback_context;
-    void (*legacy)( int, const char *, ... ) = rocketnet_log_legacy;
     rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
 
     if ( cb )
-    {
-        cb( ctx, level, buffer, length );
-    }
-    else if ( legacy )
-    {
-        legacy( level, "%s", buffer );
-    }
+        cb( ctx, (enum rocketnet_log_level_t) level, buffer, length );
     else
-    {
-        default_log_callback( NULL, level, buffer, length );
-    }
+        default_log_callback( NULL, (enum rocketnet_log_level_t) level, buffer, length );
 }
 
 void rocketnet_printf( int level, const char * format, ... )
@@ -381,6 +376,24 @@ void rocketnet_default_free_function( void * context, void * p )
 }
 
 static void * (*rocketnet_malloc_function)( void * context, size_t bytes ) = rocketnet_default_malloc_function;
+
+// the allocations rocketnet_malloc has refused on this thread, ever: a size
+// past the header overhead or a NULL from the installed allocator. A driver
+// open reads it before and after a create (sdk/rocketnet_driver.cpp), so a
+// create that returned NULL after a refusal reports OUT_OF_MEMORY
+static thread_local uint64_t rocketnet_allocation_refusals_on_this_thread = 0;
+
+uint64_t rocketnet_allocation_refusals()
+{
+    return rocketnet_allocation_refusals_on_this_thread;
+}
+
+// counts a failed allocation made outside rocketnet_malloc (a page-aligned
+// buffer a driver registers with the kernel) as a refusal on this thread
+void rocketnet_allocation_refused()
+{
+    ++rocketnet_allocation_refusals_on_this_thread;
+}
 static void (*rocketnet_free_function)( void * context, void * p ) = rocketnet_default_free_function;
 
 static std::mutex rocketnet_lifecycle_mutex;
@@ -421,9 +434,9 @@ uint64_t rocketnet_allocation_overhead()
     return sizeof(rocketnet_allocation_header_t) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
 }
 
-bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+enum rocketnet_status_t rocketnet_set_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
-    return rocketnet_allocator_ex( malloc_function, free_function ) == ROCKETNET_STATUS_OK;
+    return (enum rocketnet_status_t) rocketnet_allocator_ex( malloc_function, free_function );
 }
 
 int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
@@ -459,7 +472,10 @@ void * rocketnet_malloc( void * context, size_t bytes )
     const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     if ( bytes > SIZE_MAX - overhead )
+    {
+        ++rocketnet_allocation_refusals_on_this_thread;
         return NULL;
+    }
     void * (*allocate)( void *, size_t );
     void (*release)( void *, void * );
     {
@@ -471,6 +487,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
     void * base = allocate( context, bytes + overhead );
     if ( !base )
     {
+        ++rocketnet_allocation_refusals_on_this_thread;
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         --rocketnet_allocations;
         return NULL;
@@ -611,7 +628,7 @@ int rocketnet_signed_packets[256];
 
 int rocketnet_encrypted_packets[256];
 
-const char * rocketnet_platform_string( int platform_id )
+const char * rocketnet_platform_name( int platform_id )
 {
     switch ( platform_id )
     {
@@ -626,7 +643,7 @@ const char * rocketnet_platform_string( int platform_id )
     return "unknown";
 }
 
-const char * rocketnet_connection_string( int connection_type )
+const char * rocketnet_connection_name( int connection_type )
 {
     switch ( connection_type )
     {
@@ -641,9 +658,11 @@ const char * rocketnet_connection_string( int connection_type )
 
 void * rocketnet_global_context = NULL;
 
-bool rocketnet_init( void * context )
+enum rocketnet_status_t rocketnet_init( void * context )
 {
-    return rocketnet_init_ex( context, NULL );
+    int status = ROCKETNET_STATUS_OK;
+    (void) rocketnet_init_ex( context, &status );
+    return (enum rocketnet_status_t) status;
 }
 
 bool rocketnet_init_ex( void * context, int * status )
@@ -688,8 +707,8 @@ bool rocketnet_init_ex( void * context, int * status )
     }
 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
-    rocketnet_info( "platform is %s (%s)", rocketnet_platform_string( rocketnet_platform_id() ),
-                    rocketnet_connection_string( rocketnet_platform_connection_type() ) );
+    rocketnet_info( "platform is %s (%s)", rocketnet_platform_name( rocketnet_platform_id() ),
+                    rocketnet_connection_name( rocketnet_platform_connection_type() ) );
 
     const char * log_level_override = rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL" );
     if ( log_level_override )
@@ -704,9 +723,9 @@ bool rocketnet_init_ex( void * context, int * status )
     return true;
 }
 
-void rocketnet_term()
+enum rocketnet_status_t rocketnet_term()
 {
-    (void) rocketnet_term_ex();
+    return (enum rocketnet_status_t) rocketnet_term_ex();
 }
 
 int rocketnet_term_ex()

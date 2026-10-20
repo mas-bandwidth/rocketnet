@@ -35,12 +35,32 @@ From the repository root, after the normal build, in two terminals:
 The server listens on `127.0.0.1:40000`, receives one reliable-ordered message
 from the client, echoes it, and exits after its first client disconnects. Both
 programs finish in under ten seconds and print `PASS` as their last line.
-`tools/run_examples.py --build build` runs the pair in that order. To see the
+
+## The port
+
+Both programs take the port from `--port <n>`, else from the environment
+variable `ROCKETNET_EXAMPLE_PORT`, else the default `40000`; the server binds
+`127.0.0.1` at that port and the client's token names the same address. Give
+both the same port:
+
+```sh
+./bin/example_client_server_server --port 41234
+./bin/example_client_server_client --port 41234
+```
+
+A value that is not 1 to 65535 prints a `FAIL` line and exits non-zero.
+`tools/run_examples.py --build build` runs the pair in that order, in a fresh
+temporary working directory, on a free UDP port it asks the operating system
+for and passes through `ROCKETNET_EXAMPLE_PORT`, so two runs at once never
+share a port or a key file. When the server cannot bind that port, because
+another process took it between the pick and the start, the script says so
+and picks again, at most three tries. To see the
 refusal, start a fresh server and run the client's own flag:
 
 ```sh
 ./bin/example_client_server_client --wrong-protocol
 ```
+`--wrong-protocol` combines with `--port <n>` in either order.
 The client mints the token for another protocol id, the server ignores it, and
 the client prints `expected refusal:` with the refused state and then `PASS`.
 Stop that server when the run finishes.
@@ -65,12 +85,12 @@ can be deleted after a run.
   `rocketnet_write_production_connect_token`
 - `rocketnet_server_default_config`, `rocketnet_server_create`, `rocketnet_server_update`,
   `rocketnet_server_port`, `rocketnet_server_max_clients`, `rocketnet_server_num_connected_clients`,
-  `rocketnet_server_receive`, `rocketnet_server_release`, `rocketnet_server_start`,
-  `rocketnet_server_finish`, `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
+  `rocketnet_server_receive_message`, `rocketnet_server_release_message`, `rocketnet_server_start_message`,
+  `rocketnet_server_finish_message`, `rocketnet_server_send_packets`, `rocketnet_server_disconnect_reason`,
   `rocketnet_server_destroy`
 - `rocketnet_client_default_config`, `rocketnet_client_create`, `rocketnet_client_state`,
-  `rocketnet_client_state_name`, `rocketnet_client_update`, `rocketnet_client_receive`,
-  `rocketnet_client_release`, `rocketnet_client_start`, `rocketnet_client_finish`,
+  `rocketnet_client_state_name`, `rocketnet_client_update`, `rocketnet_client_receive_message`,
+  `rocketnet_client_release_message`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_send_packets`, `rocketnet_client_disconnect`, `rocketnet_client_disconnect_reason`,
   `rocketnet_client_destroy`
 - `rocketnet_time`, `rocketnet_sleep`

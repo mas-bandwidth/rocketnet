@@ -1,0 +1,420 @@
+# RocketNet on macOS
+
+This is the page a Mac engine programmer reads first: how to build, which
+transport a client or server gets and how to pin one, the client's threads and
+App Nap, what socket errors and ICMP do, the file-descriptor limit, the
+application firewall prompt, debugging, and the commands that verify a Mac, in
+order.
+
+Each claim names the file that backs it. A section whose hardening work has not
+landed says **pending** and makes no claim. Every command on this page is run
+on an Apple-silicon Mac with the Command Line Tools and no Xcode; a command
+that needs more than that says what it needs. The support tiers themselves are
+in [PLATFORMS.md](PLATFORMS.md); this page does not widen them.
+
+## What is supported
+
+The supported row is macOS 27 on arm64 with Apple Clang, transports `portable`
+and `msgx` (`docs/PLATFORMS.md`, the table). CI runs it on a self-hosted
+Apple-silicon runner labelled `rocketnet-macos`, as a Debug row and a Release
+row (`.github/workflows/ci.yml`, the `macos-15` entries of the
+`build-and-test` matrix, whose `runner` is
+`self-hosted, macOS, ARM64, rocketnet-macos`). The same runner carries the
+macOS nightly rows: soak, frame budget and examples
+(`docs/PLATFORMS.md`; `.github/workflows/nightly-soak.yml`,
+`nightly-frame-budget.yml`, `nightly-examples.yml`). macOS on x86_64 is an
+unsupported row (`docs/PLATFORMS.md`).
+
+## Build
+
+The tools are Apple clang from the Command Line Tools, `cmake` 3.20 or later,
+`make`, `xxd` and Python 3; libsodium is vendored (`BUILDING.md`;
+`CMakeLists.txt`, `cmake_minimum_required`). CI's macOS dependency step checks
+for `cmake clang c++ xxd python3` (`.github/workflows/ci.yml`, "Check the
+fleet's build dependencies are present").
+
+Release, through the Makefile:
+
+```sh
+make
+```
+
+`make` configures `build/` as Release and builds with at most eight jobs
+(`Makefile`, the `build` target; `make JOBS=4` lowers it). Debug configures
+CMake directly, as CI's Debug row does (`.github/workflows/ci.yml`, "Build
+(Debug)"):
+
+```sh
+cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug --parallel 4
+```
+
+Both configurations write their executables and dylibs into the same `bin/`
+(`CMakeLists.txt`, `CMAKE_RUNTIME_OUTPUT_DIRECTORY` and
+`CMAKE_LIBRARY_OUTPUT_DIRECTORY`), so `bin/` holds whichever build ran last.
+
+The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
+(functional suite; it also runs `test_msgx`, `test_serialize` and
+`test_transport_control` as sibling executables, `functional/main.cpp`),
+`bin/test_msgx` (built only on Apple, `CMakeLists.txt`, the `if(APPLE)` block
+that adds it), `bin/test_lifecycle`, `bin/test_driver`, the
+`bin/example_*` programs, `bin/soak`, `bin/soak_sim`, `bin/load` and
+`bin/transport_memory`.
+
+The CMake cache sets no `CMAKE_OSX_ARCHITECTURES` and no
+`CMAKE_OSX_DEPLOYMENT_TARGET`, so a build is the host's native slice and its
+minimum OS is the SDK it was built with. Check what a build produced:
+
+```sh
+grep -E 'CMAKE_OSX_(ARCHITECTURES|DEPLOYMENT_TARGET)' build-debug/CMakeCache.txt
+lipo -archs bin/librocketnet.dylib
+vtool -show-build bin/test
+```
+
+On an Apple-silicon Mac `lipo` prints `arm64` and `vtool` prints `minos`
+equal to `sdk`.
+
+### Universal binaries, the Xcode generator, the deployment target
+
+**pending.**
+
+## The macOS transports
+
+The driver registry has two rows that build on macOS: `portable` (every
+platform, server rank 30, client rank 30) and `msgx` (macOS, server rank 10,
+client rank 10); lower ranks win (`sdk/rocketnet_drivers.inc`, lines 5 and 8).
+So `auto` asks for `msgx` first on both endpoints and falls to `portable` when
+`msgx` refuses. The `loopback` row is pin-only, an in-memory transport for
+tests (`sdk/rocketnet_drivers.inc`, line 10). Both socket transports use the
+same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
+`rocketnet_msgx_driver`); what differs is the pump under the socket.
+
+**msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
+(`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").
+The two symbols are resolved with `dlsym` at platform init, with no link-time
+reference, so their absence is never a load failure. At socket create, a
+non-blocking socket with both symbols runs one real `recvmsg_x` as a probe; a
+result of zero or more, or `EAGAIN`/`EWOULDBLOCK`, grants the pump, and any
+other errno leaves that socket on the portable per-packet loop (the probe block
+under `#if TARGET_OS_OSX` in `rocketnet_platform_socket_create_internal`).
+
+At runtime a send errno that is ordinary UDP weather (`EAGAIN`, `EWOULDBLOCK`,
+`ENOBUFS`, `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EMSGSIZE`,
+`EADDRNOTAVAIL`, `EPERM`, `EACCES`, `EHOSTDOWN`, `ENETDOWN`) finishes that
+chunk per packet and does not pause the pump; any other refusal pauses the
+batch pump on that socket for 60 seconds, and the first batch call after the
+pause is the re-probe (`rocketnet_msgx_send_weather`, `rocketnet_msgx_pause`,
+`ROCKETNET_MSGX_RETRY_SECONDS`). The pump is per socket, so one socket can be
+paused while another batches. `rocketnet_platform_socket_pump` reports the live
+pump, so a paused socket reads as `portable`.
+
+**portable** is the per-packet `sendto` / `recvmsg` loop
+(`rocketnet_platform_socket_send_packet` and
+`rocketnet_platform_socket_receive_packet` in the macOS section of
+`sdk/rocketnet_platform.cpp`).
+
+### Pinning a transport
+
+The client and server configs each carry a `transport` string, with an
+environment overlay: `ROCKETNET_CLIENT_TRANSPORT` and
+`ROCKETNET_SERVER_TRANSPORT` (`sdk/rocketnet.h`, `rocketnet_client_config_t`
+and `rocketnet_server_config_t`). `NULL` is `auto`; one name is a pin (that
+transport or a refused create, never a silent fall); a comma list is an
+ordered candidate list (`BUILDING.md`, "Server transports"). An unknown name
+refuses the create and the log lists the valid names. A name the registry
+knows but macOS does not build (`gso`, `xdp`, `iocp`, `io_uring`, `rio`) is
+skipped with `transport <name> is not available here. skipped`, and a list
+left with no transport for the endpoint falls to `auto` with a warning
+(`sdk/rocketnet_config.cpp`, `rocketnet_driver_ladder_parse`):
+
+```sh
+ROCKETNET_SERVER_TRANSPORT=gso ./bin/example_transports
+```
+
+logs `transport list "gso" names no transport for this endpoint on this platform. using auto (msgx,portable)` and `auto chose msgx`. The variable
+displaces whatever `transport` the program set (each create logs `server config override ROCKETNET_SERVER_TRANSPORT=gso (displaces <old>)`), so the
+example's own impossible pin is displaced too, its last check fails, and it
+exits 1. The functional
+case `driver_env_pin_is_honoured` fails under such a pin for the same reason.
+
+Pinning `msgx` requires the probe to grant it: a refused probe fails the create
+instead of falling to `portable`. Pinning `portable` skips the probe, so a
+fixed-port bind never has a queued datagram consumed by it
+(`rocketnet_platform_socket_create_with_pump`).
+
+**`ROCKETNET_PUMP=portable`** is the older override, kept with its meaning:
+the batch pump is off. Under it `auto` lands on `portable`, logging
+`msgx pump refused: ROCKETNET_PUMP=portable`, and a pinned `msgx` refuses
+(`rocketnet_platform_socket_create_with_pump`). The per-endpoint transport
+variables are its successors.
+
+```sh
+./bin/example_transports
+ROCKETNET_PUMP=portable ./bin/example_transports
+```
+
+The first prints `auto chose msgx`; the second logs the refusal above and
+`server transport ladder granted portable after refusals: msgx`
+(`examples/transports.c`).
+
+Every other config field has an overlay named
+`ROCKETNET_<ENDPOINT>_<FIELD>` with `<ENDPOINT>` `CLIENT` or `SERVER`, built by
+`rocketnet_config_env_var_name_for` (`sdk/rocketnet_config.cpp`); the comment
+beside each field in `sdk/rocketnet.h` names its variable. The legacy names
+`ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
+`ROCKETNET_CLIENT_DRIVER` are refused aloud and never applied
+(`sdk/rocketnet_config.cpp`).
+
+The test suites clear `ROCKETNET_PUMP` and every config overlay before they
+run, and keep only `ROCKETNET_SERVER_TRANSPORT` and
+`ROCKETNET_CLIENT_TRANSPORT` (`sdk/rocketnet_tests.cpp`,
+`rocketnet_test_environment_t`). Under a suite, `ROCKETNET_PUMP` has no effect;
+use an example program, or your game, to see it.
+
+CI pins every macOS pair on IPv4, IPv6 and dual stack: `portable/portable`,
+`portable/msgx`, `msgx/portable`, `msgx/msgx` and `loopback/loopback`, each
+running `test_transport_udp_loopback`, `test_transport_ipv6_loopback`,
+`test_transport_dual_stack_ipv4_client` and `driver_env_pin_is_honoured`
+(`.github/workflows/ci.yml`, "Transport family matrix",
+`TRANSPORT_MATRIX_MACOS`). The commands are in "Verify a Mac" below.
+
+## The client's threads, QoS and App Nap
+
+On macOS the platform layer builds the kqueue wake (`sdk/rocketnet_platform.h`,
+`ROCKETNET_PLATFORM_HAS_WAKE`), so a socket client runs a client I/O thread
+(`sdk/rocketnet_client_transport.cpp`): a kqueue holds the socket's `EVFILT_READ` and
+an `EVFILT_USER` trigger (`sdk/rocketnet_platform.cpp`, the kqueue wake). The
+thread is a plain `pthread_create` with default attributes
+(`rocketnet_platform_thread_create`). Right after the create, the creating
+thread makes one call on it, the flow library's setting, unchanged: `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )`
+(`rocketnet_platform_client_thread_priority`, `sdk/rocketnet_platform.cpp:3135`).
+That is the only thing the library sets on its macOS network threads: no QoS
+class, no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and no App Nap call (a
+search of `sdk/` for `qos_class`, `NSProcessInfo` and `LSAppNapIsDisabled`
+finds nothing). `rocketnet_set_thread_priority( false )` turns the call off
+(`docs/CLIENT-IO.md`, Thread priority). Apart from it, the only scheduling
+policy the SDK sets is the Mach time-constraint policy on the thread that waits
+in frame sync, put back to the standard policy afterwards
+(`sdk/rocketnet_frame_sync.cpp:180`).
+
+A game that wants the client's I/O on a thread it owns sets `step_driven = 1`
+in `rocketnet_client_config_t` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1`): the
+client then runs the I/O step inside `rocketnet_client_update` and
+`rocketnet_client_send_packets` on the caller's thread and creates no I/O
+thread (`sdk/rocketnet.h`, the `step_driven` field;
+`sdk/rocketnet_client_transport.cpp`, where the thread is created only when
+neither step mode is set). That thread's QoS is then the game's.
+
+```sh
+ROCKETNET_CLIENT_STEP_DRIVEN=1 ./bin/example_transports
+```
+
+It logs `client config override ROCKETNET_CLIENT_STEP_DRIVEN=1 (displaces 0)`
+and exits 0.
+
+App Nap is a property of the game process, not of the library: nothing in
+`sdk/` holds a power or activity assertion. List the assertions a running game
+holds with:
+
+```sh
+pmset -g assertions
+```
+
+How the client's timing behaves under App Nap and under a lowered QoS, and what
+the library does about it: **pending.**
+
+## Socket errors and ICMP
+
+The SDK never calls `connect` on a UDP socket; every send names its destination
+(`sdk/rocketnet_platform.cpp`, no `connect(` in the file). A failed `sendto`
+is logged at debug level and the packet is dropped
+(`rocketnet_platform_socket_send_packet`). A failed `recvmsg` returns 0, which
+ends that drain; an error other than `EAGAIN` or `EINTR` is logged at debug
+level, and the next update reads again. A zero-length datagram is skipped
+rather than read as "drained", and a datagram longer than the caller's slot
+keeps its true length so the transport drops it as oversize
+(`rocketnet_platform_socket_receive_packet`). The msgx pump applies the
+weather and pause rules above to the same errnos.
+
+`test_platform_batch_pump_refused_destination` is the run: a batch with a
+refused destination in the middle delivers every other packet
+(`functional/rocketnet_functional_tests.cpp`).
+
+```sh
+./bin/functional --run test_platform_batch_pump_refused_destination
+```
+
+What a receive does after a peer is hard-killed and the kernel answers with
+ICMP: **pending.**
+
+## The file-descriptor limit
+
+A socket transport owns one UDP socket: the memory plan for `portable` and for
+`msgx` is one socket (`sdk/rocketnet_driver_builtin.cpp`,
+`rocketnet_builtin_server_memory_plan`). A server keeps that one socket for all
+of its clients (up to `ROCKETNET_MAX_CLIENTS`, 1000, `sdk/rocketnet.h`), so
+the descriptor limit is not a limit on how many clients one server accepts. It
+does bound how many client transports one process holds open: each live client
+is one descriptor. A tool or test that runs many clients in one process checks
+the limits first:
+
+```sh
+ulimit -n
+launchctl limit maxfiles
+sysctl kern.maxfilesperproc
+```
+
+`ulimit -n <n>` raises the soft limit for that shell and its children, up to
+the hard limit and `kern.maxfilesperproc`. An app launched from Finder or the
+Dock gets the launchd limit that `launchctl limit maxfiles` prints. Many
+clients in one process on macOS, measured: **pending.**
+
+## The application firewall prompt
+
+A server binds the wildcard address on its port, whatever host its public
+address names: the bind address is the public address with its host part
+zeroed (`sdk/rocketnet_server_transport.cpp`, `bind_address`). With public
+address `127.0.0.1:0` the log reads `server transport started on 0.0.0.0:<port>` (`./bin/example_transports`). A client binds the wildcard of
+its family too (the log reads `client bound to [::]:<port>`).
+
+When the macOS application firewall is on, it asks "Do you want the
+application to accept incoming network connections?" the first time an app it
+has no rule for opens a socket that can receive from other machines; a
+wildcard bind is such a socket. So a dev build of a game server, the examples
+and the functional suite can each raise the prompt on a Mac with the firewall
+on, even when every peer is on loopback. The trigger is the bind, not the
+transport: `msgx` and `portable` bind the same way.
+
+- **Loopback-only tests need no exception.** The firewall filters traffic
+  arriving from other machines; traffic to `127.0.0.1` and `::1` does not
+  arrive that way. A run whose peers are all on loopback needs no rule, so the
+  prompt can be denied. Do not add a rule for a test binary.
+- **A server for players on other machines needs the exception**, for the
+  game binary that hosts it.
+- **A signed build avoids repeated prompts.** The firewall keys its rule to the
+  app's code signature. The linker gives every build an ad-hoc signature that
+  changes with the binary, so each rebuild is a new app to the firewall. A
+  build signed with a stable identity (an Apple Development or Developer ID
+  certificate, through `codesign` or the project's signing settings) keeps
+  one rule across rebuilds.
+
+```sh
+/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+codesign -dv bin/functional
+```
+
+The first prints whether the firewall is on. The second prints
+`Signature=adhoc` and `flags=0x20002(adhoc,linker-signed)` for a build from
+this checkout. These commands were run on a Mac with the firewall off, so the
+prompt and the loopback behaviour above are described from the firewall's
+documented behaviour, not observed in a run.
+
+## Debugging with lldb
+
+`lldb` ships with the Command Line Tools. Build Debug (above), then load a
+binary and set breakpoints; this works with no further setup:
+
+```sh
+lldb --batch -o "target create ./bin/example_transports" \
+  -o "breakpoint set -n rocketnet_server_create" \
+  -o "breakpoint set -n rocketnet_client_create"
+lldb --batch -o "target create ./bin/functional" \
+  -o "breakpoint set -n rocketnet_platform_socket_create_with_pump" \
+  -o "image lookup -n rocketnet_platform_socket_pump"
+```
+
+`lldb --batch` reads standard input after its commands, so from a script or an
+ssh session give it `< /dev/null`. Each `breakpoint set` resolves to a source
+line. A breakpoint on `rocketnet_platform_socket_create_with_pump` stops at
+every socket create, where the pump request is visible, and
+`rocketnet_platform_socket_pump` reports the live pump of a socket.
+
+Running or attaching under `lldb` needs developer tools access: Developer Mode
+on (`DevToolsSecurity -status` prints its state; enabling it needs an
+administrator), or a logged-in desktop session that answers the authorization
+prompt. Without it, `run` waits on that prompt; over ssh nobody can answer it.
+With access, the unit and functional suites each run one case in-process under
+the debugger, through `--run <case>` (`test/suite_runner.h`, `suite_main`):
+
+```sh
+lldb -- ./bin/functional --run test_transport_udp_loopback
+lldb -- ./bin/test --run test_time
+```
+
+The suites otherwise run each case in a child process, so a breakpoint in a
+whole-suite run is not hit. Inside `lldb`, `settings set target.env-vars ROCKETNET_CLIENT_TRANSPORT=msgx` pins a transport for that run.
+
+## Sanitizers and leaks
+
+**pending.**
+
+## Fuzzing
+
+The fuzz corpora replay on macOS without libFuzzer, as CI does on its macOS
+rows (`.github/workflows/ci.yml`, "Replay the fuzz corpora without
+libFuzzer"); `make` builds the four replay binaries:
+
+```sh
+./bin/fuzz_replay_rocketnet_fuzz fuzz/corpus/*
+./bin/fuzz_replay_rocketnet_fuzz_message fuzz/corpus_message/*
+./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
+./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
+```
+
+Each prints `replayed <n> inputs` and exits 0. Running libFuzzer on macOS:
+**pending.**
+
+## Verify a Mac
+
+Run these in order from the checkout, one at a time; each exits 0. Builds and
+suites never run two at once.
+
+```sh
+uname -s                  # Darwin
+uname -m                  # arm64
+sw_vers -productVersion
+clang --version           # Apple clang
+cmake --version
+git log --oneline -1
+
+make JOBS=4
+./bin/test
+./bin/functional
+ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
+./bin/test_msgx
+./bin/test_lifecycle
+./bin/test_driver
+./bin/example_transports
+
+for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loopback; do
+  for name in test_transport_udp_loopback test_transport_ipv6_loopback \
+              test_transport_dual_stack_ipv4_client driver_env_pin_is_honoured; do
+    ROCKETNET_SERVER_TRANSPORT=${pair%%:*} ROCKETNET_CLIENT_TRANSPORT=${pair##*:} \
+      ./bin/functional --run $name > /dev/null || echo "FAILED $pair $name"
+  done
+done
+
+cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug --parallel 4
+./bin/test
+```
+
+How to read them:
+
+- `./bin/test` prints each unit case and the ten slowest as
+  `test_timing_slowest_* [SKIPPED ...]` lines; it opens no socket. A case over
+  60 seconds prints a warning; over 120 seconds it is killed and the suite
+  fails (`test/suite_runner.h`; Debug scales the limit).
+- `./bin/functional` opens real sockets on loopback. With no pin set it prints
+  `driver_env_pin_is_honoured [SKIPPED ...]`; under the portable pin it prints
+  `driver_env_pin_is_honoured` alone, which is what CI greps for
+  (`.github/workflows/ci.yml`, "Run functional suite (portable rung pinned by
+  env)").
+- The loop is CI's macOS transport matrix, case by case; it prints nothing
+  when every cell passes.
+- `./bin/functional` under a pin other than `portable` runs cases CI does not
+  run under that pin; the four matrix cases are the per-pin claim.
+- The functional suite has timing bounds. On a heavily loaded Mac a timed case
+  such as `live_message_matrix_loopback` (10 second bound) can fail on time;
+  rerun that one case with `./bin/functional --run <case>` before reading it
+  as a defect, and report it either way.

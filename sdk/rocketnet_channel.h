@@ -88,7 +88,7 @@ struct rn_channels_t
     uint32_t delivery_capacity;       // W + Du, the region's delivery table
     uint32_t violations;              // records refused on receive this update
     uint32_t payload_capacity;        // the payload bytes a frame holds: a message is small when its record fits one (8)
-    int error;                        // sticky: ROCKETNET_MESSAGE_ERROR_NONE, or ERROR_PROTOCOL_VIOLATION after a wire violation (17.3 item 11)
+    int error;                        // sticky: ROCKETNET_DISCONNECT_REASON_NONE, or ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION after a wire violation (17.3 item 11)
     uint32_t pending;                 // the send descriptor between start and finish, or RN_DESCRIPTOR_NONE
     uint32_t pending_bytes;           // what the pending start reserved
     uint32_t pending_channel;
@@ -383,7 +383,7 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
 // field by field with this end's body. Equal: config_received is set. A
 // different field, or a version this end does not know, logs one error line
 // naming the first differing field and both values and sets the sticky error
-// ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH (rn_ordered_decide). A body layer 2
+// ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH (rn_ordered_decide). A body layer 2
 // refuses (MESSAGE_BAD_CONTROL) is a wire violation. rn_ordered_receive calls
 // it for each new control record; returns the error it set, or NONE.
 
@@ -397,7 +397,7 @@ uint32_t rn_ordered_deliveries( const struct rn_ordered_t * ordered );
 
 void rn_ordered_end_update( struct rn_ordered_t * ordered );
 
-// What to end the connection with, or ROCKETNET_MESSAGE_ERROR_NONE: the region's
+// What to end the connection with, or ROCKETNET_DISCONNECT_REASON_NONE: the region's
 // exhaustion first (tla/RNConnectionMemory.tla Kick), then a wire violation,
 // then an unacked reliable message past its timeout (6.4). The owner reads it
 // every update.

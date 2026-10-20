@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Deterministic instruction-count scenario on the in-process loopback driver:
-    one process, no sockets, no threads (step_driven = 1), no wall clock
+    one process, no sockets, no threads (step_driven = true), no wall clock
     (caller-passed time starting at 1000.0 with fixed dt = 0.01), and all
     random bytes drawn from a fixed splitmix64 seed installed before
     rocketnet_init.
@@ -166,8 +166,8 @@ void init_deterministic_runtime()
     g_rng_state = FIXED_SEED;
     g_sim_time = INITIAL_TIME;
     CHECK(randombytes_set_implementation(&g_fixed_rng) == 0);
-    CHECK(rocketnet_init(NULL));
-    rocketnet_quiet(1);
+    CHECK(rocketnet_init(NULL) == ROCKETNET_STATUS_OK);
+    rocketnet_set_quiet(1);
 }
 
 void run_client_frame(bool setup_only)
@@ -185,12 +185,12 @@ void run_client_frame(bool setup_only)
     CHECK(strcmp(rocketnet_server_transport_driver(server), "loopback") == 0);
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK(rocketnet_write_dev_connect_token("127.0.0.1:42000", 1001ULL, 2000ULL, token));
+    CHECK(rocketnet_write_dev_connect_token("127.0.0.1:42000", 1001ULL, 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config(&client_config);
     strcpy(client_config.driver, "loopback");
-    client_config.step_driven = 1;
+    client_config.step_driven = true;
     client_config.game_clock_epoch = 1000;
     client_config.time_callback = sim_time_callback;
 
@@ -306,12 +306,12 @@ void run_server_tick(bool setup_only)
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         CHECK(rocketnet_write_dev_connect_token(
-            "127.0.0.1:42001", (uint64_t)(2000 + c), 2000ULL, token));
+            "127.0.0.1:42001", (uint64_t)(2000 + c), 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK);
 
         rocketnet_client_transport_config_t client_config;
         rocketnet_client_transport_default_config(&client_config);
         strcpy(client_config.driver, "loopback");
-        client_config.step_driven = 1;
+        client_config.step_driven = true;
         client_config.game_clock_epoch = 1000;
         client_config.time_callback = sim_time_callback;
 
