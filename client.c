@@ -708,7 +708,9 @@ static void run_matrix( opts_t * o )
         cc.send_kbps = o->send_kbps;
         cc.packets_per_update = 64;     // the budget, section 2
 
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0 );
+        enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, NULL, 0, &create_status );
+        if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
             rocketnet_client_destroy( client );

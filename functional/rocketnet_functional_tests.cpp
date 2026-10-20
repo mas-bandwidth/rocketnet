@@ -3476,7 +3476,7 @@ void rocketnet_test_public_client_server_queries()
     server_config.transport = "portable";
     const uint64_t memory_bytes = rocketnet_server_required_memory( &server_config );
     rocketnet_check( memory_bytes > 0 );
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -3494,7 +3494,7 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -8452,7 +8452,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     rocketnet_server_dev_config( &server_config );
     server_config.max_clients = 2;
     server_config.transport = "portable";
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -8468,7 +8468,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -8540,7 +8540,9 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    rocketnet_check( server && create_status == ROCKETNET_STATUS_OK );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -8564,7 +8566,9 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status );
+    rocketnet_check( client && create_status == ROCKETNET_STATUS_OK );
     rocketnet_check( client );
     const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, token );
     printf( "two address token: connect status %d\n", (int) connect_status );

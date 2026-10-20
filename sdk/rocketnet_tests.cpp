@@ -7665,6 +7665,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_server_dev_config",
     "rocketnet_server_dev_config_sized",
     "rocketnet_server_create",
+    "rocketnet_server_create_sized",
     "rocketnet_server_start",
     "rocketnet_server_stop",
     "rocketnet_server_running",
@@ -7725,7 +7726,6 @@ static const char * rocketnet_test_public_null_exempt_exports[] =
     "rocketnet_server_validate_config_sized",
     "rocketnet_server_required_memory",
     "rocketnet_server_required_memory_sized",
-    "rocketnet_server_create_sized",
 };
 
 
@@ -8105,8 +8105,8 @@ void rocketnet_test_public_api_null()
                                                                                   1, 0, 1, 10, NULL, NULL,
                                                                                   ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
 
-    RN_TEST_ONE_MISUSE( rocketnet_client_default_config( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_sized( NULL, sizeof( client_config ) ) != ROCKETNET_STATUS_OK ) );
+    RN_TEST_ONE_MISUSE( (rocketnet_client_default_config_sized)( NULL, 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_client_default_config_sized)( NULL, sizeof( client_config ) ) != ROCKETNET_STATUS_OK ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_connect( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_update( NULL, 1000.0 ) == ROCKETNET_UPDATE_OK ) );
@@ -8128,10 +8128,10 @@ void rocketnet_test_public_api_null()
     for ( int i = 0; i <= ROCKETNET_CLIENT_STAT_COUNT; i++ )
         RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_stat( NULL, (enum rocketnet_client_stat_t) i ) == 0.0 ) );
 
-    RN_TEST_ONE_MISUSE( rocketnet_server_default_config( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config_sized( NULL, sizeof( server_config ) ) != ROCKETNET_STATUS_OK ) );
-    RN_TEST_ONE_MISUSE( rocketnet_server_dev_config( NULL ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_create( NULL, NULL, NULL, NULL, 0 ) == NULL ) );
+    RN_TEST_ONE_MISUSE( (rocketnet_server_default_config_sized)( NULL, 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_server_default_config_sized)( NULL, sizeof( server_config ) ) != ROCKETNET_STATUS_OK ) );
+    RN_TEST_ONE_MISUSE( (rocketnet_server_dev_config_sized)( NULL, 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( (rocketnet_server_create_sized)( NULL, NULL, NULL, 0, NULL, 0, NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_stop( NULL ) );
@@ -8166,22 +8166,22 @@ void rocketnet_test_public_api_null()
     // the exempt: NULL is the defaults, or there is no pointer
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
-    rocketnet_check( rocketnet_client_validate_config( NULL ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_client_required_memory( NULL ) > 0 );
-    rocketnet_check( rocketnet_server_validate_config( NULL ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_server_required_memory( NULL ) > 0 );
+    rocketnet_check( (rocketnet_client_validate_config_sized)( NULL, 0 ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( (rocketnet_client_required_memory_sized)( NULL, 0 ) > 0 );
+    rocketnet_check( (rocketnet_server_validate_config_sized)( NULL, 0 ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( (rocketnet_server_required_memory_sized)( NULL, 0 ) > 0 );
     rocketnet_check( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ) != NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before );
 
     // a wrong size is refused before anything else, NULL config or not
     rocketnet_client_default_config( &client_config );
     rocketnet_server_default_config( &server_config );
-    rocketnet_check( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) - 4 ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_server_default_config_sized( &server_config, sizeof( server_config ) - 4 ) != ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ) - 4, NULL, 0 ) == NULL );
-    rocketnet_check( rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) - 4, NULL, 0 ) == NULL );
-    rocketnet_check( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_server_default_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) - 4 ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( (rocketnet_server_default_config_sized)( &server_config, sizeof( server_config ) - 4 ) != ROCKETNET_STATUS_OK );
+    rocketnet_check( (rocketnet_client_create_sized)( NULL, &client_config, sizeof( client_config ) - 4, NULL, 0, NULL ) == NULL );
+    rocketnet_check( (rocketnet_server_create_sized)( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) - 4, NULL, 0, NULL ) == NULL );
+    rocketnet_check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( (rocketnet_server_default_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
 
     // the audit itself: every export is a case or exempt, exactly once
     const int num_exports = (int)( sizeof(rocketnet_test_exports) / sizeof(rocketnet_test_exports[0]) );
