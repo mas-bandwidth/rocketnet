@@ -806,6 +806,7 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     rn_message_object_close_in_place( object );
 
+    // tla/RNServerSendFair.tla Tick models this bounded cyclic pass.
     // RNSlots Send, fair rotation: start at the first connection not yet
     // offered a frame, and stop when the transport's send capacity for this
     // update is spent. The cursor names the next unserved connection, so a

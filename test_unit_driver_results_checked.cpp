@@ -70,7 +70,7 @@ static int driver_results_lie_receive( void * driver, rocketnet_address_t * from
     if ( lie->mode == 2 )
         return -1;
     if ( lie->mode == 3 )
-        return capacity + 1;
+        return 65536;
     if ( data && capacity > 0 )
         data[0] = 0x21;
     return 1;
@@ -103,6 +103,28 @@ static int driver_results_lie_receive_batch( void * driver, rocketnet_address_t 
         from[0].type = from[1].type = ROCKETNET_ADDRESS_IPV4;
         from[0].port = from[1].port = 1;
         packet_bytes[0] = -1;
+        packet_bytes[1] = 4;
+        memset( packet_data + packet_stride, 0x22, 4 );
+        return 2;
+    }
+    if ( lie->mode == 6 && max_packets >= 3 )
+    {
+        memset( from, 0, 3 * sizeof( *from ) );
+        memset( packet_data, 0xcc, (size_t) packet_stride * 3 );
+        for ( int i = 0; i < 3; i++ )
+            from[i].type = ROCKETNET_ADDRESS_IPV4;
+        packet_bytes[0] = -1;
+        packet_bytes[1] = 65535;
+        packet_bytes[2] = 4;
+        memset( packet_data + packet_stride, 0xa5, (size_t) packet_stride );
+        memset( packet_data + 2 * packet_stride, 0x22, 4 );
+        return 3;
+    }
+    if ( lie->mode == 7 && max_packets >= 2 )
+    {
+        memset( from, 0, 2 * sizeof( *from ) );
+        from[0].type = from[1].type = ROCKETNET_ADDRESS_IPV4;
+        packet_bytes[0] = 65536;
         packet_bytes[1] = 4;
         memset( packet_data + packet_stride, 0x22, 4 );
         return 2;
@@ -253,6 +275,56 @@ static void driver_results_client_batch_refuses_a_bad_byte_count()
 }
 REGISTER_UNIT_TEST( driver_results_client_batch_refuses_a_bad_byte_count );
 
+// A truncated batch slot keeps its original length. Compaction copies only
+// the stored stride prefix and leaves the following valid slot intact.
+static void driver_results_client_truncated_batch_copies_only_prefix()
+{
+    driver_results_lie_t lie = {};
+    lie.mode = 6;
+    rocketnet_client_driver_operations_t ops;
+    rocketnet_client_driver_t driver = {};
+    rocketnet_client_receive_buffer_t * buffers[2] = {};
+    driver_results_clock_t clock;
+    rocketnet_client_io_t io;
+    driver_results_open_io( &lie, &ops, &driver, &io, buffers, &clock, true );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( io.driver_faults == 1 );
+    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    rocketnet_unit_check( received != NULL );
+    rocketnet_unit_check( received->num_packets == 2 );
+    rocketnet_unit_check( received->packet_bytes[0] == 65535 );
+    for ( int i = 0; i < ROCKETNET_FRAME_SIZE; i++ )
+        rocketnet_unit_check( received->packet_data[0][i] == 0xa5 );
+    rocketnet_unit_check( received->packet_bytes[1] == 4 );
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_unit_check( received->packet_data[1][i] == 0x22 );
+    driver_results_close_io( &driver, buffers );
+    printf( "driver_results_client_truncated_batch_copies_only_prefix\n" );
+}
+REGISTER_UNIT_TEST( driver_results_client_truncated_batch_copies_only_prefix );
+
+static void driver_results_client_batch_impossible_length_is_a_fault()
+{
+    driver_results_lie_t lie = {};
+    lie.mode = 7;
+    rocketnet_client_driver_operations_t ops;
+    rocketnet_client_driver_t driver = {};
+    rocketnet_client_receive_buffer_t * buffers[2] = {};
+    driver_results_clock_t clock;
+    rocketnet_client_io_t io;
+    driver_results_open_io( &lie, &ops, &driver, &io, buffers, &clock, true );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( io.driver_faults == 1 );
+    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    rocketnet_unit_check( received != NULL );
+    rocketnet_unit_check( received->num_packets == 1 );
+    rocketnet_unit_check( received->packet_bytes[0] == 4 );
+    rocketnet_unit_check( received->packet_data[0][0] == 0x22 );
+    driver_results_close_io( &driver, buffers );
+    printf( "driver_results_client_batch_impossible_length_is_a_fault\n" );
+}
+REGISTER_UNIT_TEST( driver_results_client_batch_impossible_length_is_a_fault );
+
 // A driver open allows wait and wake both absent. A blocked idle step does
 // not call wait.
 static void driver_results_client_without_wait_skips_the_call()
@@ -330,7 +402,12 @@ static int driver_results_server_receive_batch( void * driver, rocketnet_address
     from[0].port = 9;
     if ( lie->mode == 3 )
     {
-        bytes[0] = ROCKETNET_RECEIVE_CEILING + 1;
+        bytes[0] = 65536;
+        return 1;
+    }
+    if ( lie->mode == 6 )
+    {
+        bytes[0] = 65535;
         return 1;
     }
     if ( lie->mode == 4 )
@@ -416,6 +493,35 @@ static void driver_results_server_receive_checks_counts()
     printf( "driver_results_server_receive_checks_counts\n" );
 }
 REGISTER_UNIT_TEST( driver_results_server_receive_checks_counts );
+
+static int driver_results_admission_count( void * context, const rocketnet_address_t *, const uint8_t *, int )
+{
+    ( *(int*) context )++;
+    return ROCKETNET_SERVER_ADMISSION_ADMIT;
+}
+
+static void driver_results_server_truncated_datagram_skips_admission()
+{
+    driver_results_server_lie_t lie = {};
+    rocketnet_server_driver_operations_t operations;
+    rocketnet_server_transport_t * server = driver_results_make_server( &lie, &operations );
+    int admission_calls = 0;
+    rocketnet_server_transport_set_admission_callback( server, driver_results_admission_count, &admission_calls );
+    const uint64_t before = server->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+    const uint64_t received_before = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+    lie.mode = 6;
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( server->driver_faults == 0 );
+    rocketnet_unit_check( admission_calls == 0 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == before + 1 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before + 1 );
+    lie.mode = 5;
+    lie.calls = 0;
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( admission_calls == 1 );
+    rocketnet_server_transport_destroy( server );
+}
+REGISTER_UNIT_TEST( driver_results_server_truncated_datagram_skips_admission );
 
 static void driver_results_set_ipv4( rocketnet_address_t * address, int a, int b, int c, int d, uint16_t port )
 {

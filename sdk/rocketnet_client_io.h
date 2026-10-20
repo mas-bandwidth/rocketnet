@@ -419,7 +419,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             const int got = io->driver->operations->receive_batch( io->driver->instance, from, packet_data,
                 ROCKETNET_FRAME_SIZE, packet_bytes, max_packets );
             // a count past the slots asked for, or a byte count that is
-            // negative or past the stride, is a driver fault and is not stored
+            // negative or beyond the UDP envelope, is a driver fault and is not stored
             if ( got < 0 )
             {
                 io->driver_faults++;
@@ -436,14 +436,15 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             int accepted = 0;
             for ( int i = 0; i < count; i++ )
             {
-                if ( packet_bytes[i] < 0 || packet_bytes[i] > ROCKETNET_FRAME_SIZE )
+                if ( packet_bytes[i] < 0 || packet_bytes[i] > 65535 )
                 {
                     io->driver_faults++;
                     continue;
                 }
                 if ( accepted != i )
                     memmove( packet_data + (size_t) accepted * ROCKETNET_FRAME_SIZE,
-                        packet_data + (size_t) i * ROCKETNET_FRAME_SIZE, (size_t) packet_bytes[i] );
+                        packet_data + (size_t) i * ROCKETNET_FRAME_SIZE,
+                        (size_t) ( packet_bytes[i] < ROCKETNET_FRAME_SIZE ? packet_bytes[i] : ROCKETNET_FRAME_SIZE ) );
                 (void) rocketnet_client_receive_handshake_io_receive( handshake );
                 const int index = buffer->num_packets;
                 buffer->from[index] = from[i];
@@ -469,7 +470,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 ROCKETNET_MAX_PACKET_BYTES );
             if ( bytes == 0 )
                 break;
-            if ( bytes < 0 || bytes > ROCKETNET_MAX_PACKET_BYTES )
+            if ( bytes < 0 || bytes > 65535 )
             {
                 io->driver_faults++;
                 break;
