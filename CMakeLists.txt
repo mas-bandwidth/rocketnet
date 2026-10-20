@@ -204,9 +204,9 @@ add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # installed; the production shared library must not carry the minting symbol.
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The test hook library: the same source with the unit suite's seams compiled
-# in (the filter epoch window's MAC tally, the message layer's payload copy
-# count, and the public link simulator's development switch). Only the unit
-# suite links it, so the installed rocketnet library carries no test hook.
+# in (the message layer's payload copy count, and the public link simulator's
+# development switch). Only the unit suite links it, so the installed rocketnet
+# library carries no test hook.
 set(rocketnet_test_hook_targets)
 if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
@@ -347,10 +347,9 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
     target_link_libraries(rocketnet_test_support PUBLIC rocketnet_test_hooks)
     rocketnet_use_sodium(rocketnet_test_support)
-    # The filter epoch window's MAC tally (test_unit_filter_epochs.cpp) and the
-    # message layer's payload copy count (test_unit_unreliable_in_place.cpp)
-    # exist only for the unit suite: the test binary sees the declarations, and
-    # the definitions live in rocketnet_test_hooks, never in rocketnet.
+    # The message layer's payload copy count (test_unit_unreliable_in_place.cpp)
+    # exists only for the unit suite: the test binary sees the declaration, and
+    # the definition lives in rocketnet_test_hooks, never in rocketnet.
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )

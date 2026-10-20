@@ -72,15 +72,13 @@ the owner to confirm rather than describing that backend.
   table as `tla/RNFilterEpochs.tla`: `Install(g)`, `Retire`, `Check(e)`, with
   invariants `NeverKeyedAtZero`, `AtLeastTwoLiveAfterRotation`,
   `WrapSkipsZero` and `DeadEpochRefusedWithoutMac`.
-- `rocketnet-filter-epoch-window` (waiting on both) adds
-  `struct rocketnet_filter_epochs_t` (up to 4 live generations),
-  `rocketnet_filter_epochs_install` and `rocketnet_filter_epochs_check` to
-  `sdk/rocketnet_protocol.{h,cpp}`, each citing its RNFilterEpochs action, the
-  retired magic wiped. Not wired into a receive path: that waits for this
-  design.
+- `rocketnet-filter-epoch-window` (removed in v1.0) held the receiver table of
+  up to 4 live generations, each install citing its RNFilterEpochs action and
+  the retired magic wiped. It had no production caller, so the code is gone;
+  the table stays design only.
 
-This design builds on those three and adds no second path: every keyed check
-below calls `rocketnet_filter_epochs_check`, and every keyed write calls
+This design builds on those pieces and adds no second path: every keyed check
+below calls the receiver table's check, and every keyed write calls
 `rocketnet_keyed_filter_value`.
 
 ### 1.3 Identity: what the server already has
@@ -201,15 +199,16 @@ refusal, a cold reader's probes) before anything above it starts.
 
 ### 2.1 L0: the keyed value and the receiver's generation table
 
-**Owns.** `rocketnet_keyed_filter_value` and `rocketnet_filter_epochs_t`: up to
-4 live `(epoch, magic)` pairs, newest last.
+**Owns.** `rocketnet_keyed_filter_value` and the receiver's generation table:
+up to 4 live `(epoch, magic)` pairs, newest last. The table is design only in
+v1.0; no code implements it.
 
 **Guarantees.** Epoch 0 is never keyed. A dead epoch is refused on a comparison
 with no MAC computed. At least two generations are live after the first
 rotation. Generations advance by one and wrap 255 to 1. A retired magic is wiped.
 
-**Checked by.** `tla/RNFilterEpochs.tla` and the two code cards in 1.2. This
-layer is in flight and is not redesigned here.
+**Checked by.** `tla/RNFilterEpochs.tla`. This layer is design only and is not
+redesigned here.
 
 ### 2.2 L1: how a generation reaches a server and a client
 
@@ -286,7 +285,7 @@ is sent on the server's own schedule, like a keep-alive).
 
 **The server's receive check.** With the session layer on, the prefilter step
 in `rocketnet_prefilter_check` (`sdk/rocketnet_protocol.cpp:50-70`) becomes
-`rocketnet_filter_epochs_check` against the server's live table. Epoch 0 is
+the receiver table's check against the server's live table. Epoch 0 is
 refused (STANDARD.md:536-539). The type and size rule is unchanged.
 
 **The client's send.** The client writes its header with the epoch it was most
@@ -345,7 +344,7 @@ extraction the owner confirms in QUESTION 2.
 userspace on install and retire, and SipHash-2-4 over the 7-byte input in the
 XDP program, verifier-clean.
 
-**Guarantees.** The kernel rejects exactly what `rocketnet_filter_epochs_check`
+**Guarantees.** The kernel rejects exactly what the userspace keyed check
 rejects, never more: a generation is in the kernel map no later than in the
 userspace table and leaves it no earlier. The same per-title generator emits
 the constant, the userspace keyed reader and the BPF reader, so they cannot
@@ -354,7 +353,7 @@ drift (`sdk/rocketnet_wire.h:13-17` is the existing form of that promise).
 **Checked by.** Host tier rows in `test_unit_xdp_filter_host.cpp` (keyed live,
 keyed dead epoch, keyed wrong value, epoch 0 under keyed), the kernel tier
 replaying the same rows, and a differential case: one corpus through both the
-BPF reader and `rocketnet_filter_epochs_check`, every verdict equal.
+BPF reader and the userspace keyed reader, every verdict equal.
 
 ### 2.6 L5: replay protection in the kernel
 
@@ -596,7 +595,7 @@ dependencies only. W-numbers are the owner approvals a card waits for.
    token reading as epoch 0.
 5. `rocketnet-server-keyed-receive` (pro; after 0c, 2). `sdk/rocketnet_protocol.{h,cpp}`,
    `sdk/rocketnet_server_protocol.cpp`, a new test file: the server prefilter
-   calls `rocketnet_filter_epochs_check` when keyed, refuses epoch 0. Test
+   calls the receiver table's check when keyed, refuses epoch 0. Test
    `server_keyed_receive_refusals`.
 6. `rocketnet-server-install-generation` (pro; after 3, 5).
    `sdk/rocketnet.h`, `tools/exports.txt`, `sdk/rocketnet_server_transport.cpp`,
@@ -625,7 +624,7 @@ dependencies only. W-numbers are the owner approvals a card waits for.
     `sdk/rocketnet_wire.h`, `test_unit_xdp_filter_host.cpp`: the magic map and
     SipHash in BPF, verifier-clean. Test the four keyed host rows.
 13. `rocketnet-xdp-keyed-differential` (pro; after 12). One corpus through
-    the BPF reader and `rocketnet_filter_epochs_check`, every verdict equal.
+    the BPF reader and the userspace keyed reader, every verdict equal.
 14. `rocketnet-per-title-generator-keyed` (pro; after 12). The generator emits
     the keyed reader beside the constant; scope per QUESTION 9.
 
