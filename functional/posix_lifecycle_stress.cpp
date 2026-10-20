@@ -1175,20 +1175,21 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
     macOS cells (posix_cells). Seconds per run:
 
         case                                 r1    r2    r3    r4    r5
-        posix_init_term_1000                 11    11    10    8     10
+        posix_init_term_1000                 12    11    10    8     8
         posix_server_create_destroy_1000     owed: a run takes about 150 s
-        posix_client_create_destroy_1000     28    28    27    25    24 FAIL
-        posix_server_restart_same_port_100   20    21    20    19    24
-        posix_connect_disconnect_1000        52    51    50    51    55
-        posix_destroy_under_traffic_100      74    81    78    75    75
+        posix_client_create_destroy_1000     29    28    27    26    27
+        posix_server_restart_same_port_100   23    22    22    20    20
+        posix_connect_disconnect_1000        52    54    52    51    50
+        posix_destroy_under_traffic_100      77    76    78    78    78
 
-    Every cell of every run printed fds 4 -> 4 and threads 1 -> 1 except one:
-    run 5 of posix_client_create_destroy_1000, [server msgx forced portable,
-    client msgx], printed threads 1 -> 5 (fds 4 -> 4) and failed in
-    posix_case_result, with the host's load average near 15. Twelve more
-    runs of that case over the msgx server cells
-    (ROCKETNET_POSIX_LIFECYCLE_CELLS=msgx) passed with flat counts. The
-    four extra threads are not explained yet.
+    Every cell of every run printed fds 4 -> 4 and threads 1 -> 1. One
+    earlier run of posix_client_create_destroy_1000 on the same host, a tree
+    whose only difference in this file was this record, printed threads
+    1 -> 5 (fds 4 -> 4) in [server msgx forced portable, client msgx] and
+    failed in posix_case_result, with the host's load average near 15.
+    Twelve runs of that case over the msgx server cells
+    (ROCKETNET_POSIX_LIFECYCLE_CELLS=msgx) right after it passed with flat
+    counts. The four extra threads are not explained yet.
 
     The red proof, each a scratch build that is not kept, each run as
     ./bin/functional --run posix_client_create_destroy_1000 and failing at
