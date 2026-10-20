@@ -222,6 +222,7 @@ struct rocketnet_server_transport_t
     int driver;
 
     rocketnet_server_driver_t io;
+    uint64_t driver_faults;                     // a receive count or byte count this update refused
 
     // the kernel replay marks: allocated only when the granted driver reports
     // the replay capability, written from the update walk and committed to the
@@ -1845,11 +1846,29 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                                                         receive_buffer->packet_bytes,
                                                                         batch_capacity );
 
+        // a count past the slots asked for, or a byte count that is negative
+        // or past the stride, is a driver fault and is not a received packet
+        if ( num_received < 0 )
+        {
+            server_transport->driver_faults++;
+            num_received = 0;
+        }
+        else if ( num_received > batch_capacity )
+        {
+            server_transport->driver_faults++;
+            num_received = batch_capacity;
+        }
+
         for ( int i = 0; i < num_received; i++ )
         {
             struct rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
             const int packet_bytes = receive_buffer->packet_bytes[i];
+            if ( packet_bytes < 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            {
+                server_transport->driver_faults++;
+                continue;
+            }
 
             server_transport->stats_frames[stats_index].packets_received++;
             server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( from.type ) );

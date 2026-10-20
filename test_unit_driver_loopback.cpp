@@ -584,3 +584,5 @@ REGISTER_UNIT_TEST( driver_loopback_destroy_frees_the_port );
 REGISTER_UNIT_TEST( driver_loopback_holds_max_clients_plus_server );
 REGISTER_UNIT_TEST( driver_loopback_refuses_past_max_endpoints );
 REGISTER_UNIT_TEST( wire_totals_staged_finish_counts_exactly );
+
+#include "test_unit_driver_results_checked.cpp"
