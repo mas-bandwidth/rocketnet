@@ -937,7 +937,7 @@ base types only by a flag on that descriptor:
 | Type | ACKED when | LOSS when |
 |---|---|---|
 | 6, 7 | every number the message took is acked. A block waits for all of its fragments, not for the last index as RakNet does (study §7.3, item 5). | never. The connection dies instead (study §7.3). |
-| 5, single packet | the `packet_id` of the RECORDS packet that carried it is acked | its sent-map entry is evicted, or reaches `send_time + rto` without an ack. A sweep cursor walks the sent ring in send order, fires LOSS for each expired entry's unreliable receipts and clears them. It costs O(expired). The entry itself stays, so its reliable references still match a late ack. |
+| 5, single packet | the `packet_id` of the RECORDS packet that carried it is acked | its sent-map entry is evicted, or reaches `send_time +` the adaptive RTO (the larger of the unclamped RTO and the clamped resend rto, or `ROCKETNET_RECEIPT_RTO_UNKNOWN_MS` until the first rtt sample) without an ack (`rn_window_ack_receipt_loss_delay`). A sweep cursor walks the sent ring in send order, fires LOSS for each expired entry's unreliable receipts and clears them. It costs O(expired). The entry itself stays, so its reliable references still match a late ack. |
 | 5, larger than a packet | promoted to a reliable code-2 block, as RakNet sends type 5 as 6, so ACKED only | never |
 
 Receipts go into the connection's receipt ring of `Rq` entries and then into

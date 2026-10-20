@@ -1225,7 +1225,7 @@ double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint )
         const rn_sent_packet_t * entry = &region->sent_packets[sweep % region->packets];
         if ( entry->packet_id == 0 )
             continue;
-        const double loss = entry->send_time + ack->rto;
+        const double loss = entry->send_time + rn_window_ack_receipt_loss_delay( ack );
         if ( loss < deadline )
             deadline = loss;
         break;

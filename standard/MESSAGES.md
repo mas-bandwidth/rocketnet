@@ -2959,8 +2959,13 @@ promotion defined here and in [m2 Payload forms and sender size rules](#m2).
 3. A type-6 or type-7 receipt reports ACKED when all reliable numbers for its
    send are acknowledged. A type-5 send that remains unreliable reports ACKED
    when its carrying packet is acknowledged and LOSS when it is lost, refused
-   by the send budget, or expires without an acknowledgement. These outcomes
-   are API semantics and are not carried on the wire.
+   by the send budget, or expires without an acknowledgement. The packet
+    expires at its send time plus the adaptive RTO, the larger of the sender's
+    unclamped RTO and its clamped resend RTO, and
+    `ROCKETNET_RECEIPT_RTO_UNKNOWN_MS` until the first RTT sample. An
+    acknowledgement that arrives after the resend RTO and before that expiry
+    reports ACKED. These outcomes are API semantics and are not carried on the
+    wire.
 
 ```vector m12.promotion
 public type: 5 (unreliable with ack receipt)
