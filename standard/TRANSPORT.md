@@ -3623,10 +3623,7 @@ an input ([t1.4 Conventions](#t1.4)).
     The RTO is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
     configured maximum (2 seconds by default) and raised to the configured
     minimum (0 by default). A nonzero minimum is an implementation option.
-    The sender MUST NOT back off the RTO after retransmission. These estimator
-    and RTO values match RakNet's CCRakNetSlidingWindow.cpp:210-222, 288-314;
-    its 100 ms minimum in CCRakNetSlidingWindow.h:151-154 is commented out
-    by the code at CCRakNetSlidingWindow.cpp:294, 298.
+    The sender MUST NOT back off the RTO after retransmission.
 11. A server SHOULD enforce the handshake work budget after the cookie of a
     connection request validates and before any asymmetric operation. When it
     does, a request past the budget MUST be refused with no reply and counted

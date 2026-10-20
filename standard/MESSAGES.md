@@ -2573,10 +2573,7 @@ the smoothed RTT MUST then move 5 percent toward the new sample. The retransmiss
 where srtt and deviation are in seconds. The timeout MUST be 2 seconds before
 the first sample by default. The minimum defaults to 0, which applies no floor
 and matches RakNet; a caller may configure a nonzero minimum. The maximum
-defaults to 2 seconds. The source behavior is documented in
-docs/RAKNET-RELIABILITY.md:667-668, 686-695, with RakNet source
-CCRakNetSlidingWindow.cpp:210-222, 288-314. RakNet's commented 100 ms
-minimum is not active (CCRakNetSlidingWindow.cpp:294, 298). The timeout MUST
+defaults to 2 seconds. The timeout MUST
 NOT back off after a resend: every pass uses the same function of the
 estimates, so a record that is never acknowledged is resent at that delay
 until the reliable timeout ends the connection.
