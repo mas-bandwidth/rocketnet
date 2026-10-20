@@ -16,6 +16,10 @@
 //     a message's bytes, planted through the public API, are gone from the
 //     block when rocketnet_client_destroy and rocketnet_server_destroy return
 //     or free it (sdk/rocketnet_api.cpp).
+//   - a message arena at its destroy, owned or in a caller's block: the
+//     planted bytes in a region are gone (sdk/rocketnet_allocator.cpp,
+//     rn_arena_destroy). This is the message layer's own destroy, beneath
+//     the public objects' wipe.
 //   - the base64 staging of a BYTES config field parsed from the environment,
 //     on the parse and the refused exit (sdk/rocketnet_config.cpp, the
 //     ROCKETNET_CONFIG_KIND_BYTES case of rocketnet_config_apply_env).
@@ -32,6 +36,8 @@
 #include "sdk/rocketnet_internal.h"
 #include "sdk/rocketnet_config.h"
 #include "sdk/rocketnet_base64.h"
+#include "sdk/rocketnet_allocator.h"
+#include "sdk/rocketnet_counters.h"
 #include "sdk/rocketnet_client_protocol.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_protocol.h"
@@ -431,8 +437,74 @@ static void secrets_wiped_destroy_caller_blocks()
     check( server_pattern == 0 );
 }
 
+// the planted message in the first region's receive ring
+static void secrets_wiped_plant_in_arena( rn_arena_t * arena )
+{
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    check( region != NULL );
+    check( region->ring_bytes >= SECRETS_WIPED_MESSAGE_BYTES );
+    secrets_wiped_message( region->receive_ring );
+}
+
+// An owned arena: the counting allocator sees its block freed, and the block
+// no longer holds the planted message.
+static void secrets_wiped_arena_destroy_owned()
+{
+    rocketnet_term();
+    check( rocketnet_set_allocator( secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    std::map<void *, size_t> sizes;
+    secrets_wiped_sizes = &sizes;
+
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    rn_arena_t * arena = rn_arena_create( NULL, NULL, 2, &counters );
+    check( arena != NULL );
+    secrets_wiped_plant_in_arena( arena );
+    secrets_wiped_watched[0] = arena;
+    secrets_wiped_watched_frees = 0;
+    secrets_wiped_watched_pattern = 0;
+    rn_arena_destroy( arena );
+
+    const int watched_frees = secrets_wiped_watched_frees;
+    const int watched_pattern = secrets_wiped_watched_pattern;
+    secrets_wiped_watched[0] = NULL;
+    secrets_wiped_sizes = NULL;
+    rocketnet_term();
+    check( rocketnet_set_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+
+    check( watched_frees == 1 );
+    check( watched_pattern == 0 );
+}
+
+// An arena in a caller's block: destroy gives the block back without the
+// planted message.
+static void secrets_wiped_arena_destroy_in_block()
+{
+    const uint64_t bytes = rn_arena_required_bytes( NULL, 2 );
+    check( bytes > 0 );
+    uint8_t * raw = (uint8_t *) malloc( (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
+    check( raw != NULL );
+    uint8_t * block = secrets_wiped_aligned( raw );
+
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    rn_arena_t * arena = rn_arena_create_in_block( block, bytes, NULL, 2, &counters );
+    check( arena != NULL );
+    secrets_wiped_plant_in_arena( arena );
+    check( secrets_wiped_pattern_count( block, (size_t) bytes ) == 1 );
+    rn_arena_destroy( arena );
+
+    const int pattern = secrets_wiped_pattern_count( block, (size_t) bytes );
+    free( raw );
+    check( pattern == 0 );
+}
+
 REGISTER_UNIT_TEST( secrets_wiped_destroy_owned_blocks );
 REGISTER_UNIT_TEST( secrets_wiped_destroy_caller_blocks );
+REGISTER_UNIT_TEST( secrets_wiped_arena_destroy_owned );
+REGISTER_UNIT_TEST( secrets_wiped_arena_destroy_in_block );
 
 #if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
 
