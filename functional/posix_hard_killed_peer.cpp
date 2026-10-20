@@ -195,10 +195,10 @@ static void posix_hk_live_init( posix_hk_live_t & live, struct rocketnet_client_
     live.slot = -1;
 }
 
-// one server update interval of traffic: every connected live client sends
-// one payload up and drains, the server drains and sends one payload down to
-// every connected slot (a dead one included, until it times out). gaps are
-// measured only while measure is set.
+// one server update interval of traffic: every live client drains, the
+// server drains and sends one payload down to every connected slot (a dead
+// one included, until it times out), then every connected live client sends
+// one payload up. gaps are measured only while measure is set.
 
 static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live, bool measure, uint64_t * sent_to_slot_total )
 {
@@ -219,17 +219,6 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
             if ( measure && live[i].last_down > 0.0 && now - live[i].last_down > live[i].max_gap_down )
                 live[i].max_gap_down = now - live[i].last_down;
             live[i].last_down = now;
-        }
-        if ( rocketnet_client_transport_state( live[i].client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-        {
-            memset( payload, 0, sizeof(payload) );
-            payload[0] = 0x0U;
-            payload[1] = (uint8_t) i;
-            rocketnet_client_transport_send_packet( live[i].client, payload, (int) sizeof(payload) );
-            rocketnet_client_transport_send_packets( live[i].client );
-            live[i].sent_up++;
-            if ( live[i].slot < 0 )
-                live[i].slot = rocketnet_client_transport_client_index( live[i].client );
         }
     }
 
@@ -273,6 +262,28 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
                 live[i].sent_down++;
     }
     rocketnet_server_transport_send_packets( server );
+
+    // the live clients send up last, so each payload has the rest of the tick
+    // to reach the server's receive thread before the next
+    // rocketnet_server_transport_update takes it, as the server's payloads
+    // down have before the next client update. sent just ahead of the
+    // server's update, a payload the receive thread had not yet read waited a
+    // second update, a gap of two intervals with no receive at fault.
+
+    for ( size_t i = 0; i < live.size(); i++ )
+    {
+        if ( rocketnet_client_transport_state( live[i].client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
+            memset( payload, 0, sizeof(payload) );
+            payload[0] = 0x0U;
+            payload[1] = (uint8_t) i;
+            rocketnet_client_transport_send_packet( live[i].client, payload, (int) sizeof(payload) );
+            rocketnet_client_transport_send_packets( live[i].client );
+            live[i].sent_up++;
+            if ( live[i].slot < 0 )
+                live[i].slot = rocketnet_client_transport_client_index( live[i].client );
+        }
+    }
 
     // a gap still open counts too: a receive that stopped outright is the
     // longest gap of all, not an absent one
