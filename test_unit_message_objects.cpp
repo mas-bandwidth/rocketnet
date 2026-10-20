@@ -567,6 +567,74 @@ static void message_send_refused_counts_bad_arguments()
 // test_unit_unreliable_in_place.cpp's.
 // ---------------------------------------------------------------------------
 
+// A client start before its transport is CONNECTED is dropped and counted
+// once in MESSAGE_SEND_NOT_CONNECTED (standard/MESSAGES.md m1.5,
+// tla/ClientSession.tla DropSend): NULL, never queued, never a fallback, and
+// nothing of it arrives once the transport connects.
+static void message_client_start_dropped_before_transport_connected()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    mo_pair_t pair;
+    memset( &pair, 0, sizeof( pair ) );
+    pair.net = mo_net_new();
+    pair.num_clients = 1;
+    pair.server = mo_server_create( pair.net, &config, MO_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
+    pair.clients[0] = mo_client_create( pair.net, 0, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS );
+    check( pair.server && pair.clients[0] );
+    pair.time = MO_T0;
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.clients[0] );
+
+    const int modes[] = { ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_RELIABLE };
+    const int num_modes = (int) ( sizeof( modes ) / sizeof( modes[0] ) );
+    for ( int i = 0; i < num_modes; i++ )
+    {
+        const uint64_t before = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
+        uint8_t * p = rocketnet_message_client_start( pair.clients[0], 0, modes[i], 100 );
+        check( p == NULL );
+        if ( p )
+            mo_fill( p, 900 + (uint32_t) i, 100 );
+        check( rocketnet_message_client_finish( pair.clients[0], 100 ) == 0 );
+        check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == before + 1 );
+    }
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == (uint64_t) num_modes );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == 0 );
+    check( pair.net->clients[0]->finishes == 0 );
+
+    // the transport connects: nothing of the dropped sends arrives, and the
+    // first send after CONNECTED does
+    mo_net_connect( pair.net, 0 );
+    std::vector<mo_received_t> server_got;
+    for ( int i = 0; i < 20; i++ )
+        mo_step( &pair, &server_got, NULL );
+    check( server_got.empty() );
+    uint8_t * p = rocketnet_message_client_start( pair.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+    check( p != NULL );
+    if ( p )
+    {
+        mo_fill( p, 7, 100 );
+        check( rocketnet_message_client_finish( pair.clients[0], 100 ) != 0 );
+    }
+    for ( int i = 0; i < 20; i++ )
+        mo_step( &pair, &server_got, NULL );
+    check( server_got.size() == 1 );
+    uint32_t id = 0;
+    check( server_got.size() == 1 && mo_verify( server_got[0].bytes, &id ) && id == 7 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == (uint64_t) num_modes );
+
+    // a server slot with no connection: the same drop, on the server's counters
+    const rocketnet_counters_t * server_counters = rocketnet_message_server_counters( pair.server );
+    const uint64_t server_before = mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
+    const uint64_t refused_before = mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    check( rocketnet_message_server_start( pair.server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 10 ) == NULL );
+    check( rocketnet_message_server_finish( pair.server, 1, 10 ) == 0 );
+    check( mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == server_before + 1 );
+    check( mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused_before );
+    mo_pair_teardown( &pair );
+}
+REGISTER_UNIT_TEST( message_client_start_dropped_before_transport_connected );
+
 static const uint8_t * mo_find( const uint8_t * haystack, int haystack_bytes, const uint8_t * needle, int needle_bytes )
 {
     for ( int i = 0; i + needle_bytes <= haystack_bytes; i++ )
@@ -744,7 +812,7 @@ static void release_returns_room()
 
     // update with a held view: the named error, the assert in a debug build,
     // and the views are taken back so nothing grows
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( mo_assert_hook );
     mo_asserts = 0;
 
@@ -1798,7 +1866,7 @@ static void rnslots_witness_replays()
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, 0, 0, &data, &bytes ) == 1 );
-        void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+        void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
         rocketnet_set_assert_callback( mo_assert_hook );
         mo_asserts = 0;
         pair.time += 0.01;

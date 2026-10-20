@@ -12,11 +12,24 @@
     queue; traffic for any other port passes untouched.
 
     Both address families take the same checks in the same order: IPv4, and
-    IPv6 with UDP directly after the fixed header. An IPv6 frame whose next
-    header is an extension header (hop-by-hop, routing, fragment,
-    destination options, AH, ESP) passes to the kernel stack and is counted,
-    never parsed and never dropped; every other IPv6 next header, ICMPv6
-    and its neighbor discovery above all, passes untouched.
+    IPv6 with UDP directly after the fixed header. RocketNet assumes a
+    1500-byte MTU path and never sends a datagram the network must
+    fragment, so an IP fragment for this server is hostile or misconfigured.
+    The first fragment (IPv4 with more-fragments set and offset 0, IPv6 with
+    a fragment header at offset 0 with more-fragments set, either carrying
+    the UDP header) of a datagram to the configured address and port drops
+    and is counted in DROPPED_FIRST_FRAGMENT: without it the kernel can
+    never reassemble the datagram, and drops the rest at its reassembly
+    timeout. Every other fragment (a non-first fragment to any port, a first
+    fragment to another port or address, to an unconfigured server, or whose
+    UDP header is not in the frame) passes to the kernel stack and is
+    counted in PASSED_FRAGMENT, so other services' fragmented traffic is
+    untouched. Both checks run before any size, epoch, filter or replay
+    check, so a fragment never counts as any other drop. An IPv6 frame whose next header is any
+    other extension header (hop-by-hop, routing, destination options, AH,
+    ESP) passes to the kernel stack and is counted, never parsed and never
+    dropped; every other IPv6 next header, ICMPv6 and its neighbor discovery
+    above all, passes untouched.
 
     USAGE:
 
@@ -110,6 +123,64 @@ static __always_inline int server_xdp_is_ipv6_extension( __u8 next_header )
            next_header == IPPROTO_DSTOPTS  ||
            next_header == IPPROTO_AH       ||
            next_header == IPPROTO_ESP;
+}
+
+// The IPv6 fragment header (RFC 8200 section 4.5): next header, reserved,
+// the fragment offset in 8-byte units shifted left 3 with the more-fragments
+// flag in bit 0 (two reserved bits between), and the identification. The
+// kernel's struct frag_hdr is not in a uapi header, so it is defined here.
+
+struct server_xdp_ipv6_fragment_header_t
+{
+    __u8 next_header;
+    __u8 reserved;
+    __be16 offset_flags;
+    __be32 identification;
+};
+
+// The configuration, or NULL when there is none or it names no port: an
+// unconfigured program passes everything.
+
+static __always_inline struct rocketnet_server_xdp_config_t * server_xdp_config()
+{
+    int key = 0;
+    struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
+    if ( config == NULL || config->public_port == 0 )
+    {
+        debug_printf( "server_xdp is not configured" );
+        return NULL;
+    }
+    return config;
+}
+
+static __always_inline int server_xdp_ipv4_address_match( const struct rocketnet_server_xdp_config_t * config, const struct iphdr * ip )
+{
+    return config->public_address == 0 || ip->daddr == config->public_address;
+}
+
+// the destination as four fixed-offset words; all zero accepts any
+
+static __always_inline int server_xdp_ipv6_address_match( const struct rocketnet_server_xdp_config_t * config, const struct ipv6hdr * ip6 )
+{
+    const __u32 * want = (const __u32*) config->public_address_ipv6;
+
+    return ( want[0] | want[1] | want[2] | want[3] ) == 0 ||
+           ( ip6->daddr.in6_u.u6_addr32[0] == want[0] &&
+             ip6->daddr.in6_u.u6_addr32[1] == want[1] &&
+             ip6->daddr.in6_u.u6_addr32[2] == want[2] &&
+             ip6->daddr.in6_u.u6_addr32[3] == want[3] );
+}
+
+// A first fragment whose UDP header is in the frame: is it addressed to
+// this server? The caller has checked that it is a first fragment of a UDP
+// datagram; this checks the UDP header fits, the program is configured, and
+// the destination port and address are this server's.
+
+static __always_inline int server_xdp_first_fragment_is_ours( struct udphdr * udp, void * data_end, const struct rocketnet_server_xdp_config_t * config, int address_match )
+{
+    if ( (void*)udp + sizeof(struct udphdr) > data_end )
+        return 0;
+    return config != NULL && udp->dest == config->public_port && address_match;
 }
 
 // Everything after the IP header is one function for both families, so the
@@ -260,23 +331,43 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                 return XDP_DROP;
             }
 
+            // a fragment (more-fragments set or a nonzero offset): only the
+            // first carries the UDP header, and none is a whole datagram. The
+            // first fragment of a datagram to this server drops, so the
+            // kernel can never reassemble it; every other fragment is the
+            // kernel's to reassemble
+
+            if ( ip->frag_off & __constant_htons( 0x3fff ) )
+            {
+                if ( ( ip->frag_off & __constant_htons( 0x3fff ) ) == __constant_htons( 0x2000 ) &&
+                     ip->ihl == 5 && ip->protocol == IPPROTO_UDP )
+                {
+                    struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
+                    const struct rocketnet_server_xdp_config_t * config = server_xdp_config();
+                    if ( config != NULL && server_xdp_first_fragment_is_ours( udp, data_end, config, server_xdp_ipv4_address_match( config, ip ) ) )
+                    {
+                        debug_printf( "ipv4 first fragment to this server" );
+                        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
+                        return XDP_DROP;
+                    }
+                }
+
+                debug_printf( "ipv4 fragment" );
+                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+                return XDP_PASS;
+            }
+
             if ( ip->ihl == 5 && ip->protocol == IPPROTO_UDP ) // UDP only
             {
                 struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
 
                 if ( (void*)udp + sizeof(struct udphdr) <= data_end )
                 {
-                    int key = 0;
-                    struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
-                    if ( config == NULL || config->public_port == 0 )
-                    {
-                        debug_printf( "server_xdp is not configured" );
+                    struct rocketnet_server_xdp_config_t * config = server_xdp_config();
+                    if ( config == NULL )
                         return XDP_PASS;
-                    }
 
-                    const int address_match = config->public_address == 0 || ip->daddr == config->public_address;
-
-                    return server_xdp_udp( ctx, udp, data_end, config, address_match, 4, &ip->saddr );
+                    return server_xdp_udp( ctx, udp, data_end, config, server_xdp_ipv4_address_match( config, ip ), 4, &ip->saddr );
                 }
             }
         }
@@ -296,26 +387,50 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
                 if ( (void*)udp + sizeof(struct udphdr) <= data_end )
                 {
-                    int key = 0;
-                    struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
-                    if ( config == NULL || config->public_port == 0 )
-                    {
-                        debug_printf( "server_xdp is not configured" );
+                    struct rocketnet_server_xdp_config_t * config = server_xdp_config();
+                    if ( config == NULL )
                         return XDP_PASS;
-                    }
 
-                    // the destination as four fixed-offset words; all zero accepts any
-
-                    const __u32 * want = (const __u32*) config->public_address_ipv6;
-
-                    const int address_match = ( want[0] | want[1] | want[2] | want[3] ) == 0 ||
-                                              ( ip6->daddr.in6_u.u6_addr32[0] == want[0] &&
-                                                ip6->daddr.in6_u.u6_addr32[1] == want[1] &&
-                                                ip6->daddr.in6_u.u6_addr32[2] == want[2] &&
-                                                ip6->daddr.in6_u.u6_addr32[3] == want[3] );
-
-                    return server_xdp_udp( ctx, udp, data_end, config, address_match, 6, &ip6->saddr );
+                    return server_xdp_udp( ctx, udp, data_end, config, server_xdp_ipv6_address_match( config, ip6 ), 6, &ip6->saddr );
                 }
+            }
+            else if ( ip6->nexthdr == IPPROTO_FRAGMENT )
+            {
+                // a fragment, judged as the IPv4 fragments are: the first
+                // fragment (offset 0, more-fragments set, UDP behind it) of
+                // a datagram to this server drops; every other fragment is
+                // the kernel's to reassemble
+
+                // the header starts 54 bytes into the frame (the Ethernet
+                // and fixed IPv6 headers), not a multiple of the struct's
+                // 4-byte alignment, so it is copied through a byte pointer
+                // into a local after the bounds check rather than read
+                // through a struct pointer
+
+                __u8 * fragment = (void*) ip6 + sizeof(struct ipv6hdr);
+
+                if ( (void*)fragment + sizeof(struct server_xdp_ipv6_fragment_header_t) <= data_end )
+                {
+                    struct server_xdp_ipv6_fragment_header_t header;
+                    __builtin_memcpy( &header, fragment, sizeof(header) );
+
+                    if ( header.next_header == IPPROTO_UDP &&
+                         ( header.offset_flags & __constant_htons( 0xfff9 ) ) == __constant_htons( 0x0001 ) )
+                    {
+                        struct udphdr * udp = (void*) fragment + sizeof(struct server_xdp_ipv6_fragment_header_t);
+                        const struct rocketnet_server_xdp_config_t * config = server_xdp_config();
+                        if ( config != NULL && server_xdp_first_fragment_is_ours( udp, data_end, config, server_xdp_ipv6_address_match( config, ip6 ) ) )
+                        {
+                            debug_printf( "ipv6 first fragment to this server" );
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
+                            return XDP_DROP;
+                        }
+                    }
+                }
+
+                debug_printf( "ipv6 fragment" );
+                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT );
+                return XDP_PASS;
             }
             else if ( server_xdp_is_ipv6_extension( ip6->nexthdr ) )
             {
