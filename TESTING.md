@@ -8,27 +8,27 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | test | Windows | macOS | Linux |
 |---|:---:|:---:|:---:|
-| Unit suite (./bin/test) | ✅ | ✅ | ✅ |
-| Functional suite (./bin/functional) | ✅ | ✅ | ✅ |
-| Functional suite repeated, zero flakes | OWED | OWED | OWED |
-| Transport matrix, every cell fifty times | OWED | OWED | OWED |
-| Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows) | ✅ | PLANNED | OWED |
-| Leaks (LSan, the leaks tool, App Verifier's leak layer) | ✅ | PLANNED | OWED |
-| libFuzzer (corpus replay and fuzz runs; clang-cl on Windows) | PLANNED | ✅ | ✅ |
+| Unit suite (./bin/test) | ❌ | ❌ | ✅ |
+| Functional suite (./bin/functional) | ❌ | ❌ | ❌ |
+| Functional suite repeated, zero flakes | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
+| Transport matrix, every cell fifty times | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
+| Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows) | ✅ | planned for the final deliverable | planned for the final deliverable |
+| Leaks (LSan, the leaks tool, App Verifier's leak layer) | ✅ | planned for the final deliverable | planned for the final deliverable |
+| libFuzzer (corpus replay and fuzz runs; clang-cl on Windows) | planned for the final deliverable | ✅ | ✅ |
 | Toolchain matrix (MSVC, clang-cl and ARM64 on Windows; Xcode universal arm64 and x86_64 on macOS; gcc and clang on Linux) | ✅ | ✅ | ✅ |
-| Lifecycle stress (init/term, create/destroy, restart, destroy under traffic) | PLANNED | ✅ | ✅ |
-| Hard-killed peer never stalls receive | PLANNED | ✅ | PLANNED |
-| Socket error paths (oversize, runt, garbage, zero-length, failed sends) | PLANNED | ✅ | ✅ |
+| Lifecycle stress (init/term, create/destroy, restart, destroy under traffic) | planned for the final deliverable | ✅ | ✅ |
+| Hard-killed peer never stalls receive | planned for the final deliverable | ✅ | planned for the final deliverable |
+| Socket error paths (oversize, runt, garbage, zero-length, failed sends) | planned for the final deliverable | ✅ | ✅ |
 | Network thread priority | ✅ | ✅ | ✅ |
 | Examples (run_examples.py) | ❌ | ❌ | ❌ |
 | Example soak (example_soak) | ❌ | ❌ | ❌ |
-| 1000 clients, load harness | OWED | OWED | ✅ |
-| 1000 light clients (10 Hz, 1 packet per update) | OWED | OWED | OWED |
-| Soak (30 minutes per transport under impairment) | OWED | ✅ | OWED |
-| Main API calls under 0.1 ms each, Release, under load | PLANNED | PLANNED | PLANNED |
-| Nightlies (every nightly job's steps green on this branch) | PLANNED | OWED | OWED |
-| CI (ci.yml, every step green on this branch) | PLANNED | PLANNED | PLANNED |
-| complete | 30% | 45% | 40% |
+| 1000 clients, load harness | planned for the final deliverable | planned for the final deliverable | ✅ |
+| 1000 light clients (10 Hz, 1 packet per update) | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
+| Soak (30 minutes per transport under impairment) | planned for the final deliverable | ✅ | planned for the final deliverable |
+| Main API calls under 0.1 ms each, Release, under load | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
+| Nightlies (every nightly job's steps green on this branch) | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
+| CI (ci.yml, every step green on this branch) | ❌ | ❌ | ❌ |
+| complete | 20% | 35% | 35% |
 
 ## Platform-specific tests
 
@@ -36,13 +36,13 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | test | platform | status |
 |---|:---:|:---:|
-| UDP connection reset (SIO_UDP_CONNRESET) never stalls receive | Windows | PLANNED |
+| UDP connection reset (SIO_UDP_CONNRESET) never stalls receive | Windows | ❌ |
 | Application Verifier | Windows | ✅ |
 | App Nap and timer coalescing keep client timing | macOS | ✅ |
-| MemorySanitizer (msan.yml) | Linux | PLANNED |
-| Big-endian system build and suites | Linux | PLANNED |
-| Live XDP fleet test (the XDP server on space, a client on every fleet machine) | Linux | PLANNED |
-| complete | 2 of 6 | 33% |
+| MemorySanitizer (msan.yml) | Linux | ✅ |
+| Big-endian system build and suites | Linux | planned for the final deliverable |
+| Live XDP test (an XDP server, a client on every test machine) | Linux | planned for the final deliverable |
+| complete | 3 of 6 | 50% |
 
 ## Tests per transport
 
@@ -50,8 +50,8 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | test | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned) | ✅ | PLANNED | ✅ | ✅ | PLANNED | PLANNED | PLANNED | PLANNED |
-| Every matrix cell fifty times, zero flakes | OWED | OWED | OWED | OWED | OWED | OWED | OWED | OWED |
+| Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned) | ✅ | planned for the final deliverable | ✅ | ✅ | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
+| Every matrix cell fifty times, zero flakes | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | complete | 50% | 0% | 50% | 50% | 0% | 0% | 0% | 0% |
 
 ## Transport-specific tests
@@ -64,63 +64,63 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Functional suite on each server transport | msgx | ✅ |
 | Functional suite on each server transport | gso | ✅ |
 | Functional suite on each server transport | io_uring | ✅ |
-| Functional suite on each server transport | portable | PLANNED |
+| Functional suite on each server transport | portable | planned for the final deliverable |
 | Functional suite on each server transport | iocp | ✅ |
 | Functional suite on each server transport | rio | ✅ |
-| Hard-killed peer or ICMP error never stalls receive | xdp | PLANNED |
+| Hard-killed peer or ICMP error never stalls receive | xdp | planned for the final deliverable |
 | Hard-killed peer or ICMP error never stalls receive | msgx | ✅ |
-| Hard-killed peer or ICMP error never stalls receive | gso | PLANNED |
-| Hard-killed peer or ICMP error never stalls receive | io_uring | PLANNED |
-| Hard-killed peer or ICMP error never stalls receive | portable | PLANNED |
-| Hard-killed peer or ICMP error never stalls receive | iocp | PLANNED |
-| Hard-killed peer or ICMP error never stalls receive | rio | PLANNED |
+| Hard-killed peer or ICMP error never stalls receive | gso | planned for the final deliverable |
+| Hard-killed peer or ICMP error never stalls receive | io_uring | planned for the final deliverable |
+| Hard-killed peer or ICMP error never stalls receive | portable | planned for the final deliverable |
+| Hard-killed peer or ICMP error never stalls receive | iocp | planned for the final deliverable |
+| Hard-killed peer or ICMP error never stalls receive | rio | planned for the final deliverable |
 | Socket error paths | xdp | ✅ |
 | Socket error paths | msgx | ✅ |
 | Socket error paths | gso | ✅ |
 | Socket error paths | io_uring | ✅ |
-| Socket error paths | portable | PLANNED |
-| Socket error paths | iocp | PLANNED |
-| Socket error paths | rio | PLANNED |
+| Socket error paths | portable | planned for the final deliverable |
+| Socket error paths | iocp | planned for the final deliverable |
+| Socket error paths | rio | planned for the final deliverable |
 | Lifecycle stress | xdp | ✅ |
 | Lifecycle stress | msgx | ✅ |
 | Lifecycle stress | gso | ✅ |
 | Lifecycle stress | io_uring | ✅ |
-| Lifecycle stress | portable | PLANNED |
-| Lifecycle stress | iocp | PLANNED |
-| Lifecycle stress | rio | PLANNED |
-| Soak under impairment, flat resources | xdp | OWED |
+| Lifecycle stress | portable | planned for the final deliverable |
+| Lifecycle stress | iocp | planned for the final deliverable |
+| Lifecycle stress | rio | planned for the final deliverable |
+| Soak under impairment, flat resources | xdp | planned for the final deliverable |
 | Soak under impairment, flat resources | msgx | ✅ |
-| Soak under impairment, flat resources | gso | OWED |
-| Soak under impairment, flat resources | io_uring | OWED |
-| Soak under impairment, flat resources | portable | OWED |
-| Soak under impairment, flat resources | iocp | OWED |
-| Soak under impairment, flat resources | rio | OWED |
+| Soak under impairment, flat resources | gso | planned for the final deliverable |
+| Soak under impairment, flat resources | io_uring | planned for the final deliverable |
+| Soak under impairment, flat resources | portable | planned for the final deliverable |
+| Soak under impairment, flat resources | iocp | planned for the final deliverable |
+| Soak under impairment, flat resources | rio | planned for the final deliverable |
 | 1000 clients, load harness | xdp | ✅ |
-| 1000 clients, load harness | msgx | OWED |
+| 1000 clients, load harness | msgx | planned for the final deliverable |
 | 1000 clients, load harness | gso | ✅ |
 | 1000 clients, load harness | io_uring | ✅ |
-| 1000 clients, load harness | portable | OWED |
-| 1000 clients, load harness | iocp | OWED |
-| 1000 clients, load harness | rio | OWED |
-| 1000 light clients (10 Hz, 1 packet per update) | xdp | OWED |
-| 1000 light clients (10 Hz, 1 packet per update) | msgx | OWED |
-| 1000 light clients (10 Hz, 1 packet per update) | gso | OWED |
-| 1000 light clients (10 Hz, 1 packet per update) | io_uring | OWED |
-| 1000 light clients (10 Hz, 1 packet per update) | portable | OWED |
-| 1000 light clients (10 Hz, 1 packet per update) | iocp | OWED |
-| 1000 light clients (10 Hz, 1 packet per update) | rio | OWED |
-| 1000 clients over the LAN, every guarantee checked (soak matrix) | xdp | OWED |
-| 1000 clients over the LAN, every guarantee checked (soak matrix) | msgx | OWED |
-| 1000 clients over the LAN, every guarantee checked (soak matrix) | gso | OWED |
-| 1000 clients over the LAN, every guarantee checked (soak matrix) | io_uring | OWED |
-| 1000 clients over the LAN, every guarantee checked (soak matrix) | portable | OWED |
-| 1000 clients over the LAN, every guarantee checked (soak matrix) | iocp | OWED |
-| 1000 clients over the LAN, every guarantee checked (soak matrix) | rio | OWED |
-| Sanitizers per transport | xdp | OWED |
-| Sanitizers per transport | msgx | PLANNED |
-| Sanitizers per transport | gso | OWED |
-| Sanitizers per transport | io_uring | OWED |
-| Sanitizers per transport | portable | OWED |
+| 1000 clients, load harness | portable | planned for the final deliverable |
+| 1000 clients, load harness | iocp | planned for the final deliverable |
+| 1000 clients, load harness | rio | planned for the final deliverable |
+| 1000 light clients (10 Hz, 1 packet per update) | xdp | planned for the final deliverable |
+| 1000 light clients (10 Hz, 1 packet per update) | msgx | planned for the final deliverable |
+| 1000 light clients (10 Hz, 1 packet per update) | gso | planned for the final deliverable |
+| 1000 light clients (10 Hz, 1 packet per update) | io_uring | planned for the final deliverable |
+| 1000 light clients (10 Hz, 1 packet per update) | portable | planned for the final deliverable |
+| 1000 light clients (10 Hz, 1 packet per update) | iocp | planned for the final deliverable |
+| 1000 light clients (10 Hz, 1 packet per update) | rio | planned for the final deliverable |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | xdp | planned for the final deliverable |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | msgx | planned for the final deliverable |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | gso | planned for the final deliverable |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | io_uring | planned for the final deliverable |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | portable | planned for the final deliverable |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | iocp | planned for the final deliverable |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) | rio | planned for the final deliverable |
+| Sanitizers per transport | xdp | planned for the final deliverable |
+| Sanitizers per transport | msgx | planned for the final deliverable |
+| Sanitizers per transport | gso | planned for the final deliverable |
+| Sanitizers per transport | io_uring | planned for the final deliverable |
+| Sanitizers per transport | portable | planned for the final deliverable |
 | Sanitizers per transport | iocp | ✅ |
 | Sanitizers per transport | rio | ✅ |
 | Application Verifier | portable | ✅ |
@@ -134,51 +134,51 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | test | status |
 |---|:---:|
-| Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x | PLANNED |
-| Security pass: per-client resource exhaustion disconnects the client | PLANNED |
-| Receipt loss reported after its own deadline | PLANNED |
-| Source format in the netcode style (clang-format check) | PLANNED |
-| TLA+ ledger current (tla/CASES.tsv and tla/COVERAGE.tsv match the models) | PLANNED |
-| TLA+ model check: link (19 required) | PLANNED |
-| TLA+ model check: clientconnection (14 required, 9 bench) | PLANNED |
-| TLA+ model check: replaywindow (2 required, 1 bench) | PLANNED |
-| TLA+ model check: rnsendstore (1 required) | PLANNED |
-| TLA+ model check: rnring (5 required) | PLANNED |
-| TLA+ model check: rnsendspans (3 required) | PLANNED |
-| TLA+ model check: rnwindow (7 required) | PLANNED |
-| TLA+ model check: receiveorder (4 required) | PLANNED |
-| TLA+ model check: rndriversendstaging (2 required) | PLANNED |
-| TLA+ model check: rnsecuritytables (13 required) | PLANNED |
-| TLA+ model check: serverconnection (5 required) | PLANNED |
-| TLA+ model check: rnconnectionmemory (3 required) | PLANNED |
-| TLA+ model check: rnsendbudget (4 required) | PLANNED |
-| TLA+ model check: rnreceipts (5 required) | PLANNED |
-| TLA+ model check: rnchannel (9 required) | PLANNED |
-| TLA+ model check: rnslots (12 required) | PLANNED |
-| TLA+ model check: rnchanneltypes (11 required) | PLANNED |
-| TLA+ model check: rnsenthistory (3 required) | PLANNED |
-| TLA+ model check: rnscheduler (3 required) | PLANNED |
-| TLA+ model check: rnresendtiming (3 required) | PLANNED |
-| TLA+ model check: rnfilterepochs (3 required) | PLANNED |
-| TLA+ model check: rnuringdriver (4 required) | PLANNED |
-| TLA+ model check: fragmentsandacks (18 required, 6 bench) | PLANNED |
-| TLA+ model check: rnblocks (2 required) | PLANNED |
-| TLA+ model check: rnclientio (8 required) | PLANNED |
-| TLA+ model check: rnendpoint (5 required, 2 bench) | PLANNED |
-| TLA+ model check: rnxdpreplay (3 required) | PLANNED |
-| TLA+ model check: rnxdpreceivering (2 required) | PLANNED |
-| TLA+ model check: rnriodriver (4 required) | PLANNED |
-| TLA+ model check: rnflows (2 required) | PLANNED |
-| TLA+ model check: rnclientiodecrypt (5 required) | PLANNED |
-| TLA+ model check: rnlivefleetrun (3 required) | PLANNED |
-| TLA+ model check: clientsession (5 required) | PLANNED |
-| TLA+ model check: serversession (10 required) | PLANNED |
-| TLA+ model check: rnoutgoingbuild (4 required) | PLANNED |
-| TLA+ model check: rnsimfaults (3 required) | PLANNED |
-| TLA+ model check: rnclientreceivequit (5 required) | PLANNED |
-| TLA+ model check: rnserversendfair (4 required) | PLANNED |
-| TLA+ model check: sendhandoff (3 required) | PLANNED |
-| CBMC bounded proofs of the untrusted-input readers to the full packet size (Frama-C route for C++) | PLANNED |
-| Frama-Clang WP trial on rocketnet_ack_block_read | PLANNED |
-| Holistic review: six independent whole-system reviewers | PLANNED |
+| Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x | planned for the final deliverable |
+| Security pass: per-client resource exhaustion disconnects the client | planned for the final deliverable |
+| Receipt loss reported after its own deadline | planned for the final deliverable |
+| Source format in the netcode style (clang-format check) | planned for the final deliverable |
+| TLA+ ledger current (tla/CASES.tsv and tla/COVERAGE.tsv match the models) | planned for the final deliverable |
+| TLA+ model check: link (19 required) | planned for the final deliverable |
+| TLA+ model check: clientconnection (14 required, 9 bench) | planned for the final deliverable |
+| TLA+ model check: replaywindow (2 required, 1 bench) | planned for the final deliverable |
+| TLA+ model check: rnsendstore (1 required) | planned for the final deliverable |
+| TLA+ model check: rnring (5 required) | planned for the final deliverable |
+| TLA+ model check: rnsendspans (3 required) | planned for the final deliverable |
+| TLA+ model check: rnwindow (7 required) | planned for the final deliverable |
+| TLA+ model check: receiveorder (4 required) | planned for the final deliverable |
+| TLA+ model check: rndriversendstaging (2 required) | planned for the final deliverable |
+| TLA+ model check: rnsecuritytables (13 required) | planned for the final deliverable |
+| TLA+ model check: serverconnection (5 required) | planned for the final deliverable |
+| TLA+ model check: rnconnectionmemory (3 required) | planned for the final deliverable |
+| TLA+ model check: rnsendbudget (4 required) | planned for the final deliverable |
+| TLA+ model check: rnreceipts (5 required) | planned for the final deliverable |
+| TLA+ model check: rnchannel (9 required) | planned for the final deliverable |
+| TLA+ model check: rnslots (12 required) | planned for the final deliverable |
+| TLA+ model check: rnchanneltypes (11 required) | planned for the final deliverable |
+| TLA+ model check: rnsenthistory (3 required) | planned for the final deliverable |
+| TLA+ model check: rnscheduler (3 required) | planned for the final deliverable |
+| TLA+ model check: rnresendtiming (3 required) | planned for the final deliverable |
+| TLA+ model check: rnfilterepochs (3 required) | planned for the final deliverable |
+| TLA+ model check: rnuringdriver (4 required) | planned for the final deliverable |
+| TLA+ model check: fragmentsandacks (18 required, 6 bench) | planned for the final deliverable |
+| TLA+ model check: rnblocks (2 required) | planned for the final deliverable |
+| TLA+ model check: rnclientio (8 required) | planned for the final deliverable |
+| TLA+ model check: rnendpoint (5 required, 2 bench) | planned for the final deliverable |
+| TLA+ model check: rnxdpreplay (3 required) | planned for the final deliverable |
+| TLA+ model check: rnxdpreceivering (2 required) | planned for the final deliverable |
+| TLA+ model check: rnriodriver (4 required) | planned for the final deliverable |
+| TLA+ model check: rnflows (2 required) | planned for the final deliverable |
+| TLA+ model check: rnclientiodecrypt (5 required) | planned for the final deliverable |
+| TLA+ model check: rnlivefleetrun (3 required) | planned for the final deliverable |
+| TLA+ model check: clientsession (5 required) | planned for the final deliverable |
+| TLA+ model check: serversession (10 required) | planned for the final deliverable |
+| TLA+ model check: rnoutgoingbuild (4 required) | planned for the final deliverable |
+| TLA+ model check: rnsimfaults (3 required) | planned for the final deliverable |
+| TLA+ model check: rnclientreceivequit (5 required) | planned for the final deliverable |
+| TLA+ model check: rnserversendfair (4 required) | planned for the final deliverable |
+| TLA+ model check: sendhandoff (3 required) | planned for the final deliverable |
+| CBMC bounded proofs of the untrusted-input readers to the full packet size (Frama-C route for C++) | planned for the final deliverable |
+| Frama-Clang WP trial on rocketnet_ack_block_read | planned for the final deliverable |
+| Holistic review: six independent whole-system reviewers | planned for the final deliverable |
 | complete | 0% |
