@@ -16,6 +16,7 @@
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <pthread.h>
 #include <sched.h>
+#include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
@@ -296,6 +297,17 @@ uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * 
     return rocketnet_platform_atomic_load_u64( &socket->send_failures );
 }
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+// The file status flags a non-blocking socket is set to: the descriptor's
+// current flags (fcntl F_GETFL) with O_NONBLOCK added. F_SETFL replaces the
+// flags it is given, so the socket create paths pass this merge rather than
+// O_NONBLOCK alone.
+
+int rocketnet_platform_nonblocking_flags( int flags )
+{
+    return flags | O_NONBLOCK;
+}
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 // Test-only send-failure seam, compiled into the development library only.
 // The next N sendto and sendmsg_x calls on one socket report the chosen errno
 // without reaching the kernel, so a functional case can drive the send error
@@ -786,8 +798,9 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     if ( socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
-        // non-blocking
-        if ( fcntl( socket->handle, F_SETFL, O_NONBLOCK, 1 ) == -1 )
+        // non-blocking, keeping the descriptor's other status flags
+        const int flags = fcntl( socket->handle, F_GETFL, 0 );
+        if ( flags == -1 || fcntl( socket->handle, F_SETFL, rocketnet_platform_nonblocking_flags( flags ) ) == -1 )
         {
             rocketnet_error( "failed to set socket to non-blocking" );
             rocketnet_platform_socket_destroy( socket );
@@ -2443,8 +2456,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     if ( socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
-        // non-blocking
-        if ( fcntl( socket->handle, F_SETFL, O_NONBLOCK, 1 ) == -1 )
+        // non-blocking, keeping the descriptor's other status flags
+        const int flags = fcntl( socket->handle, F_GETFL, 0 );
+        if ( flags == -1 || fcntl( socket->handle, F_SETFL, rocketnet_platform_nonblocking_flags( flags ) ) == -1 )
         {
             rocketnet_error( "failed to set socket to non-blocking" );
             rocketnet_platform_socket_destroy( socket );
@@ -2772,6 +2786,18 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 #define ROCKETNET_MSGX_RETRY_SECONDS 60.0
 
+static inline double rocketnet_msgx_down_until( rocketnet_platform_socket_t * socket )
+{
+    double value;
+    __atomic_load( &socket->msgx_down_until, &value, __ATOMIC_RELAXED );
+    return value;
+}
+
+static inline void rocketnet_msgx_set_down_until( rocketnet_platform_socket_t * socket, double value )
+{
+    __atomic_store( &socket->msgx_down_until, &value, __ATOMIC_RELAXED );
+}
+
 // the name reports the LIVE path -- tests and logs treat it as ground
 // truth, so a paused pump reads as portable until its pause expires. a
 // pure read: expiry itself is cleared by the next batch call's
@@ -2782,25 +2808,30 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
     rocketnet_assert( socket );
     if ( !socket->msgx )
         return "portable";
-    if ( socket->msgx_down_until > 0.0 && rocketnet_platform_time() < socket->msgx_down_until )
+    const double down_until = rocketnet_msgx_down_until( socket );
+    if ( down_until > 0.0 && rocketnet_platform_time() < down_until )
         return "portable";
     return "msgx";
 }
 
 // is the msgx pump live for this call? eligibility is decided at create;
 // a pause expires here, making the caller's next batch attempt the
-// re-probe. main-thread only, like every batch call (the transport's
-// phase contract: update and the flushes run on the main thread).
+// re-probe. the client's batch send and receive run on its I/O thread
+// (portable_io_client_send_batch in sdk/rocketnet_driver_builtin.cpp) while
+// rocketnet_platform_socket_pump above reads the pause on its caller's
+// thread, so msgx_down_until is only loaded and stored atomically (relaxed:
+// it orders nothing else).
 
 static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 {
     if ( !socket->msgx )
         return false;
-    if ( socket->msgx_down_until > 0.0 )
+    const double down_until = rocketnet_msgx_down_until( socket );
+    if ( down_until > 0.0 )
     {
-        if ( rocketnet_platform_time() < socket->msgx_down_until )
+        if ( rocketnet_platform_time() < down_until )
             return false;
-        socket->msgx_down_until = 0.0;
+        rocketnet_msgx_set_down_until( socket, 0.0 );
         rocketnet_debug( "msgx pump pause expired. next batch call is the re-probe" );
     }
     return true;
@@ -2808,7 +2839,7 @@ static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 
 static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
 {
-    socket->msgx_down_until = rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS;
+    rocketnet_msgx_set_down_until( socket, rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS );
     rocketnet_warn( "%s refused (%s). msgx pump pauses %g seconds", which, strerror( error ), ROCKETNET_MSGX_RETRY_SECONDS );
 }
 
@@ -3471,6 +3502,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 #include <wininet.h>
 #include <iphlpapi.h>
 #include <qos2.h>
+#include <mswsock.h>
 
 #pragma comment( lib, "WS2_32.lib" )
 #pragma comment( lib, "IPHLPAPI.lib" )
@@ -4056,7 +4088,6 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     // reset reports for this socket, otherwise a receive errors out after a peer
     // disconnects hard and its ICMP port unreachable comes back
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) s->handle );
-
     // own the port exclusively: without SO_EXCLUSIVEADDRUSE another local
     // process binds the same port with SO_REUSEADDR and takes its datagrams.
     // set before bind, as the IOCP and RIO drivers do.
