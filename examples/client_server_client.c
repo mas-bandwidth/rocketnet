@@ -135,6 +135,7 @@ int main( int argc, char ** argv )
     config.state_change_callback = state_changed;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );

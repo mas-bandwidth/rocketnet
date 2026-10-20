@@ -444,13 +444,7 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
 }
 
-size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config )
-{
-    struct rocketnet_client_config_t current;
-    return rn_client_required_memory_current( rn_client_config_read( &current, config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) );
-}
-
-size_t rocketnet_client_required_memory_sized( const struct rocketnet_client_config_t * config, size_t config_bytes )
+size_t (rocketnet_client_required_memory)( const struct rocketnet_client_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_CLIENT_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;
@@ -1125,17 +1119,7 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
 }
 
-size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config )
-{
-    struct rocketnet_server_config_t current;
-    size_t result = rn_server_required_memory_current( rn_server_config_read( &current, config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) );
-
-    sodium_memzero( &current, sizeof( current ) );
-
-    return result;
-}
-
-size_t rocketnet_server_required_memory_sized( const struct rocketnet_server_config_t * config, size_t config_bytes )
+size_t (rocketnet_server_required_memory)( const struct rocketnet_server_config_t * config, size_t config_bytes )
 {
     if ( config && !RN_SERVER_CONFIG_SIZE_KNOWN( config_bytes ) )
         return 0;

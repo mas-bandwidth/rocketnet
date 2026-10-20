@@ -7418,7 +7418,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_default_config",
     "rocketnet_client_validate_config",
     "rocketnet_client_required_memory",
-    "rocketnet_client_required_memory_sized",
     "rocketnet_client_create",
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
@@ -7444,7 +7443,6 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_dev_config",
     "rocketnet_server_validate_config",
     "rocketnet_server_required_memory",
-    "rocketnet_server_required_memory_sized",
     "rocketnet_server_create",
     "rocketnet_server_start",
     "rocketnet_server_stop",
@@ -7558,13 +7556,11 @@ static const char * rocketnet_test_public_null_exempt_exports[] =
     "rocketnet_sleep",
     "rocketnet_client_validate_config",
     "rocketnet_client_required_memory",
-    "rocketnet_client_required_memory_sized",
     "rocketnet_client_create",
     "rocketnet_client_state_name",
     "rocketnet_disconnect_reason_name",
     "rocketnet_server_validate_config",
     "rocketnet_server_required_memory",
-    "rocketnet_server_required_memory_sized",
 };
 
 
@@ -8008,9 +8004,9 @@ void rocketnet_test_public_api_null()
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
     rocketnet_check( (rocketnet_client_validate_config)( NULL, 0 ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_client_required_memory( NULL ) > 0 );
+    rocketnet_check( (rocketnet_client_required_memory)( NULL, 0 ) > 0 );
     rocketnet_check( (rocketnet_server_validate_config)( NULL, 0 ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_server_required_memory( NULL ) > 0 );
+    rocketnet_check( (rocketnet_server_required_memory)( NULL, 0 ) > 0 );
     rocketnet_check( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ) != NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before );
 

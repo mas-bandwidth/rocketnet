@@ -48,6 +48,7 @@ int main( void )
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -69,6 +70,7 @@ int main( void )
 
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );

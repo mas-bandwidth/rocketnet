@@ -297,10 +297,10 @@ REGISTER_UNIT_TEST( api_polish_lookups_say_unknown );
 
 // --- ruling 8: sizes are size_t ------------------------------------------------
 
-static_assert( rn_same<decltype( rocketnet_client_required_memory( NULL ) ), size_t>::value, "ruling 8: client required memory" );
-static_assert( rn_same<decltype( rocketnet_client_required_memory_sized( NULL, 0 ) ), size_t>::value, "ruling 8: client required memory sized" );
-static_assert( rn_same<decltype( rocketnet_server_required_memory( NULL ) ), size_t>::value, "ruling 8: server required memory" );
-static_assert( rn_same<decltype( rocketnet_server_required_memory_sized( NULL, 0 ) ), size_t>::value, "ruling 8: server required memory sized" );
+static_assert( rn_same<decltype( rocketnet_client_required_memory( (struct rocketnet_client_config_t *) NULL ) ), size_t>::value, "ruling 8: client required memory" );
+static_assert( rn_same<decltype( (rocketnet_client_required_memory)( NULL, 0 ) ), size_t>::value, "ruling 8: client required memory sized" );
+static_assert( rn_same<decltype( rocketnet_server_required_memory( (struct rocketnet_server_config_t *) NULL ) ), size_t>::value, "ruling 8: server required memory" );
+static_assert( rn_same<decltype( (rocketnet_server_required_memory)( NULL, 0 ) ), size_t>::value, "ruling 8: server required memory sized" );
 static_assert( rn_same<decltype( &rocketnet_client_create ), rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, size_t, void *, size_t, rocketnet_status_t * )>::value, "ruling 8: client create" );
 static_assert( rn_same<decltype( &rocketnet_server_create ), rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, size_t, void *, size_t, rocketnet_status_t * )>::value, "ruling 8: server create" );
 

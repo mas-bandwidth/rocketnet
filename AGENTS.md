@@ -91,8 +91,8 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
 
 1. **Initialize the library once per process:** Call `rocketnet_init(NULL)`; it returns `ROCKETNET_STATUS_OK` on success or a `rocketnet_status_t` refusal.
 2. **Create the server and client:**
-   - Fill `struct rocketnet_server_config_t` with `rocketnet_server_default_config(&server_config, sizeof(server_config))` (or `rocketnet_server_default_config(&server_config)`), set `protocol_id`, `backend_public_key`, `server_public_key`, and `server_secret_key` (or use `rocketnet_server_dev_config` / `rocketnet_server_dev_config` in local development builds), call `rocketnet_server_create` with the address and a status out-parameter (it writes the refusal's code on NULL; `rocketnet_status_name` names it), then call `rocketnet_server_start(server)`. Create binds nothing and starts stopped; start binds the transport and accepts clients.
-   - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config(&client_config, sizeof(client_config))` (or `rocketnet_client_default_config(&client_config)`), call `rocketnet_client_create` with a status out-parameter (it writes the refusal's code on NULL), then call `rocketnet_client_connect(client, connect_token)` with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
+   - Fill `struct rocketnet_server_config_t` with `rocketnet_server_default_config(&server_config)`, set `protocol_id`, `backend_public_key`, `server_public_key`, and `server_secret_key` (or use `rocketnet_server_dev_config` in local development builds), call `rocketnet_server_create` with the address and a status out-parameter (it writes the refusal's code on NULL; `rocketnet_status_name` names it), then call `rocketnet_server_start(server)`. Create binds nothing and starts stopped; start binds the transport and accepts clients.
+   - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config(&client_config)`, call `rocketnet_client_create` with a status out-parameter (it writes the refusal's code on NULL), then call `rocketnet_client_connect(client, connect_token)` with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
 3. **Run the five-step frame loop in exact order every tick** (using the caller's monotonic `double time` in seconds):
    - **Step 1 — Update:** Call `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` first to pump the transport, process incoming packets and ACKs, and advance connection state.
    - **Step 2 — Receive and release:** Drain every pending message on each channel with `rocketnet_client_receive_message` / `rocketnet_server_receive_message`, copy or process its payload, and release the view in the **same** frame before the next update with `rocketnet_client_release_message` / `rocketnet_server_release_message`. Read any ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
@@ -130,7 +130,7 @@ int main( void )
     const char * server_address = "127.0.0.1:40000";
 
     struct rocketnet_server_config_t server_config;
-    if ( rocketnet_server_default_config( &server_config, sizeof( server_config ) ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK )
         return 1;
     server_config.protocol_id = protocol_id;
     server_config.max_clients = 8;
@@ -170,7 +170,7 @@ int main( void )
     }
 
     struct rocketnet_client_config_t client_config;
-    if ( rocketnet_client_default_config( &client_config, sizeof( client_config ) ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
         return 1;
@@ -309,7 +309,7 @@ RocketNet's security model is documented in [SECURITY.md](SECURITY.md):
 - **Keys and key generation:**
   - **Backend signing keypair (Ed25519):** Generated via `rocketnet_generate_backend_keypair` or deterministically via `rocketnet_generate_backend_keypair_from_seed` (`ROCKETNET_BACKEND_SEED_BYTES` = `32`, `ROCKETNET_BACKEND_PUBLIC_KEY_BYTES` = `32`, `ROCKETNET_BACKEND_SECRET_KEY_BYTES` = `64`). The backend keeps `backend_secret_key`; each game server receives `backend_public_key` (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`).
   - **Server sealing keypair (X25519):** Generated via `rocketnet_generate_server_keypair` (`ROCKETNET_SERVER_PUBLIC_KEY_BYTES` = `32`, `ROCKETNET_SERVER_SECRET_KEY_BYTES` = `32`). The backend seals private token data to `server_public_key`; the server opens it with `server_secret_key` (`ROCKETNET_SERVER_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SERVER_SECRET_KEY`).
-  - **No default production keys:** `rocketnet_server_default_config` and `rocketnet_server_default_config` leave the three key fields all-zero, and `rocketnet_server_start` refuses to bind until non-zero keys are provided. `rocketnet_server_dev_config` / `rocketnet_server_dev_config` populates the development keys explicitly.
+  - **No default production keys:** `rocketnet_server_default_config` leaves the three key fields all-zero, and `rocketnet_server_start` refuses to bind until non-zero keys are provided. `rocketnet_server_dev_config` populates the development keys explicitly.
   - **User data:** Each token carries `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` (`256` bytes) of signed application metadata.
 - **What the server checks on every handshake:**
   1. Packet size, `filter_value` (`ROCKETNET_SERVER_FILTER_VALUE` / `ROCKETNET_CLIENT_FILTER_VALUE`), wire version, `protocol_id` (`ROCKETNET_SERVER_PROTOCOL_ID`), and `create_timestamp <= expire_timestamp`.

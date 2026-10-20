@@ -166,6 +166,7 @@ int main( int argc, char ** argv ) {
     s_cfg.rto_min_ms = c_cfg.rto_min_ms = s_cfg.rto_initial_ms = c_cfg.rto_initial_ms = 200; s_cfg.rto_max_ms = c_cfg.rto_max_ms = 500;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     server = (rocketnet_server_create)( NULL, "127.0.0.1:0", &s_cfg, sizeof( s_cfg ), NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -179,6 +180,7 @@ int main( int argc, char ** argv ) {
         CHECK( rocketnet_write_dev_connect_token( addr, c + 1, 4102444800ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
         enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
         clients[c] = (rocketnet_client_create)( NULL, &c_cfg, sizeof( c_cfg ), NULL, 0, &create_status_2 );
+        if ( !clients[c] ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
         if ( clients[c] && rocketnet_client_connect( clients[c], token ) != ROCKETNET_STATUS_OK )
         {
             rocketnet_client_destroy( clients[c] );

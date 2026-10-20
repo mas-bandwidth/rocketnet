@@ -39,6 +39,7 @@ static int exchange( struct rocketnet_server_t * server, const char * server_add
         return 0;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     client = rocketnet_client_create( NULL, &config, NULL, 0, &create_status );
+    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -112,6 +113,7 @@ static int create_and_prove( const char * label, const char * transport )
     config.transport = transport;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_2 );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -151,6 +153,7 @@ int main( void )
     {
         enum rocketnet_status_t create_status_3 = ROCKETNET_STATUS_OK;
         struct rocketnet_server_t * refused = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status_3 );
+        if ( !refused ) printf( "create refused: %s\n", rocketnet_status_name( create_status_3 ) );
         const int started = refused ? (int) rocketnet_server_start( refused ) : -1;
         if ( refused )
             rocketnet_server_destroy( refused );

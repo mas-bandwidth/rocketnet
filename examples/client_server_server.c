@@ -113,6 +113,7 @@ int main( int argc, char ** argv )
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, address, &config, NULL, 0, &create_status );
+    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );

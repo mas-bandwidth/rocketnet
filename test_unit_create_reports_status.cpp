@@ -183,6 +183,46 @@ static void create_reports_status_invalid_argument()
 }
 REGISTER_UNIT_TEST( create_reports_status_invalid_argument );
 
+// ---- a known prefix size, and an unknown larger size ------------------------
+
+static void create_reports_status_prefix_size()
+{
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    struct rocketnet_server_config_t server_config;
+    check( rocketnet_server_dev_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.max_clients = 4;
+
+    // a smaller known size reads the caller's prefix and defaults the tail
+    enum rocketnet_status_t status = ROCKETNET_STATUS_COUNT;
+    struct rocketnet_client_t * client = (rocketnet_client_create)( NULL, &client_config, ROCKETNET_CLIENT_CONFIG_BYTES_1, NULL, 0, &status );
+    check( client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_client_destroy( client );
+
+    status = ROCKETNET_STATUS_COUNT;
+    struct rocketnet_server_t * server = (rocketnet_server_create)( NULL, "127.0.0.1:0", &server_config, ROCKETNET_SERVER_CONFIG_BYTES_1, NULL, 0, &status );
+    check( server != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_server_destroy( server );
+
+    // the same prefix through required_memory: a known size sizes, an
+    // unknown larger size returns 0
+    check( (rocketnet_client_required_memory)( &client_config, ROCKETNET_CLIENT_CONFIG_BYTES_1 ) > 0 );
+    check( (rocketnet_server_required_memory)( &server_config, ROCKETNET_SERVER_CONFIG_BYTES_1 ) > 0 );
+    check( (rocketnet_client_required_memory)( &client_config, sizeof( client_config ) + 8 ) == 0 );
+    check( (rocketnet_server_required_memory)( &server_config, sizeof( server_config ) + 8 ) == 0 );
+
+    // an unknown larger size is refused before any other check
+    status = ROCKETNET_STATUS_OK;
+    check( (rocketnet_client_create)( NULL, &client_config, sizeof( client_config ) + 8, NULL, 0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    status = ROCKETNET_STATUS_OK;
+    check( (rocketnet_server_create)( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) + 8, NULL, 0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+}
+REGISTER_UNIT_TEST( create_reports_status_prefix_size );
+
 // ---- an over-long address ---------------------------------------------------
 
 static void create_reports_status_invalid_address()
@@ -251,6 +291,10 @@ static void create_reports_status_config_refusals()
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
+    // validate runs the same check and refuses the same config (as
+    // CONFIG_OUT_OF_RANGE; create names the budget code above)
+    check( (rocketnet_server_validate_config)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    check( rocketnet_server_validate_config( &server_config ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 }
 REGISTER_UNIT_TEST( create_reports_status_config_refusals );
 
