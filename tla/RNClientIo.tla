@@ -241,7 +241,7 @@ HandOffTo(to) ==
     /\ UNCHANGED recvVars
 
 \* send_packets, send_packet, update and destroy pass the transport's
-\* server address (sdk/rocketnet_client_transport.cpp:1086 and :1245)
+\* server address (rocketnet_client_transport_destroy and update)
 HandOff == HandOffTo(addr)
 
 \* the hand-off when the other ring is still HandedOff or Sending: the
@@ -264,8 +264,7 @@ DeferTo(to) ==
 
 Defer == DeferTo(addr)
 
-\* rocketnet_client_transport_disconnect (sdk/rocketnet_client_transport.cpp
-\* from :1993): with the fills joined, the burst is sealed for the server
+\* rocketnet_client_transport_disconnect: with the fills joined, the burst is sealed for the server
 \* address, the protocol reset zeroes the server address, the burst is
 \* committed into the Filling ring (one slot stands for the burst) and a
 \* hand-off is attempted with the address saved before the reset.  Once

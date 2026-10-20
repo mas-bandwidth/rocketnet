@@ -145,20 +145,18 @@ hand-off attempt every frame (it retries any deferred slots, and hands off
 its own packet when it committed one), and `disconnect` ends with one. Both
 run on the main thread with fills joined.
 
-**A ring's destination.** Each ring carries its destination (`io->to`,
-`sdk/rocketnet_client_io.h:100`). The first hand-off attempt that finds
+**A ring's destination.** Each ring carries its destination (`io->to` in `rocketnet_client_io_t`). The first hand-off attempt that finds
 committed slots in the Filling ring binds that ring's destination to the
-address it is passed and marks it bound (`io->to_held`,
-`sdk/rocketnet_client_io.h:309-313`); a deferred attempt leaves it bound, and
+address it is passed and marks it bound (`io->to_held`, in
+`rocketnet_client_io_hand_off`); a deferred attempt leaves it bound, and
 a later attempt for the same ring does not overwrite it. A ring that is handed
-off is unbound for its next fill (`sdk/rocketnet_client_io.h:315-316`). So
+off is unbound for its next fill (a `HANDED_OFF` result clears `to_held`). So
 deferred slots leave for the address they were committed with. `disconnect`
-saves the server address (`sdk/rocketnet_client_transport.cpp:2002`), resets
-the protocol, which zeroes it (`sdk/rocketnet_client_transport.cpp:2008`),
-and hands its burst off with the saved address
-(`sdk/rocketnet_client_transport.cpp:2024`); when that attempt is deferred,
+saves the server address, resets the protocol, which zeroes it
+(`rocketnet_client_connection_reset`), and hands its burst off with the saved
+address (`rocketnet_client_transport_disconnect`); when that attempt is deferred,
 the next one, from `update` or from `destroy`
-(`sdk/rocketnet_client_transport.cpp:1086`), passes the zeroed
+(`rocketnet_client_transport_destroy`), passes the zeroed
 `protocol.server_address`, and the burst still goes to the server
 (`SentToCommitted`; the reversed witness
 `MCRNClientIoBrokenDestinationOverwrite.cfg` restores the overwrite on every
