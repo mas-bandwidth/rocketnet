@@ -136,7 +136,7 @@ static void server_transport_create_ex_reports_every_status()
     // before init (the public NULL guard runs first)
     status = -1;
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     server_create_ex_expected_null_asserts = 0;
     rocketnet_set_assert_callback( server_create_ex_expected_null_assert );
 #endif

@@ -6746,22 +6746,27 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 
     rocketnet_check( rocketnet_platform_socket_receive_packets_mmsg( receiver, from, receive_data[0], stride, packet_bytes, 64 ) == 0 );
 
-    // One recvmmsg result with a truncated datagram followed by two kept
-    // datagrams exercises both chunk indexing and rejection compaction.
+    // One recvmmsg result with a truncated datagram, a zero-length one and a
+    // kept one exercises chunk indexing, the oversize report (true size, the
+    // stored prefix) and rejection compaction. The zero-length datagram goes
+    // by a raw sendto: the mmsg send path carries positive-size payloads only.
     uint8_t truncated_data[16];
     memset( truncated_data, 'T', sizeof(truncated_data) );
     uint8_t kept_data[2] = { 0xA1, 0xB2 };
-    struct rocketnet_platform_send_t compact_sends[3];
+
+    sockaddr_in zero_length_to;
+    rocketnet_platform_address_to_sockaddr_in( &bind_address, &zero_length_to );
+    const char zero_length_byte = 0;
+    rocketnet_check( sendto( sender->handle, &zero_length_byte, 0, 0, (sockaddr*) &zero_length_to, sizeof(zero_length_to) ) == 0 );
+
+    struct rocketnet_platform_send_t compact_sends[2];
     compact_sends[0].to = &bind_address;
     compact_sends[0].packet_data = truncated_data;
     compact_sends[0].packet_bytes = sizeof(truncated_data);
     compact_sends[1].to = &bind_address;
-    compact_sends[1].packet_data = &kept_data[0];
+    compact_sends[1].packet_data = &kept_data[1];
     compact_sends[1].packet_bytes = 1;
-    compact_sends[2].to = &bind_address;
-    compact_sends[2].packet_data = &kept_data[1];
-    compact_sends[2].packet_bytes = 1;
-    rocketnet_platform_socket_send_packets_mmsg( sender, compact_sends, 3 );
+    rocketnet_platform_socket_send_packets_mmsg( sender, compact_sends, 2 );
     rocketnet_platform_sleep( 0.01 );
 
     uint8_t compact_receive_data[3][8];
@@ -6769,7 +6774,9 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
     int compact_bytes[3];
     const int compact_received = rocketnet_platform_socket_receive_packets_mmsg( receiver, compact_from, compact_receive_data[0], sizeof(compact_receive_data[0]), compact_bytes, 3 );
     rocketnet_check( compact_received == 2 );
-    rocketnet_check( rocketnet_address_equal( &compact_from[0], &sender_bind ) && compact_bytes[0] == 1 && compact_receive_data[0][0] == kept_data[0] );
+    rocketnet_check( rocketnet_address_equal( &compact_from[0], &sender_bind ) && compact_bytes[0] == (int) sizeof(truncated_data) );
+    for ( int j = 0; j < (int) sizeof(compact_receive_data[0]); j++ )
+        rocketnet_check( compact_receive_data[0][j] == 'T' );
     rocketnet_check( rocketnet_address_equal( &compact_from[1], &sender_bind ) && compact_bytes[1] == 1 && compact_receive_data[1][0] == kept_data[1] );
 
     // A kernel-refused entry drops by itself and the unsent suffix is retried.
@@ -8214,6 +8221,95 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// A real client and server over the portable transport on 127.0.0.1 (port
+// 0): the server disconnects the connected client, and the client reads
+// ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED once its update accepts the
+// server's disconnect packet, DISCONNECTED and not timed out.
+
+static void rocketnet_test_public_client_reads_server_disconnected()
+{
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = 2;
+    server_config.transport = "portable";
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_server_destroy( server );
+        server = NULL;
+    }
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 78, (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    client_config.transport = "portable";
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
+    {
+        rocketnet_client_destroy( client );
+        client = NULL;
+    }
+    rocketnet_check( client );
+
+    const double wall_start = rocketnet_time();
+    while ( rocketnet_time() - wall_start < 10.0 )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - wall_start );
+        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_send_packets( server );
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+             rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+            break;
+        rocketnet_sleep( 0.005 );
+    }
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    const uint64_t index = rocketnet_client_index( client );
+    rocketnet_server_disconnect_client( server, index );
+    rocketnet_server_send_packets( server );
+
+    // well inside the connection timeout: the disconnect packet ends it
+    const double disconnect_start = rocketnet_time();
+    while ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && rocketnet_time() - disconnect_start < 2.0 )
+    {
+        const double now = 1000.0 + ( rocketnet_time() - wall_start );
+        rocketnet_check( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_server_send_packets( server );
+        rocketnet_check( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_sleep( 0.005 );
+    }
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rocketnet_check( rocketnet_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    rocketnet_check( !rocketnet_server_client_connected( server, index ) );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+}
+
+#if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+void rocketnet_test_posix_server_receive_weather();
+void rocketnet_test_posix_client_receive_weather();
+void rocketnet_test_posix_platform_send_seam();
+void rocketnet_test_posix_transport_send_seam();
+void rocketnet_test_posix_send_burst();
+#if defined(__linux__)
+void rocketnet_test_linux_gso_sendmmsg_errors();
+void rocketnet_test_linux_gso_recvmmsg_errors();
+void rocketnet_test_linux_uring_receive_cqe_errors();
+void rocketnet_test_linux_uring_send_cqe_errors();
+void rocketnet_test_linux_xdp_receive_weather_ipv4();
+void rocketnet_test_linux_xdp_receive_weather_ipv6();
+#endif
+#endif
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
@@ -8291,6 +8387,21 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "client_io_windows_handoff_round_trip", rocketnet_functional_skip_client_io_windows_handoff_round_trip },
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather },
+    { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather },
+    { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam },
+    { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam },
+    { "test_posix_send_burst", rocketnet_test_posix_send_burst },
+#if defined(__linux__)
+    { "test_linux_gso_sendmmsg_errors", rocketnet_test_linux_gso_sendmmsg_errors },
+    { "test_linux_gso_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors },
+    { "test_linux_uring_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors },
+    { "test_linux_uring_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors },
+    { "test_linux_xdp_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4 },
+    { "test_linux_xdp_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6 },
+#endif
+#endif
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -8312,6 +8423,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config },
     { "test_config_precedence", rocketnet_test_config_precedence },
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries },
+    { "public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected },
     { "test_server_driver_pin_portable", rocketnet_test_server_driver_pin_portable },
     { "test_server_driver_pin_loopback", rocketnet_test_server_driver_pin_loopback },
     { "test_driver_env_pins_loopback", rocketnet_test_driver_env_pins_loopback },
