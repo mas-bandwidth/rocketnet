@@ -3350,6 +3350,143 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
+
+void rocketnet_test_server_serves_both_families()
+{
+    // One server at a named IPv4 and a named IPv6 loopback on one port.
+    // An IPv4 client and an IPv6 client connect in this run, payloads both ways.
+    // The runner pins the server transport. This case does not.
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 16;
+    snprintf( server_config.public_address, sizeof( server_config.public_address ), "127.0.0.1:0" );
+    snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "[::1]:0" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
+    rocketnet_check( server );
+
+    const int port = rocketnet_server_transport_port( server );
+    char ipv4_address[64];
+    char ipv6_address[64];
+    snprintf( ipv4_address, sizeof( ipv4_address ), "127.0.0.1:%d", port );
+    snprintf( ipv6_address, sizeof( ipv6_address ), "[::1]:%d", port );
+
+    uint8_t token4[ROCKETNET_CONNECT_TOKEN_BYTES];
+    uint8_t token6[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const double now = rocketnet_platform_time();
+    rocketnet_check( rocketnet_write_dev_connect_token( ipv4_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, now ), token4, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_write_dev_connect_token( ipv6_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, now ), token6, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_t * ipv4 = rocketnet_client_transport_create( NULL, token4, NULL, rocketnet_platform_time() );
+    rocketnet_check( ipv4 );
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( ipv4, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( ipv4 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( ipv4 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    struct rocketnet_client_transport_t * ipv6 = rocketnet_client_transport_create( NULL, token6, NULL, rocketnet_platform_time() );
+    rocketnet_check( ipv6 );
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( ipv4, rocketnet_platform_time() );
+        rocketnet_client_transport_update( ipv6, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( ipv6 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 2 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( ipv6 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 2 );
+
+    int got_from_4 = 0, got_from_6 = 0, got_to_4 = 0, got_to_6 = 0;
+    int sent_4 = 0, sent_6 = 0, sent_to_4 = 0, sent_to_6 = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        if ( sent_4 < 10 )
+        {
+            rocketnet_client_transport_send_packet( ipv4, (const uint8_t*) "hello4", 6 );
+            sent_4++;
+        }
+        if ( sent_6 < 10 )
+        {
+            rocketnet_client_transport_send_packet( ipv6, (const uint8_t*) "hello6", 6 );
+            sent_6++;
+        }
+        if ( sent_to_4 < 10 )
+        {
+            rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "world4", 6 );
+            sent_to_4++;
+        }
+        if ( sent_to_6 < 10 )
+        {
+            rocketnet_server_transport_send_packet( server, 1, (const uint8_t*) "world6", 6 );
+            sent_to_6++;
+        }
+
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_client_transport_update( ipv4, rocketnet_platform_time() );
+        rocketnet_client_transport_update( ipv6, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_bytes == 6 );
+            if ( payload_client_index == 0 )
+            {
+                rocketnet_check( memcmp( payload, "hello4", 6 ) == 0 );
+                got_from_4++;
+            }
+            else
+            {
+                rocketnet_check( payload_client_index == 1 );
+                rocketnet_check( memcmp( payload, "hello6", 6 ) == 0 );
+                got_from_6++;
+            }
+        }
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( ipv4, packet, (int) sizeof( packet ) ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == 6 );
+            rocketnet_check( memcmp( packet, "world4", 6 ) == 0 );
+            got_to_4++;
+        }
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( ipv6, packet, (int) sizeof( packet ) ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == 6 );
+            rocketnet_check( memcmp( packet, "world6", 6 ) == 0 );
+            got_to_6++;
+        }
+
+        if ( got_from_4 >= 1 && got_from_6 >= 1 && got_to_4 >= 1 && got_to_6 >= 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( got_from_4 >= 1 && got_from_6 >= 1 && got_to_4 >= 1 && got_to_6 >= 1 );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( ipv6 );
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( ipv4 );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
 void rocketnet_test_server_handshake_deadline_from_config()
 {
     struct rocketnet_test_env_guard_t deadline_guard, transport_guard;
@@ -3622,6 +3759,8 @@ void rocketnet_test_config_precedence()
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    config.max_clients = 1;
 
     // default layer
 
@@ -3677,6 +3816,8 @@ static void rocketnet_test_transport_io_pin_exchange( const char * transport_lis
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    server_config.max_clients = 1;
     snprintf( server_config.transport, sizeof(server_config.transport), "%s", transport_list );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -3779,6 +3920,9 @@ void rocketnet_test_server_transport_io_pin_loopback()
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // Keep a spare slot so the socket-client refusal below cannot pass
+    // merely because the loopback client filled the server.
+    server_config.max_clients = 2;
     snprintf( server_config.transport, sizeof(server_config.transport), "loopback" );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -3901,6 +4045,8 @@ void rocketnet_test_transport_env_pins_loopback()
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    server_config.max_clients = 1;
     rocketnet_check( strcmp( server_config.transport, "auto" ) == 0 );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -3962,7 +4108,7 @@ void transport_env_pin_is_honoured()
         rocketnet_server_transport_dev_config( &server_config );
         rocketnet_check( strcmp( server_config.transport, "auto" ) == 0 );
 
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
         rocketnet_check( server );
         rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), server_pin ) == 0 );
         rocketnet_server_transport_stop( server );
@@ -4598,6 +4744,8 @@ void rocketnet_test_server_port_zero_transport()
 
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
+        // This selection/configuration fixture needs one connection, not 1000 slots.
+        config.max_clients = 1;
         snprintf( config.transport, sizeof(config.transport), "%s", list );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
@@ -4633,6 +4781,8 @@ void rocketnet_test_server_port_zero_transport()
 
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
+        // This selection/configuration fixture needs one connection, not 1000 slots.
+        config.max_clients = 1;
         snprintf( config.transport, sizeof(config.transport), "%s", name );
 
         rocketnet_test_captured_log[0] = '\0';
@@ -8762,6 +8912,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
     { "test_transport_ipv6_loopback", rocketnet_test_transport_ipv6_loopback },
     { "test_transport_dual_stack_ipv4_client", rocketnet_test_transport_dual_stack_ipv4_client },
+    { "test_server_serves_both_families", rocketnet_test_server_serves_both_families },
     { "max_size_packet_crosses_a_1500_mtu_link_ipv4", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4 },
     { "max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6 },
     { "xdp_max_size_both_ways_ipv4", rocketnet_test_xdp_max_size_both_ways_ipv4 },

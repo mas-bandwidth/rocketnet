@@ -13,6 +13,10 @@
 > The four tool-generated serverconnection records are merged into the global `tla/RUNS.tsv` with `tlacheck merge --keep tla/RUNS.tsv`, and `tlacheck groups --root . --stale` prints `[]`. The four cases re-measured identically with the pinned runner and JAR: `MCServerConnection.cfg` passes (554,563 generated / 116,118 distinct, exit 0), `MCServerConnectionExpiredToken.cfg` passes (134 / 48, exit 0), `MCServerConnectionClientIdNoCheck.cfg` violates `OneTokenOneLiveConnection` (24,910 / 10,671, exit 12), and `MCServerConnectionHoldUntilExpire.cfg` violates `ChurnNeverDenied` (102,917 / 39,836, exit 12). The earlier sidecar `tla/RUNS-ServerConnection.tsv` is retained as the raw run evidence.
 
 
+> **Both families.** `ServedFamilies` is the set of families the server serves (one, or both when `ConfiguredFamilies` names both). `ReachesServer(c)` is `PickFamily(c) \in ServedFamilies`. `TokenAddressAdvertised` checks the token address of the family the request arrived on and does not consult the other family. `ClientHost(c)` is that client's host families. `MCServerConnectionServesBothFamilies.cfg` passes `BothFamiliesConnect`: client 1 is IPv4-only, client 2 is IPv6-only, each token names both families, and the server's config names both. `MCServerConnectionBrokenOneFamilyServed.cfg` is the reversed witness (`ServeFirstFamilyOnly`): the config names both and the server serves only the first family, so `BothFamiliesConnect` fails.
+
+
+
 `tla/ServerConnection.tla` is the server of `sdk/rocketnet_server_protocol.cpp` (the
 request ladder, the response, the sealed session types, the sweep, the keep-alive and the
 application disconnect) with its tables: the encryption map keyed by source address

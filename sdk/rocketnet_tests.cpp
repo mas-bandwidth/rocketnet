@@ -3591,9 +3591,11 @@ void rocketnet_test_request_path_config_branches()
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     // the ipv6 advertised branch: a token naming a DIFFERENT server's ipv4
-    // but THIS server's ipv6 is accepted -- either advertised address, not
-    // only the first
+    // but THIS server's ipv6 is accepted when the request arrives over IPv6
+    // -- the arrival family's token address is the one checked
+    // (TokenAddressAdvertised), not only the first
     rocketnet_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[2001:db8::1]:40000" ) );
+    rocketnet_check( rocketnet_address_parse( &test.client_address, "[2001:db8::7]:56789" ) );
     {
         struct rocketnet_signed_connect_data_t signed_fields;
         struct rocketnet_connect_token_private_t private_fields;
@@ -12706,8 +12708,10 @@ void rocketnet_test_public_config_resolve()
 
     // every server field lands
 
+    // the sized form fills every revision: rocketnet_server_config_resolve
+    // reads the whole struct, second_public_address included
     struct rocketnet_server_config_t server;
-    rocketnet_server_dev_config( &server );
+    rocketnet_server_dev_config_sized( &server, sizeof( server ) );
     server.protocol_id = 0x1122334455667788ULL;
     server.max_clients = 5;
     memcpy( server.filter_value, filter, 4 );
@@ -12719,7 +12723,7 @@ void rocketnet_test_public_config_resolve()
     server.per_client_send_kbps = 4321;
     server.num_channels = 6; server.reliable_timeout_ms = 6000;
     struct rocketnet_server_config_t dev;
-    rocketnet_server_dev_config( &dev );
+    rocketnet_server_dev_config_sized( &dev, sizeof( dev ) );
     rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
     rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
     rocketnet_check( memcmp( server_transport.filter_value, filter, 4 ) == 0 );

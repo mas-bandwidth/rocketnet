@@ -133,11 +133,15 @@ Every public call that can fail returns `enum rocketnet_status_t`:
 paths return a handle or `NULL` and log one `ERROR` line with the reason,
 including `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`,
 `MEMORY_BUDGET_EXCEEDED`, `INVALID_TRANSPORT_LIST`, `OUT_OF_MEMORY`,
-`INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `TRANSPORT_LADDER_EXHAUSTED`,
+`INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`,
 `MISSING_KEYS`, `INVALID_PROTOCOL_ID`, `INVALID_ADDRESS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED`,
 `THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
-`THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
+`ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is 26. Its string is
+`TRANSPORT_FAMILIES_UNSUPPORTED` (`rocketnet_status_names` in `sdk/rocketnet.cpp`). It is appended
+immediately before `ROCKETNET_STATUS_COUNT`. A transport returns it at create
+when it cannot serve both named families, and start returns it when every
+candidate that opened refused for that reason.
 
 ### 2.2 The reporting today
 

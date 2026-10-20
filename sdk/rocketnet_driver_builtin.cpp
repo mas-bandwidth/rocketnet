@@ -12,7 +12,20 @@ static void * portable_socket_create( void * context, const char * name, rocketn
         ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, name );
 }
 static void * portable_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
-{ return portable_socket_create( context, config->name, bind ); }
+{
+#if defined( __OpenBSD__ )
+    if ( config->transport && config->transport->second_public_address[0] != '\0' )
+    {
+        if ( config->status )
+            *config->status = ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED;
+        rocketnet_error( "server transport portable cannot serve both families on this platform: IPV6_V6ONLY cannot be cleared" );
+        return NULL;
+    }
+#else
+    (void) config;
+#endif
+    return portable_socket_create( context, config->name, bind );
+}
 static void portable_destroy( void * transport ) { rocketnet_platform_socket_destroy( (rocketnet_platform_socket_t*) transport ); }
 static bool synchronous_stop( void * ) { return true; }
 static void portable_send( void * transport, const rocketnet_platform_send_t * packets, int count )
@@ -232,7 +245,10 @@ static void * xdp_create( void * context, const rocketnet_server_transport_io_co
     const int cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1;
     // The backend retains its existing verify-and-bind preflight and commit
     // barrier. Registration never bypasses either or provisions the machine.
-    return rocketnet_server_socket_create( context, config->public_address, config->transport->filter_value, queues, cpus );
+    const char * second = NULL;
+    if ( config->transport && config->transport->second_public_address[0] != '\0' )
+        second = config->transport->second_public_address;
+    return rocketnet_server_socket_create( context, config->public_address, config->transport->filter_value, queues, cpus, second, config->status );
 }
 static bool xdp_stop( void * transport )
 {

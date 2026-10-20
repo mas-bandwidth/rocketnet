@@ -109,39 +109,54 @@ ASSUME /\ NumClients \in Nat \ {0} /\ NumAddrs \in Nat /\ NumAddrs >= NumClients
 
 (***************************************************************************)
 (* Address families.  A connect token names one or two server addresses,   *)
-(* at most one per family (rocketnet_write_production_connect_token,        *)
-(* sdk/rocketnet_connect_token.cpp).  The server serves one family, the     *)
-(* family of its public address (sdk/rocketnet.h, the transport field of    *)
-(* rocketnet_server_config_t).  The client's host has IPv4, IPv6 or both.   *)
-(* The client selects the IPv6 address when the token names one and the     *)
-(* host has IPv6 or the token names no IPv4 address, else the IPv4 address  *)
-(* (rocketnet_client_protocol_pick_server_address,                          *)
-(* sdk/rocketnet_client_protocol.cpp); a selected family the host lacks     *)
-(* refuses the create (rocketnet_platform_client_bind_family returns NONE,  *)
-(* sdk/rocketnet_client_transport.cpp).  A request sent to a family the      *)
-(* server does not serve reaches no server.  The server accepts a token     *)
-(* when either flagged address is one it serves (AddressMatch = "either",   *)
-(* rocketnet_server_token_address_is_advertised,                            *)
-(* sdk/rocketnet_server_protocol.cpp); the reversed witness "ipv6only"       *)
-(* checks only the IPv6 address whenever its flag is set, the defect that   *)
-(* rule replaced.  These are definitions, so every run keeps its cfg; the   *)
-(* dual-family runs replace them (<- in the cfg) with MCServerConnection's  *)
-(* values.  The defaults reach the server, as every other run assumes.      *)
+(* at most one per family (rocketnet_write_production_connect_token,       *)
+(* sdk/rocketnet_connect_token.cpp).  The server config names one family   *)
+(* or both on one port (ConfiguredFamilies).  ServedFamilies is the set    *)
+(* the server actually serves: ConfiguredFamilies, unless                  *)
+(* ServeFirstFamilyOnly, the reversed witness in which the server serves   *)
+(* only the first configured family (ipv4 before ipv6, the create call's   *)
+(* address when the config names both).  ServedFamily remains the single   *)
+(* family the older cfgs override; ConfiguredFamilies follows it unless a  *)
+(* cfg replaces ConfiguredFamilies.  Each client has its own host families *)
+(* (ClientHost(c)); the default is HostFamilies for every client.  The     *)
+(* client selects the IPv6 address when the token names one and that       *)
+(* client's host has IPv6, or the token names no IPv4 address, else the    *)
+(* IPv4 address (rocketnet_client_protocol_pick_server_address,            *)
+(* sdk/rocketnet_client_transport.cpp); a selected family the host lacks   *)
+(* refuses the create.  A request sent on a family the server does not     *)
+(* serve reaches no server (ReachesServer: PickFamily(c) \in               *)
+(* ServedFamilies).  The server accepts a token when the token's address   *)
+(* of the family the request arrived on is one it serves                   *)
+(* (AddressMatch = "either", rocketnet_server_token_address_is_advertised, *)
+(* sdk/rocketnet_server_protocol.cpp).  It does not consult the token's    *)
+(* other-family address.  The reversed witness "ipv6only" checks only the  *)
+(* IPv6 address whenever its flag is set.  These are definitions, so every *)
+(* run keeps its cfg; the family runs replace them (<- in the cfg).  The   *)
+(* defaults reach the server, as every other run assumes.                  *)
 (***************************************************************************)
 TokenFamilies == {"ipv4"}
 HostFamilies  == {"ipv4", "ipv6"}
 ServedFamily  == "ipv4"
 AddressMatch  == "either"
+ClientHost(c) == IF c \in Nat THEN HostFamilies ELSE HostFamilies
+ConfiguredFamilies == {ServedFamily}
+ServeFirstFamilyOnly == FALSE
+FamilyRank(f) == IF f = "ipv4" THEN 1 ELSE 2
+FirstConfiguredFamily ==
+    CHOOSE f \in ConfiguredFamilies :
+        \A g \in ConfiguredFamilies : FamilyRank(f) <= FamilyRank(g)
+ServedFamilies ==
+    IF ServeFirstFamilyOnly THEN {FirstConfiguredFamily} ELSE ConfiguredFamilies
 
-PickFamily ==
-    IF "ipv6" \in TokenFamilies /\ ("ipv6" \in HostFamilies \/ "ipv4" \notin TokenFamilies)
+PickFamily(c) ==
+    IF "ipv6" \in TokenFamilies /\ ("ipv6" \in ClientHost(c) \/ "ipv4" \notin TokenFamilies)
       THEN "ipv6" ELSE "ipv4"
-CreateSucceeds == PickFamily \in HostFamilies
-ReachesServer  == PickFamily = ServedFamily
-TokenAddressAdvertised ==
-    CASE AddressMatch = "either"   -> ServedFamily \in TokenFamilies
-      [] "ipv6" \in TokenFamilies -> ServedFamily = "ipv6"
-      [] OTHER                     -> ServedFamily = "ipv4"
+CreateSucceeds(c) == PickFamily(c) \in ClientHost(c)
+ReachesServer(c)  == PickFamily(c) \in ServedFamilies
+TokenAddressAdvertised(arrival, tokFams) ==
+    CASE AddressMatch = "either" -> arrival \in tokFams /\ arrival \in ServedFamilies
+      [] "ipv6" \in tokFams     -> ServedFamilies = {"ipv6"}
+      [] OTHER                  -> ServedFamilies = {"ipv4"}
 
 Clients == 1..NumClients
 Addrs   == 1..NumAddrs
@@ -267,6 +282,13 @@ MapAddr(p) ==
       THEN p.from
       ELSE CHOOSE a \in LiveAddrs : KeysOf(smap[a]) = KeysOf(p)
 
+\* the family a request arrived on: the sending client's selected family.
+\* Addresses are unique (init and ClientMove), so the sender is one client.
+ArrivalFamily(a) ==
+    IF \E c \in Clients : cAddr[c] = a
+      THEN PickFamily(CHOOSE c \in Clients : cAddr[c] = a)
+      ELSE "ipv4"
+
 (***************************************************************************)
 (* Fresh values: a nonce no live mapping holds, no client holds, and no    *)
 (* packet in flight carries.                                               *)
@@ -317,7 +339,7 @@ Init ==
 \* rocketnet_client_protocol_connect, with the client's own token or any
 \* token the environment holds (TokenChoice)
 ClientConnect(c) ==
-    /\ cstate[c] <= 0 /\ cAtt[c] < MaxAttempts /\ CreateSucceeds
+    /\ cstate[c] <= 0 /\ cAtt[c] < MaxAttempts /\ CreateSucceeds(c)
     /\ \E t \in (IF TokenChoice = "own" THEN {c} ELSE Tokens) :
         /\ cTok' = [cTok EXCEPT ![c] = t]
         /\ cstate' = [cstate EXCEPT ![c] = 1] /\ cAtt' = [cAtt EXCEPT ![c] = @ + 1]
@@ -368,7 +390,7 @@ ClientPacket(c) ==
 \* address nobody serves
 ClientSend(c) ==
     /\ cstate[c] \in 1..4 /\ cSinceSend[c] = SendInterval
-    /\ IF ReachesServer THEN ClientSendPacket(c, ClientPacket(c))
+    /\ IF ReachesServer(c) THEN ClientSendPacket(c, ClientPacket(c))
                         ELSE UNCHANGED <<c2sVars, cLostKinds>>
     /\ cSinceSend' = [cSinceSend EXCEPT ![c] = 0]
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
@@ -457,7 +479,7 @@ ServerRecvRequest(p) ==
                  /\ UNCHANGED <<bound, churnDenied>>
             [] p.tok \in ExpiredTokens ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
-            [] ~TokenAddressAdvertised ->
+            [] ~TokenAddressAdvertised(ArrivalFamily(p.from), TokenFamilies) ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
             [] ~p.cookie ->
                  ServerSendPacket([type |-> "cookie", to |-> p.from, salt |-> p.salt])
@@ -785,6 +807,17 @@ Connects == \A c \in Clients : (cstate[c] = 1) ~> (cstate[c] = 4)
 OneFamilyHostConnects ==
     (Cardinality(HostFamilies) = 1 /\ HostFamilies \subseteq TokenFamilies /\ ServedFamily \in HostFamilies)
       => \A c \in Clients : <>(cstate[c] = 4)
+
+\* an IPv4-only client and an IPv6-only client, each with a token naming both
+\* families, both reach connected against one server whose config names both.
+\* The consequent does not mention ServedFamilies: a server that names both
+\* but serves only the first family leaves the other client at state 1.
+BothFamiliesConnect ==
+    (Cardinality(Clients) = 2
+     /\ ClientHost(1) = {"ipv4"} /\ ClientHost(2) = {"ipv6"}
+     /\ TokenFamilies = {"ipv4", "ipv6"}
+     /\ ConfiguredFamilies = {"ipv4", "ipv6"})
+      => (\A c \in Clients : <>(cstate[c] = 4))
 
 \* neither peer is left waiting for a packet nobody will send again: a
 \* half-open mapping is established or dies, and an unacknowledged slot is

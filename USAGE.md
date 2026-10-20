@@ -112,16 +112,20 @@ known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
 end reports the transport that won.
 
-Every transport serves IPv4 and IPv6, the AF_XDP server transport (`xdp`)
-included: a server serves the family of its public address, and `"auto"`
-tries `xdp` first for either family. One interface takes one XDP program, so
-on a dual-stack interface `xdp` serves one family and another transport the
-other.
+Every transport serves IPv4, IPv6, or both. `second_public_address` NULL or
+empty serves the family of the public address. When it names the other family
+on the same port (both 0, or equal), the server binds the IPv6 wildcard on
+that port with `IPV6_V6ONLY` off and advertises both named addresses.
+`"auto"` tries `xdp` first when both addresses are on one interface. `xdp` on
+two interfaces, and `portable` where `IPV6_V6ONLY` cannot be cleared, refuse
+with `TRANSPORT_FAMILIES_UNSUPPORTED` and the ladder continues. A connect
+token is accepted when its address of the arrival family is one the server
+advertises (`TokenAddressAdvertised`).
 
-`public_address` on the server displaces the address passed to create, so the
-address the transport binds and the address connect tokens are checked against
-are always the same one. The environment form applies to the first server
-create in the process only.
+`public_address` on the server displaces the address passed to create.
+`second_public_address` is the other family on that same port. The environment
+form of `public_address` applies to the first server create in the process
+only.
 
 ### Environment overrides
 
@@ -192,6 +196,7 @@ row per field of both public structs.
 | simulated_latency_ms | ROCKETNET_SERVER_SIMULATED_LATENCY_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
 | simulated_jitter_ms | ROCKETNET_SERVER_SIMULATED_JITTER_MS | int | `0` | refuses the create unless `0..60000`; development only, and a production library refuses any nonzero value |
 | simulated_duplicate_percent | ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT | int | `0` | refuses the create unless `0..100`; development only, and a production library refuses any nonzero value |
+| second_public_address | ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS | const char * | `NULL` | empty serves one family; the same family, a different port, or a string that does not parse: refuses the create |
 
 The message fields marked WIRE must be identical on both ends; the connection
 verifies them. The cross rules are in [docs/CHANNELS.md](docs/CHANNELS.md)
