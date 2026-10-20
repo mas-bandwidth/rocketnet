@@ -3279,8 +3279,9 @@ connection ack packet is opened, replay-marked and processed for its block like
 any other session packet, but MUST NOT add acknowledgement debt. This rule
 prevents acknowledgements from eliciting acknowledgements.
 
-An endpoint MUST send a standalone connection ack packet on its next
-protocol update whenever acknowledgement debt is nonzero. A sender MUST clear
+An endpoint MUST send an acknowledgement block on its next protocol update
+whenever acknowledgement debt is nonzero. If no other session packet carries
+the block on that update, it MUST send a standalone connection ack packet. A sender MUST clear
 the debt when it sends any session packet that carries a block. A standalone
 acknowledgement contains the block and no packet-type data. A type 8 packet
 does not add debt, so acknowledgements do not elicit acknowledgements.
@@ -3609,8 +3610,9 @@ an input ([t1.4 Conventions](#t1.4)).
    rotation period of [t3 Constants and registries](#t3) and no longer.
 8. An endpoint MUST send the redundant disconnect packet count of
    [t3 Constants and registries](#t3) on a deliberate disconnect.
-9. An endpoint MUST send a standalone ack on its next update when ack debt is
-   nonzero, and MUST NOT wait for a packet threshold or keep-alive cadence.
+9. An endpoint MUST send an acknowledgement block on its next update when
+   ack debt is nonzero, using a standalone ack if no other session packet
+   carries it, and MUST NOT wait for a packet threshold or keep-alive cadence.
 10. A reliable-message sender MUST retransmit an unacknowledged message only
     when its adaptive retransmission timeout (RTO) expires. Before any RTT
     sample, the RTO is 2 seconds by default. For the first RTT sample, the
