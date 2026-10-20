@@ -9,10 +9,23 @@
 
     The macOS counters use libproc (proc_pidinfo PROC_PIDLISTFDS and
     PROC_PIDTASKINFO pti_threadnum); the Linux counters read /proc/self/fd,
-    /proc/self/task and the locked memory (VmLck in /proc/self/status, which
-    the xdp umem moves). The cases share one shape: a resource is created and
-    destroyed repeatedly in a cell (server transport, client transport or
-    both), and the process must end the cell exactly as it started it.
+    /proc/self/task and the heap in use, counted in whole xdp umems. An xdp
+    umem is a posix_memalign block of ROCKETNET_XDP_NUM_FRAMES *
+    ROCKETNET_XDP_FRAME_SIZE bytes per queue, freed with free() at destroy
+    (sdk/rocketnet_server_socket_linux.cpp:1716-1718 and :1999), with no mlock,
+    so it moves neither VmLck nor VmPin; the kernel charges its pin to the
+    user's RLIMIT_MEMLOCK account. The Linux cells keep the heap with mmap
+    off and trimming off (posix_heap_keep below), so the umem is served from
+    the heap and the address space stays mapped after its free; the free
+    shows only in the heap's bytes in use. The count is glibc's bytes in use
+    (mallinfo2 uordblks plus hblkhd) divided by one umem's bytes: zero
+    outside an xdp server's life, and one more for every leaked umem. A live
+    server (its umems and the rest of its memory) moves it by at least one,
+    which the xdp server create case checks.
+
+    The cases share one shape: a resource is created and destroyed
+    repeatedly in a cell (server transport, client transport or both), and
+    the process must end the cell exactly as it started it.
 
     On Linux the server cells are portable, gso, io_uring and xdp, each with
     the portable client. io_uring is a named skip on a kernel whose
@@ -106,7 +119,7 @@ struct posix_resource_counts_t
 {
     int fds;
     int threads;
-    long locked_kb;
+    long umems;
 };
 
 static int posix_open_file_descriptors()
@@ -160,26 +173,18 @@ static int posix_threads()
 #endif
 }
 
-// VmLck from /proc/self/status, in kB: memory a cell locks and never unlocks
-// (the xdp umem) is a difference. macOS reads zero.
-static long posix_locked_kb()
+// The heap in use in whole xdp umems (see the header): a leaked umem is a
+// difference, and the few MB the cells hold besides it never reach one. Zero
+// without glibc or xdp, and on macOS.
+#if defined(__GLIBC__) && ROCKETNET_XDP
+static const unsigned long long posix_umem_bytes = (unsigned long long) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+#endif
+
+static long posix_heap_umems()
 {
-#if defined(__linux__)
-    FILE * file = fopen( "/proc/self/status", "r" );
-    if ( !file )
-        return -1;
-    char line[256];
-    long locked = -1;
-    while ( fgets( line, sizeof( line ), file ) )
-    {
-        if ( strncmp( line, "VmLck:", 6 ) == 0 )
-        {
-            locked = strtol( line + 6, NULL, 10 );
-            break;
-        }
-    }
-    fclose( file );
-    return locked;
+#if defined(__GLIBC__) && ROCKETNET_XDP
+    const struct mallinfo2 info = mallinfo2();
+    return (long) ( ( (unsigned long long) info.uordblks + info.hblkhd ) / posix_umem_bytes );
 #else
     return 0;
 #endif
@@ -190,7 +195,7 @@ static posix_resource_counts_t posix_read_counts()
     posix_resource_counts_t counts;
     counts.fds = posix_open_file_descriptors();
     counts.threads = posix_threads();
-    counts.locked_kb = posix_locked_kb();
+    counts.umems = posix_heap_umems();
     return counts;
 }
 
@@ -205,7 +210,7 @@ static posix_resource_counts_t posix_stable_counts()
     {
         rocketnet_platform_sleep( 0.001 );
         const posix_resource_counts_t current = posix_read_counts();
-        if ( current.fds == previous.fds && current.threads == previous.threads && current.locked_kb == previous.locked_kb )
+        if ( current.fds == previous.fds && current.threads == previous.threads && current.umems == previous.umems )
             return current;
         previous = current;
     }
@@ -216,6 +221,11 @@ static posix_resource_counts_t posix_stable_counts()
 // onto the portable pump) against every client cell (portable, msgx). The
 // forced cell requests msgx first and lets ROCKETNET_PUMP=portable refuse that
 // rung, so the ladder grants portable; the grant is checked, not assumed.
+// ROCKETNET_PUMP=portable turns the msgx pump off for every create in the
+// process, client and server alike (rocketnet_platform_socket_create_with_pump
+// in sdk/rocketnet_platform.cpp refuses a required msgx while it is set), so
+// posix_server_create sets it around the server create only and the client
+// cell keeps its own pump.
 struct posix_cell_t
 {
     const char * name;
@@ -490,8 +500,6 @@ static void posix_cell_begin( const posix_cell_t * cell, posix_env_guard_t * ser
     posix_env_clear( server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     posix_env_clear( client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
     posix_env_clear( pump_guard, "ROCKETNET_PUMP" );
-    if ( cell->pump )
-        posix_check( setenv( "ROCKETNET_PUMP", cell->pump, 1 ) == 0 );
 #if defined(__linux__) && ROCKETNET_XDP
     if ( cell->xdp )
         posix_xdp_setup();
@@ -519,7 +527,11 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     }
     snprintf( config.driver, sizeof( config.driver ), "%s", cell->server_driver );
     int status = ROCKETNET_STATUS_OK;
+    if ( cell->pump )
+        posix_check( setenv( "ROCKETNET_PUMP", cell->pump, 1 ) == 0 );
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, rocketnet_platform_time(), &status );
+    if ( cell->pump )
+        posix_check( unsetenv( "ROCKETNET_PUMP" ) == 0 );
     if ( !server )
         printf( "server create [%s] at %s failed: %s\n", cell->name, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
     posix_check( server != NULL );
@@ -719,14 +731,14 @@ static bool posix_wait_server_empty( rocketnet_server_transport_t * server, doub
 static void posix_case_result( const char * name, const posix_cell_t * cell, const posix_resource_counts_t * before,
                                const posix_resource_counts_t * after, double seconds )
 {
-    printf( "%s [%s]: fds %d -> %d, threads %d -> %d, locked kB %ld -> %ld, %.3fs\n", name, cell->name,
-            before->fds, after->fds, before->threads, after->threads, before->locked_kb, after->locked_kb, seconds );
+    printf( "%s [%s]: fds %d -> %d, threads %d -> %d, heap umems %ld -> %ld, %.3fs\n", name, cell->name,
+            before->fds, after->fds, before->threads, after->threads, before->umems, after->umems, seconds );
     fflush( stdout );
-    if ( before->fds < 0 || before->threads < 0 || before->locked_kb < 0 ||
-         before->fds != after->fds || before->threads != after->threads || before->locked_kb != after->locked_kb )
+    if ( before->fds < 0 || before->threads < 0 || before->umems < 0 ||
+         before->fds != after->fds || before->threads != after->threads || before->umems != after->umems )
     {
-        printf( "%s [%s]: FAIL resource count moved (fds %d -> %d, threads %d -> %d, locked kB %ld -> %ld)\n", name, cell->name,
-                before->fds, after->fds, before->threads, after->threads, before->locked_kb, after->locked_kb );
+        printf( "%s [%s]: FAIL resource count moved (fds %d -> %d, threads %d -> %d, heap umems %ld -> %ld)\n", name, cell->name,
+                before->fds, after->fds, before->threads, after->threads, before->umems, after->umems );
         fflush( stdout );
         exit( 1 );
     }
@@ -782,6 +794,19 @@ void rocketnet_test_posix_server_create_destroy_1000()
         for ( int i = 0; i < count; i++ )
         {
             rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), 4 );
+
+            // a live xdp server holds at least one umem, so the count sees
+            // it: a count that cannot move cannot catch a leaked umem
+            if ( i == 0 && cell->xdp )
+            {
+                const posix_resource_counts_t live = posix_stable_counts();
+                printf( "posix_server_create_destroy_1000 live server [%s]: heap umems %ld -> %ld\n", cell->name, before.umems, live.umems );
+                fflush( stdout );
+#if defined(__GLIBC__) && ROCKETNET_XDP
+                posix_check( live.umems >= before.umems + 1 );
+#endif
+            }
+
             rocketnet_server_transport_destroy( server );
 
             // a leak per cycle exhausts a kernel limit long before the last of
@@ -830,6 +855,77 @@ void rocketnet_test_posix_client_create_destroy_1000()
     }
 }
 
+// The port the restart case binds for its whole life. A kernel-chosen
+// ephemeral port is not the case's to keep: the discovery server releases it,
+// and any sibling test's client or scratch socket binding port 0 can take it
+// before the next rebind. On Linux a failing run saw the io_uring rung refuse
+// a discovered 127.0.0.1:44960 with errno 98 (EADDRINUSE), then exhaust the
+// ladder, because the port had gone to a socket that does not share the
+// driver's SO_REUSEPORT. Take a port below the kernel's ephemeral range
+// instead, in a slice this cell alone scans.
+static unsigned posix_reserved_restart_port( int cell_index )
+{
+    const unsigned first_port = 1025;
+    unsigned last_port = 29999;
+#if defined(__linux__)
+    FILE * port_range = fopen( "/proc/sys/net/ipv4/ip_local_port_range", "r" );
+    if ( !port_range )
+        return 0;
+    unsigned ephemeral_first = 0;
+    unsigned ephemeral_last = 0;
+    const int range_read = fscanf( port_range, "%u %u", &ephemeral_first, &ephemeral_last );
+    fclose( port_range );
+    if ( range_read != 2 || ephemeral_first <= first_port || ephemeral_last < ephemeral_first )
+        return 0;
+    if ( last_port >= ephemeral_first )
+        last_port = ephemeral_first - 1;
+#endif
+    if ( last_port < first_port )
+        return 0;
+
+    // the restart_same_port driver cases run concurrently in the suite and
+    // each reserves its own port. seeding every reservation on the same
+    // getpid() starts them all at the same port, so their probe-then-release
+    // reservations can pick the same port and one rebind fails with
+    // EADDRINUSE. seed on the cell index so each case scans a disjoint
+    // subrange.
+    const unsigned slice_count = (unsigned) posix_cell_count;
+    if ( slice_count == 0 )
+        return 0;
+    const unsigned port_count = last_port - first_port + 1;
+    const unsigned slice = port_count / slice_count;
+    const unsigned slice_index = (unsigned) cell_index % slice_count;
+    const unsigned base = first_port + slice_index * slice;
+    const unsigned remainder = ( slice_index == slice_count - 1 ) ? port_count % slice_count : 0;
+    const unsigned usable = slice + remainder;
+    if ( usable == 0 )
+        return 0;
+    unsigned port = base + (unsigned) getpid() % usable;
+    if ( port > last_port )
+        return 0;
+    for ( unsigned i = 0; i < usable; i++ )
+    {
+        const int fd = (int) socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+        if ( fd < 0 )
+            return 0;
+
+        struct sockaddr_in address;
+        memset( &address, 0, sizeof( address ) );
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl( INADDR_ANY );
+        address.sin_port = htons( (uint16_t) port );
+        const int result = bind( fd, (struct sockaddr*) &address, sizeof( address ) );
+        const int error = errno;
+        close( fd );
+        if ( result == 0 )
+            return port;
+        if ( error != EADDRINUSE && error != EACCES )
+            return 0;
+        port = base + ( port - base + 1 ) % usable;
+    }
+    return 0;
+}
+
 void rocketnet_test_posix_server_restart_same_port_100()
 {
     const char * case_name = "posix_server_restart_same_port_100";
@@ -845,12 +941,15 @@ void rocketnet_test_posix_server_restart_same_port_100()
 
         const posix_resource_counts_t before = posix_stable_counts();
 
-        // discover a free port, release it, and from then on bind that exact
-        // port again and again. The restart is what SO_REUSEADDR behaviour on
-        // BSD is on trial for; the client connects every round.
-        rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
-        const unsigned fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
-        rocketnet_server_transport_destroy( discovery );
+        unsigned fixed_port = 0;
+        if ( cell->xdp )
+        {
+            rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
+            fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
+            rocketnet_server_transport_destroy( discovery );
+        }
+        else
+            fixed_port = posix_reserved_restart_port( cell_index );
         posix_check( fixed_port != 0 );
 
         char fixed_address[64];
@@ -1019,11 +1118,22 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 // faults and ~0.12 s of system time a gso create on a 64-core Linux member.
 // A per-cell case serves those allocations from the main heap and keeps the
 // heap untrimmed, so a create after the first reuses resident pages. The
-// counts read file descriptors, threads and locked memory, none of which
-// this moves.
+// counts read file descriptors, threads and the heap's bytes in use, none
+// of which this moves.
 static void posix_heap_keep( bool keep )
 {
-#if defined(__GLIBC__)
+#if defined(__SANITIZE_ADDRESS__)
+    (void) keep;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+    (void) keep;
+#elif defined(__GLIBC__)
+    posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
+    posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
+#else
+    (void) keep;
+#endif
+#elif defined(__GLIBC__)
     posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
     posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
 #else

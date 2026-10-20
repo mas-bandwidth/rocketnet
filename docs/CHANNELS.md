@@ -763,7 +763,7 @@ The 24-bit number is reconstructed against `R` by half range: `n = R + δ`,
 with δ the signed 24-bit difference. Then:
 
 - `n < R`, or the bit for `n` is already set: a duplicate. It is dropped and
-  counted (`MESSAGE_DUPLICATE`). This is normal after a resend.
+  counted (`MESSAGE_DUPLICATE`; it counts message numbers, so a k-chunk duplicate counts k). This is normal after a resend.
 - `n >= R + W`: violation `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
 - The descriptor at `n % W` is live and names a different number: violation
   `MESSAGE_SLOT_COLLISION`.
@@ -856,7 +856,7 @@ it, if it is reliable and not a duplicate. Then `rn_channels_dispatch`
 | Code | Action |
 |---|---|
 | 0 | Deliver now: a pointer into the batch, from the unreliable budget. |
-| 1 | If `o == ordered_read` and `s >= watermark`, deliver now. If `o > ordered_read`, hold it as the channel's newest sequenced message (7.3). Otherwise drop it as stale (`MESSAGE_SEQUENCED_STALE`). |
+| 1 | If `o == ordered_read` and `s >= watermark`, deliver now. If `o > ordered_read`, hold it as the channel's newest sequenced message (7.3). Otherwise drop it as stale (`MESSAGE_SEQUENCED_STALE`, counting messages with ordering behind or sequence behind the watermark). |
 | 2 | Deliver now (unordered). |
 | 3 | If `o == ordered_read`, deliver now, then **drain** (below). If `o > ordered_read`, copy into the ring at its offset, insert `(channel, o)` into the held index, and keep the descriptor live. If `o < ordered_read`, it is a violation (`MESSAGE_ORDERING_BEHIND`), because a reliable ordered record can only be behind if it is a duplicate, and layer 3 already caught those. |
 | 4 | Same as code 1, except the held copy lives in the ring at its offset. |
@@ -942,7 +942,7 @@ base types only by a flag on that descriptor:
 
 Receipts go into the connection's receipt ring of `Rq` entries and then into
 the object's per-update receipt list. When the ring is full, the oldest
-receipt is dropped and counted (`MESSAGE_RECEIPT_RING_FULL`). An ACKED receipt
+receipt is dropped and counted (`MESSAGE_RECEIPT_RING_FULL`; the ring drops the oldest receipt rather than refusing sends). An ACKED receipt
 means the peer's transport opened the packet, which is RakNet's meaning too.
 It does not mean the application read the message (I12). Sequenced types have
 no receipt variants (study §2).
@@ -1353,14 +1353,25 @@ header; the internal transport and message layers are in
   packets one frame at a time from the transport's `start_packet`, ordered
   progress and retransmits first, then unreliable, and calls the transport's
   `send_packets`.
-- **Admission.** The transport's batches carry a client index but no
-  connection tag. An entry is admitted only for a slot bound before this
-  update's transport update and still bound to the same connection after it;
-  a slot bound or dropped by this update discards its entries, counted as
-  `MESSAGE_STALE_CONNECTION_ENTRY`. The connection id is the transport's
-  `client_id` for the slot, so a reconnect of the same client id into the same
-  slot inside one transport update is not told apart; a per-entry connection
-  tag from the transport (P9b) closes it.
+- **Admission.** Observe reads each slot's connection from
+  `rocketnet_server_transport_client_connection_id` (P9a;
+  `rn_server_link_connection`, `sdk/rocketnet_message_server.cpp:972`), which
+  differs for every connection a slot holds, so a reconnect of the same client
+  id into the same slot inside one transport update resets the slot and
+  announces its CONFIG (`sdk/rocketnet_message_server.cpp:517`). Each entry of
+  the payload and acked batches carries the connection it was received for
+  (P9b): the server's link reads
+  `rocketnet_server_transport_payload_connection_ids` and
+  `rocketnet_server_transport_acked_connection_ids`
+  (`sdk/rocketnet_message_server.cpp:979`, `:986`), and the client's link
+  tags every entry with 1, the id its object binds its one connection to at
+  create (`sdk/rocketnet_message_client.cpp:75`,
+  `sdk/rocketnet_message_server.cpp:301`). `rn_message_admit`
+  (`sdk/rocketnet_message_server.cpp:407`) hands the entry's id to
+  `rn_slots_admit`, which applies it only when that id is the slot's binding
+  (`sdk/rocketnet_slots.cpp:54`): an entry of another connection, or for a
+  free slot, is discarded and counted as `MESSAGE_STALE_CONNECTION_ENTRY`, and
+  a slot bound in this update keeps its own first entries.
 - **Exhaustion** (R5). A start the region has no room for, or a record the
   receive side cannot place, ends the connection with
   `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
@@ -1373,10 +1384,11 @@ header; the internal transport and message layers are in
   direction's budget (not recommended, because without one there is no
   defined behaviour when a sender outruns its path or its peer), and
   `set_send_kbps` follows the same rule at runtime. A reused slot starts at
-  the server's configured value. `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` and
-  `ROCKETNET_MESSAGE_SERVER_SEND_KBPS` override the field and the create
-  argument at create (default < struct < environment), each override logged
-  with the value it displaces.
+  the server's configured value. The message object reads no environment
+  (sdk/rocketnet_message_server.cpp:146); the public
+  creates read the budget from `ROCKETNET_CLIENT_SEND_KBPS` and
+  `ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` (sdk/rocketnet_api.cpp:135
+  and :173) and pass it as the create argument.
 - **Time.** Create takes no time. The object's clock is the game's time from
   the first update on. The client's transport is seeded at 0.0 at create and
   is handed the time since the first update, so its connect timers and the
@@ -1444,7 +1456,7 @@ counter for each violation in section 13.3.
 
 Why a connection ended is read with `rocketnet_client_disconnect_reason` and
 `rocketnet_server_disconnect_reason`, an `enum rocketnet_disconnect_reason_t`
-(`sdk/rocketnet.h:338-347`): `NONE`, `CONFIG_MISMATCH`, `CONFIG_TIMEOUT`,
+(`sdk/rocketnet.h:316-324`): `NONE`, `CONFIG_MISMATCH`,
 `PROTOCOL_VIOLATION`, `RELIABLE_TIMEOUT`, `MESSAGE_MEMORY_EXHAUSTED`, and, on
 the client only, `SERVER_DISCONNECTED`: the client accepted the server's
 disconnect packet (`rocketnet_server_disconnect_client`, `rocketnet_server_stop`

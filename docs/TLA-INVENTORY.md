@@ -785,9 +785,11 @@ or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `
 `head`, `count`, `filling` and the published `send_flow_index`.
 
 **Transitions.**
-- Worker receive: peek ≤ `pending.available()`; consume ≤ the staging room; release
-  exactly the consumed count; append to pending; flush all-or-zero into the fill ring
-  (`:2141-2229`; `pending_frames.h:16-34`).
+- Worker receive: peek ≤ `pending.available()`; consume ≤ the staging room; cancel the
+  peeked descriptors not consumed and release exactly the consumed count
+  (`sdk/rocketnet_server_socket_linux.cpp`, `rocketnet_xdp_receive_ring_finish`; the ring is
+  modelled in `tla/RNXdpReceiveRing.tla`); append to pending; flush all-or-zero into the
+  fill ring (`pending_frames.h:16-34`).
 - Worker send: complete-ring frames → free (`:2236-2247`). The front generation's packets
   → frames; on exhaustion stop and retain `packet_start_index` (`:2287-2298`). Retire the
   generation when every packet is copied (`:2318-2321`). TX reserve is all-or-zero; zero
@@ -1116,17 +1118,17 @@ Added with module 12. Written, run and recorded: `tla/ServerSession.tla`,
 
 - CONSTANTS `SlotCount = 2`, `MaxSessions = 2`, `MaxTokens = 2`, `MaxStarts = 2`,
   `MaxCreates = 1`; `Defect`, `UnresetField` select a witness.
-- VARIABLES: `state` (NONE, STOPPED, RUNNING, STOPPING), per slot `st`, `sess`, `rec` (the
+- VARIABLES: `state` (NONE, STOPPED, RUNNING), per slot `st`, `sess`, `rec` (the
   same per-connection record), `reason`; `kept` (used-token history, keys, config, lifetime
   counters, kept across stop and start per STANDARD.md:2913); `draining`; `link`.
-- Actions: `Create`, `Destroy`, `Start`, `Stop`, `DrainStep(i)`, `StopComplete`,
+- Actions: `Create`, `Destroy`, `Start`, `Stop`, `DrainStep(i)`,
   `DisconnectAll`, `DrainDone`, `ClientConnects(i, t)`, `Establish(i)`, `Deny(i)`,
   `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)`, `ServerSend(i)`, `ClientSend`,
   `Deliver`, `Lose`; every exit from a slot's connection goes through one `Reset(i)`.
 - Properties: `StartOnlyFromStopped`, `NoSendUnlessConnected`, `ResetIsInit`,
   `RecordIsCurrent`, `SlotReuseObservesNothing`, `NoClientWhileStopped`,
-  `StopDisconnectsAll`, `ReasonKeptUntilNextConnection`, `ResetTouchesOnlyItsSlot`,
-  `TokenAdmitsOnce`; LIVE `HandshakeResolves`, `StopReachesStopped`.
+  `StopDisconnectsAll`, `ReasonKeptWithinRun`, `ResetTouchesOnlyItsSlot`,
+  `TokenAdmitsOnce`; LIVE `HandshakeResolves`.
 - Reversed witnesses: `MCServerSessionUnresetSlot.cfg` must fail `SlotReuseObservesNothing`;
   `MCServerSessionStopLeavesClient.cfg` must fail `NoClientWhileStopped`;
   `MCServerSessionTouchesOtherSlot.cfg` must fail `ResetTouchesOnlyItsSlot`.

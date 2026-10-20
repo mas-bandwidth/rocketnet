@@ -17,6 +17,8 @@
 #include <errno.h>
 #include <inttypes.h>
 
+#include <sodium.h>
+
 // ----------------------------------------------------------------
 //              the tables, expanded into everything derived
 // ----------------------------------------------------------------
@@ -83,7 +85,7 @@ void rocketnet_message_default_config( struct rocketnet_message_config_t * confi
 static const struct rocketnet_config_field_t rocketnet_client_config_fields[] =
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
-    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 0, 0 },
+    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 1, 0 },
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
@@ -501,7 +503,7 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     return true;
 }
 
-// "transport, never driver, no alias" (Glenn, 2026-10-18). the table row
+// the environment names the transport, never the driver, with no alias. the table row
 // "driver" is read only as ROCKETNET_<ENDPOINT>_TRANSPORT. the old driver
 // spellings, process-wide ROCKETNET_DRIVER and per-endpoint
 // ROCKETNET_<ENDPOINT>_DRIVER, are refused aloud, naming the variable to use
@@ -528,6 +530,18 @@ static void rocketnet_config_refuse_driver_names( const char * transport_name, c
             rocketnet_error( "%s config refuses %s: the transport is chosen by %s (transport, never driver)", transport_name, old_names[i], env_name );
     }
 }
+
+// The decode staging seam, compiled into the unit suite's hook library only
+// (ROCKETNET_SECRET_WIPE_TEST_HOOKS): the BYTES case below hands its base64
+// staging to the hook on both of its exits, after the staging is done with,
+// so a unit case reads what a secret field's staging still holds
+// (test_unit_secrets_wiped.cpp).
+#if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
+void (*rocketnet_config_decode_staging_hook)( const uint8_t * staging, int bytes ) = NULL;
+#define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do { if ( rocketnet_config_decode_staging_hook ) rocketnet_config_decode_staging_hook( staging, bytes ); } while ( 0 )
+#else
+#define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do {} while ( 0 )
+#endif
 
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
 {
@@ -625,12 +639,19 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
                     return false;
                 }
                 const int decoded_bytes = rocketnet_base64_decode_data( value, decoded, (size_t) field->size );
-                if ( decoded_bytes != field->size )
+                const bool decoded_whole = decoded_bytes == field->size;
+                if ( decoded_whole )
+                    memcpy( base, decoded, (size_t) field->size );
+                // the staging holds the decoded bytes, a secret key's among
+                // them, on the parse and on a refused decode alike: wiped
+                // before either exit
+                sodium_memzero( decoded, sizeof(decoded) );
+                ROCKETNET_CONFIG_DECODE_STAGING_SEEN( decoded, field->size );
+                if ( !decoded_whole )
                 {
                     rocketnet_error( "%s config could not parse %s as base64 of exactly %d bytes", transport_name, env_name, field->size );
                     return false;
                 }
-                memcpy( base, decoded, (size_t) field->size );
             }
             break;
 
@@ -692,6 +713,22 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             break;
 
             case ROCKETNET_CONFIG_KIND_UINT64:
+            {
+                // a row whose max is above its min has that range (the
+                // step_driven row's 0 .. 1 at :88); a 0 .. 0 row takes any value
+                if ( field->max_value > field->min_value )
+                {
+                    uint64_t value;
+                    memcpy( &value, base, sizeof(value) );
+                    if ( value < (uint64_t) field->min_value || value > (uint64_t) field->max_value )
+                    {
+                        rocketnet_error( "%s config %s %" PRIu64 " is out of range (%" PRId64 " to %" PRId64 ")", transport_name, field->name, value, field->min_value, field->max_value );
+                        return false;
+                    }
+                }
+            }
+            break;
+
             case ROCKETNET_CONFIG_KIND_BYTES:
             {
                 // any value of the full width is structurally valid;

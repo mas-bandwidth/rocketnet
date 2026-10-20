@@ -38,6 +38,23 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
 
+// The capacity-aware receive entry's declaration lives beside its definition
+// in sdk/rocketnet_server_protocol.cpp; the transport passes the size of the
+// payload buffer it hands over.
+
+int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
+                                     const struct rocketnet_address_t * from,
+                                     const uint8_t * packet_data,
+                                     int packet_bytes,
+                                     uint64_t current_timestamp,
+                                     double current_time,
+                                     uint8_t * response_packet,
+                                     int * response_bytes,
+                                     uint8_t * out_payload,
+                                     int out_payload_capacity,
+                                     int * out_payload_bytes,
+                                     int * out_payload_client_index );
+
 #include <sodium.h>
 #include <atomic>
 #include <memory.h>
@@ -170,6 +187,7 @@ struct rocketnet_server_pending_wire_totals_t
 {
     rocketnet_address_t address;
     struct rocketnet_server_wire_totals_t totals;
+    double first_seen_time;
     bool used;
 };
 
@@ -334,11 +352,23 @@ static struct rocketnet_server_pending_wire_totals_t * rocketnet_server_pending_
         {
             memset( pending, 0, sizeof( *pending ) );
             pending->address = *address;
+            pending->first_seen_time = server_transport->time;
             pending->used = true;
             return pending;
         }
     }
     return NULL;
+}
+
+static void rocketnet_server_pending_wire_expire( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    const double deadline = server_transport->protocol.handshake_deadline_seconds;
+    for ( int i = 0; i < ROCKETNET_SERVER_PENDING_WIRE_TOTALS; i++ )
+    {
+        struct rocketnet_server_pending_wire_totals_t * pending = &server_transport->pending_wire_totals[i];
+        if ( pending->used && time - pending->first_seen_time >= deadline )
+            pending->used = false;
+    }
 }
 
 static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_transport_t * server_transport,
@@ -678,37 +708,6 @@ static int rocketnet_server_config_has_keys( const struct rocketnet_server_trans
            memcmp( config->backend_public_key, zero, 32 ) != 0;
 }
 
-// the one surviving pre-#106 env alias kept working under the ROCKETNET_PUMP
-// pattern: ROCKETNET_SERVER_NUM_QUEUES is honored only where its successor
-// ROCKETNET_SERVER_NUM_XDP_QUEUES is unset, strict-parsed by the same rules,
-// and every use is logged loudly naming the successor; set beside the
-// successor it yields, loudly.
-
-static bool rocketnet_server_apply_env_alias( const char * alias_name, const char * successor_name, int * field )
-{
-    const char * value = rocketnet_platform_getenv( alias_name );
-    if ( !value || value[0] == '\0' )
-        return true;
-
-    const char * successor_value = rocketnet_platform_getenv( successor_name );
-    if ( successor_value && successor_value[0] != '\0' )
-    {
-        rocketnet_warn( "server config ignores %s: its successor %s is set", alias_name, successor_name );
-        return true;
-    }
-
-    int parsed;
-    if ( !rocketnet_config_parse_int_value( value, &parsed ) )
-    {
-        rocketnet_error( "server config could not parse %s=\"%s\" as an integer", alias_name, value );
-        return false;
-    }
-
-    rocketnet_info( "server config override %s=%d (deprecated alias; %s is the successor) (displaces %d)", alias_name, parsed, successor_name, *field );
-    *field = parsed;
-    return true;
-}
-
 bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * driver, rocketnet_server_memory_plan_t & plan)
 {
@@ -953,21 +952,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
     if ( !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
-    {
-        if ( status )
-            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
-        return NULL;
-    }
-
-    // the one surviving alias: ROCKETNET_SERVER_NUM_QUEUES is the pre-#106
-    // spelling of the num_xdp_queues field, whose canonical per-endpoint
-    // name is now ROCKETNET_SERVER_NUM_XDP_QUEUES. ROCKETNET_SERVER_NUM_OS_CPUS
-    // and ROCKETNET_SERVER_PUBLIC_ADDRESS are no longer aliases -- they are
-    // the canonical names the table reads above -- and the old process-wide
-    // ROCKETNET_NUM_OS_CPUS / ROCKETNET_PUBLIC_ADDRESS spellings are refused
-    // aloud by rocketnet_config_apply_env with their replacements named.
-
-    if ( !rocketnet_server_apply_env_alias( "ROCKETNET_SERVER_NUM_QUEUES", "ROCKETNET_SERVER_NUM_XDP_QUEUES", &effective_config.num_xdp_queues ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -1711,6 +1695,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     server_transport->packet_leases.reset();
 
     server_transport->time = time;
+    rocketnet_server_pending_wire_expire( server_transport, time );
     rocketnet_server_link_drain( server_transport );
 
     rocketnet_server_update_stats( server_transport, time );
@@ -1777,11 +1762,13 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         if ( response )
             response += ROCKETNET_FRAME_WIRE_OFFSET;
 
-        const int outcome = rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
+        const int outcome = rocketnet_server_protocol_process_packet_capacity( &server_transport->protocol, &received->from[i],
                                          received->packet_data[i], received->packet_bytes[i],
                                          current_timestamp, current_time,
                                          response ? response : response_overflow, &response_bytes,
-                                         payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
+                                         payload ? payload : payload_overflow,
+                                         payload ? ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
+                                         &payload_bytes, &payload_client_index );
 
         // a packet that opened under a connection's keys teaches the driver
         // its link-layer source (the xdp reply-MAC rule, DRIVERS.md); a
@@ -1905,10 +1892,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             if ( response )
                 response += ROCKETNET_FRAME_WIRE_OFFSET;
 
-            rocketnet_server_protocol_process_packet( &server_transport->protocol, &from, receive_frame, packet_bytes,
+            rocketnet_server_protocol_process_packet_capacity( &server_transport->protocol, &from, receive_frame, packet_bytes,
                                              current_timestamp, current_time,
                                              response ? response : response_overflow, &response_bytes,
-                                             payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
+                                             payload ? payload : payload_overflow,
+                                             payload ? ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
+                                             &payload_bytes, &payload_client_index );
 
             int wire_client_after = wire_client_before;
             if ( wire_client_before < 0 )

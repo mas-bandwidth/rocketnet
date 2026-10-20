@@ -68,12 +68,6 @@ static void write_hex( FILE * file, const char * label, const uint8_t * bytes, i
     fputc( '\n', file );
 }
 
-static const char * reason_name( int reason )
-{
-    static const char * names[] = { "none", "config mismatch", "config timeout", "protocol violation",
-                                    "reliable timeout", "message memory exhausted" };
-    return reason >= 0 && reason < 6 ? names[reason] : "unknown";
-}
 
 int main( int argc, char ** argv )
 {
@@ -173,7 +167,7 @@ int main( int argc, char ** argv )
             had_client = 1;
         else if ( had_client )
         {
-            printf( "server client disconnected (reason %s)\n", reason_name( rocketnet_server_disconnect_reason( server, 0 ) ) );
+            printf( "server client disconnected (reason %s)\n", rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, 0 ) ) );
             break;
         }
 

@@ -252,12 +252,18 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
     check( got->connected_step == want->connected_step );
 }
 
-// the counters of the fixed run at the base, with the link simulator off and
-// with it on at 5 ms latency (the simulator on, both patterns zero)
+// the counters of the fixed run, with the link simulator off and with it on at
+// 5 ms latency (the simulator on, both patterns zero). The packets, bytes and
+// counter hashes are the same in both runs; connected_step is two steps later
+// with the simulator on, because both ends hold each packet for the 5 ms
+// latency: the client routes through its simulator whenever one exists
+// (rocketnet_client_io_core, sdk/rocketnet_client_transport.cpp:336-339; the
+// simulator is created at :981-984 when any simulated field is set).
+// Hashes reflect the nine message-violation counters appended in sdk/rocketnet_counters.h.
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x4393f65828b4dd66 ), UINT64_C( 0xec89783b8289d264 ), 24 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xbd190b8677ba72a6 ), UINT64_C( 0x5219d21d4aad11e4 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0x4393f65828b4dd66 ), UINT64_C( 0xec89783b8289d264 ), 25 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xbd190b8677ba72a6 ), UINT64_C( 0x5219d21d4aad11e4 ), 26 };
 
 static void loopback_patterns_off_same_trace()
 {

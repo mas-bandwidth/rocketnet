@@ -80,12 +80,6 @@ static int read_hex( FILE * file, const char * label, uint8_t * bytes, int count
     }
     return 1;
 }
-static const char * reason_name( int reason )
-{
-    static const char * names[] = { "none", "config mismatch", "config timeout", "protocol violation",
-                                    "reliable timeout", "message memory exhausted" };
-    return reason >= 0 && reason < 6 ? names[reason] : "unknown";
-}
 static void state_changed( void * context, enum rocketnet_client_state_t previous, enum rocketnet_client_state_t current )
 {
     (void) context;
@@ -194,7 +188,7 @@ int main( int argc, char ** argv )
 
     CHECK( wrong_protocol ? refused : received );
     rocketnet_client_disconnect( client );
-    printf( "client disconnect reason: %s\n", reason_name( rocketnet_client_disconnect_reason( client ) ) );
+    printf( "client disconnect reason: %s\n", rocketnet_disconnect_reason_name( rocketnet_client_disconnect_reason( client ) ) );
     result = 0;
 
 cleanup:

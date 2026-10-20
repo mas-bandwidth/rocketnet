@@ -70,11 +70,11 @@ cmake --install build --config Release --prefix C:/path/to/prefix
 When consuming an installed prefix:
 
 ```cmake
-find_package(RocketNet 1.0.0 EXACT CONFIG REQUIRED)
+find_package(RocketNet 1.0 CONFIG REQUIRED)
 target_link_libraries(game PRIVATE RocketNet::rocketnet)
 ```
 
-Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project. For a shared library build, configure RocketNet with `-DBUILD_SHARED_LIBS=ON`.
+Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project. For a shared library build, link against the shared target rather than setting `BUILD_SHARED_LIBS` (targets are explicitly static or shared; see [BUILDING.md](BUILDING.md)).
 
 When embedding the source tree with `add_subdirectory`:
 
@@ -213,23 +213,26 @@ int main( void )
             rocketnet_client_release_message( client, data );
         }
 
-        uint64_t slot = rocketnet_client_index( client );
-        if ( rocketnet_server_client_connected( server, slot ) )
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
+            uint64_t slot = rocketnet_client_index( client );
+            if ( rocketnet_server_client_connected( server, slot ) )
             {
-                if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
-                    server_received_and_replied = 1;
-                rocketnet_server_release_message( server, slot, data );
-
-                if ( server_received_and_replied )
+                while ( rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
                 {
-                    uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-                    if ( !reply )
-                        return 1;
-                    memcpy( reply, "pong", 4 );
-                    if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
-                        return 1;
+                    if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
+                        server_received_and_replied = 1;
+                    rocketnet_server_release_message( server, slot, data );
+
+                    if ( server_received_and_replied )
+                    {
+                        uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+                        if ( !reply )
+                            return 1;
+                        memcpy( reply, "pong", 4 );
+                        if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
+                            return 1;
+                    }
                 }
             }
         }
@@ -339,11 +342,10 @@ RocketNet never clamps invalid configuration or silently ignores API misuse; eve
 - **Disconnect reasons (`rocketnet_client_disconnect_reason`, `rocketnet_server_disconnect_reason`):**
   - `ROCKETNET_DISCONNECT_REASON_NONE` (`0`): no message-layer error.
   - `ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH` (`1`): wire-checked channel configuration fields (`num_channels`, `window_messages`, `receive_ring_bytes`, `max_message_bytes`) differed between client and server.
-  - `ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT` (`2`): peer's channel configuration record did not arrive within `reliable_timeout_ms`.
   - `ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION` (`3`): peer sent a malformed message record or violated window/ring bounds.
   - `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT` (`4`): a reliable message went unacknowledged past `reliable_timeout_ms`.
   - `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (`5`): connection send descriptors (`send_queue_messages`) or send buffer (`send_buffer_bytes`) ran out of room for a send that could not be dropped.
-  - `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED` (`6`): client only. The client accepted the server's disconnect packet: the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy` (`sdk/rocketnet_message_server.cpp:477`, from the counter `sdk/rocketnet_client_protocol.cpp:1202` counts). Kept until the next connection reaches CONNECTED. A deliberate `rocketnet_client_disconnect` and a connection timeout read `NONE`.
+  - `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED` (`6`): client only. The client accepted the server's disconnect packet: the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`. Kept until the next connection reaches CONNECTED. A deliberate `rocketnet_client_disconnect` and a connection timeout read `NONE`.
 - **Counters and stats to watch:**
   - Read client counters with `rocketnet_client_counter` (`enum rocketnet_client_counter_t`: `ROCKETNET_CLIENT_COUNTER_PACKETS_SENT`, `ROCKETNET_CLIENT_COUNTER_PACKETS_RECEIVED`, `ROCKETNET_CLIENT_COUNTER_BYTES_SENT`, `ROCKETNET_CLIENT_COUNTER_BYTES_RECEIVED`, `ROCKETNET_CLIENT_COUNTER_PAYLOADS_RECEIVED`, `ROCKETNET_CLIENT_COUNTER_MESSAGES_RESENT`, `ROCKETNET_CLIENT_COUNTER_MESSAGES_DUPLICATE`, `ROCKETNET_CLIENT_COUNTER_RECEIPTS_ACKED`, `ROCKETNET_CLIENT_COUNTER_RECEIPTS_LOST`, `ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS`, `ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED`, `ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED`, `ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS`).
   - Read server-wide counters with `rocketnet_server_counter` (`enum rocketnet_server_counter_t`: `ROCKETNET_SERVER_COUNTER_PACKETS_SENT`, `ROCKETNET_SERVER_COUNTER_PACKETS_RECEIVED`, `ROCKETNET_SERVER_COUNTER_BYTES_SENT`, `ROCKETNET_SERVER_COUNTER_BYTES_RECEIVED`, `ROCKETNET_SERVER_COUNTER_CLIENTS_CONNECTED`, `ROCKETNET_SERVER_COUNTER_CLIENTS_DENIED_FULL`, `ROCKETNET_SERVER_COUNTER_HANDSHAKES_OVER_BUDGET`, `ROCKETNET_SERVER_COUNTER_PAYLOADS_RECEIVED`, `ROCKETNET_SERVER_COUNTER_MESSAGES_RESENT`, `ROCKETNET_SERVER_COUNTER_MESSAGES_DUPLICATE`, `ROCKETNET_SERVER_COUNTER_RECEIPTS_ACKED`, `ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST`, `ROCKETNET_SERVER_COUNTER_BUDGET_DROPS`, `ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED`, `ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS`) and per-slot counters with `rocketnet_server_client_counter` (`enum rocketnet_server_client_counter_t`: `ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_SENT`, `ROCKETNET_SERVER_CLIENT_COUNTER_PACKETS_RECEIVED`, `ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_SENT`, `ROCKETNET_SERVER_CLIENT_COUNTER_BYTES_RECEIVED`).
@@ -374,7 +376,7 @@ RocketNet never clamps invalid configuration or silently ignores API misuse; eve
 3. **Keeping the `start` pointer after `finish` or `abort`:** Once `rocketnet_client_finish_message` / `rocketnet_server_finish_message` or `rocketnet_client_abort_message` / `rocketnet_server_abort_message` is called, the buffer belongs to the transport queue or free pool. Never read or write through the pointer after committing or aborting.
 4. **Passing a dishonest maximum to `start` or writing past it:** `start` reserves room for `bytes` bytes (`1 .. max_message_bytes`). Writing past `bytes` corrupts adjacent region memory; passing `bytes_written < 1` or `bytes_written > bytes` to `finish` is refused (`0` returned, `start` stays pending).
 5. **Calling `send_packets` before queuing messages:** Calling `rocketnet_client_send_packets` or `rocketnet_server_send_packets` at the top of the frame instead of the end leaves every message queued during the frame sitting in the region until the next frame, adding a full tick of latency.
-6. **Passing wall-clock time in deterministic tests:** Mixing wall-clock time with simulated ticks causes non-deterministic timeouts (`ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT` or `ROCKETNET_DISCONNECT_REASON_CONFIG_TIMEOUT`). Pass a controlled monotonic `time` variable instead.
+6. **Passing wall-clock time in deterministic tests:** Mixing wall-clock time with simulated ticks causes non-deterministic timeouts (`ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT`). Pass a controlled monotonic `time` variable instead.
 7. **Forgetting keys on `rocketnet_server_default_config`:** `rocketnet_server_default_config` zeroes `backend_public_key`, `server_public_key`, and `server_secret_key`; `rocketnet_server_start` returns `ROCKETNET_STATUS_MISSING_KEYS` unless valid keys are populated or `rocketnet_server_dev_config` is used in development.
 8. **Leaving a `start` open across `update` or `send_packets`:** An in-place start (a fitting unreliable message, written into the packet buffer) still pending when `rocketnet_client_update` / `rocketnet_server_update` or `rocketnet_client_send_packets` / `rocketnet_server_send_packets` runs is aborted there and counted as API misuse (`rocketnet_api_misuse_count()`); nothing is sent, and its later `finish` returns `0`. Which path `start` took is not visible to the caller, so finish or abort every start before the next `update` or `send_packets`.
 9. **Sending before the connection is up:** a send before the connection is `ROCKETNET_CLIENT_STATE_CONNECTED` is dropped: start returns NULL, finish returns 0, nothing is queued, on the client and the server alike. It is a normal drop, never API misuse: `rocketnet_api_misuse_count()` is unchanged, and each dropped start adds 1 to `ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS` on the client or `ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS` on the server. Gate the first send on `rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED`, or on `rocketnet_server_client_connected` for the slot, as the example above does.

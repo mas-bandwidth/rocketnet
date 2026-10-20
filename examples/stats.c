@@ -15,11 +15,6 @@
 #include <stdint.h>
 #include <string.h>
 
-// The lifecycle card that lands after this one renames start, finish, receive,
-// release and send_packets to *_start_message, *_finish_message,
-// *_receive_message, *_release_message and *_send_packets. The header at this
-// base still declares the old names, so this example uses them.
-
 #define CHECK( condition ) do { if ( !( condition ) ) { printf( "FAIL: %s\n", #condition ); goto cleanup; } } while ( 0 )
 
 static int print_client_stats( struct rocketnet_client_t * client )
@@ -154,8 +149,8 @@ int main( void )
                 break;
         }
     }
-    printf( "client after disconnect state %s reason %d\n", rocketnet_client_state_name( rocketnet_client_state( client ) ), rocketnet_client_disconnect_reason( client ) );
-    printf( "server client %d disconnect reason %d\n", client_index, rocketnet_server_disconnect_reason( server, client_index ) );
+    printf( "client after disconnect state %s reason %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ), rocketnet_disconnect_reason_name( rocketnet_client_disconnect_reason( client ) ) );
+    printf( "server client %d disconnect reason %s\n", client_index, rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, client_index ) ) );
     result = 0;
 cleanup:
     rocketnet_client_destroy( client );

@@ -278,7 +278,6 @@ static const char * const counters_base_names[] =
 static const char * const counters_appended_names[] =
 {
     "CONNECTION_RESPONSE_INTERNAL_ERROR",
-    "CONNECTION_REQUEST_MAPPING_SALT_MISMATCH",
     "SEND_HISTORY_LOST",
     "MESSAGE_BAD_CHANNEL",
     "MESSAGE_BAD_BLOCK",
@@ -295,7 +294,6 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_INVALID_TYPE",
     "XDP_KERNEL_DROPPED_WRONG_EPOCH",
     "XDP_KERNEL_PASSED_IPV6_EXTENSION",
-    "CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED",
     "CLIENT_SEND_DEFERRED",
     "XDP_KERNEL_DROPPED_REPLAYED",
     "CLIENT_CHALLENGE_WRONG_SIZE",
@@ -311,6 +309,15 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_PASSED_FRAGMENT",
     "XDP_KERNEL_DROPPED_FIRST_FRAGMENT",
     "MESSAGE_SEND_NOT_CONNECTED",
+    "MESSAGE_BAD_FORM",
+    "MESSAGE_TRUNCATED",
+    "MESSAGE_BAD_FLAGS",
+    "MESSAGE_BAD_LENGTH",
+    "MESSAGE_BAD_SIZE",
+    "MESSAGE_BAD_CONTROL",
+    "MESSAGE_NUMBER_OUTSIDE_WINDOW",
+    "MESSAGE_SLOT_COLLISION",
+    "MESSAGE_DUPLICATE_ORDERING",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

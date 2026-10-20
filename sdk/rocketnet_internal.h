@@ -319,14 +319,16 @@ void * rocketnet_default_malloc_function( void * context, size_t bytes );
 /** @brief Internal default deallocator callback. @param context Opaque context, ignored. @param p Original pointer returned by the default allocator. */
 void rocketnet_default_free_function( void * context, void * p );
 
-// Internal to the SDK. Both transport updates clamp the caller's clock once per
-// update, before any read of it, through this helper: a non-finite time, or a
-// time below the last good one, becomes the last good time. A clamp sets
-// *clamped, counts one misuse and fires rocketnet_assert; a release build
-// clamps and goes on, a debug build is loud. It is also the client create's
-// check, seeded with a zero last good time. One compare per update, none per
-// packet.
-/** @brief Internal monotonic-time guard used by transport updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
+// Internal to the SDK. The transport updates and the message object's update
+// clamp the caller's clock once per update, before any read of it, through this
+// helper: a non-finite time, or a time below the last good one, becomes the
+// last good time. A clamp sets *clamped, counts one misuse and fires
+// rocketnet_assert; a release build clamps and goes on, a debug build is loud.
+// It is also the client create's check, seeded with a zero last good time. The
+// message object clamps first and passes the clamped value on to its transport,
+// so a bad time is counted once, never stored, and never becomes the clock
+// origin. One compare per update, none per packet.
+/** @brief Internal monotonic-time guard used by transport and message-object updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
 
 #ifdef __cplusplus
@@ -533,7 +535,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // validation, as the transports' tables (docs/CHANNELS.md 12). Fields marked
 // WIRE must be identical on both ends; CONFIG verifies them (layer 7).
 // Validation applies the ranges here and the cross rules of section 14, and
-// refuses, never clamps.
+// refuses, never clamps. The public env pass reads every row but the two
+// budget rows under the endpoint's prefix (sdk/rocketnet_api.cpp:119
+// and :125); the budget's one variable is the
+// endpoint's budget field, ROCKETNET_CLIENT_SEND_KBPS or
+// ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS.
 
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
@@ -558,10 +564,37 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, server_send_kbps ) + sizeof( int ), sizeof( int ) )
 #define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1, ROCKETNET_MESSAGE_CONFIG_BYTES_2
 
+// The platform's network lookups, for unit tests only. On Linux,
+// rocketnet_platform_init (sdk/rocketnet_platform.cpp:391) classifies the
+// connection with get_connection_type (sdk/rocketnet_platform.cpp:1763):
+// getifaddrs (:1774), an AF_INET ioctl socket (:1782) and a netlink route
+// dump (:1851). rocketnet_platform_client_ipv6_available
+// (sdk/rocketnet_platform.cpp:4345) opens and closes an AF_INET6 socket
+// (:4361). With a table set, each reads its entry instead and opens nothing
+// (:391, :4352); NULL, the default, runs the real lookups. The unit suite sets
+// a fake before rocketnet_init (test.cpp:106) so ./bin/test opens no socket.
+// Not exported.
+
+struct rocketnet_platform_network_lookups_t
+{
+    int ( *connection_type )( void );
+    bool ( *ipv6_available )( void );
+};
+
+void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_platform_network_lookups_t * lookups );
+
 // The public config structs in rocketnet.h are written out field by field;
 // the tables above are the declarations the parse, the validation, the env
 // surface and the ABI descriptors derive from. sdk/rocketnet_config.cpp
 // asserts, field by field, that each public struct and its table agree in
 // name, order, offset and size, so the two cannot drift.
+
+// the longest single rocketnet_sleep, in seconds: its microsecond count fits
+// a 32-bit int
+#define ROCKETNET_SLEEP_MAX_SECONDS 2000.0
+
+// the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
+// or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
+double rocketnet_sleep_clamp( double seconds );
 
 #endif // #ifndef ROCKETNET_INTERNAL_H

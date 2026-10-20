@@ -59,6 +59,16 @@ struct rn_message_link_t
     // The client's link leaves *client_index NULL.
     int (*acked)( void * transport, const int ** client_index, const uint64_t ** packet_ids );
 
+    // the connection entry k of the update's payload batch (payload_connection)
+    // or acked batch (acked_connection) was received for (P9b), which
+    // rn_message_admit hands to rn_slots_admit. The server's link reads
+    // rocketnet_server_transport_payload_connection_ids and
+    // rocketnet_server_transport_acked_connection_ids; the client's link
+    // answers 1, the id of its one connection, for every entry. NULL (the
+    // unit suite's untagged fakes): rn_message_admit tags the entry itself.
+    uint64_t (*payload_connection)( void * transport, int k );
+    uint64_t (*acked_connection)( void * transport, int k );
+
     // The configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
     int (*max_payload_bytes)( void * transport );
@@ -68,7 +78,10 @@ struct rn_message_link_t
     void (*send_packets)( void * transport );
 
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots
-    // Observe). The client's link answers 1 while it is CONNECTED.
+    // Observe). The server's link answers
+    // rocketnet_server_transport_client_connection_id, which differs for every
+    // connection a slot holds (P9a). The client's link answers 1 while it is
+    // CONNECTED.
     uint64_t (*connection)( void * transport, int client_index );
 
     void (*disconnect)( void * transport, int client_index );
@@ -185,14 +198,6 @@ uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
                                                        int32_t default_kbps, double time );
-
-// R6 (docs/CHANNELS.md 11.5): false when ROCKETNET_MESSAGE_CLIENT_SEND_KBPS
-// (is_server 0) or ROCKETNET_MESSAGE_SERVER_SEND_KBPS (1) is set to a value
-// that does not parse or is above ROCKETNET_SEND_BUDGET_MAX_KBPS, logged with
-// the variable and its value. The public creates refuse on it before the
-// transport opens a socket; rn_message_object_create applies a valid value,
-// logged with the value it displaces.
-bool rn_message_object_send_kbps_env_valid( int is_server );
 
 void rn_message_object_destroy( struct rn_message_object_t * object );
 

@@ -246,3 +246,38 @@ MCReplayWindow	MCReplayWindow.cfg with ClearedWords 4; checks AckReportsOnlyRece
 MCReplayWindow	MCReplayWindow.cfg with GateBeforeAdvance FALSE; checks NoAdvanceBeforeConnect (reversed witness, OV-34)	2	2	fail as expected (OV-34): Invariant NoAdvanceBeforeConnect is violated, 2-state trace	hetzner2	2026-10-13
 MCReplayWindow	MCReplayWindow.cfg with GateBeforeAdvance FALSE; checks AckReportsOnlyProcessed (reversed witness, OV-34, the harm)	2	2	fail as expected (OV-34): Invariant AckReportsOnlyProcessed is violated, 2-state trace	hetzner2	2026-10-13
 ```
+
+## Mid-scale instance
+
+`MCReplayWindowMid.cfg` is the same module with a larger ring: 7 words of 3
+bits (`W = 21`, against 6 words of 2 bits and `W = 12`) over `MaxSeq = 22`, so
+the mark crosses the ring boundary at least once and the long-skip branch is
+reachable from a fresh window. It keeps every invariant and `Monotone`;
+`ClearedWords = 7` is still the rule and `GateBeforeAdvance` is still `TRUE`.
+
+The deployed constants are `Words = 64` and `WordBits = 64` with
+`MaxSeq` unbounded. The invariants are pointwise over bits and words: every
+range, floor, clear and ack walk is defined by `s % W` and `b div WordBits`
+without a case split on `W`, and the long-skip branch clears all `Words`
+words. A larger ring therefore cannot turn a passing mid instance into a
+failure; it only changes which sequence names share a bit, and the mid
+instance exercises a different word width and a full lap. The part not
+covered at deployed size is the 64-bit sequence and ack-range width
+(`uint64` marks, `u16` ack run caps); those are wire-representation
+obligations, not ring-size behaviour.
+
+The mid run exceeds the 110-second runner budget, so it is a bench case, and
+a manual exploration under the same two workers completes: 34,603,033
+generated / 3,145,729 distinct states in 445.380 s, exit 0, with every
+invariant and `Monotone` passing. The record carries `mode = manual` and the
+bench row names the measured time. This checks a full lap at `W = 21` rather
+than extrapolating it from the formula.
+
+What the mid instance does not cover is the deployed ring's width: 64 words of
+64 bits (4096 bits) and a 64-bit sequence space. Going from 21 to 4096 bits
+adds word boundaries (`b div WordBits`) that the 21-bit ring never crosses
+past word 2, so the deployed-size lap remains argued, not checked. The
+invariant statements themselves are pointwise in `W` and `WordBits`, and the
+long-skip branch clears every word, so the argument is that a larger ring
+changes which sequence names share a bit without changing the predicate a
+bit must satisfy.

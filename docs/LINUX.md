@@ -121,9 +121,7 @@ spelling `ROCKETNET_<FIELD>` is refused aloud and not applied, naming its
 replacement (`sdk/rocketnet_config.cpp:548-562`); so are the old
 `ROCKETNET_DRIVER`, `ROCKETNET_TRANSPORT`, `ROCKETNET_SERVER_DRIVER` and
 `ROCKETNET_CLIENT_DRIVER` (`sdk/rocketnet_config.cpp:564-565`,
-`BUILDING.md:332-334`). `ROCKETNET_SERVER_NUM_QUEUES` is the one surviving
-alias, of `ROCKETNET_SERVER_NUM_XDP_QUEUES`
-(`sdk/rocketnet_server_transport.cpp:950-958`).
+`BUILDING.md:332-334`).
 
 CI's transport matrix pins each Linux server transport against the portable
 client on four cases, `driver_env_pin_is_honoured` among them, which proves
@@ -178,7 +176,11 @@ again (`sdk/rocketnet_server_uring_linux.cpp:570-585`,
 `sdk/rocketnet_server_uring.h:65-66`). The ring has 4096 submission entries and
 a completion queue twice that (`sdk/rocketnet_server_uring.h:39-41`,
 `sdk/rocketnet_server_uring_linux.cpp:731-742`). **Send** submits one batched
-`SENDMSG` per staged slot and reaps until every send has completed
+`SENDMSG` per staged slot and reaps within a fixed per-call completion budget
+(`ROCKETNET_URING_SEND_BUDGET`), waiting at most one bounded
+`ROCKETNET_URING_SEND_WAIT_SECONDS`; sends still pending when the call returns
+stay in the completion queue for a later call and are counted
+`SEND_DEFERRED`, so a send flush never waits unboundedly
 (`sdk/rocketnet_server_uring_linux.cpp:28-33`, `DRIVERS.md:176-179`).
 
 **What the host needs.**

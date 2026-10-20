@@ -46,6 +46,10 @@ slowest as a table. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
+The functional-only sibling binaries are `test_serialize` (a real clock and
+`rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
+`usleep`), `test_driver`, `test_transport_control`, `test_lifecycle`,
+`test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and
@@ -56,12 +60,23 @@ config the gate reads, without creating a transport.
 The functional suite takes its loopback ports from the OS. Every loopback
 server and socket it opens binds port 0 and reads back the port the OS gave.
 An address that must carry a real port takes a free one from the OS through
-`rocketnet_test_free_port` (functional/harness.inc:228), which binds a
-scratch socket to `127.0.0.1:0`, reads the port, and closes it. Two
-`./bin/functional` runs may share a machine at the same time. The one
-exception is the root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`), which
-makes a fixed namespace and veth pair and binds port 40411 on it
-(functional/rocketnet_functional_tests.cpp:7213); it skips without root.
+`rocketnet_test_free_port`, which binds a scratch socket to
+`127.0.0.1:0`, reads the port, and closes it. Two `./bin/functional` runs
+may share a machine at the same time. The one exception is the root-only XDP
+veth case (`ROCKETNET_TEST_XDP_VETH`), which makes a fixed namespace and veth
+pair and binds port 40411 on it; it skips without root.
+
+Many-client load runs use the dedicated load harness:
+
+    ./bin/load <clients> <seconds> [drop-one]
+
+The load tool runs the public API (`rocketnet_server_t` and `rocketnet_client_t`
+from `rocketnet.h`) under the light profile (10 Hz updates, one message per client
+per update in each direction: the client-to-server message rotates through all
+eight reliability modes, and the server-to-client message is reliable-ordered),
+verifying loopback scale up to 1000 concurrent clients across five pass criteria
+(`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
+`unreliable_integrity`, and `counters_agree`).
 
 Dependencies, per platform, as CI installs them:
 
@@ -71,6 +86,64 @@ Dependencies, per platform, as CI installs them:
 
     # macOS
     brew install cmake
+
+The macOS default build is the host's native slice. `CMakeLists.txt:5-6` sets
+`CMAKE_OSX_DEPLOYMENT_TARGET` to 12.0 when the caller does not: the Xcode 27
+build system refuses 11.0 (its supported range starts at 12.0) while the
+Command Line Tools accept it, so 12.0 is the lowest target both toolchains
+build for both slices of a universal library. Override it with `-D` for
+another minimum.
+To build a universal (arm64 and x86_64) library and the suites:
+
+    cmake -B build-universal -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-universal --clean-first --parallel 4
+    lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
+
+Both `lipo -info` lines name `x86_64 arm64`. The libraries and executables of
+every build tree land in the checkout's `bin/` (`CMakeLists.txt:59-64`), so `--clean-first` relinks
+them against the universal objects when a native build ran first; without it
+CMake sees the newer native files and skips the link. To read the deployment
+target on
+each slice:
+
+    otool -l -arch arm64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
+    otool -l -arch x86_64 bin/librocketnet.dylib | grep -A4 LC_BUILD_VERSION
+
+Both print `minos 12.0`; the static archive carries the same load command in
+each member, read after `lipo -thin <arch>` and `ar -x`. CMake compiles each
+architecture in its own clang pass, so the vendored sodium builds its x86 asm
+into the x86_64 slice and its ARM path into the arm64 slice; the XDP archive
+is embedded once with the host `xxd` and the generated header is
+architecture-neutral. The `-fcf-protection` hardening option is x86-only, so
+the compiler-flag check (`CMakeLists.txt:210`, `CMakeLists.txt:213`) drops it for a fat compile while the stack protector
+and the other Release flags stay on both slices.
+
+Against a universal build, `tools/check_package.py build-universal` passes the
+build's `CMAKE_OSX_ARCHITECTURES` to its consumers (`tools/check_package.py:125`)
+and `tools/check_dll_consumer.py --build build-universal` adds one `-arch` per
+library slice (`tools/check_dll_consumer.py:184`); each refuses a consumer
+executable whose `lipo -archs` lacks a slice (`tools/check_package.py:140`,
+`tools/check_dll_consumer.py:255`).
+
+The Xcode generator needs Xcode installed, and its license accepted once by an
+administrator (`sudo xcodebuild -license`); until then `xcodebuild` refuses and
+the configure step stops with "No CMAKE_C_COMPILER could be found". The
+Command Line Tools alone have no `xcodebuild`. `DEVELOPER_DIR` selects Xcode
+for one command without changing `xcode-select`:
+
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+    cmake -B build-xcode -G Xcode
+    cmake --build build-xcode --config Release --parallel 4
+    ./bin/Release/test
+
+`CMakeLists.txt:59-64` sets the output directories to `bin/` with no
+configuration in the path, and a multi-config generator such as Xcode appends
+the configuration to them, so its executables and libraries land in
+`bin/Release/`. The unit suite opens the development library by its absolute
+build path (`CMakeLists.txt:533-534`), and the release library by
+`bin/librocketnet.dylib`, then by the bare name
+(`sdk/rocketnet_tests.cpp:14700-14701`), which the executable's run path
+resolves in `bin/Release/` (`CMakeLists.txt:538`).
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
@@ -99,6 +172,15 @@ checkout, in PowerShell or cmd.exe:
 loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
 takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`
 line continuation, so on Windows write each command on one line.
+
+Configure with `-DROCKETNET_SANITIZE_ADDRESS=ON` (default `OFF`) to build every
+target with AddressSanitizer: `/fsanitize=address` and `/Zi` with
+`/INCREMENTAL:NO` at link under MSVC, and `-fsanitize=address` elsewhere. On
+Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
+`cmake --build build --config Release --parallel 4`), the build copies the MSVC
+AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
+into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
 
 `py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
 executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
@@ -144,7 +226,9 @@ checks. The fixed-vector test is `bin/test_sodium`.
 
 For integration testing against an independently supplied libsodium, configure
 with `-DROCKETNET_USE_SYSTEM_SODIUM=ON`. That opt-in uses pkg-config on POSIX,
-or `ROCKETNET_SODIUM_INCLUDE_DIR` and `ROCKETNET_SODIUM_LIBRARY` on Windows.
+or `ROCKETNET_SODIUM_INCLUDE_DIR` and `ROCKETNET_SODIUM_LIBRARY` on Windows,
+and configure fails unless that libsodium is 1.0.20 or later
+(`cmake/RocketNetDependencies.cmake`).
 A Windows caller must select a library for its configuration and CRT. Packages
 built in this mode retain that external dependency. The default vendor is built
 with the same compiler and Debug/Release runtime as RocketNet.
@@ -172,16 +256,27 @@ An independent CMake project (enable CXX for the static library's C++ runtime)
 can then use:
 
 ```cmake
-find_package(RocketNet 1.0.0 EXACT CONFIG REQUIRED)
+find_package(RocketNet 1.0 CONFIG REQUIRED)
 target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 # Or: target_link_libraries(game PRIVATE RocketNet::rocketnet_shared)
 ```
+
+When linking the static archive (`librocketnet.a`) directly in a C project
+without CMake, link against the C++ standard library runtime (`-lstdc++` on
+Linux, `-lc++` on macOS) and the required platform libraries (on Linux:
+`-lbpf -lxdp -luring -lstdc++ -lpthread -lm`; on macOS: `-lc++ -lpthread -lm`).
 
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
 Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
 is compiled into each SDK library with private symbol names; no sodium header,
 DLL or package is required by consumers. Dependency metadata contains no
 producer paths. Shared consumers inherit the Windows DLL import definition.
+The package accepts a request for any earlier or equal version of the same major
+version (`COMPATIBILITY SameMajorVersion`), so `find_package(RocketNet 1.0)`
+finds every later 1.x patch. The imported targets
+hand a consumer no floating-point option and no memory-budget definition: the
+only compile definition they carry is `ROCKETNET_SHARED` on
+`RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
 The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
@@ -218,7 +313,7 @@ verifies that the XDP archive contains the current sources. These checks are in 
 
 The current public layouts are preserved. New allocation-free `rocketnet_abi_*`
 queries expose the SDK revision, compiler-derived struct sizes, field counts,
-offsets and widths for both configs, packet context and all four stats structs.
+offsets and widths for both configs and packet context.
 They are safe before init and write no caller-owned struct. Unknown names return
 `SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
 these before calling struct-writing functions.
@@ -228,8 +323,7 @@ An incompatible layout or calling-contract change must increment
 do not require a revision change. Changes to public fields must also update the
 ABI metadata and native regression checks. The existing unsized C entry points still
 require matching headers and library; this does not make an old native binary
-safe to use with an arbitrary newer library. Sized evolution APIs remain a
-separate compatibility project.
+safe to use with an arbitrary newer library.
 
 ## History memory budget
 
@@ -258,9 +352,9 @@ still requires roughly 4.2 GiB; select fewer queues or provision that explicitly
 `rocketnet_server_required_memory(config)` returns the bytes of the caller memory
 block the server needs for `config` at its `max_clients`. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
-Pass `NULL` config for defaults. The query reads the supplied configuration only:
-it does not apply environment overrides, check keys, probe hardware or approve a
-configuration against the component budgets. `rocketnet_client_required_memory` is
+Pass `NULL` config for defaults. The query reads the supplied configuration and
+applies environment overrides (matching create), but does not check keys, probe
+hardware or approve a configuration against the component budgets. `rocketnet_client_required_memory` is
 the client form. The detailed per-transport plan and the kernel-facing host memory
 estimate are internal to the transport layer (`sdk/rocketnet_layers.h`), not part
 of the public client and server API.
@@ -376,10 +470,8 @@ that degradation is internal to the transport, below the ladder; likewise the Da
 batch pump's live-refusal pause. The pre-#106 `ROCKETNET_PUMP=portable` override is
 absorbed into this system with its exact old meaning — the msgx pump off —
 honored and named in the logs, with `ROCKETNET_SERVER_TRANSPORT=portable` and
-`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors;
-`ROCKETNET_SERVER_NUM_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS` likewise keep
-working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
-`ROCKETNET_NUM_OS_CPUS`. Run `./bin/functional` against each rung. The unit
+`ROCKETNET_CLIENT_TRANSPORT=portable` as its successors. Run `./bin/functional`
+against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
 
@@ -520,7 +612,10 @@ for correct wire bytes today. The strict build is the family floor: contraction 
 architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-64 one), so
 float arithmetic near a wire diverges bit-wise between architectures without it. If you
 compile rocketnet's sources into your own build rather than linking the library, carry the same
-flag. The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
+flag. The flag is private to rocketnet's own targets: neither the installed
+package nor `add_subdirectory` passes it to your targets, whose floating-point
+flags stay your own.
+The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
 (one rounding of `a*b+c` would change `0x00000000` to `0x33800000` / `0x3C90000000000000`),
 and `tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
 omits `-ffp-contract=off` or `/fp:precise`.
