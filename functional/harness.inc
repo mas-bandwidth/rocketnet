@@ -236,7 +236,7 @@ void rocketnet_test_config_out_of_range_refuses_create()
 // port the OS gave into the address, and the socket is closed before the
 // port is returned. Two suites on one machine then never name the same port.
 // No caller binds the port: each one (functional/rocketnet_functional_tests.cpp
-// :4666, :4793, :4840) hands it to an xdp create that the commit barrier
+// :4668, :4795, :4842) hands it to an xdp create that the commit barrier
 // refuses before its first bind, so another process taking the port after
 // the scratch socket closes changes no result, and no create retries it.
 

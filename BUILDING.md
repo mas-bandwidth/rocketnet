@@ -76,7 +76,7 @@ share a machine at the same time. What holds then:
   case can fail with `TRANSPORT_LADDER_EXHAUSTED` when two suites run at once.
 - The root-only XDP veth case (`ROCKETNET_TEST_XDP_VETH`) makes a fixed
   namespace and veth pair and binds port 40411 on it
-  (functional/rocketnet_functional_tests.cpp:7192); it skips without root.
+  (functional/rocketnet_functional_tests.cpp:7196); it skips without root.
 
 Two `tools/run_examples.py` runs may also share a machine: each example
 pair runs in its own temporary directory on its own free port, the client
