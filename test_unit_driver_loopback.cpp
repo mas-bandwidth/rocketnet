@@ -112,6 +112,74 @@ static void driver_loopback_exchanges_both_ways()
     printf( "driver_loopback_exchanges_both_ways\n" );
 }
 
+// a server bound to the IPv6 wildcard is dual stack: it serves an IPv4
+// client and an IPv6 client on the one port, and each reply comes from the
+// loopback of the family the client sent to, so each client sees its
+// server at the address it addressed.
+
+static void driver_loopback_dual_stack_serves_ipv4_and_ipv6()
+{
+    const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    const rocketnet_server_driver_config_t server_setup = { "loopback", &server_config, NULL };
+    const rocketnet_client_driver_config_t client_setup = { "loopback", &client_config };
+
+    rocketnet_address_t server_address, client4_address, client6_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "[::]:0" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client4_address, "0.0.0.0:0" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client6_address, "[::]:0" ) );
+    rocketnet_server_driver_t server = {};
+    rocketnet_client_driver_t client4 = {};
+    rocketnet_client_driver_t client6 = {};
+    rocketnet_unit_check( rocketnet_server_driver_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( rocketnet_client_driver_open( backend->client, NULL, &client_setup, &client4_address, &client4 ) );
+    rocketnet_unit_check( rocketnet_client_driver_open( backend->client, NULL, &client_setup, &client6_address, &client6 ) );
+
+    const uint8_t data4[] = { 4, 4, 4, 4 };
+    const uint8_t data6[] = { 6, 6, 6, 6, 6, 6 };
+
+    rocketnet_address_t to4 = server_address;
+    set_ipv4_loopback( to4 );
+    rocketnet_address_t to6;
+    rocketnet_unit_check( rocketnet_address_parse( &to6, "[::1]:0" ) );
+    to6.port = server_address.port;
+
+    client4.operations->send( client4.instance, &to4, data4, sizeof( data4 ) );
+    client6.operations->send( client6.instance, &to6, data6, sizeof( data6 ) );
+
+    rocketnet_address_t from[2];
+    uint8_t buf[2 * 64];
+    int bytes[2] = { 0, 0 };
+    const int received = server.operations->receive_batch( server.instance, from, buf, 64, bytes, 2 );
+    rocketnet_unit_check( received == 2 );
+    rocketnet_unit_check( bytes[0] == (int) sizeof( data4 ) && memcmp( buf, data4, sizeof( data4 ) ) == 0 );
+    rocketnet_unit_check( from[0].type == ROCKETNET_ADDRESS_IPV4 && from[0].port == client4_address.port );
+    rocketnet_unit_check( bytes[1] == (int) sizeof( data6 ) && memcmp( buf + 64, data6, sizeof( data6 ) ) == 0 );
+    rocketnet_unit_check( from[1].type == ROCKETNET_ADDRESS_IPV6 && from[1].port == client6_address.port );
+
+    rocketnet_platform_send_t replies[2] = { { &from[0], data4, (int) sizeof( data4 ) },
+                                             { &from[1], data6, (int) sizeof( data6 ) } };
+    server.operations->send_batch( server.instance, replies, 2 );
+
+    rocketnet_address_t reply_from;
+    uint8_t reply[64];
+    int reply_bytes = client4.operations->receive( client4.instance, &reply_from, reply, 64 );
+    rocketnet_unit_check( reply_bytes == (int) sizeof( data4 ) && memcmp( reply, data4, sizeof( data4 ) ) == 0 );
+    rocketnet_unit_check( rocketnet_address_equal( &reply_from, &to4 ) );
+
+    reply_bytes = client6.operations->receive( client6.instance, &reply_from, reply, 64 );
+    rocketnet_unit_check( reply_bytes == (int) sizeof( data6 ) && memcmp( reply, data6, sizeof( data6 ) ) == 0 );
+    rocketnet_unit_check( rocketnet_address_equal( &reply_from, &to6 ) );
+
+    rocketnet_server_driver_close( &server );
+    rocketnet_client_driver_close( &client4 );
+    rocketnet_client_driver_close( &client6 );
+    printf( "driver_loopback_dual_stack_serves_ipv4_and_ipv6\n" );
+}
+
 static void driver_loopback_full_queue_drops_and_counts()
 {
     const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
@@ -447,7 +515,7 @@ static void driver_loopback_holds_max_clients_plus_server()
 static char g_loopback_refusal_log[1024];
 static int g_loopback_refusal_log_count;
 
-static void loopback_refusal_log_capture( void *, int, const char * message, size_t length )
+static void loopback_refusal_log_capture( void *, enum rocketnet_log_level_t, const char * message, size_t length )
 {
     g_loopback_refusal_log_count++;
     const size_t copy = length < sizeof( g_loopback_refusal_log ) - 1 ? length : sizeof( g_loopback_refusal_log ) - 1;
@@ -459,8 +527,8 @@ static void driver_loopback_refuses_past_max_endpoints()
 {
     const rocketnet_driver_backend_t * backend = &rocketnet_loopback_driver;
     const int live_before = rocketnet_loopback_endpoints_live();
-    const int saved_level = rocketnet_get_log_level();
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    const enum rocketnet_log_level_t saved_level = rocketnet_get_log_level();
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
     rocketnet_set_log_callback( loopback_refusal_log_capture, NULL );
 
     rocketnet_client_transport_config_t client_config;
@@ -503,13 +571,14 @@ static void driver_loopback_refuses_past_max_endpoints()
     rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
 
     rocketnet_set_log_callback( NULL, NULL );
-    rocketnet_log_level( saved_level );
+    rocketnet_set_log_level( saved_level );
     free( clients );
     printf( "driver_loopback_refuses_past_max_endpoints\n" );
 }
 
 REGISTER_UNIT_TEST( driver_loopback_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( driver_loopback_exchanges_both_ways );
+REGISTER_UNIT_TEST( driver_loopback_dual_stack_serves_ipv4_and_ipv6 );
 REGISTER_UNIT_TEST( driver_loopback_full_queue_drops_and_counts );
 REGISTER_UNIT_TEST( driver_loopback_destroy_frees_the_port );
 REGISTER_UNIT_TEST( driver_loopback_holds_max_clients_plus_server );

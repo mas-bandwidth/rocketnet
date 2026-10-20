@@ -151,7 +151,7 @@ at step k, computed from k and never accumulated.
 - Message config: `rocketnet_message_default_config` (as the channel harness takes it: a window of
   1024 messages, a receive ring of 262,144 bytes, `max_message_bytes` 262,144) with `num_channels = 9`, on both ends, and the default send budgets.
 - Traffic: nine channels. Channels 0-7 each carry one channel type, channel c carrying type c
-  (`ROCKETNET_UNRELIABLE` 0 through `ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT` 7), so each
+  (`ROCKETNET_RELIABILITY_UNRELIABLE` 0 through `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT` 7), so each
   per-channel check sees one type. Channel 8 is mixed: types 3, 4 and 1 interleaved, so the
   coupling of sequenced messages to the ordered epoch is exercised (section 4). Types 0 and 5 carry
   no channel on the wire and are received on channel 0 (docs/CHANNELS.md, "UNRELIABLE"); every

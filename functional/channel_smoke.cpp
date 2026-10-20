@@ -49,8 +49,8 @@ void harness_one_message_each_way_lossless()
 
     const uint8_t to_server[4] = { 'h', 'i', 'c', 's' };
     const uint8_t to_client[4] = { 'h', 'i', 'c', 'c' };
-    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE, to_server, 4 ) != 0 );
-    rocketnet_check( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_UNRELIABLE, to_client, 4 ) != 0 );
+    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, to_server, 4 ) != 0 );
+    rocketnet_check( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, to_client, 4 ) != 0 );
 
     int server_got = 0, client_got = 0;
     for ( int i = 0; i < 60 * 10 && ( server_got == 0 || client_got == 0 ); i++ )
@@ -130,13 +130,13 @@ void harness_one_message_each_way_lossy()
             if ( server_got == 0 )
             {
                 const uint8_t m[4] = { 'l', 'o', (uint8_t) ( client_sent >> 8 ), (uint8_t) client_sent };
-                rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE, m, 4 ) != 0 );
+                rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, m, 4 ) != 0 );
                 client_sent++;
             }
             if ( client_got == 0 )
             {
                 const uint8_t m[4] = { 'l', 'o', (uint8_t) ( server_sent >> 8 ), (uint8_t) server_sent };
-                rocketnet_check( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_UNRELIABLE, m, 4 ) != 0 );
+                rocketnet_check( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, m, 4 ) != 0 );
                 server_sent++;
             }
         }
@@ -212,8 +212,8 @@ void harness_lossy_100_percent_negative_control()
 
     const uint8_t to_server[4] = { 'n', 'o', 'p', 'e' };
     const uint8_t to_client[4] = { 'n', 'o', 'p', 'e' };
-    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE, to_server, 4 ) != 0 );
-    rocketnet_check( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_UNRELIABLE, to_client, 4 ) != 0 );
+    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, to_server, 4 ) != 0 );
+    rocketnet_check( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, to_client, 4 ) != 0 );
 
     const double t0 = h.now;
     int server_got = 0, client_got = 0;
@@ -261,7 +261,7 @@ void harness_no_allocation_after_create()
     }
 
     const uint8_t payload[4] = { 1, 2, 3, 4 };
-    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE, payload, 4 ) != 0 );
+    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, payload, 4 ) != 0 );
     int got = 0;
     for ( int i = 0; i < 60 * 10 && got == 0; i++ )
     {

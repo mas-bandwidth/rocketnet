@@ -114,7 +114,7 @@ struct rn_message_link_t
 #define RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( X ) \
     X( connection_id, uint64_t connection_id ) /* RNSlots: the connection this slot is bound to, 0 when free */          \
     X( state, int state ) /* RN_MESSAGE_CONNECTION_* */                                                                  \
-    X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_MESSAGE_ERROR_* of the last connection that ended here */ \
+    X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_DISCONNECT_REASON_* of the last connection that ended here */ \
     /* the receive bookkeeping (RNSlots Release): one state per delivery entry, */                                       \
     /* one cursor per channel, and the views held now */                                                                 \
     X( views, uint8_t * views ) /* region->delivery_entries */                                                           \
@@ -192,7 +192,7 @@ bool rn_message_object_send_kbps_env_valid( int is_server );
 void rn_message_object_destroy( struct rn_message_object_t * object );
 
 // The update, RNSlots BeginUpdate to EndUpdate. ROCKETNET_OK, or
-// ROCKETNET_ERROR_MESSAGE_NOT_RELEASED when a received message was held.
+// ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED when a received message was held.
 int rn_message_object_update( struct rn_message_object_t * object, double time );
 
 void rn_message_object_send_packets( struct rn_message_object_t * object );

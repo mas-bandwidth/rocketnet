@@ -49,8 +49,8 @@ void unreliable_receipts_over_lossy_link()
         {
             const uint8_t to_server[3] = { 0xC1, (uint8_t) step, 0x5A };
             const uint8_t to_client[3] = { 0xC2, (uint8_t) step, 0xA5 };
-            client_serial[step] = rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, to_server, 3 );
-            server_serial[step] = rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, to_client, 3 );
+            client_serial[step] = rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, to_server, 3 );
+            server_serial[step] = rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, to_client, 3 );
             receipt_check( client_serial[step] != 0 && server_serial[step] != 0 );
         }
 
@@ -79,18 +79,18 @@ void unreliable_receipts_over_lossy_link()
         {
             const int i = receipt_find_serial( client_serial, messages, events[j].serial );
             receipt_check( i >= 0 && !client_outcome[i] );
-            receipt_check( events[j].status == ROCKETNET_RECEIPT_ACKED || events[j].status == ROCKETNET_RECEIPT_LOSS );
+            receipt_check( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED || events[j].status == ROCKETNET_RECEIPT_STATUS_LOSS );
             client_outcome[i] = (uint8_t) events[j].status;
-            if ( events[j].status == ROCKETNET_RECEIPT_ACKED ) client_acked++; else client_lost++;
+            if ( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED ) client_acked++; else client_lost++;
         }
         count = rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 256 );
         for ( int j = 0; j < count; j++ )
         {
             const int i = receipt_find_serial( server_serial, messages, events[j].serial );
             receipt_check( i >= 0 && !server_outcome[i] );
-            receipt_check( events[j].status == ROCKETNET_RECEIPT_ACKED || events[j].status == ROCKETNET_RECEIPT_LOSS );
+            receipt_check( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED || events[j].status == ROCKETNET_RECEIPT_STATUS_LOSS );
             server_outcome[i] = (uint8_t) events[j].status;
-            if ( events[j].status == ROCKETNET_RECEIPT_ACKED ) server_acked++; else server_lost++;
+            if ( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED ) server_acked++; else server_lost++;
         }
         if ( step >= messages && client_acked + client_lost == messages && server_acked + server_lost == messages )
             break;
@@ -99,8 +99,8 @@ void unreliable_receipts_over_lossy_link()
     for ( int i = 0; i < messages; i++ )
     {
         receipt_check( client_outcome[i] != 0 && server_outcome[i] != 0 );
-        if ( client_outcome[i] == ROCKETNET_RECEIPT_ACKED ) receipt_check( at_server[i] );
-        if ( server_outcome[i] == ROCKETNET_RECEIPT_ACKED ) receipt_check( at_client[i] );
+        if ( client_outcome[i] == ROCKETNET_RECEIPT_STATUS_ACKED ) receipt_check( at_server[i] );
+        if ( server_outcome[i] == ROCKETNET_RECEIPT_STATUS_ACKED ) receipt_check( at_client[i] );
     }
     rocketnet_channel_harness_read_counters( &h );
     printf( "receipt lossy: sent=%d each client_acked=%d client_lost=%d server_acked=%d server_lost=%d delivered_server=%d delivered_client=%d elapsed_ms=%.1f resends=%llu wire_to_server=%lld wire_to_client=%lld\n",
@@ -132,8 +132,8 @@ void promoted_receipts_over_lossy_reliable_blocks()
             to_server[i][j] = (uint8_t) ( i * 31 + j * 7 + 1 );
             to_client[i][j] = (uint8_t) ( i * 29 + j * 11 + 2 );
         }
-        client_serial[i] = rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, to_server[i], lengths[i] );
-        server_serial[i] = rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, to_client[i], lengths[i] );
+        client_serial[i] = rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, to_server[i], lengths[i] );
+        server_serial[i] = rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, to_client[i], lengths[i] );
         receipt_check( client_serial[i] != 0 && server_serial[i] != 0 );
     }
 
@@ -166,14 +166,14 @@ void promoted_receipts_over_lossy_reliable_blocks()
         for ( int j = 0; j < count; j++ )
         {
             const int i = receipt_find_serial( client_serial, 3, events[j].serial );
-            receipt_check( i >= 0 && !client_receipt[i] && events[j].status == ROCKETNET_RECEIPT_ACKED );
+            receipt_check( i >= 0 && !client_receipt[i] && events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
             client_receipt[i] = 1;
         }
         count = rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 256 );
         for ( int j = 0; j < count; j++ )
         {
             const int i = receipt_find_serial( server_serial, 3, events[j].serial );
-            receipt_check( i >= 0 && !server_receipt[i] && events[j].status == ROCKETNET_RECEIPT_ACKED );
+            receipt_check( i >= 0 && !server_receipt[i] && events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
             server_receipt[i] = 1;
         }
         if ( client_receipt[0] && client_receipt[1] && client_receipt[2] &&

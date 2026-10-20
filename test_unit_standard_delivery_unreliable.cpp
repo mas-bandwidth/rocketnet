@@ -74,7 +74,7 @@ static int delivery_step( rn_channels_t * channels, rocketnet_counters_t * count
     const int result = rn_channels_dispatch( channels, &record, &out );
 
     uint8_t outcome = 0xFF;
-    if ( channels->error != ROCKETNET_MESSAGE_ERROR_NONE )
+    if ( channels->error != ROCKETNET_DISCONNECT_REASON_NONE )
         outcome = 5;
     else if ( result == ROCKETNET_CHANNEL_DISPATCH_DELIVERED )
         outcome = 0;

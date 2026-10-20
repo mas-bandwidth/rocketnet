@@ -21,8 +21,14 @@ runs on the main thread.
   `<<phase, slot, status>>` not yet dequeued. Each posted request completes
   at most once, so a set stands for the queue's bag.
 - **Receive slices.** A slice is `Posted`, `Completed` (its completion is
-  queued) or `Copied` (dequeued and not posted; a slice whose re-post failed
-  stays `Copied`, retired). `held[i]` is the datagram in the slice's buffer.
+  queued) or `Copied` (dequeued and not posted). A refused re-post leaves
+  the slice `Copied` in the retry list, where the next `receive_packets`
+  re-posts it; `RetryRefused = FALSE` restores the old rule that retires it.
+  `held[i]` is the datagram in the slice's buffer.
+- **Retry list.** `retry` is the set of slices whose re-post was refused
+  and that are waiting for the next `receive_packets`. A set of slice ids
+  keeps the per-slice identity the code's `retry_slices` array carries,
+  without adding a fourth slice state: every slice in the set is `Copied`.
 - **Datagrams.** Abstract ids `1..MaxSteps`, which bounds the receive side.
   `consumed` is every datagram copied into a bank or counted dropped.
 - **Banks.** `fillBank` and `exposed`, each at most `Slices` datagrams;
@@ -43,7 +49,8 @@ runs on the main thread.
 | `DequeueSend(p, s)` | send_packets dequeues the send CQ without blocking and retires each completed slot of either phase (a failed status counts SEND_FAILED) |
 | `SwitchPhase` | send_packets switches the fill phase to the other phase, opening it only when its outstanding count is zero; while it waits it polls the send CQ (SEND_WAITS) |
 | `KernelFillSlice(i)` | the kernel completes a posted RIOReceiveEx: a datagram in the slice, or a failed status |
-| `DequeueReceive(i)` | receive_packets, per completion: a failed status counts RECEIVE_FAILED; else the datagram is copied into the fill bank, or counted dropped (RECEIVE_DROPPED_SIZE, RECEIVE_DROPPED_OVERFLOW); then the slice is re-posted, or retired when the re-post fails (RECEIVE_REPOST_FAILED) |
+| `DequeueReceive(i)` | receive_packets, per completion: a failed status counts RECEIVE_FAILED; else the datagram is copied into the fill bank, or counted dropped (RECEIVE_DROPPED_SIZE, RECEIVE_DROPPED_OVERFLOW); then the slice is re-posted. A refused re-post counts RECEIVE_REPOST_FAILED and leaves the slice in the retry list, or retires it when `RetryRefused` is `FALSE` |
+| `RetryRepost(i)` | receive_packets, before it dequeues: one more post of each slice in the retry list (rocketnet_rio_retry_receives); a slice refused again stays in the list and counts RECEIVE_REPOST_FAILED again, and nothing is retried after Close |
 | `Swap` | once the receive CQ is empty, receive_packets swaps the banks: the old fill bank becomes the exposed bank |
 | `TransportReads` | process_packets returns views of the exposed bank, valid until the next receive_packets |
 | `Close` | closesocket completes every outstanding request with an error |
@@ -71,8 +78,13 @@ schedule, which only strengthens the safety result.
 - **`RepostOnlyAfterCopy`**: a posted slice holds no datagram; every
   delivered datagram is still in its slice or consumed; every banked
   datagram is consumed.
+- **`ReceiveDepthNeverShrinks`**: while the socket is `Running` every
+  slice is `Posted`, `Completed`, or waiting in the retry list. A transient
+  refusal never removes a slice from the receive depth.
 - **`FreedOnlyWhenDrained`**: `Freed` holds only with no `Posted` slot, no
-  `Posted` or `Completed` slice, and both completion queues empty.
+  `Posted` or `Completed` slice, and both completion queues empty. A slice
+  waiting in the retry list is not posted, so the kernel does not own it
+  and it blocks neither `Drained` nor `Free`.
 - **`TypeOK`**: every variable has its declared type.
 
 ## Liveness
@@ -112,9 +124,9 @@ With the pinned runner and JAR of `tla/README.md`, from the checkout, one
 shard per case:
 
 ```sh
-for i in 0 1 2; do
+for i in 0 1 2 3; do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group rnriodriver --shards 3 --shard "$i" --workers 2 --timeout 110s \
+    --group rnriodriver --shards 4 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnriodriver-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
@@ -125,26 +137,31 @@ The small instance:
 
 | Constant | Value |
 |---|---|
-| `Slots` | 2 |
+| `Slots` | 1 in the control, 2 in the three witnesses |
 | `Slices` | 2 (also each bank's capacity) |
 | `MaxSteps` | 1 |
 | `SwitchWaitsDrain` | `TRUE` (`FALSE` in the switch witness) |
 | `FreeWaitsDrain` | `TRUE` (`FALSE` in the free witness) |
+| `RetryRefused` | `TRUE` (`FALSE` in the retire-on-refusal witness) |
 
-One datagram keeps the liveness check inside the 110-second budget; two
-slots per phase keep the reservation index past one slot, and two slices
-keep a retired slice beside a live one. `Slots = 2, Slices = 2, MaxSteps = 2` did not finish within that budget.
+One datagram keeps the liveness check inside the 110-second budget, and two
+slices keep a waiting slice beside a live one. The control uses one slot per
+send phase: `Slots = 2, Slices = 2, MaxSteps = 1` with the retry state did
+not finish within that budget. The switch witness keeps two slots per phase
+because its defect needs the reservation index past one slot. The retired
+instance is a smaller one, not a passing claim.
 
 ## Runs
 
-The three rows are in `tla/RUNS.tsv`, each measured by `tlacheck run` on a
+The four rows are in `tla/RUNS.tsv`, each measured by `tlacheck run` on a
 Linux bench (Java 21.0.12.1, the pinned JAR, 110-second budget):
 
 | Case | Outcome | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|
-| `MCRNRioDriver.cfg` | PASS, exit 0, no error, depth 24 | 431,147 | 81,330 | 21.4 |
-| `MCRNRioDriverBrokenSwitchWithoutDrain.cfg` | `NoReserveIntoPostedPhase` violated, exit 12, depth 8 | 4,036 | 1,496 | 0.8 |
-| `MCRNRioDriverBrokenFreeBeforeDrain.cfg` | `FreedOnlyWhenDrained` violated, exit 12, depth 3 | 56 | 37 | 0.7 |
+| `MCRNRioDriver.cfg` | PASS, exit 0, no error, depth 18 | 25,525 | 6,542 | 7.8 |
+| `MCRNRioDriverBrokenSwitchWithoutDrain.cfg` | `NoReserveIntoPostedPhase` violated, exit 12, depth 8 | 4,563 | 1,692 | 3.6 |
+| `MCRNRioDriverBrokenFreeBeforeDrain.cfg` | `FreedOnlyWhenDrained` violated, exit 12, depth 3 | 56 | 37 | 3.0 |
+| `MCRNRioDriverBrokenRetireOnRefusal.cfg` | `ReceiveDepthNeverShrinks` violated, exit 12, depth 3 | 27 | 23 | 2.9 |
 
 ## The reversed witnesses
 
@@ -193,6 +210,25 @@ The committed instance with `FreeWaitsDrain = FALSE`: `Free` follows
   accounted for; only then RIOCloseCompletionQueue, RIODeregisterBuffer and
   VirtualFree" is exactly what the witness removes. The counterexample is
   real for that defect.
+
+### `MCRNRioDriverBrokenRetireOnRefusal.cfg`
+
+The committed instance with `RetryRefused = FALSE`: a refused re-post
+retires its slice, the old rule.
+
+- **The trace TLC printed:**
+  1. The initial state: both receive slices are posted, as at create.
+  2. `KernelFillSlice(1)`: slice 1 completes with datagram 1.
+  3. `DequeueReceive(1)`: the datagram is copied into the fill bank, and
+     the refused re-post leaves slice 1 `Copied`; `retry` is empty.
+- **Against the code, by hand:** the fixed `rocketnet_rio_complete_receive`
+  counts RECEIVE_REPOST_FAILED and appends the slice to `retry_slices`
+  instead of retiring it, and `rocketnet_rio_retry_receives` re-posts it on
+  the next `receive_packets`. The old rule is exactly what this witness
+  restores: slice 1 is neither posted nor waiting, so the receive depth
+  falls from two to one while the socket still runs, and
+  `ReceiveDepthNeverShrinks` fails. The counterexample is real for that
+  defect.
 
 ## Citation owed
 

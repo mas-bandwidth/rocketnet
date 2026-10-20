@@ -373,7 +373,7 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->rto = ack->rto_initial;                // tla/RNResendTiming.tla Init: rto = RtoInitial
     ack->has_rtt = 0;
     ack->has_oldest = 0;
-    ack->error = ROCKETNET_MESSAGE_ERROR_NONE;
+    ack->error = ROCKETNET_DISCONNECT_REASON_NONE;
 
     ack->resend_head = RN_RESEND_NONE;
     ack->resend_tail = RN_RESEND_NONE;
@@ -454,8 +454,8 @@ static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, 
     if ( serial == 0 )
         return;
     rn_region_t * region = ack->region;
-    rocketnet_assert( status == ROCKETNET_RECEIPT_ACKED || status == ROCKETNET_RECEIPT_LOSS );
-    rn_window_ack_count( region, status == ROCKETNET_RECEIPT_ACKED ? ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED : ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
+    rocketnet_assert( status == ROCKETNET_RECEIPT_STATUS_ACKED || status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    rn_window_ack_count( region, status == ROCKETNET_RECEIPT_STATUS_ACKED ? ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED : ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
     const uint32_t capacity = region->receipt_entries;
     rocketnet_assert( capacity > 0 );
     if ( ack->receipt_tail - ack->receipt_head == capacity )
@@ -472,7 +472,7 @@ static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, 
 void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial )
 {
     rocketnet_assert( ack );
-    rn_window_ack_receipt_emit( ack, serial, ROCKETNET_RECEIPT_LOSS );
+    rn_window_ack_receipt_emit( ack, serial, ROCKETNET_RECEIPT_STATUS_LOSS );
 }
 
 static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet_t * entry, uint32_t status )
@@ -534,7 +534,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
         rn_sent_packet_t * oldest = &region->sent_packets[ack->pkt_head % P];
         if ( oldest->packet_id != 0 )
         {
-            rn_window_ack_receipt_resolve( ack, oldest, ROCKETNET_RECEIPT_LOSS ); // RNReceipts EvictMap
+            rn_window_ack_receipt_resolve( ack, oldest, ROCKETNET_RECEIPT_STATUS_LOSS ); // RNReceipts EvictMap
             rn_sent_index_remove( region, oldest->packet_id );
             oldest->packet_id = 0;
             rn_window_ack_count( region, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED );
@@ -599,7 +599,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
     rn_sent_packet_t * entry = &region->sent_packets[entry_index];
     rocketnet_assert( entry->packet_id == packet_id );
 
-    rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_ACKED ); // RNReceipts ReceiveAck, EmitAck
+    rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_ACKED ); // RNReceipts ReceiveAck, EmitAck
 
     // 1. One unambiguous RTT sample per acked packet_id (RFC 6298, CHANNELS 6.4).
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
@@ -657,7 +657,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
             // Read the descriptor before its last fragment can free it.
             if ( descriptor->in_use && ( descriptor->flags & ( RN_SEND_FLAG_RECEIPT_PROMOTED | RN_SEND_FLAG_RECEIPT_RELIABLE ) ) &&
                  descriptor->fragments_acked + 1 == descriptor->fragments )
-                rn_window_ack_receipt_emit( ack, descriptor->serial, ROCKETNET_RECEIPT_ACKED );
+                rn_window_ack_receipt_emit( ack, descriptor->serial, ROCKETNET_RECEIPT_STATUS_ACKED );
             rn_region_send_free_fragment( region, d, chain_index );
         }
 
@@ -708,7 +708,7 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
         if ( entry->packet_id != 0 && now < entry->send_time + ack->rto )
             break;
         if ( entry->packet_id != 0 )
-            rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_LOSS );
+            rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_LOSS );
         ack->receipt_sweep++;
     }
 }
@@ -780,7 +780,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
-    if ( ack->error != ROCKETNET_MESSAGE_ERROR_NONE )
+    if ( ack->error != ROCKETNET_DISCONNECT_REASON_NONE )
         return 1;
 
     const rn_window_send_t * send = ack->send;
@@ -790,7 +790,7 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
     rn_window_ack_refresh_oldest( ack, now );
     if ( ack->has_oldest && ( now - ack->oldest_first_send ) >= ack->reliable_timeout )
     {
-        ack->error = ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT;
+        ack->error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMEOUT;
         return 1;
     }
     return 0;
