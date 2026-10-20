@@ -310,6 +310,26 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     else
         unsetenv( "ROCKETNET_PUMP" );
 
+    // each cell names the drivers it tests, so a transport pin in the
+    // environment (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)
+    // is lifted for the two creates and restored after them: under a pin the
+    // ladder grants the pinned driver, and a gso or io_uring cell would read
+    // the portable driver instance as its own (posix_native_counter,
+    // posix_linux_uring_fail_sends)
+
+    char saved_server_transport[64] = "";
+    char saved_client_transport[64] = "";
+    const char * pinned_server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const char * pinned_client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
+    const bool server_pinned = pinned_server != NULL;
+    const bool client_pinned = pinned_client != NULL;
+    if ( server_pinned )
+        snprintf( saved_server_transport, sizeof(saved_server_transport), "%s", pinned_server );
+    if ( client_pinned )
+        snprintf( saved_client_transport, sizeof(saved_client_transport), "%s", pinned_client );
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+
     rocketnet_platform_socket_t * before[POSIX_MAX_SOCKETS];
 
     struct rocketnet_server_transport_config_t server_config;
@@ -320,6 +340,8 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     int num_before = posix_snapshot( before );
     pair->server = rocketnet_server_transport_create( NULL, ipv6 ? "[::1]" : "127.0.0.1", &server_config );
     posix_check( pair->server != NULL );
+    if ( strcmp( server_driver, "auto" ) != 0 )
+        posix_check( strcmp( rocketnet_server_transport_driver( pair->server ), server_driver ) == 0 );
     pair->native = posix_native_kind( server_driver );
     if ( pair->native != POSIX_NATIVE_NONE )
         pair->driver = rocketnet_server_transport_driver_for_testing( pair->server );
@@ -347,6 +369,11 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     pair->client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
     posix_check( pair->client != NULL );
     pair->client_socket = posix_new_socket( before, num_before );
+
+    if ( server_pinned )
+        setenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, 1 );
+    if ( client_pinned )
+        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, 1 );
 
     const double start = rocketnet_platform_time();
     const double deadline = start + 10.0;
