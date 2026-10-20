@@ -45,9 +45,9 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
 
         // (1) update pumps the transport and takes in what arrived
 
-        if ( rocketnet_server_update( server, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_server_update( server, now ) != ROCKETNET_UPDATE_OK )
             return -1;
-        if ( rocketnet_client_update( client, now ) != ROCKETNET_MESSAGE_OK )
+        if ( rocketnet_client_update( client, now ) != ROCKETNET_UPDATE_OK )
             return -1;
 
         // (2) receive and release every received message
@@ -78,7 +78,7 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         if ( send && !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const int message_bytes = (int) strlen( message );
-            uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, message_bytes );
+            uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_bytes );
             if ( !buffer )
                 return -1;
             memcpy( buffer, message, (size_t) message_bytes );
@@ -114,7 +114,7 @@ int main( void )
     char server_address[64];
     int result = 1;
 
-    CHECK( rocketnet_init( NULL ) );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // the server takes the published development keys, the loopback pin, and
     // an ephemeral port that is read back below
@@ -147,7 +147,7 @@ int main( void )
         // instead of reading the wall clock. A real backend stamps the current
         // time.
 
-        CHECK( rocketnet_write_dev_connect_token( server_address, (uint64_t) round, 4102444800ull, connect_token ) );
+        CHECK( rocketnet_write_dev_connect_token( server_address, (uint64_t) round, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
