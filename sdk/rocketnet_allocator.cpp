@@ -82,11 +82,6 @@ const char * rn_region_part_name( int part )
     return part >= 0 && part < RN_NUM_PARTS ? rn_part_names[part] : NULL;
 }
 
-const char * rn_region_part_formula( int part )
-{
-    return part >= 0 && part < RN_NUM_PARTS ? rn_part_formulas[part] : NULL;
-}
-
 // Section 14: each part is its formula's term exactly, at a 64-aligned offset
 // (4: ROCKETNET_ALLOCATION_ALIGNMENT), so the ring base is 16-aligned and the
 // exact region is the formula plus at most 63 bytes per part.
@@ -508,8 +503,9 @@ int rn_connection_memory_decide( const rn_region_t * region )
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 {
     // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
-    // ExhaustionOnlyLeadsToDisconnect: once exhausted, the only next step is
-    // Kick (disconnect) and Reset (Reuse). No further Use or Release.
+    // ExhaustionOnlyLeadsToDisconnect: once exhausted, no further Use; the
+    // steps left are Release (an ack returning room, which nothing takes
+    // again), Kick (disconnect) and Reuse (reset).
     rocketnet_assert( region );
 
     // an argument outside the config is the caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
@@ -681,12 +677,22 @@ static void rn_span_unlink( rn_region_t * region, uint32_t d )
 
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
 {
-    // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none); the span
+    // tla/RNConnectionMemory.tla, UseSpan (room found) or Exhaust (none); the span
     // is tla/RNRing.tla's PlaceSingle on the sender's side
     rocketnet_assert( region );
 
     if ( bytes < (int) RN_SPAN_MIN_BYTES || (uint32_t) bytes > region->max_message_bytes )
         return RN_DESCRIPTOR_NONE;
+
+    // sticky exhaustion, the same guard as rn_region_send_alloc: Use (and
+    // UseSpan) in tla/RNConnectionMemory.tla require ~exhausted, so an
+    // exhausted region takes no span until rn_region_reset, even when acks
+    // have returned room; every refused send counts MESSAGE_MEMORY_EXHAUSTED
+    if ( region->exhausted )
+    {
+        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+        return RN_DESCRIPTOR_NONE;
+    }
 
     if ( region->descriptors_free == 0 )
     {
@@ -773,7 +779,9 @@ uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t d )
 
 void rn_region_send_free( rn_region_t * region, uint32_t d )
 {
-    // tla/RNConnectionMemory.tla, Release
+    // tla/RNConnectionMemory.tla, Release: allowed on an exhausted region (an
+    // ack or an abort between Exhaust and Kick), it only returns room, and
+    // both allocators refuse to take it again until rn_region_reset
     rocketnet_assert( region );
     rocketnet_assert( d < region->queue );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];

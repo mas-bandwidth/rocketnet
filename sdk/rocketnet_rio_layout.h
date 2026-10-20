@@ -10,7 +10,7 @@
 // struct), so every offset here fits in 32 bits. This is the byte-level
 // counterpart of sdk/rocketnet_uring_codec.h: the byte-level parts of the
 // driver (carving one registered region, the 64-bit request contexts) are
-// written and unit tested here first, and the driver card links the RIO
+// written and unit tested here, and the driver links the RIO
 // API for the socket and completion queues itself.
 
 #ifndef ROCKETNET_RIO_LAYOUT_H

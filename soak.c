@@ -27,7 +27,13 @@
 
     soak exits 1 on any payload verify failure, any counter conservation
     failure and any disconnect that is not its own planned reconnect, naming
-    which. ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
+    which. Every REFUSAL counter must read 0, with one exception: when the
+    link simulator duplicates packets (ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT
+    or ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT nonzero), the duplicates
+    it plants are refused as already received, so every <FAMILY>_ALREADY_RECEIVED
+    refusal (payload, keep-alive, ack, fragment and disconnect, on the client
+    and the server) is counted and printed, not failed.
+    ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
     uses as its negative control.
 */
@@ -113,13 +119,43 @@ static void soak_accumulate_counters( uint64_t * totals, const struct rocketnet_
         totals[i] += rocketnet_counter_value( counters, i );
 }
 
+// Whether the link simulator duplicates packets on either end, read from the
+// same env overlay the transports apply at create.
+
+static int soak_duplicates_planted( void )
+{
+    const char * names[] = { "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" };
+    for ( int i = 0; i < 2; i++ )
+    {
+        const char * value = getenv( names[i] );
+        if ( value && value[0] != '\0' && strtol( value, NULL, 10 ) != 0 )
+            return 1;
+    }
+    return 0;
+}
+
+// a planted duplicate of any sealed packet (payload, keep-alive, ack,
+// fragment, disconnect) is refused as already received, counted by the
+// family's <FAMILY>_ALREADY_RECEIVED refusal; only those refusals are
+// expected, and only when the simulator plants duplicates
+
+static int soak_refusal_planted_by_duplicates( const char * counter_name )
+{
+    const char suffix[] = "_ALREADY_RECEIVED";
+    const size_t length = strlen( counter_name );
+    const size_t suffix_length = sizeof(suffix) - 1;
+    return length > suffix_length && strcmp( counter_name + length - suffix_length, suffix ) == 0;
+}
+
 // The counter discipline, computed from the counter list. Conservation: every
-// family balances, RECEIVED == the sum of its outcomes. Clean run: this is
-// loopback with no injected fault, so every REFUSAL counter reads 0. Returns
-// the number of violations, each printed by counter name.
+// family balances, RECEIVED == the sum of its outcomes. Refusals: this is
+// loopback with no injected fault, so every REFUSAL counter reads 0, except
+// the already-received refusal of the duplicates the link simulator plants.
+// Returns the number of violations, each printed by counter name.
 
 static int soak_check_counters( const char * name, const struct rocketnet_counters_t * counters )
 {
+    const int duplicates_planted = soak_duplicates_planted();
     int violations = 0;
 
     char report[256];
@@ -133,6 +169,12 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
     {
         if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL && rocketnet_counter_value( counters, i ) != 0 )
         {
+            if ( duplicates_planted && soak_refusal_planted_by_duplicates( rocketnet_counter_name( i ) ) )
+            {
+                printf( "soak: planted duplicates refused at %s: %s = %llu\n", name, rocketnet_counter_name( i ),
+                        (unsigned long long) rocketnet_counter_value( counters, i ) );
+                continue;
+            }
             printf( "soak: REFUSAL on a clean run at %s: %s = %llu\n", name, rocketnet_counter_name( i ),
                     (unsigned long long) rocketnet_counter_value( counters, i ) );
             violations++;
