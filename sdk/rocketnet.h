@@ -198,7 +198,7 @@
 extern "C" {
 #endif
 
-/// @brief Stable status values returned by a call that can fail, except a create, which returns a pointer.
+/// @brief Stable status values returned by a call that can fail, except a create, which returns a pointer, and finish message, which returns a uint32_t receipt serial.
 ///
 /// OK is the sole success value, every failure is a positive code, and the
 /// numbering is append-only. A published value and meaning never change; a new
