@@ -93,7 +93,8 @@ int main( void ) {
                 s->arrived++;
                 rocketnet_client_release_message( client, data );
             }
-        const int slot = rocketnet_client_index( client );
+        // the client's server slot exists only once it is CONNECTED; -1 until then
+        const int slot = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED ? (int) rocketnet_client_index( client ) : -1;
         while ( slot >= 0 && rocketnet_server_receive_message( server, slot, 0, &data, &bytes ) )
             rocketnet_server_release_message( server, slot, data );
         struct rocketnet_receipt_t receipts[32];
