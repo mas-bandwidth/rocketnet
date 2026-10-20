@@ -146,7 +146,7 @@ seal it.
   decides when a packet closes, and a game that over-declares wastes the
   tail of every packet; a finish that writes less than declared leaves a
   hole the records after it must close, so each record would be moved down,
-  which is the copy this card removes, or the space is padding on the wire.
+which is avoided by the current path, or the space is padding on the wire.
 - **Ordering.** The open frame holds messages of several modes; its packet
   id is shared, so the receipt entry carries several serials, and a
   sequenced record and the reliable records added later share one packet.

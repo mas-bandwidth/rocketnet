@@ -79,7 +79,7 @@ it by reference and does not copy it. Its rules, as the header states:
 2. Every failure code is a positive integer in `1 .. ROCKETNET_STATUS_COUNT - 1`.
 3. **Append-only stability law**: Once a code is published in a release, its
    integer value and meaning are permanent. New codes append immediately before
-   `ROCKETNET_STATUS_COUNT`. Deprecated codes remain reserved in the enum
+`ROCKETNET_STATUS_COUNT`. Reserved codes keep their numeric positions in the enum
    and in `rocketnet_status_name` and are never renumbered or reassigned.
 4. Runtime introspection:
    - `int rocketnet_num_status_codes(void)` returns `ROCKETNET_STATUS_COUNT`.

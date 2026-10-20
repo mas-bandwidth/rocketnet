@@ -1,7 +1,7 @@
 # Native transports
 
 The public transport API in `rocketnet.h` is independent of the backend.
-Native transport backends implement `rocketnet_driver.h`; they do not add binding or
+Native transports implement `rocketnet_driver.h`; they do not add binding or
 wire-format rules. For Linux transport selection, pinning, host requirements (`xdp`, `gso`, `io_uring`, `portable`) and host verification, see [docs/LINUX.md](docs/LINUX.md).
 
 `rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
@@ -12,7 +12,7 @@ derived from these rows. Existing IDs and preference orders are preserved.
 
 The backend record points to immutable server and/or client operations. The
 transport retains the selected operations and opaque instance for its lifetime.
-Factories, resources and platform decisions stay in the transport backend layer. The
+Factories, resources and platform decisions stay in the transport layer. The
 transport branches on generic capabilities, never a specific backend identity.
 
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
@@ -41,7 +41,7 @@ Two I/O shapes preserve the existing implementations:
 - **Buffered:** the transport supplies its common control, payload and receive
   buffers. `send_batch` and `receive_batch` borrow that storage only for the call.
   This is the portable/msgx shape. It does not require a backend-owned pool.
-- **Staged:** the driver supplies frame storage and a complete receive batch.
+- **Staged:** the transport supplies frame storage and a complete receive batch.
   XDP, GSO and IOCP use this shape, with their own pools and worker arrangements.
   The transport does not allocate, recycle or schedule those backend frames.
 
@@ -56,7 +56,7 @@ The flags express the differences the transport needs:
 
 | Flag | Meaning |
 | --- | --- |
-| `STAGED` | Use driver-owned frames and receive views instead of borrowed transport buffers. |
+| `STAGED` | Use transport-owned frames and receive views instead of borrowed transport buffers. |
 | `FLUSH_ON_UPDATE` | Flush staged control traffic at the end of update. Buffered control traffic completes by the end of update; full batches may flush during the update walk. |
 | `FINISH_FINAL` | A finished frame cannot be withdrawn. Otherwise abort may withdraw it before flush. Unfinished reservations can always be aborted. |
 | `BINDS_PUBLIC_ADDRESS` | The factory binds the advertised address rather than the transport's ordinary bind address. |
@@ -66,7 +66,7 @@ keeps operation buffers until completion retirement. The backend owns that
 decision; it must never hand a still-owned frame to another producer.
 
 An optional kernel replay capability protects session packets from replay on a
-kernel dataplane. A driver with it implements `replay_forget`,
+kernel dataplane. A transport with it implements `replay_forget`,
 `replay_mark` and `replay_commit` together, all three or none; the transport
 calls them on the main thread once per update, after packet processing, and
 nothing else writes the transport's replay map. XDP is the only built-in backend
@@ -77,11 +77,11 @@ that reports it.
 Every transport receives at least twice what it sends in one update:
 `receive_capacity >= 2 * send_budget`, checked by
 `test_unit_receive_budget_twice_send.cpp` and locked by a
-`ROCKETNET_STATIC_ASSERT` beside each transport's constants. The send budget
+`ROCKETNET_STATIC_ASSERT` beside each transport’s constants. The send budget
 is what one update stages or submits; the receive capacity is the bank,
 ring, staging or completion budget the send path can fill while it waits.
 The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
-(`sdk/rocketnet_constants.h`, 16000) bounds every transport's drain.
+(`sdk/rocketnet_constants.h`, 16000) bounds every transport drain.
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
@@ -98,7 +98,7 @@ The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
 
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
 at the stride the kernel reports, and a send run of same-destination frames of
-one size with at most one shorter tail. Each coalescing driver probes its
+one size with at most one shorter tail. Each coalescing transport probes its
 offloads at create on the bound socket; a refusal is a tier, not an error, and
 the create log line names each feature as yes or no.
 
@@ -139,11 +139,11 @@ when the create returned NULL after an allocation on the calling thread was
 refused (sdk/rocketnet_driver.cpp:126, :148 and :182, reading the per-thread
 count kept at sdk/rocketnet.cpp:369); any other NULL leaves it OK and is a
 refusal. The count rises on every `rocketnet_malloc` refusal
-(sdk/rocketnet.cpp:461 and :475) and on the two page buffers a driver
+(sdk/rocketnet.cpp:461 and :475) and on the two page buffers a transport
 allocates outside it, the xdp umem (sdk/rocketnet_server_socket_linux.cpp:1720)
 and the rio region (sdk/rocketnet_server_rio_windows.cpp:508), through
 `rocketnet_allocation_refused` (sdk/rocketnet.cpp:378). So every built-in
-driver (portable, msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it
+transport (portable, msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it
 through the open. The transport ladder falls to the next
 candidate on a refusal, and on OUT_OF_MEMORY it stops:
 `rocketnet_server_transport_create_ex` (sdk/rocketnet_server_transport.cpp:1299)
@@ -187,7 +187,7 @@ transport cell, and an injected-errno seam covers each receive arm.
 ## Server network threads and their priority
 
 The library sets the server thread priority on each network thread a server
-driver creates, from the creating thread right after the create
+transport creates, from the creating thread right after the create
 (`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp:1434`, `:3142`
 and `:3573`):
 `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
@@ -204,13 +204,13 @@ settings (`flow_platform.cpp`), unchanged.
 `rocketnet_set_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
 A refused call is counted by `rocketnet_get_thread_priority_refusals` and
-logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the driver starts
+logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the transport starts
 either way. The server task workers of a game and its main thread are the
 game's to set; the library sets nothing on them.
 
 ## Adding a backend without editing the transport
 
-For an in-tree transport backend, define a `const rocketnet_transport_backend_t`, add its row
+For an in-tree transport, define a `const rocketnet_transport_backend_t`, add its row
 to `rocketnet_drivers.inc`, and add its source to the build. It may support one
 endpoint or both. There are no transport switches, members or platform guards
 to extend.
@@ -219,20 +219,20 @@ An embedding project can also supply its own registry rows and implementation:
 
 ```sh
 cmake -S . -B build \
-  -DROCKETNET_TRANSPORT_REGISTRY_HEADER=/path/to/my_drivers.inc \
-  -DROCKETNET_TRANSPORT_SOURCES=/path/to/my_driver.cpp
+  -DROCKETNET_TRANSPORT_REGISTRY_HEADER=/path/to/my_transports.inc \
+  -DROCKETNET_TRANSPORT_SOURCES=/path/to/my_transport.cpp
 ```
 
 The `.inc` has `ROCKETNET_TRANSPORT(...)` rows in the same format as the built-in
 file, and no include guard: it is intentionally expanded more than once. Native
 registration is compiled into the SDK; this is not a dynamic plugin ABI.
-Backend symbols are not public C exports. Per-driver settings and resource
+Backend symbols are not public C exports. Per-transport settings and resource
 validation belong in the factory; the public transport configuration is unchanged.
 
 `test/driver_extension` is an executable example: an external row and backend
 serve both ends of an encrypted handshake and payload exchange through only
-the public transport API. `tools/check_driver_extension.py build` builds and
-runs it independently. `test_driver` checks registry ordering, factory refusal,
+the public transport API. `tools/check_transport_extension.py build` builds and
+runs it independently. `test_transport` checks registry ordering, factory refusal,
 address isolation, lifecycle and buffered I/O. Existing GSO/IOCP and complete
 transport tests cover the real staged paths; hosted tests do not replace XDP
 hardware failure tests or per-platform line-rate measurements.
@@ -255,9 +255,9 @@ dropped-overflow receives, failed receive reposts, and RIO commit calls. Its sen
 ## The io_uring server transport
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
-is a staged Linux server transport with one io_uring per instance, used only on the
+is a staged Linux server transport with one io_uring per transport, used only on the
 main thread, and no worker threads. An `SO_REUSEPORT` socket group, bound the
-way the GSO driver binds its group, shards receives across queues. Each queue
+way the GSO transport binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
 batched `SENDMSG` per staged slot, in chunks no larger than the free submission
@@ -270,7 +270,7 @@ later call reaps it. A queue count past
 `ROCKETNET_URING_MAX_QUEUES` refuses the create; zero selects
 `ROCKETNET_URING_DEFAULT_QUEUES`.
 
-The driver needs liburing at build time (`ROCKETNET_IO_URING`, on by default
+The transport needs liburing at build time (`ROCKETNET_IO_URING`, on by default
 and used when liburing is found). A build without it keeps the registry row with
 no platform: the row is absent from the availability lists and a pin of
 `io_uring` is skipped by the ladder. At run time `rocketnet_server_uring_available()`
@@ -356,7 +356,7 @@ one interface runs `xdp` for one family and another transport (`gso`,
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
 per-CPU totals each time the transport counter surface is read. Only a
-driver with a kernel prefilter fills them; a driver with none leaves them
+transport with a kernel prefilter fills them; a transport with none leaves them
 zero.
 
 The replay map is read-only to the kernel: it drops a session packet 16 or
@@ -396,7 +396,7 @@ that resolves to no MAC is refused at start and counted as
 ## Embedded XDP source maintenance
 
 The XDP frame codec (`sdk/rocketnet_xdp_frame.h`) synthesises Ethernet + IP +
-UDP for both address families: IPv4 byte-identical to the historical builder
+UDP for both address families: IPv4 byte-identical to the canonical builder
 (ihl 5, DF set, ttl 64, header checksum, UDP checksum 0) and IPv6 with the
 mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
 pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
@@ -433,7 +433,7 @@ MSVC unit suite on Windows, the cases print `SKIPPED`. When the filter adopts
 a new kernel header, helper or map, the shim follows in the same change, with
 the helper's kernel source cited. `xdp_host_every_counter_has_a_case` fails
 when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
-a historical filter, configure with
+the compatible filter, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 
 The XDP program is compiled at build time and loaded from memory. On Linux,

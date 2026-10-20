@@ -5,7 +5,7 @@ server gets on a given kernel and why, how to pin one, what `gso`, `io_uring`
 and `xdp` need from the host, how socket errors and ICMP behave, the fd and
 memlock limits for 1000 clients, what each transport needs inside a container,
 and the commands that verify a host. Every claim names the file and line that
-backs it; a section whose proof is still an open card says **pending**.
+backs it; a section whose executable proof is unavailable says **pending**.
 
 ## 1. Build
 

@@ -119,16 +119,13 @@ known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
 end reports the transport that won.
 
-Every transport serves IPv4 and IPv6, the AF_XDP server transport (`xdp`)
-included: a server serves the family of its public address, and `"auto"`
-tries `xdp` first for either family. One interface takes one XDP program, so
-on a dual-stack interface `xdp` serves one family and another transport the
-other.
-
-`public_address` on the server displaces the address passed to create, so the
-address the transport binds and the address connect tokens are checked against
-are always the same one. The environment form applies to the first server
-create in the process only.
+A server can advertise one IPv4 address, one IPv6 address, or one of each.
+`public_address` displaces the address passed to create;
+`second_public_address` adds the other address family. The selected server
+transport must serve every configured family or create returns
+`ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`. Connect tokens are checked
+against the advertised address for the family on which the request arrived.
+The environment forms apply to the first server create in the process only.
 
 ### Environment overrides
 
@@ -179,6 +176,7 @@ row per field of both public structs.
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
 | transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | public_address | ROCKETNET_SERVER_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse: refuses the create |
+| second_public_address | ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS | const char * | `NULL` | an address that does not parse or duplicates the first address family: refuses the create |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer, or above `10000000`: refuses the create; `0` or less sets the budget to its ceiling, `ROCKETNET_SEND_BUDGET_MAX_KBPS` (10 Gbit/s), NOT RECOMMENDED; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | window_messages | ROCKETNET_SERVER_WINDOW_MESSAGES | int | `1024` | refuses the create unless `64..1048576` and a power of two |

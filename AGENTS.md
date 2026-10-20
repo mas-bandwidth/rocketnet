@@ -305,6 +305,13 @@ frame and retransmission controls use these final names:
 | `resend_delay_max_ms` | `ROCKETNET_CLIENT_RESEND_DELAY_MAX_MS` | `ROCKETNET_SERVER_RESEND_DELAY_MAX_MS` | `2000` ms |
 | `transport` | `ROCKETNET_CLIENT_TRANSPORT` | `ROCKETNET_SERVER_TRANSPORT` | `NULL` (`"auto"`) |
 
+The server's `public_address` and optional `second_public_address` advertise
+one IPv4 address, one IPv6 address, or one of each. Their environment names are
+`ROCKETNET_SERVER_PUBLIC_ADDRESS` and
+`ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS`. A transport that cannot serve both
+configured families refuses create with
+`ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`.
+
 Other key defaults are `num_channels = 32`, `window_messages = 1024`,
 `receive_ring_bytes = 262144`, `max_message_bytes = 262144`,
 `send_buffer_bytes = 800000`, `send_queue_messages = 1024`,

@@ -63,7 +63,7 @@ A supported row promises three things, and only these three:
 
 It does not promise another compiler, another architecture, another runner
 image, privileged XDP attach, line-rate measurements, or a driver the row does
-not name. In particular, the per-commit `big-endian` leg in `ci.yml`
+not name. In particular, the `big-endian` leg in `ci.yml`
 cross-compiles the library and suite for s390x and runs the wire and sodium
 checks under qemu-user; the socket-crossing suite runs on s390x only in the
 nightly full-system guest. The nightly row is how that suite is claimed.

@@ -9,7 +9,7 @@ This file is retired. The RocketNet standard is three documents:
   standard: message forms, delivery, channels, receipts, blocks, resend and
   send budgets.
 - [standard/RATIONALE.md](standard/RATIONALE.md) — RN-R, the informative
-  rationale: why the standard is shaped as it is, and the historical design
+rationale: why the standard is shaped as it is, and the design
   notes.
 
 A link to this file from an older document still lands here; the sections it
