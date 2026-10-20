@@ -122,6 +122,7 @@ Liveness, under `SpecFair`:
   `RecvBegin` is disabled during every send call, so weak fairness would
   not make a receive (and its re-arm) happen.
 - **`ResetIndex`, `SendReturn` and `Swap`.** A call that may end does end.
+- **`Free`.** This is destroy's drain.
 
 One assumption is not a fairness condition: under `RearmOnReceive` the
 re-arm in `Swap` always succeeds. In the code
@@ -131,7 +132,18 @@ counted `RECEIVE_REARM_FAILED`, and the queue stays disarmed for that call.
 only a submission queue that stays full fails it, and the next
 receive_packets tries again. `ReceiveLiveness` holds under this assumption:
 receive is re-armed once some receive call finds an entry.
-- **`Free`.** This is destroy's drain.
+
+The model's `armed` is the kernel's view: `KernelStop` clears it when the
+multishot ends, before the `Term` is reaped. The code's `queue->armed`
+stays true until `rocketnet_server_uring_multishot_ended` reaps the `Term`,
+so `rocketnet_server_uring_rearm_unarmed` skips a queue whose `Term` is
+still in the completion queue. When a call's budget is spent with the
+`Term` still pending, the model's `Swap` re-arms one call earlier than the
+code does, and the model has no step in which that call leaves the queue
+disarmed. The later reap of the pending `Term` takes both outcomes in the
+model, so a failed one-shot re-arm disarms it again and the next call's
+`Swap` re-arms it, as the code does. The difference is at most one receive
+call in when the re-arm lands; `ReceiveLiveness` is not affected by it.
 
 ## What the model leaves out
 

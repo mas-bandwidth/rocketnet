@@ -5,8 +5,10 @@
 
 // The io_uring re-arm and destroy-bound cases. Both run through the driver's
 // development-only seam: a fake driver with queues but no kernel ring, whose
-// arm calls can be told to find no submission entry, and destroy's wait loop
-// driven by a fake completion source. No socket, no ring, no wall clock.
+// arm calls can be told to find no submission entry, and the end condition
+// of destroy's wait loop (rocketnet_server_uring_destroy_wait_over) run with
+// every round completing or every round silent. No socket, no ring, no wall
+// clock.
 
 #include <stdio.h>
 
