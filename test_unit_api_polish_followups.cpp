@@ -1,0 +1,81 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+// The api-polish follow-ups, pinned: the quiet switch is set_ named
+// (rocketnet_set_quiet), the status count is ROCKETNET_STATUS_COUNT like the
+// other *_COUNT values, and the WARN level's name is "warn", matching its
+// enum as every other level name does. The assert callback has one way in,
+// rocketnet_set_assert_callback; the internal pointer it writes is
+// rn_assert_function, never exported. Every case runs in memory, with no
+// clock, sockets or network.
+
+#include "test_unit_registry.h"
+
+#include "rocketnet.h"
+#include "rocketnet_internal.h"
+
+#include <string.h>
+#include <type_traits>
+
+#define check rocketnet_unit_check
+
+static_assert( std::is_same<decltype( &rocketnet_set_quiet ), void (*)( bool )>::value, "set_ naming: rocketnet_set_quiet( bool )" );
+static_assert( ROCKETNET_STATUS_COUNT == ROCKETNET_STATUS_FLOW_ID_RESERVED + 1, "ROCKETNET_STATUS_COUNT follows the last code" );
+
+static int api_polish_followups_count = 0;
+
+static void api_polish_followups_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context; (void) level; (void) message; (void) length;
+    api_polish_followups_count++;
+}
+
+static int api_polish_followups_asserts = 0;
+
+static void api_polish_followups_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition; (void) function; (void) file; (void) line;
+    api_polish_followups_asserts++;
+}
+
+static void api_polish_followups()
+{
+    // rocketnet_set_quiet suppresses and resumes the one log sink
+    const enum rocketnet_log_level_t saved = rocketnet_get_log_level();
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_set_log_callback( api_polish_followups_log, NULL );
+    api_polish_followups_count = 0;
+    rocketnet_set_quiet( true );
+    rocketnet_warn( "quiet" );
+    check( api_polish_followups_count == 0 );
+    rocketnet_set_quiet( false );
+    rocketnet_warn( "heard" );
+    check( api_polish_followups_count == 1 );
+    rocketnet_set_log_callback( NULL, NULL );
+    rocketnet_set_log_level( saved );
+
+    // ROCKETNET_STATUS_COUNT counts every code, OK included
+    check( ROCKETNET_STATUS_COUNT == 26 );
+    check( rocketnet_num_status_codes() == ROCKETNET_STATUS_COUNT );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) ( ROCKETNET_STATUS_COUNT - 1 ) ), "FLOW_ID_RESERVED" ) == 0 );
+    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_COUNT ), "unknown" ) == 0 );
+
+    // every level name matches its enum: WARN is "warn"
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "none" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "error" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "warn" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_INFO ), "info" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_DEBUG ), "debug" ) == 0 );
+    check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_SPAM ), "spam" ) == 0 );
+
+    // the setter is the one way in: it writes the internal pointer, and NULL restores the default
+    rocketnet_assert_callback_t original = rn_assert_function;
+    rocketnet_set_assert_callback( api_polish_followups_assert );
+    check( rn_assert_function == api_polish_followups_assert );
+    rocketnet_set_assert_callback( NULL );
+    check( rn_assert_function == original );
+    check( api_polish_followups_asserts == 0 );
+}
+REGISTER_UNIT_TEST( api_polish_followups );

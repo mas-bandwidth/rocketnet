@@ -139,7 +139,7 @@ static void sized_config_accepts_every_known_size()
     // the creates accept every known size: each one reaches its own NULL
     // guard (the token or address), a counted no-op, so no socket opens
 
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( sized_config_quiet_assert );
 
     struct rocketnet_server_transport_config_t server_config;
@@ -276,7 +276,7 @@ static void sized_config_refuses_unknown_size()
     // the creates refuse an unknown size before any other check: uncounted,
     // never reaching the NULL token or address guard
 
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_set_assert_callback( sized_config_quiet_assert );
 
     struct rocketnet_server_transport_config_t server_config;
