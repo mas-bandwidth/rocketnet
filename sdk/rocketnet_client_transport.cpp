@@ -1043,6 +1043,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         return NULL;
     }
 
+    // the client network thread (the I/O thread or the legacy thread) takes
+    // the client thread priority from this thread, right after its create
+    rocketnet_platform_client_thread_priority( client_transport->thread );
+
     return client_transport;
 }
 

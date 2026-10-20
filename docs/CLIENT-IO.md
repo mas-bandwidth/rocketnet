@@ -565,6 +565,51 @@ contract run, the meter gate on the Windows member. Red at BASE: the same
 `--run` line prints `unknown functional test client_io_windows_handoff_round_trip`,
 exit 2. Needs: rocketnet-client-io-transport.
 
+## Thread priority
+
+The client's network thread, the I/O thread or the legacy receive thread,
+takes the client thread priority from the thread that creates the client,
+right after the create (`rocketnet_client_transport_create`,
+`sdk/rocketnet_client_transport.cpp:1048`; `rocketnet_platform_client_thread_priority`,
+`sdk/rocketnet_platform.cpp:1427`, `:3135` and `:3566`). The settings are the flow library's (`flow_platform.cpp`),
+unchanged:
+
+| Platform | Call on the client network thread |
+|---|---|
+| Linux | `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )` |
+| macOS | the same call, and nothing else: no QoS class, no time-constraint policy, no pinning |
+| Windows | `SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL )` |
+
+On Windows the library also requests a 1 ms timer period,
+`timeBeginPeriod( 1 )`, at `rocketnet_init` before the timer query, and ends it
+with `timeEndPeriod( 1 )` at `rocketnet_term` (`sdk/rocketnet_platform.cpp:3449`
+and `:3433`, from `rocketnet_platform_term` at `:3480`). A step-driven client
+(`step_driven` or `step_in_update`) creates no thread and makes no call.
+
+The game's own threads are the game's: the library sets nothing on the main
+thread or on any thread it does not create. The game that carried flow also raises
+its main thread (`SCHED_RR` at `sched_get_priority_max` on Linux,
+`THREAD_PRIORITY_TIME_CRITICAL` on Windows) and pins its server task workers at
+`SCHED_FIFO`; those settings belong to the game, and the library does not copy
+them.
+
+`rocketnet_set_thread_priority( false )` turns every one of these calls off,
+process-wide. Set it before `rocketnet_init` to skip the timer period too.
+Threads created after a change follow the new value; a thread already running
+keeps what it got. A game that sets its own thread priorities turns it off.
+`rocketnet_get_thread_priority` reads the switch.
+
+A call the operating system refuses (an unprivileged Linux process may not
+take `SCHED_RR`) never fails the create or `rocketnet_init`: the thread runs at
+its default priority, `rocketnet_get_thread_priority_refusals` counts it, and
+the first refusal of each call kind logs one warning
+(`docs/ERRORS-AND-LOGGING.md` 3.4).
+
+`functional/thread_priority_timing.cpp` measures the client's receive wakes
+with the calls off and on (`ROCKETNET_FUNCTIONAL_THREAD_PRIORITY=off`,
+`ROCKETNET_TIMING_SECONDS=60`); it reports numbers and asserts only that the
+client stays connected.
+
 ## What is left out
 
 - **Decryption and the per-reply checks stay on the main thread in these

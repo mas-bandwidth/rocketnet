@@ -158,6 +158,30 @@ contract: one peer's death never stalls or degrades another peer's traffic.
 The functional cases in functional/posix_hard_killed_peer.cpp hold this per
 transport cell, and an injected-errno seam covers each receive arm.
 
+## Server network threads and their priority
+
+The library sets the server thread priority on each network thread a server
+driver creates, from the creating thread right after the create
+(`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp:1434`, `:3142`
+and `:3573`):
+`SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
+`THREAD_PRIORITY_TIME_CRITICAL` on Windows. These are the flow library's
+settings (`flow_platform.cpp`), unchanged.
+
+| Driver | Threads it creates | What the library sets |
+|---|---|---|
+| GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
+| XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
+| IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
+| io_uring, RIO, portable socket | none | nothing |
+
+`rocketnet_set_thread_priority( false )` turns the priority calls off for
+threads created after it; the XDP thread's pin to its queue's cpu always runs.
+A refused call is counted by `rocketnet_get_thread_priority_refusals` and
+logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the driver starts
+either way. The server task workers of a game and its main thread are the
+game's to set; the library sets nothing on them.
+
 ## Adding a backend without editing the transport
 
 For an in-tree driver, define a `const rocketnet_driver_backend_t`, add its row
