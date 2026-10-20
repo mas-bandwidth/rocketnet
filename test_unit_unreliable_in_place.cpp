@@ -944,7 +944,7 @@ static void message_burst_start_finish_delivers_every_message()
     {
         for ( int i = 0; i < per_update; i++ )
         {
-            uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABLE_ORDERED, bytes );
+            uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
             check( p != NULL );
             ip_fill( p, id, bytes );
             check( rocketnet_message_client_finish( pair.client, bytes ) != 0 );
@@ -952,7 +952,7 @@ static void message_burst_start_finish_delivers_every_message()
         }
         rocketnet_message_client_send_packets( pair.client );
         ip_step( &pair, &server_got, NULL );
-        check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_DISCONNECT_REASON_NONE );
         check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     }
     for ( int u = 0; u < 20 && server_got.size() < (size_t) id; u++ )
@@ -968,8 +968,8 @@ static void message_burst_start_finish_delivers_every_message()
     }
     for ( int i = 0; i < 5; i++ )
         check( ip_counter( counters, watched[i] ) == before[i] );
-    check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( pair.net->client.connected && pair.net->server.connected );
     ip_pair_teardown( &pair );
 }
@@ -997,7 +997,7 @@ static void start_past_packet_allowance_falls_back_to_the_region()
 
     // the allowance: cap in-place packets, nothing reliable due
     for ( int i = 0; i < cap; i++ )
-        ip_send_in_place( &pair, false, ROCKETNET_UNRELIABLE, 1, 64, 300 + (uint32_t) i );
+        ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 64, 300 + (uint32_t) i );
     const size_t finished_spent = client->finished.size();
     check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before );
 
@@ -1005,7 +1005,7 @@ static void start_past_packet_allowance_falls_back_to_the_region()
     for ( int i = 0; i < extra; i++ )
     {
         const size_t handed_before = client->handed.size();
-        uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_UNRELIABLE, 64 );
+        uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, 64 );
         check( p != NULL );
         check( client->handed.size() == handed_before );
         check( p != NULL && rn_region_contains( connection->region, p, 64 ) );
@@ -1025,7 +1025,7 @@ static void start_past_packet_allowance_falls_back_to_the_region()
         check( ip_got( server_got, 0, 300 + (uint32_t) i, 64 ) );
     for ( int i = 0; i < extra; i++ )
         check( ip_got( server_got, 0, 310 + (uint32_t) i, 64 ) );
-    check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_DISCONNECT_REASON_NONE );
     ip_pair_teardown( &pair );
 }
 
