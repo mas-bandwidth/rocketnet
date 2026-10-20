@@ -24,6 +24,7 @@
   - `6`: `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT` (channel `6`)
   - `7`: `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT` (channel `7`)
 - Server-to-client traffic drives `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` messages across connected clients so both directions of reliable delivery and acknowledgment are verified.
+- `LOAD_PROFILE=light` replaces both batches with the light profile (`load.c:752-763`, `load.c:871-895`, `load.c:1003-1013`): the traffic loop updates a slice of 100 clients every 10 ms, so each client updates at 10 Hz, and on each update the client sends one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message on channel `3` and the server queues one to that client; the server updates once per slice, on an absolute 10 ms schedule that catches a slow slice up. `LOAD_PROFILE` unset or `default` is the profile above; any other value exits `2`.
 - Every payload carries a 32-byte deterministic frame (`magic`, `client_idx`, `combo_idx`, `seq`, and 16 hash-derived pattern bytes) verified byte-for-byte on receipt.
 
 ## Five Pass Criteria
@@ -34,13 +35,13 @@
 4. **`unreliable_integrity`**: Every unreliable message delivered (`ROCKETNET_RELIABILITY_UNRELIABLE`, `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`) is pattern-verified (never corrupted) and never duplicated (each sequence number per client and reliability mode is observed at most once, and strictly increasing for `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`).
 5. **`counters_agree`**: The total messages sent by all clients equals the total messages received by the server plus counted drops (`sent == received + drops`).
 
-When `counters_agree` fails, `load` prints to stderr every nonzero counter of the server transport and the message server, the sums of every nonzero counter over the client transports and the message clients (`load: counters_agree ... <COUNTER>=<n>`), and each combo's client-to-server sent and received counts (`load: counters_agree combo=<n> sent=<n> received=<n>`), so the run names where the uncounted messages went (`load.c:1033`).
+When `counters_agree` fails, `load` prints to stderr every nonzero counter of the server transport and the message server, the sums of every nonzero counter over the client transports and the message clients (`load: counters_agree ... <COUNTER>=<n>`), and each combo's client-to-server sent and received counts (`load: counters_agree combo=<n> sent=<n> received=<n>`), so the run names where the uncounted messages went (`load.c:1081`).
 
 ## Diagnostic Telemetry (Recorded Without Gating)
 
 At the end of every run, the single summary line records:
 - `connect_s`: wall time from the start of the connect phase until every client and the server report the full client count connected.
-- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each read from the clock when `load` first sees that client in `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED` (`load.c:660`), not from the connect loop's per-pass time, which every client of one pass shares. With three or more clients connected, a `connect_p50_s` equal to `connect_max_s` means the stamps share one value: `load` then prints `load: connect_stamps ...` to stderr and fails the run with `failed_criterion=connect_stamps` (`load.c:1104`).
+- `connect_p50_s` and `connect_max_s`: 50th percentile and maximum per-client connect time (in seconds), each read from the clock when `load` first sees that client in `ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED` (`load.c:660`), not from the connect loop's per-pass time, which every client of one pass shares. With three or more clients connected, a `connect_p50_s` equal to `connect_max_s` means the stamps share one value: `load` then prints `load: connect_stamps ...` to stderr and fails the run with `failed_criterion=connect_stamps` (`load.c:1152`).
 - `server_update_p50_us` and `server_update_p99_us`: 50th and 99th percentile durations (in microseconds) of `rocketnet_message_server_update`.
 - `rss_mb`: process resident set size (in MiB) at the end of the run.
 - `server_driver` and `client_driver`: the transport the ladder granted to the server and to client `0`.
@@ -82,7 +83,7 @@ load: server counter CONNECTION_REQUEST_NO_COOKIE=1035
 
 ### Traffic-phase disconnect diagnostics
 
-For each of the first eight clients that leave `CONNECTED` during traffic, `bin/load` prints, after the line naming the client and its disconnect reason, when that client was last updated, the longest gap between two of its updates, and the longest single server update with its time into traffic (`load.c:827-831`, `load.c:867-874`, `load.c:883-887`):
+For each of the first eight clients that leave `CONNECTED` during traffic, `bin/load` prints, after the line naming the client and its disconnect reason, when that client was last updated, the longest gap between two of its updates, and the longest single server update with its time into traffic (`load.c:839-843`, `load.c:905-912`, `load.c:921-925`):
 
 ```
 load: client 432 left CONNECTED at t=6.496: state=0 disconnected reason=server disconnected
@@ -109,7 +110,7 @@ The msgx-degraded cell runs the auto ladder (`msgx,portable`) under the `ROCKETN
 
 ### Gate runs
 
-The macOS gate is three consecutive runs of each server cell, nine runs in all. Each summary line must say `verdict=PASS`, `fds_end` must equal `fds_start`, `threads_end` must equal `threads_start`, and `connect_p50_s` and `connect_max_s` are recorded for the run table:
+The macOS gate runs the light profile (`LOAD_PROFILE=light`): 1000 clients, each updating at 10 Hz and sending one reliable-ordered message per update, and each sent one by the server. It is three consecutive runs of each server cell, nine runs in all, with `LOAD_PROFILE=light` in the environment of every command below. Each summary line must say `verdict=PASS`, `fds_end` must equal `fds_start`, `threads_end` must equal `threads_start`, and `connect_p50_s` and `connect_max_s` are recorded for the run table:
 
 ```
 for cell in portable msgx msgx-degraded; do

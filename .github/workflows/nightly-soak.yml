@@ -236,7 +236,8 @@ jobs:
       - name: UDP loopback soak
         run: ./bin/soak 200000
 
-      # One 1000-client run per server cell: portable and msgx are pins; msgx-degraded
+      # One 1000-client light-profile run (10 Hz updates, one reliable-ordered
+      # message each way per update) per server cell: portable and msgx are pins; msgx-degraded
       # is the auto ladder under ROCKETNET_PUMP=portable, where the msgx rung refuses
       # and the ladder falls to portable (a pinned msgx under that override refuses
       # to create, by design). Each run must pass, name the expected granted driver,
@@ -248,7 +249,7 @@ jobs:
           ulimit -n 65536 || ulimit -n "$(ulimit -Hn)"
           run_cell() {
             cell=$1; want=$2; shift 2
-            line=$(env "$@" ./bin/load 1000 60 | tail -n 1) || true
+            line=$(env LOAD_PROFILE=light "$@" ./bin/load 1000 60 | tail -n 1) || true
             echo "LOAD cell=$cell $line"
             case "$line" in *verdict=PASS*) ;; *) echo "LOAD cell=$cell FAIL"; return 1 ;; esac
             case "$line" in *"server_driver=$want "*) ;; *) echo "LOAD cell=$cell wrong server driver (want $want)"; return 1 ;; esac

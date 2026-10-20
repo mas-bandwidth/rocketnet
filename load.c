@@ -749,6 +749,18 @@ int main( int argc, char ** argv )
 
     /* Step 2: Drive traffic for <seconds>, then 1.0s drain for in-flight delivery */
     const double drain_seconds = 3.0;
+    /* LOAD_PROFILE=light: each client updates at 10 Hz (a slice of 100
+       clients every 10 ms) and on each update sends one reliable-ordered
+       message and is sent one by the server, in place of the default
+       20 ms batches across all eight combinations */
+    const char * profile = getenv( "LOAD_PROFILE" );
+    const int light = ( profile && strcmp( profile, "light" ) == 0 ) ? 1 : 0;
+    if ( profile && profile[0] != 0 && !light && strcmp( profile, "default" ) != 0 )
+    {
+        fprintf( stderr, "load: LOAD_PROFILE=%s is not light or default\n", profile );
+        return 2;
+    }
+    double next_slice_time = traffic_start;
     while ( !quit )
     {
         const double now = rocketnet_time();
@@ -761,7 +773,7 @@ int main( int argc, char ** argv )
             drop_injected = 1;
 
         /* Pace sends every 20ms so all 8 reliability/channel combinations are exercised across all clients */
-        if ( in_traffic_window && ( now - last_send_batch_time >= 0.020 ) )
+        if ( !light && in_traffic_window && ( now - last_send_batch_time >= 0.020 ) )
         {
             last_send_batch_time = now;
             const int batch = num_clients < 32 ? num_clients : 32;
@@ -855,6 +867,32 @@ int main( int argc, char ** argv )
 
                 struct rocketnet_message_receipt_t receipts[16];
                 (void) rocketnet_message_client_receipts( clients[i], receipts, 16 );
+
+                if ( light && in_traffic_window &&
+                     rocketnet_message_client_state( clients[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                {
+                    const uint32_t combo = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
+                    struct load_stream_state_t * cst = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
+                    uint8_t payload[LOAD_PAYLOAD_BYTES];
+                    if ( cst->sent_count + 1 < LOAD_MAX_SEQ_TRACKED )
+                    {
+                        build_message( payload, LOAD_MAGIC_CLIENT_TO_SV, (uint32_t) i, combo, cst->sent_count + 1 );
+                        if ( rocketnet_message_client_send( clients[i], (int) combo, (int) combo, payload, LOAD_PAYLOAD_BYTES ) != 0 )
+                        {
+                            cst->sent_count++;
+                            c2s_sent_total++;
+                        }
+                    }
+                    const int sv_slot = rocketnet_client_transport_client_index( rocketnet_message_client_transport( clients[i] ) );
+                    struct load_stream_state_t * sv_st = &s2c_streams[i];
+                    if ( sv_slot >= 0 && sv_st->sent_count + 1 < LOAD_MAX_SEQ_TRACKED &&
+                         rocketnet_server_transport_is_client_connected( server_transport, sv_slot ) )
+                    {
+                        build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) i, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, sv_st->sent_count + 1 );
+                        if ( rocketnet_message_server_send( server, sv_slot, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, LOAD_PAYLOAD_BYTES ) != 0 )
+                            sv_st->sent_count++;
+                    }
+                }
 
                 rocketnet_message_client_send_packets( clients[i] );
             }
@@ -962,7 +1000,17 @@ int main( int argc, char ** argv )
             sample_resources( &fds_peak, &threads_peak );
             next_resource_sample = now + 0.25;
         }
-        rocketnet_sleep( 0.001 );
+        if ( light )
+        {
+            /* an absolute 10 ms schedule, so a slow slice is caught up and
+               each client averages 10 updates a second */
+            next_slice_time += 0.010;
+            const double left = next_slice_time - rocketnet_time();
+            if ( left > 0.0 )
+                rocketnet_sleep( left );
+        }
+        else
+            rocketnet_sleep( 0.001 );
     }
 
     /* Final verification of all 5 criteria */
