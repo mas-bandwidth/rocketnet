@@ -16,6 +16,7 @@
 #include "test_unit_registry.h"
 #include "sdk/rocketnet.h"
 #include "rocketnet_internal.h"
+#include "sdk/rocketnet_message_object.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -249,3 +250,107 @@ static void client_disconnect_and_timeout_read_none()
 }
 
 REGISTER_UNIT_TEST( client_disconnect_and_timeout_read_none );
+
+// A client message object over a link that is not a client transport (the
+// unit suites' in-memory links, the functional channel harness): the link
+// leaves end_reason NULL (sdk/rocketnet_message_object.h:80), and the
+// terminal check in rn_message_object_update
+// (sdk/rocketnet_message_server.cpp:471) calls end_reason only when it is
+// set, so a link whose transport ends reads NONE and nothing reads the
+// transport as a client transport. A link that names an end reason has it
+// recorded, and the reset keeps it.
+
+struct server_disconnected_fake_link_t
+{
+    int connected;
+    int end_reason;
+};
+
+static void server_disconnected_fake_update( void *, double ) {}
+static int server_disconnected_fake_payloads( void *, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
+{
+    *client_index = NULL;
+    *payload_data = NULL;
+    *payload_bytes = NULL;
+    return 0;
+}
+static int server_disconnected_fake_acked( void *, const int ** client_index, const uint64_t ** packet_ids )
+{
+    *client_index = NULL;
+    *packet_ids = NULL;
+    return 0;
+}
+static uint8_t * server_disconnected_fake_start_packet( void *, int, int, struct rocketnet_packet_context_t * ) { return NULL; }
+static int server_disconnected_fake_finish_packet( void *, struct rocketnet_packet_context_t *, int ) { return 0; }
+static void server_disconnected_fake_abort_packet( void *, struct rocketnet_packet_context_t * ) {}
+static void server_disconnected_fake_send_packets( void * ) {}
+static uint64_t server_disconnected_fake_connection( void * transport, int )
+{
+    return ( (server_disconnected_fake_link_t *) transport )->connected ? 1 : 0;
+}
+static void server_disconnected_fake_disconnect( void * transport, int )
+{
+    ( (server_disconnected_fake_link_t *) transport )->connected = 0;
+}
+static int server_disconnected_fake_state( void * transport )
+{
+    return ( (server_disconnected_fake_link_t *) transport )->connected ? ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED
+                                                                        : ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+}
+static int server_disconnected_fake_end_reason( void * transport )
+{
+    return ( (server_disconnected_fake_link_t *) transport )->end_reason;
+}
+
+static void server_disconnected_fake_case( int names_end_reason, int expected_reason )
+{
+    server_disconnected_fake_link_t fake;
+    fake.connected = 1;
+    fake.end_reason = ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED;
+
+    rn_message_link_t link;
+    memset( &link, 0, sizeof( link ) );
+    link.transport = &fake;
+    link.update = server_disconnected_fake_update;
+    link.payloads = server_disconnected_fake_payloads;
+    link.acked = server_disconnected_fake_acked;
+    link.start_packet = server_disconnected_fake_start_packet;
+    link.finish_packet = server_disconnected_fake_finish_packet;
+    link.abort_packet = server_disconnected_fake_abort_packet;
+    link.send_packets = server_disconnected_fake_send_packets;
+    link.connection = server_disconnected_fake_connection;
+    link.disconnect = server_disconnected_fake_disconnect;
+    link.state = server_disconnected_fake_state;
+    link.end_reason = names_end_reason ? server_disconnected_fake_end_reason : NULL;
+    link.destroy = NULL;                                        // the case owns the fake
+
+    rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
+                                                             ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 1000.0 );
+    check( object );
+    rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
+    double time = 1000.0;
+    check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+    check( object->connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED );
+    check( object->connections[0].disconnect_reason == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    // the link's transport ends: the terminal check resets the connection
+    fake.connected = 0;
+    time += 0.01;
+    check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+    check( object->connections[0].state != RN_MESSAGE_CONNECTION_CONNECTED );
+    check( object->connections[0].disconnect_reason == expected_reason );
+
+    // further updates keep it
+    time += 0.01;
+    check( rocketnet_message_client_update( client, time ) == ROCKETNET_UPDATE_OK );
+    check( object->connections[0].disconnect_reason == expected_reason );
+
+    rn_message_object_destroy( object );
+}
+
+static void client_link_without_end_reason_reads_none()
+{
+    server_disconnected_fake_case( 0, ROCKETNET_DISCONNECT_REASON_NONE );
+    server_disconnected_fake_case( 1, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+}
+REGISTER_UNIT_TEST( client_link_without_end_reason_reads_none );
