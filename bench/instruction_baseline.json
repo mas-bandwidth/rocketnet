@@ -3,7 +3,7 @@
   "valgrind_version": "valgrind-3.26.0",
   "build_type": "Release",
   "commit": "790a1c2265a14833e5b1131e7842a40ef2a0c466",
-  "reason": "repin for member gcc-15.2.0/valgrind-3.26.0",
+  "reason": "client_frame +2.58% (700044->718092 Ir, +18048 Ir) from correctness changes 90431735 per-connection-reset (+896 Ir, +0.13%), 39d2b7fc wire-bytes-per-family (+8768 Ir, +1.25%), and 61c89055 loopback-dual-stack (+8192 Ir, +1.17%, crosses 2%; plus 252550ee +384 Ir and 8cddddad -192 Ir); server_tick -7.72% (106576152->98347160 Ir, -8228992 Ir) from 16bdb2dc HAVE_EXPLICIT_BZERO=1 on sodium/sodium.c",
   "threshold_pct": 2.0,
   "regions": {
     "client_frame": {
