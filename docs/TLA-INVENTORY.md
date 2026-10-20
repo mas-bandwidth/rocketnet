@@ -929,11 +929,13 @@ This roster is generated from the checked-in root `tla/*.tla` files, excluding `
 | `RNSlots` | `tla/RNSlots.tla` |
 | `RNUringDriver` | `tla/RNUringDriver.tla` |
 | `RNWindow` | `tla/RNWindow.tla` |
+| `RNXdpReceiveRing` | `tla/RNXdpReceiveRing.tla` |
 | `RNXdpReplay` | `tla/RNXdpReplay.tla` |
 | `ReceiveOrder` | `tla/ReceiveOrder.tla` |
 | `ReplayWindow` | `tla/ReplayWindow.tla` |
 | `ServerConnection` | `tla/ServerConnection.tla` |
 | `ServerSession` | `tla/ServerSession.tla` |
+
 ## Provenance and limits
 
 The findings and proposed state-machine narratives above are a historical design review of source snapshot `5cb7613`; they are not a current implementation audit or a substitute for the measured rows in `tla/RUNS.tsv`. F1 is fixed by commit `5ab9e5c8ea4d31d385d19e5d3178e38ff6591d27`; its historical trace remains as the regression rationale. The current checked-in module files are listed above.

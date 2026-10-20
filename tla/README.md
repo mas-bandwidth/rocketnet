@@ -91,7 +91,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 
 ## Case inventory
 
-The table below is generated from `CASES.tsv`: 224 declared cases in 36 groups.
+The table below is generated from `CASES.tsv`: 227 declared cases in 37 groups.
 
 | Group | Cases | Scope |
 |---|---:|---|
@@ -126,11 +126,13 @@ The table below is generated from `CASES.tsv`: 224 declared cases in 36 groups.
 | `rnsenthistory` | 3 | Declared configurations in `CASES.tsv` |
 | `rnsimfaults` | 3 | Declared configurations in `CASES.tsv` |
 | `rnslots` | 12 | Declared configurations in `CASES.tsv` |
-| `rnuringdriver` | 3 | Declared configurations in `CASES.tsv` |
+| `rnuringdriver` | 4 | Declared configurations in `CASES.tsv` |
 | `rnwindow` | 7 | Declared configurations in `CASES.tsv` |
+| `rnxdpreceivering` | 2 | Declared configurations in `CASES.tsv` |
 | `rnxdpreplay` | 3 | Declared configurations in `CASES.tsv` |
 | `serverconnection` | 4 | Declared configurations in `CASES.tsv` |
 | `serversession` | 9 | Declared configurations in `CASES.tsv` |
+
 ## Initial migration measurements
 
 At the initial 47-case migration snapshot, cases were measured on Linux with the pinned runner and JAR above,
