@@ -247,10 +247,13 @@ static void thread_priority_refusal_counts_and_logs_once()
     priority_fake_restore();
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// The timer period exists only on Windows. Both cases are registered on every
+// platform so the suite names match across platforms; off Windows each is a
+// named skip.
 
 static void thread_priority_windows_timer_period_at_init_and_term()
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     priority_fake_install( false );
     rocketnet_unit_check( rocketnet_platform_init() );
     rocketnet_unit_check( priority_fake_count == 2 );
@@ -262,10 +265,14 @@ static void thread_priority_windows_timer_period_at_init_and_term()
     rocketnet_unit_check( priority_fake_calls[2].kind == PRIORITY_FAKE_TIME_END_PERIOD );
     rocketnet_unit_check( priority_fake_calls[2].period == 1 );
     priority_fake_restore();
+#else
+    printf( "thread_priority_windows_timer_period_at_init_and_term [SKIPPED off windows: no process timer period]\n" );
+#endif
 }
 
 static void thread_priority_windows_timer_refusal_counts_and_logs_once()
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     priority_fake_install( true );
     const uint64_t refusals = rocketnet_get_thread_priority_refusals();
     rocketnet_unit_check( rocketnet_platform_init() );
@@ -279,12 +286,13 @@ static void thread_priority_windows_timer_refusal_counts_and_logs_once()
     for ( int i = 0; i < priority_fake_count; ++i )
         rocketnet_unit_check( priority_fake_calls[i].kind != PRIORITY_FAKE_TIME_END_PERIOD );
     priority_fake_restore();
+#else
+    printf( "thread_priority_windows_timer_refusal_counts_and_logs_once [SKIPPED off windows: no process timer period]\n" );
+#endif
 }
 
 REGISTER_UNIT_TEST( thread_priority_windows_timer_period_at_init_and_term );
 REGISTER_UNIT_TEST( thread_priority_windows_timer_refusal_counts_and_logs_once );
-
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 REGISTER_UNIT_TEST( thread_priority_default_is_on );
 REGISTER_UNIT_TEST( thread_priority_client_requests_space_values );
