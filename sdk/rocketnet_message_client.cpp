@@ -81,6 +81,20 @@ static int rn_client_link_state( void * transport )
     return rocketnet_client_transport_state( (rocketnet_client_transport_t *) transport );
 }
 
+// A client transport runs one connection attempt (its create connects,
+// rocketnet_client_transport.cpp:765), so its CLIENT_DISCONNECT_ACCEPTED
+// counter is nonzero exactly when that attempt ended on the server's
+// disconnect: rocketnet_client_process_disconnect counts it
+// (rocketnet_client_protocol.cpp:1202) before it sets the protocol
+// DISCONNECTED.
+static int rn_client_link_end_reason( void * transport )
+{
+    const struct rocketnet_counters_t * counters = rocketnet_client_transport_counters( (rocketnet_client_transport_t *) transport );
+    if ( counters && counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED] )
+        return ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED;
+    return ROCKETNET_DISCONNECT_REASON_NONE;
+}
+
 static void rn_client_link_destroy( void * transport )
 {
     rocketnet_client_transport_destroy( (rocketnet_client_transport_t *) transport );
@@ -101,6 +115,7 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->connection = rn_client_link_connection;
     link->disconnect = rn_client_link_disconnect;
     link->state = rn_client_link_state;
+    link->end_reason = rn_client_link_end_reason;
     link->destroy = rn_client_link_destroy;
     link->clock_from_first_update = 1;
 }

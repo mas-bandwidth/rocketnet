@@ -905,6 +905,7 @@ int main( int argc, char ** argv )
             return 1;
         }
     }
+    (void) update_hz;
 
     if ( !address )
         address = "127.0.0.1:40000";

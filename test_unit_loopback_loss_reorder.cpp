@@ -255,9 +255,9 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // the counters of the fixed run at the base, with the link simulator off and
 // with it on at 5 ms latency (the simulator on, both patterns zero)
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xaf3af7fd64c2f326 ), UINT64_C( 0xb158a162d2d594e4 ), 24 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xb5708882a0694ca6 ), UINT64_C( 0x57ae698db0e42de4 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xaf3af7fd64c2f326 ), UINT64_C( 0xb158a162d2d594e4 ), 25 };
+    { 35, 35, 3762, 2437, 35, 35, 2437, 3762, UINT64_C( 0xb5708882a0694ca6 ), UINT64_C( 0x57ae698db0e42de4 ), 25 };
 
 static void loopback_patterns_off_same_trace()
 {
@@ -635,7 +635,10 @@ static void loopback_loss_reorder_production_refusal()
     rocketnet_public_link_simulator_test_development( 0 );
 
     client_config.simulated_reverse_window = 4;
+    loopback_error_begin( "simulated_reverse_window" );
     check( rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), 1000.0 ) == NULL );
+    check( loopback_error_lines_naming == 1 );
+    loopback_error_end();
     client_config.simulated_reverse_window = 0;
 
     check( loopback_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "7" ) == 0 );
@@ -658,7 +661,10 @@ static void loopback_loss_reorder_production_refusal()
     loopback_error_end();
     check( loopback_unsetenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) == 0 );
 
-    // ranges: zero, or N >= 2 up to 1000000; zero, or W >= 2 up to 64
+    // ranges: zero, or N >= 2 up to 1000000; zero, or W >= 2 up to 64. each
+    // refusal logs one error line; the capture keeps those lines (and the
+    // alias refusals an ambient environment adds) off stdout
+    loopback_error_begin( NULL );
     const int bad_drop[] = { -1, 1, 1000001 };
     const int good_drop[] = { 0, 2, 7, 1000000 };
     const int bad_window[] = { -1, 1, 65 };
@@ -712,6 +718,8 @@ static void loopback_loss_reorder_production_refusal()
     check( server_config.simulated_reverse_window == 3 );
     check( loopback_unsetenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) == 0 );
     check( loopback_unsetenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) == 0 );
+    check( loopback_error_lines >= 12 );
+    loopback_error_end();
 
     printf( "loopback_loss_reorder_production_refusal\n" );
 }
