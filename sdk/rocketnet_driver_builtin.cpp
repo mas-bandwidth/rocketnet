@@ -352,7 +352,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
     {
         plan.driver_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;
     }
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     else if (strcmp(driver, "msgx") == 0)
     {
         plan.driver_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;
