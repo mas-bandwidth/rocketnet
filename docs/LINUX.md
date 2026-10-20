@@ -199,9 +199,14 @@ a completion queue twice that (`sdk/rocketnet_server_uring.h:39-41`,
   offers the `io_uring` cell only when the value is 0
   (`.github/workflows/ci.yml:324-333`). The driver does not read the sysctl;
   a refusing kernel shows up as the probe refusal above.
-- No memlock headroom on this kernel: the 1000-client `io_uring` server creates
-  under `ulimit -l 64`, as the section 10 commands show. The driver never
-  touches `RLIMIT_MEMLOCK` (no call in `sdk/rocketnet_server_uring_linux.cpp`).
+- Enough `RLIMIT_MEMLOCK` for the ring and the provided buffer rings, which
+  depends on the kernel. The driver never raises the limit (no `setrlimit` in
+  `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
+  will not grant the memory. Measured with
+  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`:
+  on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB;
+  on kernel 6.8 they create at 64 KiB. The usual default soft limit of
+  8192 KiB covers 32 queues on 7.0 (section 10).
 
 The create line is
 `io_uring transport: <n> queue reuseport group on port <p>, 4096 entry ring, 4096 receive buffers per queue`
@@ -355,15 +360,16 @@ mid-burst never stalls receive for the others, per transport) and
 `max_clients`: the plan's `sockets` field (`bench/transport_memory.cpp:87`).
 For 1000 clients: `portable` 1, `gso` 4, `io_uring` 4 plus its ring, `xdp` 7
 (the plan output in section 10). The default soft limit of 1024 is ample; the
-section 10 commands create 1000-client `gso` and `io_uring` servers under
-`ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
+section 10 commands create 1000-client `gso` and 32-queue `io_uring` servers
+under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 (`sdk/rocketnet_driver_builtin.cpp:48`, `:54`,
 `sdk/rocketnet_platform.cpp:668`), so a process that runs N clients needs about
 2N descriptors: raise `ulimit -n` past 2000 for 1000 clients in one process.
 
-**Locked memory.** `portable`, `gso` and `io_uring` need no memlock headroom
-(the section 10 commands run under `ulimit -l 64`). `xdp` raises its own
-`RLIMIT_MEMLOCK` to unlimited at create and refuses with
+**Locked memory.** `portable` and `gso` need no memlock headroom: the section
+10 commands create 1000-client servers of each under `ulimit -l 64`.
+`io_uring` needs some, kernel-dependent (section 5); keep `ulimit -l` at
+8192 KiB or more. `xdp` raises its own `RLIMIT_MEMLOCK` to unlimited at create and refuses with
 `server could not setrlimit` if it cannot (`BUILDING.md:403-404`,
 `sdk/rocketnet_server_socket_linux.cpp:1605-1614`); as root on a host that
 succeeds.
@@ -422,8 +428,9 @@ python3 tools/check_memory.py ./bin/transport_memory
 ./bin/transport_memory 1000 1416 16 gso 0 --plan-only
 ./bin/transport_memory 1000 1416 16 io_uring 0 --plan-only
 ./bin/transport_memory 1000 1416 16 xdp 7 --plan-only
+bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 16 portable 0'
 bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 16 gso 0'
-bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 16 io_uring 0'
+bash -c 'ulimit -n 64 && ./bin/transport_memory 1000 1416 16 io_uring 32'
 ```
 
 `./bin/functional` with no pin runs over the `auto` ladder, which on an
