@@ -110,6 +110,7 @@ struct rocketnet_server_gso_recv_buffer_t
     uint64_t dropped_source;
     uint64_t gro_batches;
     uint64_t syscalls;
+    uint64_t receive_errors;
     rocketnet_address_t from[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     int packet_bytes[ROCKETNET_GSO_RECV_QUEUE_SIZE];
     alignas(16) uint8_t packet_data[ROCKETNET_GSO_RECV_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
@@ -191,6 +192,7 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_dropped_size;
     uint64_t counter_receive_dropped_overflow;
     uint64_t counter_receive_dropped_source;
+    uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
 
     struct rocketnet_server_socket_process_packets_t process_packets;
@@ -504,6 +506,12 @@ static void rocketnet_server_gso_worker( void * data )
 
             buffer->syscalls++;
 
+            // a failed call other than an empty socket is counted; the
+            // worker goes back to poll and tries again
+
+            if ( count < 0 && errno != EAGAIN && errno != EWOULDBLOCK )
+                buffer->receive_errors++;
+
             if ( count <= 0 )
                 break;
 
@@ -518,6 +526,15 @@ static void rocketnet_server_gso_worker( void * data )
                 // past 64KB.
 
                 if ( queue->messages[i].msg_hdr.msg_flags & MSG_TRUNC )
+                {
+                    buffer->dropped_size++;
+                    continue;
+                }
+
+                // a zero-length datagram is below the smallest packet a
+                // server reads: the size pass counts it, as io_uring's does
+
+                if ( message_bytes == 0 )
                 {
                     buffer->dropped_size++;
                     continue;
@@ -829,6 +846,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW] = gso->counter_receive_dropped_overflow;
     counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
+    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,8 +1183,10 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         gso->counter_receive_dropped_size += buffer->dropped_size;
         gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
         gso->counter_receive_dropped_source += buffer->dropped_source;
+        gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
         buffer->syscalls = 0;
+        buffer->receive_errors = 0;
         buffer->dropped_size = 0;
         buffer->dropped_overflow = 0;
         buffer->dropped_source = 0;

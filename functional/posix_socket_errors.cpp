@@ -32,6 +32,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <atomic>
 
 #if defined(__linux__)
 #include "rocketnet_server_gso.h"
@@ -63,12 +64,6 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 // protocol's prefilter and counts in the driver's own RECEIVE_DROPPED_SIZE
 
 void * rocketnet_server_transport_driver_for_testing( struct rocketnet_server_transport_t * server_transport );
-
-#if defined(__linux__)
-void rocketnet_server_gso_test_force_create_flags( int flags );
-void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
-void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
-#endif
 
 // forcing the gso plain tiers: every following gso create probes neither
 // UDP_SEGMENT nor UDP_GRO, and each pair proves it got the plain tiers
@@ -413,9 +408,9 @@ static void posix_send_datagram( int sender, const struct sockaddr_storage * to,
     if ( !expect )
         return;
 #if defined(__linux__)
-    // a zero-length datagram: the gso worker skips it uncounted, as the
-    // portable pump does; the io_uring receive counts it in its size pass
-    if ( bytes == 0 && posix_weather_native != POSIX_NATIVE_URING )
+    // a zero-length datagram: the portable pump skips it uncounted; the gso
+    // worker and the io_uring receive count it in their size pass
+    if ( bytes == 0 && posix_weather_native == POSIX_NATIVE_NONE )
         return;
     if ( posix_weather_native != POSIX_NATIVE_NONE && ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING ) )
     {
@@ -1176,6 +1171,40 @@ static void posix_linux_server_traffic_resumes( struct posix_pair_t * pair, int 
     posix_check( arrived == 8 );
 }
 
+// the failing flush runs on its own thread under a bounded wait: a driver
+// that leaked a slot or frame and waited on it forever fails a check here,
+// with the counters printed, instead of hanging the case
+
+struct posix_linux_flush_t
+{
+    struct rocketnet_server_transport_t * server;
+    std::atomic<int> done{0};
+};
+
+static void posix_linux_flush_thread( void * context )
+{
+    struct posix_linux_flush_t * flush = (struct posix_linux_flush_t*) context;
+    rocketnet_server_transport_send_packets( flush->server );
+    flush->done.store( 1 );
+}
+
+static void posix_linux_bounded_flush( struct posix_pair_t * pair, int gso_dropped, int uring_dropped )
+{
+    struct posix_linux_flush_t flush;
+    flush.server = pair->server;
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, posix_linux_flush_thread, &flush );
+    posix_check( thread != NULL );
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( flush.done.load() == 0 && rocketnet_platform_time() < deadline )
+        rocketnet_platform_sleep( 0.001 );
+    if ( flush.done.load() == 0 )
+        printf( "failing flush did not return within 5 seconds: dropped %llu so far, a slot or frame never came back\n",
+                (unsigned long long) posix_native_counter( pair->native, pair->driver, gso_dropped, uring_dropped ) );
+    posix_check( flush.done.load() == 1 );
+    rocketnet_platform_thread_join( thread );
+    rocketnet_platform_thread_destroy( thread );
+}
+
 // a flush whose every send fails: eight payloads staged, none sent, each
 // dropped one counted, and none of them reaches the client
 
@@ -1201,7 +1230,7 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
         posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
     }
     fail( pair, 1000 );
-    rocketnet_server_transport_send_packets( pair->server );
+    posix_linux_bounded_flush( pair, gso_dropped, uring_dropped );
     fail( pair, 0 );
 
     const uint64_t sent = posix_native_counter( pair->native, pair->driver, gso_sent, uring_sent ) - sent_before;
@@ -1279,12 +1308,13 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
     posix_force_gso_plain( 0 );
 
     // the workers' next 64 recvmmsg calls answer -1 with EIO. each failed
-    // call is counted as a receive syscall, the worker goes back to poll and
-    // tries again, and the datagrams behind the failures are read once the
-    // seam runs out
+    // call is counted as a receive syscall and a receive error, the worker
+    // goes back to poll and tries again, and the datagrams behind the
+    // failures are read once the seam runs out
 
     posix_pair_update( &pair );
     const uint64_t syscalls_before = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 );
+    const uint64_t errors_before = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 );
     const uint64_t received_before = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 );
     rocketnet_server_gso_test_fail_receives( (struct rocketnet_server_gso_t*) pair.driver, 64, EIO );
     posix_linux_client_traffic_resumes( &pair, 0 );
@@ -1293,26 +1323,33 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
     // flips its buffer, so the failed calls show within a few updates
 
     uint64_t syscalls = 0;
+    uint64_t errors = 0;
     const double deadline = rocketnet_platform_time() + 5.0;
     while ( rocketnet_platform_time() < deadline )
     {
         syscalls = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - syscalls_before;
-        if ( syscalls >= 64 )
+        errors = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before;
+        if ( syscalls >= 64 && errors >= 64 )
             break;
         posix_pair_update( &pair );
         rocketnet_platform_sleep( 0.001 );
     }
     const uint64_t received = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 ) - received_before;
+    if ( errors != 64 )
+        printf( "gso recvmmsg EIO: receive errors +%llu, want +64\n", (unsigned long long) errors );
     posix_check( syscalls >= 64 );
+    posix_check( errors == 64 );
     posix_check( received >= 8 );
     posix_pair_check_connected( &pair );
 
-    // and again with the seam spent: nothing is left behind
+    // and again with the seam spent: nothing is left behind, and no more
+    // errors are counted
     posix_linux_client_traffic_resumes( &pair, 8 );
     posix_pair_check_connected( &pair );
+    posix_check( posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before == 64 );
 
-    printf( "  gso%s recvmmsg EIO %s: 64 failed calls, receive syscalls +%llu, packets received +%llu, resumed 8/8 twice\n",
-            plain ? " (plain)" : "", ipv6 ? "ipv6" : "ipv4", (unsigned long long) syscalls, (unsigned long long) received );
+    printf( "  gso%s recvmmsg EIO %s: 64 failed calls, receive errors +%llu, receive syscalls +%llu, packets received +%llu, resumed 8/8 twice\n",
+            plain ? " (plain)" : "", ipv6 ? "ipv6" : "ipv4", (unsigned long long) errors, (unsigned long long) syscalls, (unsigned long long) received );
     fflush( stdout );
     posix_pair_destroy( &pair );
 }
