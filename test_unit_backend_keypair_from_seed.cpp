@@ -136,7 +136,7 @@ static void backend_keypair_from_seed_assert_hook( const char *, const char *, c
 void backend_keypair_from_seed_null_refused()
 {
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
-    rocketnet_assert_function( backend_keypair_from_seed_assert_hook );
+    rocketnet_set_assert_callback( backend_keypair_from_seed_assert_hook );
     backend_keypair_from_seed_asserts = 0;
 
     uint8_t seed[ROCKETNET_BACKEND_SEED_BYTES];
@@ -169,7 +169,7 @@ void backend_keypair_from_seed_null_refused()
 #if ROCKETNET_ASSERTS
     rocketnet_unit_check( backend_keypair_from_seed_asserts == 3 );
 #endif
-    rocketnet_assert_function( saved_assert );
+    rocketnet_set_assert_callback( saved_assert );
 }
 
 REGISTER_UNIT_TEST( backend_keypair_from_seed_round_trip );

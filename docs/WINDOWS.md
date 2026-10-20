@@ -40,6 +40,7 @@ fall to another (`sdk/rocketnet.h`). In code:
 ```c
 struct rocketnet_server_config_t config;
 rocketnet_server_default_config( &config );
+/* set protocol_id and the keys: start refuses a config without keys */
 config.transport = "iocp";              /* a pin */
 /* or: config.transport = "rio,iocp,portable";  try rio, then iocp, then portable */
 ```
@@ -62,8 +63,9 @@ In PowerShell:
 
     $env:ROCKETNET_SERVER_TRANSPORT = "rio"; bin\Release\functional.exe --run driver_env_pin_is_honoured; Remove-Item Env:ROCKETNET_SERVER_TRANSPORT
 
-`driver_env_pin_is_honoured` starts a server with the default config under
-the pin and checks that the pinned transport is the one that started
+`driver_env_pin_is_honoured` starts a server transport from the development
+config, whose transport is `auto`, under the pin and checks that the pinned
+transport is the one that started
 (`functional/rocketnet_functional_tests.cpp`). A name that is no transport
 anywhere fails loudly and lists the valid names (`sdk/rocketnet.h`).
 
@@ -157,7 +159,7 @@ client runs its socket work on its own I/O thread, created at connect
 (`sdk/rocketnet_client_transport.cpp`). That thread waits on a manual-reset
 event and on the socket's `FD_READ` through `WSAEventSelect`, so it wakes when
 the game queues a packet or a datagram arrives (`sdk/rocketnet_platform.h`).
-Set `step_driven = 1` in `rocketnet_client_config_t`, or
+Set `step_driven = true` in `rocketnet_client_config_t`, or
 `ROCKETNET_CLIENT_STEP_DRIVEN=1`, to run that work inside
 `rocketnet_client_update` and `rocketnet_client_send_packets` on the caller's
 thread with no I/O thread (`sdk/rocketnet.h`).
@@ -199,11 +201,12 @@ unreachable from one departed client does not fail the receives of the rest
 
 `rocketnet_init` calls `WSAStartup(MAKEWORD(2,2))`, and a refusal fails the
 init with `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`. `rocketnet_term` calls
-`WSACleanup` once every client and server is destroyed; while any is still
-alive it refuses, logs an error and leaves Winsock started
-(`sdk/rocketnet.cpp`, `sdk/rocketnet_platform.cpp`). A second `rocketnet_init`
-without a `rocketnet_term` between them returns false
-(`ROCKETNET_STATUS_ALREADY_INITIALIZED`) and starts nothing.
+`WSACleanup` once every client, server and other allocation is released;
+while any is still held it returns `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, logs
+an error and leaves Winsock started (`sdk/rocketnet.cpp`,
+`sdk/rocketnet_platform.cpp`). A second `rocketnet_init` without a
+`rocketnet_term` between them returns `ROCKETNET_STATUS_ALREADY_INITIALIZED`
+and starts nothing (`sdk/rocketnet.cpp`).
 
 Winsock counts `WSAStartup` and `WSACleanup` per process, so a game that
 makes its own pair keeps it balanced around its own use and the two pairs do

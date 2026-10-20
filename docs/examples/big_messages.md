@@ -11,11 +11,11 @@ in-memory `loopback` transport, so it needs no socket and no network.
    The defaults (262144) already hold 200 KB; the example sets them explicitly.
 2. Connect a client to a server with the published development keys and a
    development connect token.
-3. Send a 200 KB `ROCKETNET_RELIABLE` message with `rocketnet_client_start_message`, a
+3. Send a 200 KB `ROCKETNET_RELIABILITY_RELIABLE` message with `rocketnet_client_start_message`, a
    `memcpy` of a known pattern into the returned buffer, and
    `rocketnet_client_finish_message`. The server receives one reassembled message,
    checks every byte, and prints its size and the time it took to arrive.
-4. Send 4096 bytes as `ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT`. That is above
+4. Send 4096 bytes as `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`. That is above
    one packet's record limit, so the library promotes the send to its reliable
    path. A `start` that returns a buffer is that promotion; the same send
    without a receipt is refused at this size.
@@ -25,7 +25,7 @@ in-memory `loopback` transport, so it needs no socket and no network.
 The public header at this base declares no separate promotion counter: the
 standard names `MESSAGE_PROMOTED_UNRELIABLE`, but no such public enum exists.
 What is public is the one acknowledged receipt the promotion produces, so this
-example reads `RECEIPTS_ACKED`. A plain `ROCKETNET_UNRELIABLE` send above one
+example reads `RECEIPTS_ACKED`. A plain `ROCKETNET_RELIABILITY_UNRELIABLE` send above one
 packet is refused at this base.
 
 Each frame runs update, receive and release, simulate, queue, then send last.

@@ -38,8 +38,8 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
-    CHECK( rocketnet_init( NULL ) );
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    CHECK( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_server_config_t server_config;
     rocketnet_server_dev_config( &server_config );
@@ -60,7 +60,7 @@ int main( void )
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    CHECK( rocketnet_write_dev_connect_token( server_address, 1234, (uint64_t) time( NULL ), connect_token ) );
+    CHECK( rocketnet_write_dev_connect_token( server_address, 1234, (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
@@ -87,13 +87,13 @@ int main( void )
     while ( !( server_got && client_got ) && rocketnet_time() - wall_start < 10.0 )
     {
         now = 1000.0 + ( rocketnet_time() - wall_start );
-        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
-        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+        CHECK( rocketnet_server_update( server, now ) == ROCKETNET_UPDATE_OK );
+        CHECK( rocketnet_client_update( client, now ) == ROCKETNET_UPDATE_OK );
         CHECK( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
 
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( client_message ) );
+            uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( client_message ) );
             CHECK( out != NULL );
             memcpy( out, client_message, sizeof( client_message ) );
             CHECK( rocketnet_client_finish_message( client, (int) sizeof( client_message ) ) != 0 );
@@ -112,7 +112,7 @@ int main( void )
 
         if ( server_got && !server_sent )
         {
-            uint8_t * out = rocketnet_server_start_message( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, (int) sizeof( server_message ) );
+            uint8_t * out = rocketnet_server_start_message( server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( server_message ) );
             CHECK( out != NULL );
             memcpy( out, server_message, sizeof( server_message ) );
             CHECK( rocketnet_server_finish_message( server, 0, (int) sizeof( server_message ) ) != 0 );
