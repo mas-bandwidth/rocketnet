@@ -595,8 +595,8 @@ static void public_config_plain_create_applies_simulation()
     rocketnet_set_quiet( 1 );
     const bool development = rocketnet_public_link_simulator_development();
 
-    // a production posture refuses a nonzero simulated_* value once it reaches
-    // the transport: the plain create carries simulated_loss_percent = 25 there
+    // Client and server creates validate the full config before allocation
+    // (sdk/rocketnet_api.cpp:459 and :1155), including simulated_* fields.
 
     rocketnet_public_link_simulator_test_development( 0 );
     {
@@ -607,21 +607,13 @@ static void public_config_plain_create_applies_simulation()
         public_config_server( &server_config, &identity );
         server_config.simulated_loss_percent = 25;
         struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
-        check( server != NULL );
-        const enum rocketnet_status_t server_start = rocketnet_server_start( server );
-        check( server_start == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
-        rocketnet_server_destroy( server );
+        check( server == NULL );
 
-        uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        public_config_token( 1, &identity, token );
         struct rocketnet_client_config_t client_config;
         public_config_client( &client_config );
         client_config.simulated_loss_percent = 25;
         struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
-        check( client != NULL );
-        const enum rocketnet_status_t client_connect = rocketnet_client_connect( client, token );
-        check( client_connect == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
-        rocketnet_client_destroy( client );
+        check( client == NULL );
     }
 
     // a development posture honours it: the server's total loss, set through
