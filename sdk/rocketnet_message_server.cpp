@@ -853,11 +853,12 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
 //                          receive and release
 // ---------------------------------------------------------------
 
-// RakPeer::Receive pops one return queue across every remote system. The object's queue is the update's deliveries, connection by
-// connection in index order and each connection's in the order its channels
-// delivered them (rn_delivery_t entries are appended in dispatch order, the
-// drain of an ordered hold included), whatever channel they carry: a message
-// is never filtered by channel, so an unordered type delivered on channel 0
+// RakPeer::Receive pops one return queue across every remote system. The
+// object's queue is the update's deliveries, connection by connection in index
+// order and each connection's in the order its channels delivered them
+// (rn_delivery_t entries are appended in dispatch order, the drain of an
+// ordered hold included), whatever channel they carry: a message is never
+// filtered by channel, so an unordered type delivered on channel 0
 // (standard/MESSAGES.md, code 0 and code 2 carry no channel) is seen like
 // every other. Ordered and sequenced order holds within each channel of each
 // connection, as RakNet's ordering channels do per remote system.

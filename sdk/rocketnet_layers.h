@@ -1591,8 +1591,10 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // waits for budget and is never dropped; an unreliable one over budget is
 // dropped and counted (MESSAGE_UNRELIABLE_OVER_BUDGET).
 //
-// Receiving: receive hands out the next message of the update on a channel as
-// a const view and its length, valid until the next update. Every received
+// Receiving: receive hands out the next message of the update from the one
+// receive queue (every channel's, and on a server every slot's; the queue is
+// rn_message_object_next in sdk/rocketnet_message_server.cpp) as a const view
+// and its length, valid until the next update. Every received
 // message is released before the next update; update with one still held
 // asserts in a debug build and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED in
 // a release build. Copy what is kept past the update.

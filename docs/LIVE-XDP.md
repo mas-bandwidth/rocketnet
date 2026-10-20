@@ -269,7 +269,7 @@ receiver drains its one receive queue, every channel's messages, each naming
 the channel it was delivered on: `rocketnet_client_receive_messages` (the batch
 form) on a client, and the message layer's `rocketnet_message_server_receive`
 on the server, which releases every view before the next update
-(`client.c:436-449`, `server.c:654-667`).
+(`client.c:437-535`, `server.c:656-667`).
 The receive channel is checked against the sender's channel byte. Codes 1,
 3, 4 and 7 must arrive on the channel sent. Codes 0, 2, 5 and 6 arrive on
 channel 0, because their records carry no channel (`sdk/rocketnet.h:1716`;
