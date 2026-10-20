@@ -445,6 +445,48 @@ static std::vector<std::string> env_names_set_candidates()
 // tables under each endpoint prefix, the two budget names, the memory budget
 // that apply_env_uint64 reads, and the process-wide names read at init and in
 // the platform. The transport table's driver row is read as TRANSPORT.
+static std::string env_names_read_file( const char * relative_path )
+{
+    const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
+    FILE * file = fopen( path.c_str(), "rb" );
+    check( file != NULL );
+    std::string text;
+    char buffer[4096];
+    size_t bytes;
+    while ( ( bytes = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+        text.append( buffer, bytes );
+    fclose( file );
+    return text;
+}
+
+static void env_names_add_literal_reads( std::vector<std::string> & reads )
+{
+    const char * sources[] =
+    {
+        "sdk/rocketnet.cpp",
+        "sdk/rocketnet_config.cpp",
+        "sdk/rocketnet_platform.cpp",
+        "sdk/rocketnet_server_socket_linux.cpp"
+    };
+    const std::string marker = "rocketnet_platform_getenv( \"ROCKETNET_";
+    for ( size_t f = 0; f < sizeof( sources ) / sizeof( sources[0] ); f++ )
+    {
+        const std::string text = env_names_read_file( sources[f] );
+        for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + marker.size() ) )
+        {
+            const size_t begin = at + marker.size() - strlen( "ROCKETNET_" );
+            size_t end = begin;
+            while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
+                end++;
+            const std::string name = text.substr( begin, end - begin );
+            if ( name.compare( 0, strlen( "ROCKETNET_TEST_" ), "ROCKETNET_TEST_" ) == 0 )
+                continue;
+            if ( !env_names_contains( reads, name.c_str() ) )
+                reads.push_back( name );
+        }
+    }
+}
+
 static std::vector<std::string> env_names_pass_reads()
 {
     std::vector<std::string> reads;
@@ -492,6 +534,7 @@ static std::vector<std::string> env_names_pass_reads()
     reads.push_back( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
     reads.push_back( "ROCKETNET_LOG_LEVEL" );
     reads.push_back( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
+    env_names_add_literal_reads( reads );
     return reads;
 }
 

@@ -2311,14 +2311,14 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 // a forced-portable create SUPPRESSES the batch pump entirely. Neither form reads the socket
 // at create: the first real batch call is the probe and keeps what it reads.
 
-#define ROCKETNET_PUMP_MODE_AUTO             0
-#define ROCKETNET_PUMP_MODE_FORCE_PORTABLE   1
+#define ROCKETNET_PLATFORM_PUMP_MODE_AUTO             0
+#define ROCKETNET_PLATFORM_PUMP_MODE_FORCE_PORTABLE   1
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode );
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
-    return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PUMP_MODE_AUTO );
+    return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PLATFORM_PUMP_MODE_AUTO );
 }
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode )
@@ -2511,7 +2511,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         rocketnet_platform_create_receive_hook( socket->handle );
 #endif
 
-    if ( pump_mode != ROCKETNET_PUMP_MODE_FORCE_PORTABLE && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
+    if ( pump_mode != ROCKETNET_PLATFORM_PUMP_MODE_FORCE_PORTABLE && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
         socket->msgx = true;
     }
@@ -4702,7 +4702,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
     const bool force_portable = pump && strcmp( pump, "portable" ) == 0;
 
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size,
-                                                                                      force_portable ? ROCKETNET_PUMP_MODE_FORCE_PORTABLE : ROCKETNET_PUMP_MODE_AUTO );
+                                                                                      force_portable ? ROCKETNET_PLATFORM_PUMP_MODE_FORCE_PORTABLE : ROCKETNET_PLATFORM_PUMP_MODE_AUTO );
     if ( !socket )
         return NULL;
 
