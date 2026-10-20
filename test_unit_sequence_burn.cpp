@@ -695,8 +695,8 @@ static void sequence_burn_message_step( struct sequence_burn_message_pair_t * pa
         int bytes = 0;
         for ( ;; )
         {
-            const int got = side == BURN_SIDE_SERVER ? rocketnet_message_client_receive( pair->client, 0, &data, &bytes )
-                                                     : rocketnet_message_server_receive( pair->server, 0, 0, &data, &bytes );
+            const int got = side == BURN_SIDE_SERVER ? rocketnet_message_client_receive( pair->client, NULL, &data, &bytes )
+                                                     : rocketnet_message_server_receive( pair->server, NULL, NULL, &data, &bytes );
             if ( !got )
                 break;
             if ( bytes == BURN_MESSAGE_LARGE_BYTES && data[0] == 0xE2 )
@@ -712,7 +712,7 @@ static void sequence_burn_message_step( struct sequence_burn_message_pair_t * pa
             if ( side == BURN_SIDE_SERVER )
                 rocketnet_message_client_release( pair->client, data );
             else
-                rocketnet_message_server_release( pair->server, 0, data );
+                rocketnet_message_server_release( pair->server, data );
         }
     }
 
