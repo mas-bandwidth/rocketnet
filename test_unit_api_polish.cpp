@@ -127,6 +127,19 @@ typedef rocketnet_status_t ( *api_polish_dev_writer_t )( const char *, uint64_t,
 static_assert( rn_same<decltype( &rocketnet_write_dev_connect_token ), api_polish_dev_writer_t>::value, "ruling 2: dev token signature" );
 #endif // #if ROCKETNET_DEVELOPMENT
 
+// the development library keeps its own log state, apart from the sink the
+// suite installs in the archive it links, so the test captures the refusal
+// line in that library
+typedef void ( *api_polish_dev_set_log_t )( rocketnet_log_callback_t, void * );
+static api_polish_dev_set_log_t api_polish_dev_set_log = NULL;
+static int api_polish_dev_error_lines = 0;
+
+static void api_polish_dev_log_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "767" ) )
+        api_polish_dev_error_lines++;
+}
+
 static api_polish_dev_writer_t api_polish_dev_writer()
 {
     api_polish_dev_writer_t writer = NULL;
@@ -136,6 +149,7 @@ static api_polish_dev_writer_t api_polish_dev_writer()
         library = LoadLibraryA( "bin\\rocketnet_dev.dll" );
     check( library != NULL );
     writer = (api_polish_dev_writer_t) (void *) GetProcAddress( library, "rocketnet_write_dev_connect_token" );
+    api_polish_dev_set_log = (api_polish_dev_set_log_t) (void *) GetProcAddress( library, "rocketnet_set_log_callback" );
 #else
     const char * names[] = { "bin/librocketnet_dev.so", "librocketnet_dev.so",
                              "bin/librocketnet_dev.dylib", "librocketnet_dev.dylib" };
@@ -144,8 +158,10 @@ static api_polish_dev_writer_t api_polish_dev_writer()
         library = dlopen( names[i], RTLD_NOW | RTLD_LOCAL );
     check( library != NULL );
     writer = (api_polish_dev_writer_t) dlsym( library, "rocketnet_write_dev_connect_token" );
+    api_polish_dev_set_log = (api_polish_dev_set_log_t) dlsym( library, "rocketnet_set_log_callback" );
 #endif
     check( writer != NULL );
+    check( api_polish_dev_set_log != NULL );
     return writer;
 }
 
@@ -154,11 +170,14 @@ static void api_polish_dev_token_buffer()
     api_polish_dev_writer_t write_dev = api_polish_dev_writer();
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES + 1];
     memset( token, 0xAB, sizeof( token ) );
+    api_polish_dev_set_log( api_polish_dev_log_capture, NULL );
     check( write_dev( "127.0.0.1:40000", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( api_polish_dev_error_lines == 1 );                                             // the short buffer is named
     check( token[0] == 0xAB && token[ROCKETNET_CONNECT_TOKEN_BYTES - 2] == 0xAB );      // nothing written
     check( write_dev( "not an address", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ADDRESS );
     check( write_dev( "127.0.0.1:40000", 1, 1000, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( token[ROCKETNET_CONNECT_TOKEN_BYTES] == 0xAB );                                // nothing past the token
+    api_polish_dev_set_log( NULL, NULL );
 }
 REGISTER_UNIT_TEST( api_polish_dev_token_buffer );
 
