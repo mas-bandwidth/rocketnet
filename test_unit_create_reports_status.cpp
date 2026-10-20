@@ -15,8 +15,8 @@
 // create makes). A NULL status is accepted on a refusal and on a success.
 // No socket, no thread, no real time. The CONFIG_ENV_INVALID case sets one
 // environment variable per side and restores it before returning, as
-// test_unit_status_client_transport_create_ex.cpp does; every other case
-// sets no environment variable.
+// test_unit_status_client_transport_create_ex.cpp does. The explicit budget
+// range case temporarily clears the two budget variables and restores them.
 
 #include "test_unit_registry.h"
 
@@ -27,6 +27,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <string>
 
 #define check rocketnet_unit_check
 
@@ -279,6 +281,41 @@ static void create_reports_status_config_refusals()
     status = ROCKETNET_STATUS_OK;
     check( (rocketnet_server_create_sized)( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    // A value supplied by the caller is a config-range refusal, even though
+    // create also checks environment overrides. Keep the environment absent
+    // for this distinction, then restore it for the process running the suite.
+    const char * client_env = getenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    const char * server_env = getenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+    const std::string saved_client_env = client_env ? client_env : "";
+    const std::string saved_server_env = server_env ? server_env : "";
+    const bool had_client_env = client_env != NULL;
+    const bool had_server_env = server_env != NULL;
+    check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+    check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
+
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    client_config.send_kbps = ROCKETNET_SEND_BUDGET_MAX_KBPS + 1;
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, NULL, 0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    server_config.per_client_send_kbps = ROCKETNET_SEND_BUDGET_MAX_KBPS + 1;
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    if ( had_client_env ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
+    else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+    if ( had_server_env ) check( create_status_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env.c_str() ) == 0 );
+    else check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
 
     // a transport list that does not parse
     check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );

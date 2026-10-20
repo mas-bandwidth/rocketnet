@@ -117,7 +117,7 @@ static bool rn_copy_config_string( char * dest, size_t dest_size, const char * s
 // ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, which
 // rn_client_split (:135) and rn_server_split (:173) resolve for the create
 
-static bool rn_apply_message_and_budget_env( const char * endpoint, struct rocketnet_message_config_t * message, int * kbps, const struct rocketnet_config_field_t * budget_fields )
+static enum rocketnet_status_t rn_apply_message_and_budget_env( const char * endpoint, struct rocketnet_message_config_t * message, int * kbps, const struct rocketnet_config_field_t * budget_fields )
 {
     int num_message_fields = 0;
     const struct rocketnet_config_field_t * message_fields = rocketnet_message_config_fields( &num_message_fields );
@@ -126,11 +126,12 @@ static bool rn_apply_message_and_budget_env( const char * endpoint, struct rocke
         if ( strcmp( message_fields[i].name, "client_send_kbps" ) == 0 || strcmp( message_fields[i].name, "server_send_kbps" ) == 0 )
             continue;
         if ( !rocketnet_config_apply_env( endpoint, message, &message_fields[i], 1 ) )
-            return false;
+            return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
     }
     if ( !rocketnet_config_apply_env( endpoint, kbps, budget_fields, 1 ) )
-        return false;
-    return rocketnet_config_validate( endpoint, kbps, budget_fields, 1 );
+        return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+    return rocketnet_config_validate( endpoint, kbps, budget_fields, 1 ) ?
+        ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
 
 static bool rn_client_split( const struct rocketnet_client_config_t * config, bool read_env,
@@ -166,9 +167,11 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
 #undef RN_COPY
 
     int send_kbps = config->send_kbps;
-    if ( read_env && !rn_apply_message_and_budget_env( "client", message, &send_kbps, rn_client_budget_fields ) )
+    const enum rocketnet_status_t env_status = read_env ?
+        rn_apply_message_and_budget_env( "client", message, &send_kbps, rn_client_budget_fields ) : ROCKETNET_STATUS_OK;
+    if ( env_status != ROCKETNET_STATUS_OK )
     {
-        if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+        if ( failure ) *failure = env_status;
         return false;
     }
     if ( !read_env && !rocketnet_config_validate( "client", &send_kbps, rn_client_budget_fields, 1 ) )
@@ -240,9 +243,11 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     }
 
     int send_kbps = config->per_client_send_kbps;
-    if ( read_env && !rn_apply_message_and_budget_env( "server", message, &send_kbps, rn_server_budget_fields ) )
+    const enum rocketnet_status_t env_status = read_env ?
+        rn_apply_message_and_budget_env( "server", message, &send_kbps, rn_server_budget_fields ) : ROCKETNET_STATUS_OK;
+    if ( env_status != ROCKETNET_STATUS_OK )
     {
-        if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+        if ( failure ) *failure = env_status;
         return false;
     }
     if ( !read_env && !rocketnet_config_validate( "server", &send_kbps, rn_server_budget_fields, 1 ) )

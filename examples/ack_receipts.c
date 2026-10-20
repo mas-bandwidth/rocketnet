@@ -59,11 +59,11 @@ int main( void )
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     CHECK( rocketnet_write_dev_connect_token( server_address, 1, 4102444800ull, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    CHECK( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    CHECK( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.simulated_loss_percent = 30;
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
-    client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status_2 );
+    client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0, &create_status_2 );
     if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
