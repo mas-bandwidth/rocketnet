@@ -84,12 +84,18 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, sprint/rocketnet-proof ]
   pull_request:
-  # Filtering push to main means a feature branch no longer runs the matrix
-  # twice -- once for the push, once for its PR. workflow_dispatch keeps a
-  # deliberate way to run it on a branch, which is the capability the filter
-  # would otherwise silently remove. (serialize's ci.yml, same reasoning.)
+  # Filtering push to main and sprint/rocketnet-proof means a feature branch no
+  # longer runs the matrix twice -- once for the push, once for its PR.
+  # sprint/rocketnet-proof is named by name, not by sprint/**: every worker
+  # pushes a sprint/<card> branch, and a sprint/** filter would start this
+  # matrix on every one of those pushes, dozens an hour, for work the pull
+  # request filter already runs. sprint/rocketnet-proof is where v1.0 lands, by
+  # direct land commits with no pull request to run them, so naming that branch
+  # is what puts this gate on the landing. workflow_dispatch keeps a deliberate
+  # way to run it on any other branch, which is the capability the filter would
+  # otherwise silently remove. (serialize's ci.yml, same reasoning.)
   workflow_dispatch:
 
 # a superseded commit's run is not a gate on anything -- the gate is the head
@@ -98,6 +104,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job sets timeout-minutes: 3, the per-commit law above (one to two
+# minutes) with a minute of headroom, except xdp-libxdp-1-4, whose own
+# comment names its bound; a job that runs longer fails.
 jobs:
 
   # THE ubuntu-24.04 / Release ROW IS SPLIT IN TWO (2026-09-13); every other
@@ -138,6 +147,7 @@ jobs:
     # these rows go back to a runner label then. matrix.os stays the display name and the image the row was written
     # against; runner, when set, is the label set runs-on uses instead.
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -269,12 +279,10 @@ jobs:
 
       - name: Run functional suite (auto ladder — the fall, on Linux)
         if: contains(matrix.leg, 'b')
-        timeout-minutes: 20
         run: ./bin/functional
 
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
-        timeout-minutes: 20
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -417,6 +425,15 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 tools/check_transport_matrix.py
 
+      # tools/check_platform_policy.py exits 1 when a docs/PLATFORMS.md row
+      # does not match its named workflow (check_row, :139) or when functional/
+      # holds a wildcard address literal outside WILDCARD_ALLOWED (:30,
+      # check_wildcard_binds :185). It reads files only, so one leg per Linux
+      # row runs it.
+      - name: Check the platform policy and functional/ wildcard binds
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: python3 tools/check_platform_policy.py
+
       - name: Check export source gate
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
@@ -505,6 +522,9 @@ jobs:
   xdp-libxdp-1-4:
     name: XDP / libxdp 1.4 / Debug
     runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
+    # The guest run alone takes 120s (timeout 120 vng below) after a Debug
+    # build of the functional cell; the bound stays 10 until a fleet
+    # measurement names a smaller one.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -637,6 +657,7 @@ jobs:
     # the fleet's native Windows runner (captain-rocketnet-1: Windows 11, VS 18 Community MSVC, CMake 4, Git Bash, Python 3.9;
     # label rocketnet-windows; rowan-tools fleet/runners-windows.tsv), never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -684,13 +705,11 @@ jobs:
 
       - name: Run functional suite
         if: matrix.leg == 'a'
-        timeout-minutes: 20
         shell: bash
         run: ./bin/Release/functional.exe
 
       - name: Functional suite with IOCP selected
         if: matrix.leg == 'a'
-        timeout-minutes: 20
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: iocp
@@ -826,6 +845,7 @@ jobs:
     name: happy path / ${{ matrix.os }}
     # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos, Windows on rocketnet-windows
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -933,9 +953,26 @@ jobs:
   # against a known baseline. The per-commit gate takes asan's memory-safety
   # findings and ubsan's, both of which are immediate and unambiguous.
 
+  # SPLIT INTO THREE PARALLEL LEGS, not shortened. One job ran two unit-suite
+  # passes, the functional suite, three lifecycle binaries and a python control
+  # in series on one runner. The same reasoning and the same trade as tsan
+  # below: each leg now pays the sanitizer build once in parallel and builds
+  # only the targets it runs. NOTHING WAS DROPPED OR SHORTENED -- the same two
+  # unit passes, the functional suite, the lifecycle binaries and the control,
+  # still per commit, still with -fno-sanitize-recover=all.
+  #
+  # MEASURED WITH THE EXACT CI COMMANDS ON A 16-CORE BENCH: unit suite 45s,
+  # unit suite portable 44s, functional suite 36s, per-leg totals. Each leg
+  # fits within timeout-minutes: 3.
+
   sanitizers:
-    name: asan + ubsan
+    name: asan + ubsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [unit suite, unit suite portable, functional suite]
     steps:
 
       - uses: actions/checkout@v4
@@ -966,16 +1003,23 @@ jobs:
           -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
-      - name: Build
-        run: cmake --build build --parallel
+      - name: Build the sanitized unit suite
+        if: matrix.leg == 'unit suite' || matrix.leg == 'unit suite portable'
+        run: cmake --build build --target test --parallel
+
+      - name: Build the sanitized functional suite and the lifecycle binaries
+        if: matrix.leg == 'functional suite'
+        run: cmake --build build --target functional test_lifecycle test_driver test_sodium --parallel
 
       - name: Run unit tests
+        if: matrix.leg == 'unit suite'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./bin/test
 
       - name: Run unit tests with the driver pin preserved
+        if: matrix.leg == 'unit suite portable'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
@@ -984,13 +1028,14 @@ jobs:
         run: ./bin/test
 
       - name: Run functional suite under sanitizers
+        if: matrix.leg == 'functional suite'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-        timeout-minutes: 30
         run: ./bin/functional
 
       - name: "Functional binaries under sanitizers: lifecycle and driver contract"
+        if: matrix.leg == 'functional suite'
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
@@ -1002,6 +1047,7 @@ jobs:
           ./bin/test_sodium
 
       - name: Inactive XDP index negative control
+        if: matrix.leg == 'functional suite'
         run: python3 tools/check_xdp_guard_control.py
 
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.
@@ -1025,6 +1071,7 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
@@ -1122,7 +1169,6 @@ jobs:
       # this pass only adds a few seconds of mutation on top of it.
 
       - name: Mutation pass (time-boxed, fixed seed)
-        timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
@@ -1132,7 +1178,6 @@ jobs:
           ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Message mutation pass (time-boxed, fixed seed)
-        timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
@@ -1161,6 +1206,7 @@ jobs:
   fuzz-smoke-ndebug:
     name: fuzz smoke NDEBUG (four fuzzers, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
@@ -1236,7 +1282,6 @@ jobs:
       # replay: a copy of the seed corpus, a fixed seed, a few seconds.
 
       - name: Connect token mutation pass (time-boxed, fixed seed)
-        timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
@@ -1244,7 +1289,6 @@ jobs:
           ./bin/rocketnet_fuzz_connect_token_ndebug "$RUNNER_TEMP/fuzz-corpus_connect_token" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Receive structured mutation pass (time-boxed, fixed seed)
-        timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
@@ -1318,6 +1362,7 @@ jobs:
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -1409,7 +1454,6 @@ jobs:
       # multiarch tree.
 
       - name: Run the big-endian wire check
-        timeout-minutes: 5
         env:
           QEMU_LD_PREFIX: /
           LD_LIBRARY_PATH: /usr/lib/s390x-linux-gnu:/usr/s390x-linux-gnu/lib
@@ -1433,6 +1477,7 @@ jobs:
   conformance:
     name: standard conformance
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4
@@ -1494,6 +1539,7 @@ jobs:
   tsan:
     name: tsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -1553,7 +1599,6 @@ jobs:
         if: matrix.leg == 'threaded transport'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        timeout-minutes: 30
         run: setarch "$(uname -m)" -R ./bin/functional
 
       - name: Run the bounded loopback soak under tsan (real transport threads)
@@ -1577,6 +1622,7 @@ jobs:
   sodium-pinned:
     name: pinned libsodium (built from source)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    timeout-minutes: 3
     env:
       SODIUM_VERSION: "1.0.20"
       SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
@@ -1701,6 +1747,7 @@ jobs:
   platform-selftests:
     name: platform selftests / ${{ matrix.os }}
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -1802,6 +1849,7 @@ jobs:
   instruction-gate:
     name: instruction count gate
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
     steps:
 
       - uses: actions/checkout@v4

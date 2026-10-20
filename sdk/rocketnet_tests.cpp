@@ -2891,11 +2891,14 @@ void rocketnet_test_cookie_bounds_signature_verifies()
         rocketnet_test_server_teardown( &test );
     }
 
-    // more distinct sources than the table holds cannot churn their way out
-    // of a spent count: a source that failed and was displaced by churn would
-    // be re-verified, so the bound must hold even when the table overflows.
-    // one host reaches this with source ports alone, since the address
-    // carries the port.
+    // more distinct sources than the table holds: no source the table
+    // remembers is displaced, so each of them stays refused for the rest of
+    // the window. a source the full table cannot remember has no recorded
+    // failure and is verified on each request, because refusing it would
+    // refuse every honest first-time source (no global lockout,
+    // tla/RNSecurityTables.tla HonestConnectsUnderFlood); those verifies are
+    // bounded per update by the handshake work budget. one host reaches this
+    // with source ports alone, since the address carries the port.
     {
         struct rocketnet_test_server_t test;
         rocketnet_test_server_setup( &test );
@@ -2933,8 +2936,13 @@ void rocketnet_test_cookie_bounds_signature_verifies()
                             - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
         uint64_t refused = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT]
                             - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT];
-        rocketnet_check( failures == (uint64_t) budget );
-        rocketnet_check( refused == (uint64_t) ( num_sources * rounds - budget ) );
+        // round one: every source verifies once (the first 64 fill the table,
+        // the rest go unrecorded). later rounds: the 64 remembered sources are
+        // refused before the verify, the 32 unremembered ones verify again.
+        const int slots = ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS;
+        rocketnet_check( failures == (uint64_t) ( num_sources + ( rounds - 1 ) * ( num_sources - slots ) ) );
+        rocketnet_check( refused == (uint64_t) ( ( rounds - 1 ) * slots ) );
+        rocketnet_check( test.server.counters->handshakes_processed_this_update <= (uint64_t) ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
 
         rocketnet_test_server_teardown( &test );
     }
@@ -3825,12 +3833,24 @@ void rocketnet_test_replay_long_skip_clears_whole_window()
     memset( &replay, 0, sizeof(replay) );
 
     const uint64_t window_bits = ROCKETNET_REPLAY_WINDOW_BITS;
+    const int window_words = (int) ( ROCKETNET_REPLAY_WINDOW_BITS / 64 );
     for ( uint64_t sequence = 1; sequence <= window_bits; sequence++ )
         rocketnet_replay_advance( &replay, sequence );
+
+    // every bit of the ring is set before the skip, so the clear below cannot
+    // pass by the ring never having held anything
+    for ( int w = 0; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == ~(uint64_t) 0 );
 
     rocketnet_replay_advance( &replay, 3 * window_bits );
     for ( uint64_t sequence = 2 * window_bits + 1; sequence < 3 * window_bits; sequence++ )
         rocketnet_check( !rocketnet_replay_already_received( &replay, sequence ) );
+
+    // the full-window skip clears every word of the ring; the newest
+    // sequence's own bit is the only survivor
+    rocketnet_check( replay.window[0] == (uint64_t) 1 );
+    for ( int w = 1; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == 0 );
 
     uint8_t encoded[ROCKETNET_ACK_BLOCK_MAX_BYTES];
     struct rocketnet_ack_block_t decoded;
@@ -12284,7 +12304,10 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
 
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
-                expected_uint64 = 9876543210987654321ULL;
+                // a ranged row (step_driven's 0 .. 1,
+                // sdk/rocketnet_config.cpp:88) takes its max; a 0 .. 0 row
+                // takes any value of the full width
+                expected_uint64 = field->max_value > field->min_value ? (uint64_t) field->max_value : 9876543210987654321ULL;
                 snprintf( value_string, sizeof(value_string), "%" PRIu64, expected_uint64 );
             }
             break;
@@ -14590,6 +14613,14 @@ void rocketnet_unit_prepare()
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
+    // the unit suite runs over the loopback driver with no sockets, so a
+    // transport pin in the environment must not reach it: the pin replaces
+    // the candidate list at create and the ladder falls through to a real
+    // driver. Both pins are cleared for the run, as posix_pair_create does
+    // around its creates (functional/posix_socket_errors.cpp). A case that
+    // tests pin handling itself sets and reads its own pins after this.
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
     if ( rocketnet_unit_environment == NULL )
         rocketnet_unit_environment = new rocketnet_test_environment_t();
 }

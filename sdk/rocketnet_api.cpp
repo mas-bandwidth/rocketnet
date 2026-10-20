@@ -111,12 +111,22 @@ static bool rn_copy_config_string( char * dest, size_t dest_size, const char * s
     return true;
 }
 
+// the message table's two budget rows, client_send_kbps and server_send_kbps,
+// take no variable here: the endpoint's budget is its one budget field above,
+// ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, which
+// rn_client_split (:135) and rn_server_split (:173) resolve for the create
+
 static bool rn_apply_message_and_budget_env( const char * endpoint, struct rocketnet_message_config_t * message, int * kbps, const struct rocketnet_config_field_t * budget_fields )
 {
     int num_message_fields = 0;
     const struct rocketnet_config_field_t * message_fields = rocketnet_message_config_fields( &num_message_fields );
-    if ( !rocketnet_config_apply_env( endpoint, message, message_fields, num_message_fields ) )
-        return false;
+    for ( int i = 0; i < num_message_fields; i++ )
+    {
+        if ( strcmp( message_fields[i].name, "client_send_kbps" ) == 0 || strcmp( message_fields[i].name, "server_send_kbps" ) == 0 )
+            continue;
+        if ( !rocketnet_config_apply_env( endpoint, message, &message_fields[i], 1 ) )
+            return false;
+    }
     if ( !rocketnet_config_apply_env( endpoint, kbps, budget_fields, 1 ) )
         return false;
     return rocketnet_config_validate( endpoint, kbps, budget_fields, 1 );
@@ -589,15 +599,15 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
     if ( !rocketnet_api_null_guard( client ) )
         return;
     rn_client_end_connection( client );
-    if ( client->owns_block )
-    {
-        void * context = client->context;
+    // the header and the connection block after it hold the last
+    // connection's message bytes: all of it is wiped, then freed or given
+    // back (an adopted client is the header alone)
+    void * context = client->context;
+    const int owns_block = client->owns_block;
+    const size_t bytes = client->block ? (size_t) ( rn_client_header_bytes + client->block_bytes ) : sizeof( *client );
+    sodium_memzero( client, bytes );
+    if ( owns_block )
         rocketnet_free( context, client );
-    }
-    else
-    {
-        memset( client, 0, sizeof( *client ) );
-    }
 }
 
 enum rocketnet_update_result_t rocketnet_client_update( struct rocketnet_client_t * client, double time )
@@ -1250,6 +1260,13 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
 
 static uint64_t rn_server_running_counter( const struct rocketnet_server_t * server, int counter );
 
+// Every slot as rocketnet_server_disconnect_client ends one: a slot the
+// message layer holds CONNECTED is kicked (rn_message_object_kick,
+// sdk/rocketnet_message_server.cpp:373), which cancels its open in-place start,
+// marks it KICKED with reason NONE and disconnects it at the transport through
+// the link; a slot the transport holds connected that the message layer has
+// not yet observed is disconnected at the transport (tla/RNSlots.tla
+// PublicDisconnect).
 void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1259,6 +1276,7 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
         return;
     for ( int i = 0; i < server->max_clients; i++ )
     {
+        rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
         if ( rocketnet_server_transport_is_client_connected( transport, i ) )
             rocketnet_server_transport_disconnect_client( transport, i );
     }
@@ -1270,9 +1288,9 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
         return;
     if ( !server->running )
         return;
-    // every slot: the redundant disconnects and the slot's reset (EndClient);
-    // the disconnect packets are staged, so flush them before the transport
-    // goes
+    // one step, RUNNING to STOPPED (tla/ServerSession.tla Stop): each connected
+    // client gets the redundant disconnects, flushed before the transport
+    // goes, and every slot its reset (EndClient)
     rocketnet_server_disconnect_all_clients( server );
     rocketnet_message_server_send_packets( server->running );
     for ( int i = 0; i < server->max_clients; i++ )
@@ -1295,9 +1313,13 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     if ( !rocketnet_api_null_guard( server ) )
         return;
     rocketnet_server_stop( server );
+    // the header, keys included, and the running block after it, which held
+    // every connection's message bytes: all of it is wiped, then freed or
+    // given back (an adopted server is the header alone)
     void * context = server->context;
     const int owns_block = server->owns_block;
-    sodium_memzero( server, sizeof( *server ) );
+    const size_t bytes = server->block ? (size_t) ( rn_server_header_bytes + server->block_bytes ) : sizeof( *server );
+    sodium_memzero( server, bytes );
     if ( owns_block )
         rocketnet_free( context, server );
 }
@@ -1380,6 +1402,16 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, u
     return rocketnet_server_transport_client_id( rn_server_transport( server ), slot );
 }
 
+// The slot ends at once, before the next update, in every query and send: a
+// slot the message layer holds CONNECTED is kicked (rn_message_object_kick,
+// sdk/rocketnet_message_server.cpp:373), which cancels its open in-place start,
+// marks it KICKED with reason NONE, so rocketnet_server_client_connected reads
+// false and a start drops as not connected, and disconnects it at the
+// transport through the link; a slot the transport holds connected that the
+// message layer has not yet observed is disconnected at the transport, which
+// returns at once for a slot it does not hold
+// (sdk/rocketnet_server_transport.cpp:2649; tla/RNSlots.tla
+// PublicDisconnect).
 void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, uint64_t client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1387,6 +1419,7 @@ void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, uin
     int slot;
     if ( !rn_server_slot( server, client_index, &slot ) )
         return;
+    rn_message_object_kick( &server->running->object, slot, ROCKETNET_DISCONNECT_REASON_NONE );
     rocketnet_server_transport_disconnect_client( rn_server_transport( server ), slot );
 }
 

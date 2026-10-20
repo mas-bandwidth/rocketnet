@@ -46,6 +46,10 @@ slowest as a table. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
+The functional-only sibling binaries are `test_serialize` (a real clock and
+`rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
+`usleep`), `test_driver`, `test_transport_control`, `test_lifecycle`,
+`test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and
@@ -74,11 +78,11 @@ named functional, never as a unit step.
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
-| `test_wide` | unit | `test.cpp` built with 512 channels (CMakeLists.txt:386) | by hand |
+| `test_wide` | unit | `test.cpp` built with 512 channels (CMakeLists.txt:444) | by hand |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
-| `fuzz_replay_*` | unit | corpus replay, no init (CMakeLists.txt:618) | CI `Replay the fuzz corpora without libFuzzer` |
+| `fuzz_replay_*` | unit | corpus replay, no init (CMakeLists.txt:695) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets and transports | CI `Run functional suite` |
-| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:55) | `./bin/functional` (functional/main.cpp:69-97) |
+| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp:58) | `./bin/functional` (functional/main.cpp:69-97) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp:172,217) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP driver | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
@@ -128,6 +132,15 @@ loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
 takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`
 line continuation, so on Windows write each command on one line.
 
+Configure with `-DROCKETNET_SANITIZE_ADDRESS=ON` (default `OFF`) to build every
+target with AddressSanitizer: `/fsanitize=address` and `/Zi` with
+`/INCREMENTAL:NO` at link under MSVC, and `-fsanitize=address` elsewhere. On
+Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
+`cmake --build build --config Release --parallel 4`), the build copies the MSVC
+AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
+into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
+
 `py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
 executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
 Memory, TLS, Threadpool and Leak) with every stop logged and no debugger
@@ -172,7 +185,9 @@ checks. The fixed-vector test is `bin/test_sodium`.
 
 For integration testing against an independently supplied libsodium, configure
 with `-DROCKETNET_USE_SYSTEM_SODIUM=ON`. That opt-in uses pkg-config on POSIX,
-or `ROCKETNET_SODIUM_INCLUDE_DIR` and `ROCKETNET_SODIUM_LIBRARY` on Windows.
+or `ROCKETNET_SODIUM_INCLUDE_DIR` and `ROCKETNET_SODIUM_LIBRARY` on Windows,
+and configure fails unless that libsodium is 1.0.20 or later
+(`cmake/RocketNetDependencies.cmake`).
 A Windows caller must select a library for its configuration and CRT. Packages
 built in this mode retain that external dependency. The default vendor is built
 with the same compiler and Debug/Release runtime as RocketNet.
@@ -200,7 +215,7 @@ An independent CMake project (enable CXX for the static library's C++ runtime)
 can then use:
 
 ```cmake
-find_package(RocketNet 1.0.0 EXACT CONFIG REQUIRED)
+find_package(RocketNet 1.0 CONFIG REQUIRED)
 target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 # Or: target_link_libraries(game PRIVATE RocketNet::rocketnet_shared)
 ```
@@ -210,6 +225,12 @@ Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
 is compiled into each SDK library with private symbol names; no sodium header,
 DLL or package is required by consumers. Dependency metadata contains no
 producer paths. Shared consumers inherit the Windows DLL import definition.
+The package accepts a request for any earlier or equal version of the same major
+version (`COMPATIBILITY SameMajorVersion`, `CMakeLists.txt:659`), so
+`find_package(RocketNet 1.0)` finds every later 1.x patch. The imported targets
+hand a consumer no floating-point option and no memory-budget definition: the
+only compile definition they carry is `ROCKETNET_SHARED` on
+`RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
 The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
@@ -546,7 +567,10 @@ for correct wire bytes today. The strict build is the family floor: contraction 
 architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-64 one), so
 float arithmetic near a wire diverges bit-wise between architectures without it. If you
 compile rocketnet's sources into your own build rather than linking the library, carry the same
-flag. The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
+flag. The flag is private to rocketnet's own targets (`CMakeLists.txt:80` for the tree,
+`CMakeLists.txt:301` for each library): neither the installed package nor
+`add_subdirectory` passes it to your targets, whose floating-point flags stay your own.
+The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
 (one rounding of `a*b+c` would change `0x00000000` to `0x33800000` / `0x3C90000000000000`),
 and `tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
 omits `-ffp-contract=off` or `/fp:precise`.
