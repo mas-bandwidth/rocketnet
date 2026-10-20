@@ -19,13 +19,17 @@ happy-path: build
 # each rung is the matrix proving the abstraction, e.g.
 # ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
 
-.PHONY: docs docs-undocumented
+.PHONY: docs docs-undocumented docs-deterministic
 docs:
 	@sh tools/docs/mrdocs.sh
 
 docs-undocumented:
 	@if [ ! -f build/docs/mrdocs.log ]; then sh tools/docs/mrdocs.sh >/dev/null; fi
 	@sh tools/docs/undocumented.sh build/docs/mrdocs.log
+
+# two docs builds from a clean build/docs give the same report, byte for byte
+docs-deterministic:
+	@sh tools/docs/check_mrdocs_deterministic.sh
 
 # clang-format check over tracked sources; CI does not run it yet.
 .PHONY: format-check

@@ -335,7 +335,7 @@ enum rocketnet_disconnect_reason_t
 enum rocketnet_update_result_t
 {
     ROCKETNET_UPDATE_OK                                         =  0,  ///< the update ran
-    ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED                       = -1   ///< refused: a received message view is still held
+    ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED                       = -1   ///< a received message view was still held: the update counts and takes back the held views, logs an error, asserts in a debug build, and runs
 };
 
 // -----------------------------------------
@@ -387,7 +387,7 @@ enum rocketnet_client_counter_t
     ROCKETNET_CLIENT_COUNTER_RECEIPTS_LOST,         // receipts: sends with a receipt that were lost
     ROCKETNET_CLIENT_COUNTER_BUDGET_DROPS,          // messages: unreliable messages dropped because the send budget was spent
     ROCKETNET_CLIENT_COUNTER_SEND_DEFERRED,         // hand-offs: sends that left with the next hand-off to the send thread
-    ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED, // messages: received messages still held when an update was refused
+    ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED, // messages: received messages still held at an update, which takes them back and runs
     ROCKETNET_CLIENT_COUNTER_COUNT
 };
 
@@ -425,7 +425,7 @@ enum rocketnet_server_counter_t
     ROCKETNET_SERVER_COUNTER_RECEIPTS_ACKED,        // receipts: sends with a receipt that a client acknowledged
     ROCKETNET_SERVER_COUNTER_RECEIPTS_LOST,         // receipts: sends with a receipt that were lost
     ROCKETNET_SERVER_COUNTER_BUDGET_DROPS,          // messages: unreliable messages dropped because a client's send budget was spent
-    ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED, // messages: received messages still held when an update was refused
+    ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED, // messages: received messages still held at an update, which takes them back and runs
     ROCKETNET_SERVER_COUNTER_COUNT
 };
 
@@ -472,7 +472,9 @@ enum rocketnet_server_client_stat_t
 //                     opaque handles
 // -----------------------------------------
 
+/** @brief An opaque client: rocketnet_client_create makes one and rocketnet_client_destroy frees it. */
 struct rocketnet_client_t;
+/** @brief An opaque server: rocketnet_server_create makes one and rocketnet_server_destroy frees it. */
 struct rocketnet_server_t;
 
 // -----------------------------------------
@@ -896,9 +898,10 @@ struct rocketnet_server_config_t
 //
 // Receiving: receive hands out the next message of the update on a channel
 // as a const view and its length, valid until the next update. Release every
-// received message before the next update; update with one still held
-// asserts in a debug build and returns ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED
-// in a release build. Copy what is kept past the update.
+// received message before the next update. An update with one still held
+// counts the held views (the MESSAGES_NOT_RELEASED counters), takes them
+// back, logs an error, asserts in a debug build, runs, and returns
+// ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. Copy what is kept past the update.
 
 /** @brief One outcome for a send's nonzero receipt serial.
  * Receipts are copied into caller storage after an update. A full receipt ring
@@ -1046,7 +1049,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 // freed. a NULL client is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
-// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. a NULL client is a counted no-op that returns ROCKETNET_UPDATE_OK.
+// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED when a received
+// message view was still held: the update counts and takes back the held views,
+// logs an error, asserts in a debug build, and runs. a NULL client is a counted no-op that returns ROCKETNET_UPDATE_OK.
 ROCKETNET_EXPORT enum rocketnet_update_result_t rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
 // sends this frame's queued messages. a NULL client is a counted no-op.
@@ -1215,7 +1220,9 @@ ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t 
 // server is a counted no-op.
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
-// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. On a stopped server a counted no-op. a NULL server is a counted no-op that returns ROCKETNET_UPDATE_OK.
+// ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED when a received
+// message view was still held: the update counts and takes back the held views,
+// logs an error, asserts in a debug build, and runs. On a stopped server a counted no-op. a NULL server is a counted no-op that returns ROCKETNET_UPDATE_OK.
 ROCKETNET_EXPORT enum rocketnet_update_result_t rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
 // sends this frame's queued messages. On a stopped server a counted no-op. a NULL server is a counted no-op.
