@@ -1284,10 +1284,26 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         else
         {
             const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
-            const rocketnet_server_driver_config_t driver_config = { rocketnet_driver_name(candidate), config, public_address_string };
+            int driver_status = ROCKETNET_STATUS_OK;
+            const rocketnet_server_driver_config_t driver_config = { rocketnet_driver_name(candidate), config, public_address_string, &driver_status };
             if ( rocketnet_server_driver_open( definition && definition->backend ? definition->backend->server : NULL, context,
                     &driver_config, &bind_address, &server_transport->io ) )
                 granted_driver = candidate;
+
+            // a rung that failed for want of memory is not a refusal: the
+            // create ends with OUT_OF_MEMORY and never falls to the next
+            // candidate. Every driver reports it through driver_status
+            // (rocketnet_server_driver_config_t.status, sdk/rocketnet_driver.h);
+            // any other failed open is a refusal and falls
+
+            if ( granted_driver < 0 && driver_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
+            {
+                rocketnet_error( "server transport create: the %s transport could not allocate its endpoint", rocketnet_driver_name( candidate ) );
+                if ( status )
+                    *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+                rocketnet_server_transport_destroy( server_transport );
+                return NULL;
+            }
         }
 
         if ( granted_driver < 0 )
