@@ -8,10 +8,42 @@ reads the markdown table directly; it does not parse YAML.
 
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCUMENT = ROOT / "docs" / "PLATFORMS.md"
+
+FUNCTIONAL = ROOT / "functional"
+FUNCTIONAL_SUFFIXES = (".cpp", ".h", ".inc")
+
+# A string literal naming a wildcard address, with or without a port: "0.0.0.0",
+# "::", "[::]", "0.0.0.0:40000", "[::]:0".
+WILDCARD = re.compile(r'"(?:0\.0\.0\.0|::|\[::\])(?::\d+)?"')
+
+# Every wildcard literal functional/ may hold, keyed by file and stripped line,
+# with the reason it stays. A wildcard bind on macOS is subject to the
+# application firewall, so a case that only needs loopback binds the loopback
+# address of its family (127.0.0.1 or ::1) with port 0 instead. A line here
+# that no longer occurs in the file fails the check as well, so the list
+# never outlives the code.
+WILDCARD_ALLOWED = {
+    ("functional/rocketnet_functional_tests.cpp",
+     'rocketnet_address_parse( &refused_address, "0.0.0.0" );        // port 0: the kernel refuses it at send'):
+        "a send destination, not a bind: the refused entry of the batch",
+    ("functional/rocketnet_functional_tests.cpp",
+     'struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::]", &server_config);'):
+        "dual-stack transport case: an ipv4 client of the ipv6 wildcard",
+    ("functional/rocketnet_functional_tests.cpp",
+     'rocketnet_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );'):
+        "rio dual-stack case (Windows): ipv4 and ipv6 peers of the ipv6 wildcard",
+    ("functional/rocketnet_functional_tests.cpp",
+     'rocketnet_test_server_gso_wire_exchange( "test_server_gso_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );'):
+        "gso dual-stack case (Linux): an ipv4 peer of the ipv6 wildcard",
+    ("functional/rocketnet_functional_tests.cpp",
+     'rocketnet_test_server_uring_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 1 );'):
+        "io_uring dual-stack case (Linux): an ipv4 peer of the ipv6 wildcard",
+}
 
 TIERS = {"supported", "nightly", "unsupported"}
 COLUMNS = {
@@ -150,6 +182,41 @@ def check_row(row, workflow_cache):
     return []
 
 
+def check_wildcard_binds(root=ROOT):
+    """Return the failures for wildcard address literals in functional/.
+
+    Every line of functional/ holding a WILDCARD literal must be a key of
+    WILDCARD_ALLOWED, at most as many times as the list names it, and every
+    listed line must still occur.
+    """
+    found = Counter()
+    where = {}
+    directory = root / "functional"
+    for path in sorted(directory.iterdir()):
+        if path.suffix not in FUNCTIONAL_SUFFIXES or not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if WILDCARD.search(line):
+                key = (relative, line.strip())
+                found[key] += 1
+                where.setdefault(key, []).append(number)
+
+    failures = []
+    for key, count in found.items():
+        if key not in WILDCARD_ALLOWED or count > 1:
+            for number in where[key][0 if key not in WILDCARD_ALLOWED else 1:]:
+                failures.append(
+                    f"{key[0]}:{number}: wildcard address in functional/ is not on "
+                    f"the listed set; bind 127.0.0.1 or ::1 with port 0, or list "
+                    f"it in WILDCARD_ALLOWED with its reason: {key[1]}"
+                )
+    for key in WILDCARD_ALLOWED:
+        if key not in found:
+            failures.append(f"{key[0]}: listed wildcard line no longer occurs: {key[1]}")
+    return failures
+
+
 def main():
     """Check every row and exit 0 only when the whole policy holds.
 
@@ -162,7 +229,7 @@ def main():
         return 1
 
     workflow_cache = {}
-    failures = []
+    failures = check_wildcard_binds()
     for row in rows:
         failures.extend(check_row(row, workflow_cache))
 
@@ -176,7 +243,8 @@ def main():
     unsupported = len(rows) - supported - nightly
     print(
         f"check_platform_policy: {supported} supported, {nightly} nightly, "
-        f"{unsupported} unsupported row(s) match their named workflows"
+        f"{unsupported} unsupported row(s) match their named workflows; "
+        f"{len(WILDCARD_ALLOWED)} listed wildcard line(s) in functional/"
     )
     return 0
 
