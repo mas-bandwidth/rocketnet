@@ -64,7 +64,10 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 // ---------------------------------------------------
 // the Linux native server drivers (gso, io_uring) own their sockets, so no
 // platform socket appears for them; their size pass runs before the
-// protocol's prefilter and counts in the driver's own RECEIVE_DROPPED_SIZE
+// protocol's prefilter and counts in the driver's own RECEIVE_DROPPED_SIZE,
+// and the transport reads the same drops into PREFILTER_TOO_SHORT and
+// PREFILTER_TOO_LARGE through the builtin driver's receive_drops hook
+// (sdk/rocketnet_server_transport.cpp:2774-2786)
 
 void * rocketnet_server_transport_driver_for_testing( struct rocketnet_server_transport_t * server_transport );
 
@@ -458,7 +461,14 @@ static void posix_send_datagram( int sender, const struct sockaddr_storage * to,
         return;
     if ( posix_weather_native != POSIX_NATIVE_NONE && ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING ) )
     {
+        // one drop, read two ways: the driver's own size counter, and the
+        // transport's prefilter size counter it maps to, so an oversize
+        // datagram reads PREFILTER_TOO_LARGE here as it does on portable
         expect->driver_size++;
+        if ( bytes > ROCKETNET_RECEIVE_CEILING )
+            expect->too_large++;
+        else
+            expect->too_short++;
         return;
     }
 #endif
@@ -494,6 +504,14 @@ static bool posix_valid_matches( int index, const uint8_t * payload, int bytes )
     uint8_t expected[POSIX_WEATHER_VALID_BYTES];
     posix_valid_payload( index, expected );
     return bytes == POSIX_WEATHER_VALID_BYTES && memcmp( payload, expected, POSIX_WEATHER_VALID_BYTES ) == 0;
+}
+
+// the counters are read through the call each time: the server folds its
+// driver's own drop counts in on that call (sdk/rocketnet_server_transport.cpp:2774-2786)
+
+static const struct rocketnet_counters_t * posix_pair_counters( struct posix_pair_t * pair, int at_server )
+{
+    return at_server ? rocketnet_server_transport_counters( pair->server ) : rocketnet_client_transport_counters( pair->client );
 }
 
 // at_server: the raw sender is an outside socket aimed at the server
@@ -532,11 +550,9 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_dri
         receiver = pair.client_socket;
     }
 
-    const struct rocketnet_counters_t * counters = at_server ? rocketnet_server_transport_counters( pair.server )
-                                                             : rocketnet_client_transport_counters( pair.client );
 
     struct posix_expect_t expect;
-    posix_counters_read( counters, &expect );
+    posix_counters_read( posix_pair_counters( &pair, at_server ), &expect );
 
     static uint8_t buffer[65507];
     uint64_t random_state = 0x9e3779b97f4a7c15ULL ^ (uint64_t) ( ipv6 * 2 + at_server );
@@ -650,7 +666,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_dri
             }
 
             struct posix_expect_t now;
-            posix_counters_read( counters, &now );
+            posix_counters_read( posix_pair_counters( &pair, at_server ), &now );
             if ( posix_expect_equal( &now, &expect ) && valid_seen == valid_sent )
                 break;
 
@@ -685,7 +701,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_dri
         rocketnet_platform_sleep( 0.001 );
     }
     struct posix_expect_t final_counts;
-    posix_counters_read( counters, &final_counts );
+    posix_counters_read( posix_pair_counters( &pair, at_server ), &final_counts );
     posix_check( posix_expect_equal( &final_counts, &expect ) );
     posix_check( garbage_sent == POSIX_WEATHER_GARBAGE );
     posix_check( valid_seen == POSIX_WEATHER_ROUNDS );
@@ -1252,7 +1268,8 @@ static void posix_linux_bounded_flush( struct posix_pair_t * pair, int gso_dropp
 // a flush whose every send fails: eight payloads staged, none sent, each
 // dropped one counted, and none of them reaches the client
 
-static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)( struct posix_pair_t *, int ), uint64_t * dropped_out )
+static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)( struct posix_pair_t *, int ), uint64_t * dropped_out,
+                                       uint64_t * transport_failed_out )
 {
     const int gso_sent = ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT;
     const int gso_dropped = ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED;
@@ -1264,6 +1281,7 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
 
     const uint64_t sent_before = posix_native_counter( pair->native, pair->driver, gso_sent, uring_sent );
     const uint64_t dropped_before = posix_native_counter( pair->native, pair->driver, gso_dropped, uring_dropped );
+    const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED];
 
     for ( int i = 0; i < 8; i++ )
     {
@@ -1284,6 +1302,15 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
     posix_check( sent == 0 );
     posix_check( dropped >= 8 );
     *dropped_out = dropped;
+
+    // the transport's SEND_FAILED reads the driver's own send drops (its
+    // send_failures operation, sdk/rocketnet_server_transport.cpp:2771-2773), so it moves by exactly the dropped count
+
+    const uint64_t transport_failed = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED] - transport_failed_before;
+    if ( transport_failed != dropped )
+        printf( "failing flush: driver dropped %llu, transport SEND_FAILED +%llu\n", (unsigned long long) dropped, (unsigned long long) transport_failed );
+    posix_check( transport_failed == dropped );
+    *transport_failed_out = transport_failed;
 
     for ( int i = 0; i < 20; i++ )
     {
@@ -1324,12 +1351,13 @@ static void posix_linux_gso_send_cell( int ipv6, int plain )
     {
         posix_linux_fail_error = errors[e];
         uint64_t dropped = 0;
-        posix_linux_dropped_flush( &pair, posix_linux_gso_fail_sends, &dropped );
+        uint64_t transport_failed = 0;
+        posix_linux_dropped_flush( &pair, posix_linux_gso_fail_sends, &dropped, &transport_failed );
         posix_linux_server_traffic_resumes( &pair, tag );
         tag += 8;
         posix_pair_check_connected( &pair );
-        printf( "  gso%s sendmmsg %s %s: dropped and counted %llu, pump kept, resumed 8/8\n", plain ? " (plain)" : "",
-                errors[e] == ENOBUFS ? "ENOBUFS" : "EAGAIN", ipv6 ? "ipv6" : "ipv4", (unsigned long long) dropped );
+        printf( "  gso%s sendmmsg %s %s: dropped and counted %llu, transport SEND_FAILED +%llu, pump kept, resumed 8/8\n", plain ? " (plain)" : "",
+                errors[e] == ENOBUFS ? "ENOBUFS" : "EAGAIN", ipv6 ? "ipv6" : "ipv4", (unsigned long long) dropped, (unsigned long long) transport_failed );
         fflush( stdout );
     }
     posix_pair_destroy( &pair );
@@ -1487,13 +1515,14 @@ void rocketnet_test_linux_uring_send_cqe_errors()
             // starts from an empty staging
 
             uint64_t dropped = 0;
-            posix_linux_dropped_flush( &pair, posix_linux_uring_fail_sends, &dropped );
+            uint64_t transport_failed = 0;
+            posix_linux_dropped_flush( &pair, posix_linux_uring_fail_sends, &dropped, &transport_failed );
             posix_linux_server_traffic_resumes( &pair, tag );
             tag += 8;
             posix_pair_check_connected( &pair );
 
-            printf( "  io_uring send CQE error %s pass %d: dropped and counted %llu, slots reaped, resumed 8/8\n",
-                    ipv6 ? "ipv6" : "ipv4", pass, (unsigned long long) dropped );
+            printf( "  io_uring send CQE error %s pass %d: dropped and counted %llu, transport SEND_FAILED +%llu, slots reaped, resumed 8/8\n",
+                    ipv6 ? "ipv6" : "ipv4", pass, (unsigned long long) dropped, (unsigned long long) transport_failed );
             fflush( stdout );
         }
         posix_pair_destroy( &pair );
@@ -1522,6 +1551,10 @@ void rocketnet_test_linux_uring_send_cqe_errors()
 
 #include "rocketnet_server_socket.h"
 #include <fcntl.h>
+
+// the xdp driver's staging entry with its queue and destination MAC named
+// (sdk/rocketnet_server_socket_linux.cpp:2133)
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 #include <sched.h>
 #include <sys/vfs.h>
 
@@ -2018,7 +2051,35 @@ static void posix_xdp_weather( int ipv6 )
     posix_check( garbage_sent == POSIX_WEATHER_GARBAGE );
     posix_check( valid_seen == POSIX_WEATHER_ROUNDS );
 
-    printf( "  server-cell %s server=xdp client=portable: veth mtu %d, oversize %d bytes to our port as N=%llu fragments (far stack made %llu): first_fragment +%llu; %d bytes to port %d as %llu fragments (far stack made %llu), delivered whole %d bytes byte-exact; fragment +%llu (want N-1+%llu = %llu) too_small +%llu too_large +%llu wrong_epoch +%llu wrong_filter +%llu invalid_type +%llu valid %d/%d connected\n",
+    // a send the xdp frame codec refuses to build (a destination of the
+    // family this server does not serve) is dropped and counted in the
+    // queue's send_refused_build (sdk/rocketnet_server_socket_linux.cpp:2940), and
+    // the transport's SEND_FAILED reads it through the xdp send_failures
+    // operation: it moves by exactly that one datagram
+
+    uint64_t xdp_send_failed = 0;
+    {
+        struct rocketnet_server_socket_t * xdp = (struct rocketnet_server_socket_t*) rocketnet_server_transport_driver_for_testing( server );
+        posix_check( xdp != NULL );
+        const uint64_t failed_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED];
+        rocketnet_address_t other_family;
+        posix_check( rocketnet_address_parse( &other_family, ipv6 ? "10.77.3.2:40412" : "[2001:db8:78::2]:40412" ) );
+        static const uint8_t other_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
+        uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, 0, 0, &other_family, other_mac );
+        posix_check( frame != NULL );
+        memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, 0x77, 64 );
+        rocketnet_server_socket_finish_packet( xdp, 0, frame, 64 );
+        rocketnet_server_socket_send_packets( xdp );
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] == failed_before && rocketnet_platform_time() < deadline )
+            rocketnet_platform_sleep( 0.001 );
+        xdp_send_failed = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before;
+        if ( xdp_send_failed != 1 )
+            printf( "%s: a refused xdp send moved SEND_FAILED by %llu, want 1\n", case_name, (unsigned long long) xdp_send_failed );
+        posix_check( xdp_send_failed == 1 );
+    }
+
+    printf( "  server-cell %s server=xdp client=portable: veth mtu %d, oversize %d bytes to our port as N=%llu fragments (far stack made %llu): first_fragment +%llu; %d bytes to port %d as %llu fragments (far stack made %llu), delivered whole %d bytes byte-exact; fragment +%llu (want N-1+%llu = %llu) too_small +%llu too_large +%llu wrong_epoch +%llu wrong_filter +%llu invalid_type +%llu valid %d/%d connected, refused send SEND_FAILED +%llu\n",
             ipv6 ? "ipv6" : "ipv4", POSIX_XDP_MTU, oversize, (unsigned long long) expect_fragments, (unsigned long long) frag_creates,
             (unsigned long long) ( final_counts.first_fragment - start.first_fragment ),
             POSIX_XDP_OTHER_BYTES, POSIX_XDP_OTHER_PORT, (unsigned long long) expect_other_fragments, (unsigned long long) other_frag_creates,
@@ -2029,7 +2090,8 @@ static void posix_xdp_weather( int ipv6 )
             (unsigned long long) ( final_counts.too_large - start.too_large ),
             (unsigned long long) ( final_counts.wrong_epoch - start.wrong_epoch ),
             (unsigned long long) ( final_counts.wrong_filter - start.wrong_filter ),
-            (unsigned long long) ( final_counts.invalid_type - start.invalid_type ), valid_seen, POSIX_WEATHER_ROUNDS );
+            (unsigned long long) ( final_counts.invalid_type - start.invalid_type ), valid_seen, POSIX_WEATHER_ROUNDS,
+            (unsigned long long) xdp_send_failed );
     fflush( stdout );
 
     close( sender );
