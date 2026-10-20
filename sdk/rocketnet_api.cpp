@@ -375,8 +375,7 @@ static const rocketnet_client_config_t * rn_client_config_read( rocketnet_client
 // The one validation behind validate_config and create: the transport table's
 // ranges, the public link simulator's posture and the transport list's parse,
 // each the check connect runs on the same values
-// (sdk/rocketnet_client_transport.cpp: rocketnet_config_validate,
-// rocketnet_config_validate_public_link_simulator, rocketnet_driver_ladder_parse),
+// (sdk/rocketnet_client_transport.cpp:593, :600 and :639),
 // then the message config's rules. Each refusal logs the rule it broke.
 static bool rn_client_config_valid( const struct rocketnet_client_transport_config_t * transport, const struct rocketnet_message_config_t * message )
 {
@@ -450,7 +449,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
 {
     // the lifecycle state is read once here, before any allocation; a create
     // before rocketnet_init is refused, logged and counted, as the transport
-    // create refuses it at connect
+    // create refuses it at connect (sdk/rocketnet_client_transport.cpp:561)
     if ( !rocketnet_library_initialized() )
     {
         rocketnet_error( "rocketnet_client_create: rocketnet_init must be called first" );
@@ -1042,8 +1041,7 @@ static const rocketnet_server_config_t * rn_server_config_read( rocketnet_server
 // The one validation behind validate_config and create: the transport table's
 // ranges, the public link simulator's posture and the transport list's parse,
 // each the check start runs on the same values
-// (sdk/rocketnet_server_transport.cpp: rocketnet_config_validate,
-// rocketnet_config_validate_public_link_simulator, rocketnet_driver_ladder_parse),
+// (sdk/rocketnet_server_transport.cpp:977, :984 and :1080),
 // then the message config's rules. The keys are not checked here; start
 // refuses a config with none. Each refusal logs the rule it broke.
 static bool rn_server_config_valid( const struct rocketnet_server_transport_config_t * transport, const struct rocketnet_message_config_t * message )
@@ -1143,7 +1141,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
 {
     // the lifecycle state is read once here, before any allocation; a create
     // before rocketnet_init is refused, logged and counted, as the transport
-    // create refuses it at start
+    // create refuses it at start (sdk/rocketnet_server_transport.cpp:917)
     if ( !rocketnet_library_initialized() )
     {
         rocketnet_error( "rocketnet_server_create: rocketnet_init must be called first" );

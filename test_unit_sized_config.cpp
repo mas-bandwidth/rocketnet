@@ -326,7 +326,8 @@ static void server_default_config_max_clients_is_1000()
 }
 
 // The public creates and validate_config run one validation per side
-// (rn_client_config_valid and rn_server_config_valid, sdk/rocketnet_api.cpp):
+// (rn_client_config_valid and rn_server_config_valid, sdk/rocketnet_api.cpp:380
+// and :1047):
 // for the config's own values, validate_config returns OK exactly when create
 // accepts, and a refused config is refused by both. A create before
 // rocketnet_init returns NULL and is counted once, as the transport creates
