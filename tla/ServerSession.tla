@@ -2,8 +2,8 @@
 \* The server object's life: create (STOPPED, no transport bound), start,
 \* clients connecting into free slots, sending and receiving, leaving by their
 \* own disconnect, a timeout, a denial, disconnect_client or
-\* disconnect_all_clients, stop (every client disconnected, STOPPED), start
-\* again, destroy. The handshake packet by packet is tla/ServerConnection.tla;
+\* disconnect_all_clients, stop (one call: every client disconnected, every
+\* slot reset, STOPPED on return), start again, destroy. The handshake packet by packet is tla/ServerConnection.tla;
 \* this module models the slot's life across many clients and the single
 \* per-slot Reset(i) between them.
 \*
@@ -14,8 +14,9 @@
 \* which is per run: each start begins with an empty history (a start builds
 \* a new server transport, which creates it), and slot resets and the stop
 \* keep it within the run (standard/TRANSPORT.md t13.4). The disconnect
-\* reason of each slot is kept through its reset and cleared when the slot's
-\* next client is established.
+\* reason of each slot is per run, as rocketnet_server_disconnect_reason reads
+\* it: kept through the slot's reset, cleared when the slot's next client is
+\* established, NONE while STOPPED and NONE again at each start.
 \*
 \* A message send to a slot that is not CONNECTED, on a running or a stopped
 \* server, is dropped (ServerDropSend): it changes no slot field and nothing
@@ -28,13 +29,17 @@
 \* slot; "touchesotherslot" makes Reset(i) also clear slot i+1;
 \* "resetclearshistory" makes Reset(i) empty the used-token history;
 \* "sendbeforeconnected" lets ServerSend(i) write a slot that is not
-\* CONNECTED, a send held for a client not yet connected.
+\* CONNECTED, a send held for a client not yet connected;
+\* "reasonacrossrestart" makes stop and start keep each slot's reason (stop
+\* writes SERVER_STOPPED into an occupied slot), the rule this model held
+\* before it followed the code.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS SlotCount, MaxSessions, MaxTokens, MaxStarts, MaxCreates, Defect, UnresetField
 
 ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot",
-                   "resetclearshistory", "sendbeforeconnected", "destroysilent"}
+                   "resetclearshistory", "sendbeforeconnected", "destroysilent",
+                   "reasonacrossrestart"}
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0}
 
 \* One field per row of the per-connection reset inventory; on the server
@@ -59,7 +64,7 @@ Slots == 1..SlotCount
 Sessions == 1..MaxSessions
 Tags == 0..MaxSessions
 Tokens == 1..MaxTokens
-ServerStates == {"NONE", "STOPPED", "RUNNING", "STOPPING"}
+ServerStates == {"NONE", "STOPPED", "RUNNING"}
 SlotStates == {"FREE", "HANDSHAKE", "CONNECTED"}
 Reasons == {"NONE", "CLIENT_DISCONNECTED", "TIMED_OUT", "DENIED",
             "SERVER_DISCONNECTED", "SERVER_STOPPED"}
@@ -154,25 +159,49 @@ Destroy ==
 \* sdk/rocketnet_message_server.cpp:1035), and the transport creates an empty
 \* used-token history (sdk/rocketnet_server_transport.cpp:1439): the run
 \* begins with a fresh history; the previous run's tokens become priorTokens.
+\* The new message server zeroes its block and sets every connection's
+\* reason to NONE (sdk/rocketnet_message_server.cpp:246, :285): every slot's
+\* reason is NONE at start.
 Start ==
     /\ state = "STOPPED" /\ starts < MaxStarts
     /\ state' = "RUNNING" /\ starts' = starts + 1
     /\ startFrom' = startFrom \cup {state}
     /\ kept' = [kept EXCEPT !.used = {}]
     /\ estTokens' = {} /\ priorTokens' = priorTokens \cup estTokens
-    /\ UNCHANGED <<slot, draining, link, nextSess, home, tokOf, creates, lastEnd,
+    /\ slot' = IF Defect = "reasonacrossrestart" THEN slot
+              ELSE [i \in Slots |-> [slot[i] EXCEPT !.reason = "NONE"]]
+    /\ lastEnd' = [i \in Slots |-> "NONE"]
+    /\ UNCHANGED <<draining, link, nextSess, home, tokOf, creates,
                    established, doubleTok, observed, crossDelivered,
                    collateral, silentEnd, queuedIn, readmitted>>
 
-\* stop: no client is accepted from here; every slot is disconnected by
-\* DrainStep, then StopComplete returns to STOPPED. The code destroys the
-\* history with the transport at the end of stop (sdk/rocketnet_api.cpp:1187,
-\* sdk/rocketnet_server_transport.cpp:1513); no step reads it while STOPPED,
-\* so the model keeps it until the next Start empties it.
+\* stop: one call, RUNNING to STOPPED in one step (rocketnet_server_stop,
+\* sdk/rocketnet_api.cpp:1267-1284, returns with the server stopped; the
+\* public layer has no STOPPING state). Each connected client is sent its
+\* disconnect burst and the burst is flushed (:1276-1277), every slot is
+\* reset (:1278-1279), and the running block is destroyed (:1282-1283). While
+\* STOPPED, rocketnet_server_disconnect_reason returns NONE for every slot
+\* (rn_server_slot refuses with no running block, :931), so every slot's
+\* reason is NONE. The code destroys the history with the transport at the
+\* end of stop; no step reads it while STOPPED, so the model keeps it until
+\* the next Start empties it. The transport's own STOPPING state
+\* (rocketnet_server_transport_stop, sdk/rocketnet_server_transport.cpp:1539)
+\* is not on this path and is not modelled here.
+StopReason(i) ==
+    IF Defect = "reasonacrossrestart"
+    THEN IF slot[i].st = "FREE" THEN slot[i].reason ELSE "SERVER_STOPPED"
+    ELSE "NONE"
+StopSlot(i) ==
+    IF slot[i].st = "CONNECTED"
+    THEN [slot[i] EXCEPT !.rec = Write(@, DisconnectFields, slot[i].sess)]
+    ELSE slot[i]
 Stop ==
     /\ state = "RUNNING"
-    /\ state' = "STOPPING" /\ draining' = FALSE
-    /\ UNCHANGED <<slot, kept, env, lastEnd, established, ghosts>>
+    /\ state' = "STOPPED" /\ draining' = FALSE
+    /\ slot' = [i \in Slots |-> IF Defect = "stopleavesclient" /\ i = SlotCount
+                                THEN slot[i] ELSE Clean(StopSlot(i), StopReason(i))]
+    /\ lastEnd' = [i \in Slots |-> "NONE"]
+    /\ UNCHANGED <<kept, env, established, ghosts>>
 
 \* disconnect_all_clients: every occupied slot is disconnected by DrainStep
 \* before another client is accepted.
@@ -182,24 +211,16 @@ DisconnectAll ==
     /\ draining' = TRUE
     /\ UNCHANGED <<state, slot, kept, env, lastEnd, established, ghosts>>
 
-\* One slot of a stop or a disconnect_all_clients: the disconnect burst to a
-\* connected client, then Reset(i).
+\* One slot of a disconnect_all_clients: the disconnect burst to a connected
+\* client, then Reset(i).
 DrainStep(i) ==
     /\ droppedIn' = {}
-    /\ state = "STOPPING" \/ (state = "RUNNING" /\ draining)
+    /\ state = "RUNNING" /\ draining
     /\ slot[i].st # "FREE"
-    /\ ~(Defect = "stopleavesclient" /\ state = "STOPPING" /\ i = SlotCount)
     /\ EndSlot([slot EXCEPT ![i].rec = Write(@, DisconnectFields, slot[i].sess)], i,
-               IF state = "STOPPING" THEN "SERVER_STOPPED" ELSE "SERVER_DISCONNECTED", TRUE)
+               "SERVER_DISCONNECTED", TRUE)
     /\ UNCHANGED <<state, draining, env, established, estTokens, doubleTok,
                    observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
-
-StopComplete ==
-    /\ droppedIn' = {}
-    /\ state = "STOPPING"
-    /\ \A i \in Slots : slot[i].st = "FREE" \/ (Defect = "stopleavesclient" /\ i = SlotCount)
-    /\ state' = "STOPPED"
-    /\ UNCHANGED <<slot, kept, draining, env, lastEnd, established, ghosts>>
 
 DrainDone ==
     /\ droppedIn' = {}
@@ -290,8 +311,7 @@ ServerSend(i) ==
 \* Message start to slot i when it is not CONNECTED, or on a stopped server
 \* (rocketnet_server_start_message returns NULL, counted in
 \* NOT_CONNECTED_DROPS): dropped, never queued. No slot field changes; the
-\* slot's state is recorded in the ghost. stop is one call, so the
-\* application never sends while STOPPING.
+\* slot's state is recorded in the ghost.
 ServerDropSend(i) ==
     /\ \/ state = "STOPPED"
        \/ state = "RUNNING" /\ slot[i].st # "CONNECTED"
@@ -316,7 +336,7 @@ Deliver(s) ==
     /\ s \in link
     /\ link' = link \ {s}
     /\ LET i == home[s]
-       IN IF state \in {"RUNNING", "STOPPING"} /\ i # 0
+       IN IF state = "RUNNING" /\ i # 0
              /\ slot[i].st = "CONNECTED" /\ slot[i].rec["session_keys"] = s
           THEN /\ crossDelivered' = IF s # slot[i].sess
                                     THEN crossDelivered \cup {[from |-> s, to |-> slot[i].sess]}
@@ -338,7 +358,7 @@ Lose(s) ==
 \* Every step but a drop clears droppedIn (the fair actions also say so
 \* themselves, so that their fairness conditions name a whole step).
 Next ==
-    \/ /\ \/ Create \/ Destroy \/ Start \/ Stop \/ DisconnectAll \/ StopComplete \/ DrainDone
+    \/ /\ \/ Create \/ Destroy \/ Start \/ Stop \/ DisconnectAll \/ DrainDone
           \/ \E i \in Slots : \/ DrainStep(i) \/ Establish(i) \/ Deny(i) \/ SlotTimeout(i)
                               \/ ClientLeaves(i) \/ DisconnectClient(i) \/ ServerSend(i)
                               \/ \E t \in Tokens : ClientConnects(i, t)
@@ -348,10 +368,10 @@ Next ==
 
 Spec == Init /\ [][Next]_vars
 \* Fair delivery of the handshake's response, the timers, and the update
-\* that drains a stop or a disconnect_all_clients.
+\* that drains a disconnect_all_clients.
 Fairness ==
     /\ \A i \in Slots : WF_vars(DrainStep(i)) /\ WF_vars(Establish(i) \/ Deny(i) \/ SlotTimeout(i))
-    /\ WF_vars(StopComplete) /\ WF_vars(DrainDone)
+    /\ WF_vars(DrainDone)
 LiveSpec == Spec /\ Fairness
 
 TypeOK ==
@@ -417,7 +437,10 @@ StopDisconnectsAll ==
     /\ state = "STOPPED" => \A i \in Slots : slot[i].st = "FREE" /\ slot[i].rec = InitRec
     /\ ~silentEnd
 
-ReasonKeptUntilNextConnection == \A i \in Slots :
+\* The reason a slot reads is the one its last ended connection of this run
+\* set, NONE while its client is CONNECTED, and NONE after a stop and at each
+\* start (lastEnd is cleared by Stop and Start whatever the defect).
+ReasonKeptWithinRun == \A i \in Slots :
     slot[i].reason = IF slot[i].st = "CONNECTED" THEN "NONE" ELSE lastEnd[i]
 
 ResetTouchesOnlyItsSlot == collateral = {}
@@ -431,7 +454,6 @@ TokenAdmitsOnce == ~doubleTok
 \* expects TLC to violate it, proving the fresh history at start is reached.
 NoReadmitAfterStart == ~readmitted
 
-\* A connect reaches CONNECTED or is ended; a stop reaches STOPPED.
+\* A connect reaches CONNECTED or is ended.
 HandshakeResolves == \A i \in Slots : (slot[i].st = "HANDSHAKE") ~> (slot[i].st # "HANDSHAKE")
-StopReachesStopped == (state = "STOPPING") ~> (state \in {"STOPPED", "NONE"})
 =============================================================================
