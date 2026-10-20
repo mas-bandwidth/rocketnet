@@ -6,6 +6,11 @@
 #pragma once
 
 #include "rocketnet_internal.h"
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#include <sys/time.h>
+#else
+#include <winsock2.h>
+#endif
 
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
 #define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
@@ -98,6 +103,16 @@ double rocketnet_platform_time();
  * @return None.
  */
 void rocketnet_platform_sleep( double time );
+
+struct timeval rocketnet_platform_timeval_from_seconds( float seconds );
+
+struct rocketnet_platform_sleep_split_t
+{
+    uint32_t seconds;
+    uint32_t microseconds;
+};
+
+struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time );
 
 /**
  * @brief Looks up a process environment variable.
@@ -279,7 +294,7 @@ struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * co
 
 // pump-request create (#106): the driver ladder's entry into pump
 // selection. pump NULL/"auto" behaves exactly like the plain create above
-// (probe, honoring ROCKETNET_PUMP); "portable" forces the portable pump;
+// (runtime probe); "portable" forces the portable pump;
 // "msgx" requires the darwin batch pump or returns NULL loudly.
 
 /**
@@ -287,8 +302,8 @@ struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * co
  *
  * The address, socket mode, timeout, and buffer arguments follow
  * socket_create. NULL or "auto" uses runtime selection and the
- * ROCKETNET_PUMP environment override; "portable" requests the portable
- * implementation; "msgx" requires the macOS batch pump.
+ * platform choice; "portable" requests the portable implementation; "msgx"
+ * requires the macOS batch pump.
  * @param context Allocator context; NULL uses the default allocator.
  * @param address Writable bind address, modified with the assigned port when
  * zero; must be non-NULL and IPv4 or IPv6.
@@ -350,7 +365,7 @@ int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t
 // baseline doctrine holds and a call site never carries an #ifdef -- and a
 // platform with batch syscalls overrides them behind the same signatures.
 // Whether a faster path is live is decided inside the platform layer at
-// socket create (runtime probe, environment override ROCKETNET_PUMP=portable),
+// socket create (runtime probe or an explicit transport pump request),
 // and degradation at any point is invisible above this seam.
 //
 // send_packets sends every entry; per-packet failures are dropped exactly as
@@ -481,6 +496,30 @@ void rocketnet_platform_socket_fail_next_sends( struct rocketnet_platform_socket
  */
 int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t ** sockets, int max_sockets );
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+struct sockaddr_storage;
+/**
+ * @brief Test-only receive hook: one datagram per call.
+ *
+ * Writes the datagram into packet_data (at most max_packet_size bytes) and its
+ * source into from, and returns the datagram size; -1 reads as "socket drained".
+ */
+typedef int (*rocketnet_platform_receive_hook_t)( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from );
+
+/**
+ * @brief Test-only seam: feeds one socket's single-packet receive from a hook.
+ *
+ * Compiled into the unit suite's hook library only. While set, each read in
+ * rocketnet_platform_socket_receive_packet on this socket calls the hook in
+ * place of the kernel; other sockets read the kernel. A NULL hook clears it.
+ * @param socket Socket the hook applies to.
+ * @param hook Datagram source, or NULL to clear.
+ * @param user Passed to the hook.
+ * @return None.
+ */
+void rocketnet_platform_socket_set_receive_hook( struct rocketnet_platform_socket_t * socket, rocketnet_platform_receive_hook_t hook, void * user );
+#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
 
 // the name of the pump path live behind the seam ("portable", "msgx"), for
 // logging and for tests that pin the degradation contract
@@ -931,6 +970,9 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         uint64_t send_failures;
     };
 
+struct sockaddr_storage;
+bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t * socket, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
+
     /** @brief Holds a native thread and its allocator context. */
     struct rocketnet_platform_thread_t
     {
@@ -974,6 +1016,9 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     };
+
+struct sockaddr_storage;
+bool rocketnet_msgx_read_sockaddr( struct rocketnet_platform_socket_t * socket, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
 
     struct rocketnet_platform_thread_t
     {
@@ -1040,6 +1085,15 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     #endif // #if ROCKETNET_UNREAL_ENGINE
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform_socket_handle_t handle )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return handle != (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
+#else
+    return handle >= 0;
+#endif
+}
 
 // ----------------------------------------------------------------
 

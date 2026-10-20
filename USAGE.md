@@ -19,7 +19,7 @@ Call `rocketnet_init` once before creating a client or a server, and check its
 result. Every call that can fail returns `enum rocketnet_status_t`, and
 `ROCKETNET_STATUS_OK` (0) is success; `rocketnet_status_name` names a code. A
 second init returns `ROCKETNET_STATUS_ALREADY_INITIALIZED` without disturbing
-the live library. A create before init returns NULL and allocates nothing. Call
+the live library. A create before init returns NULL, allocates nothing, and writes `ROCKETNET_STATUS_NOT_INITIALIZED` through its status out-parameter. Call
 `rocketnet_term` after every client and server is destroyed; termination with
 live allocations is refused with `ROCKETNET_STATUS_LIVE_ALLOCATIONS` and
 logged, and a repeated termination returns `ROCKETNET_STATUS_NOT_INITIALIZED`. Startup,
@@ -83,9 +83,7 @@ with a log line.
 
 A value that does not parse, or is out of range, **refuses the create with one
 error line; nothing is ever clamped**. A secret key logs redacted, on both the
-old and the new value. The `_sized` create and default calls accept a struct
-size so a program built against an older header keeps working; an unknown size
-is refused before anything is read or written.
+old and the new value. The `_sized` create, default and validate calls each take the struct size (`config_bytes`) so a program built against an older header keeps working; the unsized calls use the revision-1 size. An unknown size is refused before anything is read or written. Each of the four creates takes a final status out-parameter (NULL is accepted): it holds `ROCKETNET_STATUS_OK` with a non-NULL result, or the refusal's code with NULL (`sdk/rocketnet.h:1081`, `sdk/rocketnet.h:1086`, `sdk/rocketnet.h:1272`, `sdk/rocketnet.h:1277`; `sdk/rocketnet_api.cpp:561`, `sdk/rocketnet_api.cpp:1302`).
 
 ```c
 #include "rocketnet.h"
@@ -278,9 +276,14 @@ and `delta: 1595776` on this SDK revision.
 ```c
 #include "rocketnet.h"
 
+#include <stdio.h>
+
 struct rocketnet_client_t * start_client( const uint8_t * token, const struct rocketnet_client_config_t * config )
 {
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, NULL, 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, NULL, 0, &status );
+    if ( !client )
+        printf( "create refused: %s\n", rocketnet_status_name( status ) );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_client_destroy( client );
@@ -291,7 +294,10 @@ struct rocketnet_client_t * start_client( const uint8_t * token, const struct ro
 
 struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t * config )
 {
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", config, NULL, 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", config, NULL, 0, &status );
+    if ( !server )
+        printf( "create refused: %s\n", rocketnet_status_name( status ) );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );

@@ -338,10 +338,10 @@ static void server_default_config_max_clients_is_1000()
 do                                                                                                              \
 {                                                                                                               \
     struct rocketnet_client_config_t c;                                                                         \
-    check( rocketnet_client_default_config_sized( &c, sizeof( c ) ) == ROCKETNET_STATUS_OK );                   \
+    check( (rocketnet_client_default_config_sized)( &c, sizeof( c ) ) == ROCKETNET_STATUS_OK );                   \
     mutation;                                                                                                   \
-    check( rocketnet_client_validate_config_sized( &c, sizeof( c ) ) == ( (accepted) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE ) ); \
-    struct rocketnet_client_t * made = rocketnet_client_create_sized( NULL, &c, sizeof( c ), NULL, 0 );         \
+    check( (rocketnet_client_validate_config_sized)( &c, sizeof( c ) ) == ( (accepted) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE ) ); \
+    struct rocketnet_client_t * made = (rocketnet_client_create_sized)( NULL, &c, sizeof( c ), NULL, 0, NULL );         \
     check( ( made != NULL ) == (accepted) );                                                                    \
     if ( made )                                                                                                 \
         rocketnet_client_destroy( made );                                                                       \
@@ -351,11 +351,11 @@ do                                                                              
 do                                                                                                              \
 {                                                                                                               \
     struct rocketnet_server_config_t c;                                                                         \
-    check( rocketnet_server_dev_config_sized( &c, sizeof( c ) ) == ROCKETNET_STATUS_OK );                       \
+    check( (rocketnet_server_dev_config_sized)( &c, sizeof( c ) ) == ROCKETNET_STATUS_OK );                       \
     c.max_clients = 4;                                                                                          \
     mutation;                                                                                                   \
-    check( rocketnet_server_validate_config_sized( &c, sizeof( c ) ) == ( (accepted) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE ) ); \
-    struct rocketnet_server_t * made = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &c, sizeof( c ), NULL, 0 ); \
+    check( (rocketnet_server_validate_config_sized)( &c, sizeof( c ) ) == ( (accepted) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE ) ); \
+    struct rocketnet_server_t * made = (rocketnet_server_create_sized)( NULL, "127.0.0.1:0", &c, sizeof( c ), NULL, 0, NULL ); \
     check( ( made != NULL ) == (accepted) );                                                                    \
     if ( made )                                                                                                 \
         rocketnet_server_destroy( made );                                                                       \
@@ -370,38 +370,38 @@ static void sized_config_create_refuses_before_init()
     check( !rocketnet_library_initialized() );
 
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
     server_config.max_clients = 4;
 
     // validate_config stays safe before init: it creates nothing
-    check( rocketnet_client_validate_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_server_validate_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_validate_config_sized)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_validate_config_sized)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
 
     uint64_t before = rocketnet_api_misuse_count();
-    check( rocketnet_client_create( NULL, NULL, NULL, 0 ) == NULL );
+    check( (rocketnet_client_create_sized)( NULL, NULL, 0, NULL, 0, NULL ) == NULL );
     check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
-    check( rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 ) == NULL );
+    check( (rocketnet_client_create_sized)( NULL, &client_config, sizeof( client_config ), NULL, 0, NULL ) == NULL );
     check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, 0 ) == NULL );
+    check( (rocketnet_server_create_sized)( NULL, "127.0.0.1:0", NULL, 0, NULL, 0, NULL ) == NULL );
     check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
-    check( rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 ) == NULL );
+    check( (rocketnet_server_create_sized)( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0, NULL ) == NULL );
     check( rocketnet_api_misuse_count() == before + 1 );
 
     check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
 
     // after init the same calls create
-    struct rocketnet_client_t * client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    struct rocketnet_client_t * client = (rocketnet_client_create_sized)( NULL, &client_config, sizeof( client_config ), NULL, 0, NULL );
     check( client != NULL );
     rocketnet_client_destroy( client );
-    struct rocketnet_server_t * server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 );
+    struct rocketnet_server_t * server = (rocketnet_server_create_sized)( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0, NULL );
     check( server != NULL );
     rocketnet_server_destroy( server );
 
@@ -561,8 +561,10 @@ static bool public_config_pair_connects( int server_loss_percent )
     struct rocketnet_server_config_t server_config;
     public_config_server( &server_config, &identity );
     server_config.simulated_loss_percent = server_loss_percent;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
     check( server != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -570,8 +572,10 @@ static bool public_config_pair_connects( int server_loss_percent )
 
     struct rocketnet_client_config_t client_config;
     public_config_client( &client_config );
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+    create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status );
     check( client != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
 
     double time = 1000.0;
@@ -606,14 +610,18 @@ static void public_config_plain_create_applies_simulation()
         struct rocketnet_server_config_t server_config;
         public_config_server( &server_config, &identity );
         server_config.simulated_loss_percent = 25;
-        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+        enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+        struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, &create_status );
         check( server == NULL );
+        check( create_status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
         struct rocketnet_client_config_t client_config;
         public_config_client( &client_config );
         client_config.simulated_loss_percent = 25;
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        create_status = ROCKETNET_STATUS_OK;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL, 0, &create_status );
         check( client == NULL );
+        check( create_status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     }
 
     // a development posture honours it: the server's total loss, set through

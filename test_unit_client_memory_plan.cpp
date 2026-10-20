@@ -98,6 +98,12 @@ static void client_memory_plan_non_step_driven()
     check( rocketnet_init_ex( &state, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
+    // rocketnet_init_ex runs platform discovery through this context before
+    // create (on Windows, get_connection_type fetches the adapter list with
+    // rocketnet_platform_adapters_fetch and frees it); the plan covers create
+    // alone, so the count starts here
+    state.total_bytes = 0;
+
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
         &state, token, &config, 1000.0, &status );
     check( client != NULL );
@@ -137,6 +143,12 @@ static void client_memory_plan_step_driven()
     int status = -1;
     check( rocketnet_init_ex( &state, &status ) );
     check( status == ROCKETNET_STATUS_OK );
+
+    // rocketnet_init_ex runs platform discovery through this context before
+    // create (on Windows, get_connection_type fetches the adapter list with
+    // rocketnet_platform_adapters_fetch and frees it); the plan covers create
+    // alone, so the count starts here
+    state.total_bytes = 0;
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
         &state, token, &config, 1000.0, &status );

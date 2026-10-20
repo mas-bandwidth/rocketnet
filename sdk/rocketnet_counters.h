@@ -924,6 +924,14 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE_ORDERING: Counts reliable ordered records refused because another record with the same channel and ordering index is already held. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_DUPLICATE_ORDERING, REFUSAL, NONE ) \
     \
+    /* The kernel prefilter's DROPPED_NO_SOCKET (sdk/rocketnet_wire.h): a */ \
+    /* packet that passed every prefilter check but whose receive queue */ \
+    /* has no AF_XDP socket in the XSKMAP, so bpf_redirect_map refused it */ \
+    /* and the XDP program dropped it. REFUSAL. appended: indices are the */ \
+    /* contract. */ \
+    /** @brief ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET: Counts packets that passed the kernel prefilter but were dropped because their receive queue had no AF_XDP socket in the redirect map. Unit: occurrences. Class: refusal; family: none. */ \
+    X( XDP_KERNEL_DROPPED_NO_SOCKET, REFUSAL, NONE ) \
+    \
     /* A datagram from a source other than the server the client dialed: */ \
     /* the client listens to that server alone and drops the datagram */ \
     /* before any protocol check, counted while the attempt holds the */ \

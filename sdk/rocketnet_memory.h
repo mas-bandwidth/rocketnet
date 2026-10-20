@@ -62,5 +62,11 @@ struct rocketnet_server_memory_plan_t
 bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * driver, rocketnet_server_memory_plan_t & plan);
 // Native built-in adapter resource policy; fills only driver/UMEM/worker/socket fields.
+// the xdp driver's queue count when num_xdp_queues is zero or negative; the
+// xdp create and rocketnet_builtin_server_memory_plan both take it
+#ifndef ROCKETNET_XDP_DEFAULT_QUEUES
+#define ROCKETNET_XDP_DEFAULT_QUEUES 7
+#endif
+
 bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * driver, rocketnet_server_memory_plan_t & plan);

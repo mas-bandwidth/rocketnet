@@ -44,10 +44,8 @@ const struct rocketnet_config_field_t * rocketnet_client_transport_config_fields
 
 const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields( int * num_fields );
 
-// the mechanical env var derivation: "driver" -> "ROCKETNET_TRANSPORT". this
-// is the pre-ruling process-wide spelling; it is kept only to NAME the old
-// variable a create refuses aloud (see rocketnet_config_apply_env). returns
-// false when the buffer cannot hold the derived name.
+// the mechanical environment-name derivation used by source utilities and
+// tests. Returns false when the buffer cannot hold the derived name.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
 
@@ -93,9 +91,8 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
 
 bool rocketnet_config_env_var_name_for( const char * transport_name, const char * field_name, char * buffer, int buffer_size );
 
-// the strict integer parse, exposed for the deprecated env alias reads
-// (the pre-#106 spellings kept working under the ROCKETNET_PUMP pattern):
-// whole-string, digits only after an optional leading minus, or false.
+// the strict integer parse: whole-string, digits only after an optional
+// leading minus, or false.
 
 bool rocketnet_config_parse_int_value( const char * value, int * out );
 

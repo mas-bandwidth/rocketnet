@@ -548,12 +548,25 @@ static void rocketnet_server_gso_worker( void * data )
             buffer->syscalls++;
 
             // a failed call other than an empty socket is counted; the
-            // worker goes back to poll and tries again
+            // worker goes back to poll and tries again. an interrupted call
+            // (EINTR) is retried without counting as an error.
 
-            if ( count < 0 && errno != EAGAIN && errno != EWOULDBLOCK )
-                buffer->receive_errors++;
+            if ( count < 0 )
+            {
+                if ( errno == EINTR )
+                {
+                    if ( queue->quit.load( std::memory_order_relaxed ) )
+                        break;
+                    continue;
+                }
 
-            if ( count <= 0 )
+                if ( errno != EAGAIN && errno != EWOULDBLOCK )
+                    buffer->receive_errors++;
+
+                break;
+            }
+
+            if ( count == 0 )
                 break;
 
             for ( int i = 0; i < count; i++ )

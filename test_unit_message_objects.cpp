@@ -2964,7 +2964,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
     memcpy( server_config.server_public_key, world.server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, world.server_secret, sizeof( server_config.server_secret_key ) );
     server_config.transport = "loopback";
-    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0 );
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", &server_config, NULL, 0, NULL );
     check( world.server != NULL );
     check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 2; i++ )
@@ -2974,7 +2974,7 @@ static void same_client_id_reconnect_in_one_update_resets_the_slot()
         client_config.transport = "loopback";
         client_config.step_driven = true;
         client_config.time_callback = reconnect_clock;
-        world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
+        world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0, NULL );
         check( world.clients[i] != NULL );
     }
 
