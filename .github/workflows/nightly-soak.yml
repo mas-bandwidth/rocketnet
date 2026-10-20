@@ -172,8 +172,8 @@ jobs:
     name: soak (${{ matrix.ref }} / windows)
     # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
     # build-and-test-windows runs on, never a hosted image. Run by hand on that runner:
-    # Release build 91s, Tests 7s, wire audit 19s, simulator soak 474s, UDP loopback soak 334s;
-    # about 15 minutes in all, well inside the 90-minute bound.
+    # configure 19s, Release build 114s (--parallel 4), Tests 12s, wire audit 23s, simulator
+    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all, inside the 90-minute bound.
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     timeout-minutes: 90
     strategy:
