@@ -2660,17 +2660,19 @@ The cookie moves the client from requesting cookie (1) to sending connection req
 The server turns a connection request into an encryption mapping, and a connection response into a client slot. It answers only traffic that has cleared the rung that provoked the answer.
 
 1. On a connection request, a server MUST apply the checks below in the order given, and MUST stop at the first that refuses.
-2. A server MUST ignore a request whose size is not the request wire size, whose version is not the protocol version, whose protocol id is not the server's, whose timeout is zero or negative without permission, whose address flags name no family, whose advertised address is not one this server serves, or whose server public key is not this server's. It MUST NOT answer such a request.
-3. A server MUST ignore a request from a source address that is already connected. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, and it MUST NOT create a second mapping or derive new keys for that address.
-4. A server MUST refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
-5. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
-6. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-7. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and, once the failed-signature budget of the current window is spent, a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
-8. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
-9. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
-10. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
-11. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
-12. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which traffic refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A server MUST count these removals apart.
+2. A server MUST ignore a request whose size is not the request wire size, counting `CONNECTION_REQUEST_WRONG_SIZE`.
+3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4).
+4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
+5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`. When the configured maximum token lifetime is positive, it MUST also refuse a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`, and one whose lifetime exceeds the configured maximum token lifetime, counting `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG`. Such a token MUST NOT be answered.
+6. A server MUST then ignore a request whose timeout is zero or negative without permission, then one whose address flags name no family or set a bit above bit 1, then one whose advertised address is not one this server serves, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
+7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
+8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
+9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and, once the failed-signature budget of the current window is spent, a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 11).
+10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
+11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
+12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
+13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
+14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A server MUST count these removals apart.
 
 An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
@@ -2694,10 +2696,11 @@ list is ignored in that state.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
-| no mapping | request | any fixed-offset check fails | ignore, count the reason | no mapping |
+| no mapping | request | size, version or protocol id check fails | ignore, count the reason | no mapping |
 | no mapping | request | token expired | ignore, count | no mapping |
 | no mapping | request | token created in the future | ignore, count | no mapping |
 | no mapping | request | token lifetime too long | ignore, count | no mapping |
+| no mapping | request | timeout, address flags, advertised address or server key check fails | ignore, count the reason | no mapping |
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
@@ -2706,13 +2709,14 @@ list is ignored in that state.
 | no mapping | request | client id connected | ignore, count | no mapping |
 | no mapping | request | no free slot | send connection denied | no mapping |
 | no mapping | request | all checks pass | create mapping, derive keys, send challenge | mapping |
-| mapping | request | source connected | resend the stored challenge | mapping |
-| mapping | request | source not connected | resend the stored challenge, refresh idle | mapping |
+| mapping | request | salt matches the mapping's | resend the stored challenge, refresh idle | mapping |
+| mapping | request | salt differs from the mapping's | resend the stored challenge | mapping |
 | mapping | response | mapping has no connected slot, source or client id already connected | ignore, count | mapping |
 | mapping | response | no free slot | send connection denied | mapping |
 | mapping | response | free slot | bind token, assign slot, send keep-alive | connected |
 | mapping | handshake deadline reached | never refreshed | remove mapping, count | no mapping |
-| mapping | idle deadline reached | no traffic inside the timeout | remove mapping, count | no mapping |
+| mapping | idle deadline reached | no matching request inside the deadline | remove mapping, count | no mapping |
+| connected | request | any | ignore, count | connected |
 | connected | session packet | any | refresh idle | connected |
 | connected | disconnect | any | reset slot, remove mapping | no mapping |
 | connected | idle timeout | any | reset slot, remove mapping | no mapping |
@@ -3603,8 +3607,9 @@ an input ([t1.4 Conventions](#t1.4)).
 6. An endpoint MUST end an established connection when the connection timeout
    has elapsed with no packet received from the peer. The connection timeout is
    the timeout seconds field of the connect token
-   ([t6 Connect token](#t6)); a connection whose timeout is zero does not time
-   out ([t12 Handshake: server](#t12)).
+   ([t6 Connect token](#t6)); a connection whose timeout is negative, which
+   only a development mode permits, does not time out, and a request whose
+   timeout is zero is refused ([t13.2 Timeout](#t13.2)).
 7. A server MUST accept a connection cookie for the cookie lifetime of
    [t3 Constants and registries](#t3). After the cookie key rotates, the server
    MUST accept a cookie minted under the previous key for one cookie key
@@ -3631,7 +3636,7 @@ The values this section introduces are:
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| half-open idle deadline | `10` | seconds | a half-open mapping with no request from its address for this long is discarded |
+| half-open idle deadline | `10` | seconds | a half-open mapping with no matching request from its address for this long is discarded |
 | handshake work budget | `1024` | requests per update | default post-cookie connection requests one server processes in one update |
 | failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications one server performs in one failed-signature window |
 | failed-signature window | `10` | seconds | the period over which the failed-signature budget is counted |

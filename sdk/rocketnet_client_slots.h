@@ -37,7 +37,7 @@ int rocketnet_client_slots_num_free( const struct rocketnet_client_slots_t * slo
 
 int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, uint64_t client_id );
 
-// Assigns the lowest free slot: unconfirmed, identity copied in, bound to
+// Assigns a free slot from the free list (LIFO): unconfirmed, identity copied in, bound to
 // the mapping index. Returns the client index, or -1 when full. The caller
 // checks for a duplicate client id before assigning; assigning a duplicate
 // is a bug, and asserts.
