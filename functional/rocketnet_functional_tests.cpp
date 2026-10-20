@@ -1593,13 +1593,21 @@ void rocketnet_test_transport_stats()
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     // two simulated seconds of traffic, one payload each way per frame. the
-    // send times are recorded so the published numbers can be recounted
+    // send times and cumulative wire-counter deltas are recorded so rates can be recounted
     // independently; two seconds ages the handshake's packets out of the
-    // window, so the window holds payload traffic alone.
+    // window. RN-1 t15 standalone acknowledgments are wire packets too;
+    // the rate must include them, independently of the payload count.
 
     const int num_traffic_frames = 120;
 
     double send_times[num_traffic_frames];
+    uint64_t client_sends[num_traffic_frames], server_sends[num_traffic_frames];
+    struct rocketnet_client_transport_stats_t client_stats;
+    struct rocketnet_server_transport_stats_t server_stats;
+    rocketnet_client_transport_stats( client, &client_stats );
+    rocketnet_server_transport_stats( server, &server_stats );
+    uint64_t client_sent = client_stats.packets_sent;
+    uint64_t server_sent = server_stats.packets_sent;
 
     uint8_t payload_data[100];
     memset( payload_data, 0x5A, sizeof(payload_data) );
@@ -1616,6 +1624,12 @@ void rocketnet_test_transport_stats()
         rocketnet_server_transport_send_packets( server );
 
         send_times[i] = game_time;
+        rocketnet_client_transport_stats( client, &client_stats );
+        rocketnet_server_transport_stats( server, &server_stats );
+        client_sends[i] = client_stats.packets_sent - client_sent;
+        server_sends[i] = server_stats.packets_sent - server_sent;
+        client_sent = client_stats.packets_sent;
+        server_sent = server_stats.packets_sent;
 
         uint8_t scratch[ROCKETNET_RECEIVE_CEILING];
         while ( rocketnet_client_transport_receive_packet( client, scratch, (int) sizeof(scratch) ) > 0 ) {}
@@ -1631,18 +1645,20 @@ void rocketnet_test_transport_stats()
     // the independent recount, under the published numbers' own rule: a
     // send contributes while its bucket is younger than one second
 
-    int expected_sends = 0;
+    uint64_t expected_client_sends = 0, expected_server_sends = 0;
     for ( int i = 0; i < num_traffic_frames; i++ )
     {
         if ( send_times[i] + 1.0 >= game_time )
-            expected_sends++;
+        {
+            expected_client_sends += client_sends[i];
+            expected_server_sends += server_sends[i];
+        }
     }
-    rocketnet_check( expected_sends > 0 );
+    rocketnet_check( expected_client_sends > 0 && expected_server_sends > 0 );
 
-    struct rocketnet_client_transport_stats_t client_stats;
     rocketnet_client_transport_stats( client, &client_stats );
 
-    rocketnet_check( client_stats.packets_sent_per_second == expected_sends );
+    rocketnet_check( client_stats.packets_sent_per_second == (int) expected_client_sends );
     rocketnet_check( client_stats.packets_received_per_second > 0 );
     rocketnet_check( client_stats.bandwidth_sent_kbps > 0 );
     rocketnet_check( client_stats.bandwidth_received_kbps > 0 );
@@ -1651,10 +1667,9 @@ void rocketnet_test_transport_stats()
     rocketnet_check( client_stats.jitter >= 0.0f );
     rocketnet_check( client_stats.packet_loss == 0.0f );
 
-    struct rocketnet_server_transport_stats_t server_stats;
     rocketnet_server_transport_stats( server, &server_stats );
 
-    rocketnet_check( server_stats.packets_sent_per_second == (uint64_t) expected_sends );
+    rocketnet_check( server_stats.packets_sent_per_second == expected_server_sends );
     rocketnet_check( server_stats.packets_received_per_second > 0 );
     rocketnet_check( server_stats.bandwidth_sent_kbps > 0.0f );
     rocketnet_check( server_stats.bandwidth_received_kbps > 0.0f );
@@ -8114,6 +8129,8 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     wire_totals_client( client, &client_before );
     wire_totals_server( server, &server_before );
 
+    const uint64_t client_ack_before = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED];
+    const uint64_t server_ack_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_ACK_RECEIVED];
     const int payload_count = 4;
     const int payload_bytes = 64;
     uint8_t payload[64];
@@ -8152,11 +8169,18 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     wire_totals_client( client, &client_after );
     wire_totals_server( server, &server_after );
 
+    // RN-1 t15: the four payloads elicit standalone acknowledgments. Their
+    // receive counters independently identify the extra wire packets. All
+    // sequences here are contiguous, so each ACK has the minimum block.
+    const uint64_t client_acks = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_ACK_RECEIVED] - server_ack_before;
+    const uint64_t server_acks = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED] - client_ack_before;
     const uint64_t headers = (uint64_t) payload_count * (uint64_t) ip_udp_header_bytes;
-    rocketnet_check( client_after.packets_sent - client_before.packets_sent == (uint64_t) payload_count );
-    rocketnet_check( client_after.packets_received - client_before.packets_received == (uint64_t) payload_count );
-    rocketnet_check( server_after.packets_sent - server_before.packets_sent == (uint64_t) payload_count );
-    rocketnet_check( server_after.packets_received - server_before.packets_received == (uint64_t) payload_count );
+    client_wire += client_acks * ( ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + ip_udp_header_bytes );
+    server_wire += server_acks * ( ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + ip_udp_header_bytes );
+    rocketnet_check( client_after.packets_sent - client_before.packets_sent == (uint64_t) payload_count + client_acks );
+    rocketnet_check( client_after.packets_received - client_before.packets_received == (uint64_t) payload_count + server_acks );
+    rocketnet_check( server_after.packets_sent - server_before.packets_sent == (uint64_t) payload_count + server_acks );
+    rocketnet_check( server_after.packets_received - server_before.packets_received == (uint64_t) payload_count + client_acks );
     rocketnet_check( client_after.bytes_sent - client_before.bytes_sent == client_wire + headers );
     rocketnet_check( server_after.bytes_received - server_before.bytes_received == client_wire + headers );
     rocketnet_check( server_after.bytes_sent - server_before.bytes_sent == server_wire + headers );
