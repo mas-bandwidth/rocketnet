@@ -196,7 +196,7 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
             if ( side == LOOPBACK_RTT_SERVER )
                 rocketnet_message_client_release( pair->client, data );
             else
-                rocketnet_message_server_release( pair->server, 0, data );
+                rocketnet_message_server_release( pair->server, data );
         }
     }
 
