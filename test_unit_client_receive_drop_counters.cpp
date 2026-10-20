@@ -10,18 +10,19 @@
 // datagrams from a source other than the dialed server. The I/O step drops
 // nothing (sdk/rocketnet_client_io.h:390-396): on update, a datagram from
 // another source counts CLIENT_RECEIVE_FOREIGN_SOURCE before any protocol
-// check (sdk/rocketnet_client_transport.cpp:1106-1110), whatever its size,
+// check (sdk/rocketnet_client_transport.cpp:1133-1137), whatever its size,
 // and one from the server reaches the prefilter
 // (sdk/rocketnet_client_protocol.cpp:1248-1253), which counts
 // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE; per-packet and batch. With a
 // link pattern configured the client runs no I/O core and update receives
-// from the driver itself (sdk/rocketnet_client_transport.cpp:1405-1407); that
+// from the driver itself (sdk/rocketnet_client_transport.cpp:1406-1407); that
 // receive keeps every datagram too, so the same counters count the same drops.
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include "rocketnet_client_io.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
@@ -199,9 +200,16 @@ static void drop_counters_run( bool batch )
 }
 
 // a step-driven client with a link pattern configured: no I/O core, so update
-// receives from the driver on the caller's thread and processes the records raw
+// receives from the driver on the caller's thread
+// (sdk/rocketnet_client_transport.cpp:1406-1407). The create reads the whole
+// current config (rocketnet_client_transport_create_step_driven_current), as
+// rocketnet_client_transport_create_step_driven reads only the fields before
+// the link simulator's and would leave simulated_drop_every_nth unread and the
+// I/O core on.
 static void client_receive_counts_prefilter_drops_without_io_core()
 {
+    rocketnet_public_link_simulator_test_development( 1 );
+
     rocketnet_client_driver_operations_t operations = rocketnet_fake_client_operations_io;
     operations.receive = drop_counters_receive;
 
@@ -211,11 +219,11 @@ static void client_receive_counts_prefilter_drops_without_io_core()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     drop_counters_token( token );
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     config.time_callback = drop_counters_time;
     config.step_driven = true;
     config.simulated_drop_every_nth = 1000;
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( &clock, token, &config, clock.now, &operations, driver );
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current( &clock, token, &config, clock.now, &operations, driver );
     check( transport != NULL );
 
     const uint64_t short_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
@@ -239,6 +247,7 @@ static void client_receive_counts_prefilter_drops_without_io_core()
 
     rocketnet_client_transport_destroy( transport );
     delete driver;
+    rocketnet_public_link_simulator_test_development( 0 );
 }
 
 REGISTER_UNIT_TEST( client_receive_counts_prefilter_drops_without_io_core );
