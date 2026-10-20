@@ -17,11 +17,13 @@
 
 thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
 
-// The packet header already carries the filter field the keyed check used:
-// the 6-byte prefilter header (sdk/rocketnet_wire.h:35-47) holds the packet
-// type, a filter epoch byte and a 4-byte filter value. The keyed filter-epoch
-// check is removed in v1.0, but the field is left exactly as it is, so a
-// keyed filter can return later as a value change, never a format change.
+// The packet header already carries the filter field a keyed check reads:
+// the prefilter header (ROCKETNET_PREFILTER_BYTES in sdk/rocketnet_wire.h,
+// written by rocketnet_write_prefilter_header) holds the packet type, a
+// filter epoch byte and a ROCKETNET_FILTER_VALUE_BYTES filter value. v1.0 has
+// no keyed filter-epoch check and writes ROCKETNET_FILTER_EPOCH_UNKEYED; the
+// field stays exactly as it is, so a keyed filter can return later as a value
+// change, never a format change.
 
 void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * filter_value )
 {
