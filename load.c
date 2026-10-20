@@ -601,6 +601,21 @@ int main( int argc, char ** argv )
         if ( rocketnet_time() - start_time > LOAD_CONNECT_DEADLINE_S )
         {
             connect_elapsed = rocketnet_time() - start_time;
+            /* name each client still short of CONNECTED at the deadline (the first
+               eight), so a connect failure says which state the client sat in */
+            int named = 0;
+            for ( int i = 0; i < num_clients && named < 8; i++ )
+            {
+                const int st = rocketnet_message_client_state( clients[i] );
+                if ( st != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                {
+                    fprintf( stderr, "load: client %d not connected at the deadline: state=%d %s\n",
+                             i, st, rocketnet_client_transport_state_name( st ) );
+                    named++;
+                }
+            }
+            fprintf( stderr, "load: server reports %d of %d clients connected at the deadline\n",
+                     rocketnet_server_transport_num_connected_clients( server_transport ), num_clients );
             break;
         }
         const double sample_now = rocketnet_time();
