@@ -8619,7 +8619,7 @@ inline void test_compressed_float_precomputed_conformance()
 //                  into serialize_compressed_float_params plus the precomputed home. FROZEN:
 //                  never edit it. it is the code the audited home replaced, kept so the
 //                  differential proves the split changed nothing, forever.
-//   legacy      -- serialize_compressed_float( stream, value, min, max, res ), which since the
+//   classic      -- serialize_compressed_float( stream, value, min, max, res ), which since the
 //                  split derives the constants per call and forwards to the audited home.
 //   precomputed -- serialize_compressed_float_precomputed( ... ) with constants derived once
 //                  per declaration by serialize_compressed_float_params, exactly as a schema
@@ -8714,7 +8714,7 @@ template <typename Stream> bool serialize_compressed_float_frozen_reference( Str
 // each helper drives the actual macro form under test, so the differential covers the macros as
 // well as the internals (the compile time surface tests established this pattern)
 
-template <typename Stream> bool serialize_compressed_float_legacy_form( Stream & stream, float & value, float min, float max, float res )
+template <typename Stream> bool serialize_compressed_float_classic_form( Stream & stream, float & value, float min, float max, float res )
 {
     serialize_compressed_float( stream, value, min, max, res );
     return true;
@@ -8824,18 +8824,18 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
     serialize::MeasureStream measureReference;
     float measure_value = value;
     serialize_differential_check( serialize_compressed_float_frozen_reference( measureReference, measure_value, min, max, res ) == true );
-    serialize::MeasureStream measureLegacy;
+    serialize::MeasureStream measureClassic;
     measure_value = value;
-    serialize_differential_check( serialize_compressed_float_legacy_form( measureLegacy, measure_value, min, max, res ) == true );
+    serialize_differential_check( serialize_compressed_float_classic_form( measureClassic, measure_value, min, max, res ) == true );
     serialize::MeasureStream measurePrecomputed;
     measure_value = value;
     serialize_differential_check( serialize_compressed_float_precomputed_form( measurePrecomputed, measure_value, max_integer_value, bits, delta, min ) == true );
-    serialize_differential_check( measureReference.GetBitsProcessed() == measureLegacy.GetBitsProcessed() );
+    serialize_differential_check( measureReference.GetBitsProcessed() == measureClassic.GetBitsProcessed() );
     serialize_differential_check( measureReference.GetBitsProcessed() == measurePrecomputed.GetBitsProcessed() );
 
     // write: byte identical wire from all three
     uint8_t buffer_reference[8 + 8] = { 0 };            // + 8: read buffer allocations extend 8 bytes past the data
-    uint8_t buffer_legacy[8 + 8] = { 0 };               // + 8: read buffer allocations extend 8 bytes past the data
+    uint8_t buffer_classic[8 + 8] = { 0 };               // + 8: read buffer allocations extend 8 bytes past the data
     uint8_t buffer_precomputed[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
     serialize::WriteStream writeReference( buffer_reference, 8 );
@@ -8843,22 +8843,22 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
     serialize_differential_check( serialize_compressed_float_frozen_reference( writeReference, write_value, min, max, res ) == true );
     writeReference.Flush();
 
-    serialize::WriteStream writeLegacy( buffer_legacy, 8 );
+    serialize::WriteStream writeClassic( buffer_classic, 8 );
     write_value = value;
-    serialize_differential_check( serialize_compressed_float_legacy_form( writeLegacy, write_value, min, max, res ) == true );
-    writeLegacy.Flush();
+    serialize_differential_check( serialize_compressed_float_classic_form( writeClassic, write_value, min, max, res ) == true );
+    writeClassic.Flush();
 
     serialize::WriteStream writePrecomputed( buffer_precomputed, 8 );
     write_value = value;
     serialize_differential_check( serialize_compressed_float_precomputed_form( writePrecomputed, write_value, max_integer_value, bits, delta, min ) == true );
     writePrecomputed.Flush();
 
-    serialize_differential_check( writeReference.GetBitsProcessed() == writeLegacy.GetBitsProcessed() );
+    serialize_differential_check( writeReference.GetBitsProcessed() == writeClassic.GetBitsProcessed() );
     serialize_differential_check( writeReference.GetBitsProcessed() == writePrecomputed.GetBitsProcessed() );
-    serialize_differential_check( memcmp( buffer_legacy, buffer_precomputed, 8 ) == 0 );
+    serialize_differential_check( memcmp( buffer_classic, buffer_precomputed, 8 ) == 0 );
     if ( compressed_float_frozen_oracle_conformant )
     {
-        serialize_differential_check( memcmp( buffer_reference, buffer_legacy, 8 ) == 0 );
+        serialize_differential_check( memcmp( buffer_reference, buffer_classic, 8 ) == 0 );
         serialize_differential_check( memcmp( buffer_reference, buffer_precomputed, 8 ) == 0 );
     }
 
@@ -8866,21 +8866,21 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
     serialize::ReadStream readReference( buffer_precomputed, 8 );
     float decoded_reference = 0.0f;
     serialize_differential_check( serialize_compressed_float_frozen_reference( readReference, decoded_reference, min, max, res ) == true );
-    serialize::ReadStream readLegacy( buffer_precomputed, 8 );
-    float decoded_legacy = 0.0f;
-    serialize_differential_check( serialize_compressed_float_legacy_form( readLegacy, decoded_legacy, min, max, res ) == true );
+    serialize::ReadStream readClassic( buffer_precomputed, 8 );
+    float decoded_classic = 0.0f;
+    serialize_differential_check( serialize_compressed_float_classic_form( readClassic, decoded_classic, min, max, res ) == true );
     serialize::ReadStream readPrecomputed( buffer_precomputed, 8 );
     float decoded_precomputed = 0.0f;
     serialize_differential_check( serialize_compressed_float_precomputed_form( readPrecomputed, decoded_precomputed, max_integer_value, bits, delta, min ) == true );
 
-    uint32_t pattern_reference, pattern_legacy, pattern_precomputed;
+    uint32_t pattern_reference, pattern_classic, pattern_precomputed;
     memcpy( &pattern_reference, &decoded_reference, 4 );
-    memcpy( &pattern_legacy, &decoded_legacy, 4 );
+    memcpy( &pattern_classic, &decoded_classic, 4 );
     memcpy( &pattern_precomputed, &decoded_precomputed, 4 );
-    serialize_differential_check( pattern_legacy == pattern_precomputed );
+    serialize_differential_check( pattern_classic == pattern_precomputed );
     if ( compressed_float_frozen_oracle_conformant )
     {
-        serialize_differential_check( pattern_reference == pattern_legacy );
+        serialize_differential_check( pattern_reference == pattern_classic );
         serialize_differential_check( pattern_reference == pattern_precomputed );
     }
 
@@ -8917,28 +8917,28 @@ inline void check_compressed_float_code_agrees( uint32_t code, float min, float 
     float decoded_reference = 0.0f;
     const bool ok_reference = serialize_compressed_float_frozen_reference( readReference, decoded_reference, min, max, res );
 
-    serialize::ReadStream readLegacy( buffer, 8 );
-    float decoded_legacy = 0.0f;
-    const bool ok_legacy = serialize_compressed_float_legacy_form( readLegacy, decoded_legacy, min, max, res );
+    serialize::ReadStream readClassic( buffer, 8 );
+    float decoded_classic = 0.0f;
+    const bool ok_classic = serialize_compressed_float_classic_form( readClassic, decoded_classic, min, max, res );
 
     serialize::ReadStream readPrecomputed( buffer, 8 );
     float decoded_precomputed = 0.0f;
     const bool ok_precomputed = serialize_compressed_float_precomputed_form( readPrecomputed, decoded_precomputed, max_integer_value, bits, delta, min );
 
-    serialize_differential_check( ok_reference == ok_legacy );
+    serialize_differential_check( ok_reference == ok_classic );
     serialize_differential_check( ok_reference == ok_precomputed );
     serialize_differential_check( ok_reference == ( code <= max_integer_value ) );      // the headroom refusal itself
 
     if ( ok_reference )
     {
-        uint32_t pattern_reference, pattern_legacy, pattern_precomputed;
+        uint32_t pattern_reference, pattern_classic, pattern_precomputed;
         memcpy( &pattern_reference, &decoded_reference, 4 );
-        memcpy( &pattern_legacy, &decoded_legacy, 4 );
+        memcpy( &pattern_classic, &decoded_classic, 4 );
         memcpy( &pattern_precomputed, &decoded_precomputed, 4 );
-        serialize_differential_check( pattern_legacy == pattern_precomputed );
+        serialize_differential_check( pattern_classic == pattern_precomputed );
         if ( compressed_float_frozen_oracle_conformant )
         {
-            serialize_differential_check( pattern_reference == pattern_legacy );
+            serialize_differential_check( pattern_reference == pattern_classic );
             serialize_differential_check( pattern_reference == pattern_precomputed );
         }
 

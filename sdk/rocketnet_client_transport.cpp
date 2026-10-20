@@ -1405,7 +1405,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     // and the poll of rocketnet_client_transport_state stays the source of truth
 
     if ( client_transport->protocol.state != state_before && client_transport->config.state_change_callback )
-        client_transport->config.state_change_callback( client_transport->context, state_before, client_transport->protocol.state );
+        client_transport->config.state_change_callback( client_transport->context, (enum rocketnet_client_state_t) state_before, (enum rocketnet_client_state_t) client_transport->protocol.state );
 }
 
 void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes )
@@ -1937,7 +1937,7 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     // this transition never crosses an update, so it is reported here
 
     if ( client_transport->protocol.state != state_before && client_transport->config.state_change_callback )
-        client_transport->config.state_change_callback( client_transport->context, state_before, client_transport->protocol.state );
+        client_transport->config.state_change_callback( client_transport->context, (enum rocketnet_client_state_t) state_before, (enum rocketnet_client_state_t) client_transport->protocol.state );
 
     if ( client_transport->io_thread || client_transport->step_in_update )
     {

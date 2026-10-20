@@ -22,7 +22,7 @@
 #define DUP_SEND_TICKS          ( DUP_MESSAGES / DUP_PER_TICK )
 #define DUP_SETTLE_TICKS        600     // ten seconds of test time after the last send
 
-static const int dup_codes[DUP_KINDS] = { ROCKETNET_UNRELIABLE, ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE };
+static const int dup_codes[DUP_KINDS] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_RELIABLE };
 static const char * dup_names[DUP_KINDS] = { "unreliable", "unreliable_sequenced", "reliable" };
 
 static void dup_check( bool condition, const char * label )

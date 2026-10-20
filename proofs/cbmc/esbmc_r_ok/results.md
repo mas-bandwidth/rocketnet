@@ -31,7 +31,7 @@ In ESBMC 8.5.0 (`64-bit x86_64 linux`, Z3 v4.13.3):
 
 ```
 $ printf '#include "%s/proofs/cbmc/esbmc_r_ok/repro_r_ok_symbolic.c"\n' "$PWD" > /tmp/repro_before.cpp
-$ ~/sdk/bin/esbmc --std c++17 --z3 -I proofs/cbmc --force-malloc-success -DTEST_LEGACY_ESBMC_R_OK /tmp/repro_before.cpp
+$ ~/sdk/bin/esbmc --std c++17 --z3 -I proofs/cbmc --force-malloc-success -DTEST_PRE_FIX_ESBMC_R_OK /tmp/repro_before.cpp
 Violated property:
   file proofs/cbmc/esbmc_r_ok/repro_r_ok_symbolic.c line 59 column 5 function main
   full symbolic malloc extent is readable
