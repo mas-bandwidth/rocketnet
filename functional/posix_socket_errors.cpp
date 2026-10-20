@@ -1497,6 +1497,36 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
     posix_pair_check_connected( &pair );
     posix_check( posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before == 64 );
 
+    // the next 64 recvmmsg calls answer -1 with EINTR: each is retried at
+    // once and counted as a receive syscall, never as a receive error, and
+    // the datagrams behind them are read
+
+    const uint64_t eintr_syscalls_before = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 );
+    const uint64_t eintr_received_before = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 );
+    rocketnet_server_gso_test_fail_receives( (struct rocketnet_server_gso_t*) pair.driver, 64, EINTR );
+    posix_linux_client_traffic_resumes( &pair, 16 );
+    posix_pair_check_connected( &pair );
+    uint64_t eintr_syscalls = 0;
+    const double eintr_deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_platform_time() < eintr_deadline )
+    {
+        eintr_syscalls = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - eintr_syscalls_before;
+        if ( eintr_syscalls >= 64 )
+            break;
+        posix_pair_update( &pair );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    const uint64_t eintr_received = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED, 0 ) - eintr_received_before;
+    const uint64_t eintr_errors = posix_native_counter( pair.native, pair.driver, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before - 64;
+    if ( eintr_errors != 0 )
+        printf( "gso recvmmsg EINTR: receive errors +%llu, want +0\n", (unsigned long long) eintr_errors );
+    posix_check( eintr_syscalls >= 64 );
+    posix_check( eintr_errors == 0 );
+    posix_check( eintr_received >= 8 );
+
+    printf( "  gso%s recvmmsg EINTR %s: 64 interrupted calls retried, receive errors +0, packets received +%llu\n",
+            plain ? " (plain)" : "", ipv6 ? "ipv6" : "ipv4", (unsigned long long) eintr_received );
+
     printf( "  gso%s recvmmsg EIO %s: 64 failed calls, receive errors +%llu, receive syscalls +%llu, packets received +%llu, resumed 8/8 twice\n",
             plain ? " (plain)" : "", ipv6 ? "ipv6" : "ipv4", (unsigned long long) errors, (unsigned long long) syscalls, (unsigned long long) received );
     fflush( stdout );
