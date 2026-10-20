@@ -486,6 +486,18 @@ static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * tra
         rocketnet_server_link_send( transport, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
 }
 
+// Link!ReverseWindow: the window the simulator holds is emitted reversed,
+// whole, at the end of each send_packets (and of the update that sends). A
+// link without patterns holds nothing and takes no lock here.
+static void rocketnet_server_link_flush( rocketnet_server_transport_t * transport )
+{
+    if ( !transport->link_simulator || !rocketnet_network_simulator_patterns_active( transport->link_simulator ) )
+        return;
+    rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+    rocketnet_network_simulator_flush_window( transport->link_simulator );
+    rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+}
+
 static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport )
 {
     if ( !transport->link_simulator )
@@ -1366,7 +1378,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     server_transport->link_simulator_from = public_address;
 
     if ( config->simulated_loss_percent || config->simulated_latency_ms ||
-         config->simulated_jitter_ms || config->simulated_duplicate_percent )
+         config->simulated_jitter_ms || config->simulated_duplicate_percent ||
+         config->simulated_drop_every_nth || config->simulated_reverse_window )
     {
         server_transport->link_simulator = rocketnet_network_simulator_create( context, 4096, UINT64_C(0x5345525645525349) );
         if ( !server_transport->link_simulator )
@@ -1388,6 +1401,15 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                             config->simulated_jitter_ms / 1000.0,
                                             (float) config->simulated_loss_percent,
                                             (float) config->simulated_duplicate_percent );
+        if ( !rocketnet_network_simulator_patterns( server_transport->link_simulator,
+                                                    config->simulated_drop_every_nth,
+                                                    config->simulated_reverse_window ) )
+        {
+            if ( status )
+                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+            rocketnet_server_transport_destroy( server_transport );
+            return NULL;
+        }
     }
 
     // the protocol, on the configured identity, advertised at the public
@@ -1999,10 +2021,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             rocketnet_server_driver_send_packets( server_transport );
         }
 
+        rocketnet_server_link_flush( server_transport );
         return;
     }
 
     rocketnet_server_flush_control_buffer( server_transport );
+    rocketnet_server_link_flush( server_transport );
 }
 
 int rocketnet_server_transport_num_payloads( struct rocketnet_server_transport_t * server_transport )
@@ -2618,6 +2642,8 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     // The disconnect_client header promise: buffered control frames leave on
     // the next flush even when this fill phase sent no payload-ring packet.
     rocketnet_server_flush_control_buffer( server_transport );
+
+    rocketnet_server_link_flush( server_transport );
 
     rocketnet_send_arena_reset( server_transport->send_arena );
 }

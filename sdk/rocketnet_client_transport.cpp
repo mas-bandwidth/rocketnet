@@ -292,6 +292,7 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
 }
 
 static void rocketnet_client_thread_function( void * data );
+static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport );
 
 // The transport-owned part of ClientSession End. The protocol overload has
 // already retired keys and cleared protocol state. Only the main-thread fill
@@ -317,6 +318,31 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
     rocketnet_packet_loss_tracker_reset( &client->packet_loss_tracker );
     rocketnet_jitter_tracker_reset( &client->jitter_tracker );
     client->stats_counted = 0;
+}
+
+// The deterministic drop and reverse patterns (tla/Link.tla "everynth" and
+// ReverseWindow) are on when the config names either and the link simulator
+// exists. With both fields zero nothing below differs from the link
+// simulator alone: every branch keyed on this predicate is the BASE branch.
+static inline bool rocketnet_client_link_patterns( const rocketnet_client_transport_t * transport )
+{
+    return transport->link_simulator &&
+           ( transport->config.simulated_drop_every_nth != 0 || transport->config.simulated_reverse_window != 0 );
+}
+
+// The I/O ring core (hand-off and caller step) carries the sends and the
+// receives, unless the patterns put them through the link simulator.
+static inline bool rocketnet_client_io_core( const rocketnet_client_transport_t * transport )
+{
+    return ( transport->io_thread || transport->step_in_update ) && !rocketnet_client_link_patterns( transport );
+}
+
+// Link!ReverseWindow: the window held by the simulator is emitted reversed, whole,
+// at the end of each send_packets (and of the update that sends).
+static inline void rocketnet_client_link_flush( rocketnet_client_transport_t * transport )
+{
+    if ( rocketnet_client_link_patterns( transport ) )
+        rocketnet_network_simulator_flush_window( transport->link_simulator );
 }
 
 static void rocketnet_client_link_send( rocketnet_client_transport_t * transport,
@@ -877,7 +903,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->link_simulator_from = bind_address;
 
     if ( config->simulated_loss_percent || config->simulated_latency_ms ||
-         config->simulated_jitter_ms || config->simulated_duplicate_percent )
+         config->simulated_jitter_ms || config->simulated_duplicate_percent ||
+         config->simulated_drop_every_nth || config->simulated_reverse_window )
     {
         client_transport->link_simulator = rocketnet_network_simulator_create( context, 512, UINT64_C(0x434c49454e545349) );
         if ( !client_transport->link_simulator )
@@ -892,6 +919,15 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                                             config->simulated_jitter_ms / 1000.0,
                                             (float) config->simulated_loss_percent,
                                             (float) config->simulated_duplicate_percent );
+        if ( !rocketnet_network_simulator_patterns( client_transport->link_simulator,
+                                                    config->simulated_drop_every_nth,
+                                                    config->simulated_reverse_window ) )
+        {
+            if ( status )
+                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+            rocketnet_client_transport_destroy( client_transport );
+            return NULL;
+        }
     }
 
     if ( !rocketnet_platform_mutex_create( &client_transport->mutex ) )
@@ -1324,7 +1360,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     struct rocketnet_client_receive_buffer_t * receive_buffer = NULL;
 
-    const bool io_core = client_transport->io_thread || client_transport->step_in_update;
+    const bool io_core = rocketnet_client_io_core( client_transport );
 
     if ( io_core )
     {
@@ -1334,6 +1370,10 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     }
     else
     {
+        // patterns on in the caller-stepped mode: no thread receives, so the
+        // update receives from the driver, stamped with the update time
+        if ( client_transport->step_in_update )
+            rocketnet_client_receive_packets( client_transport );
         rocketnet_client_update_swap_receive_buffers( client_transport );
         receive_buffer = &client_transport->receive_buffer[client_transport->receive_buffer_index];
     }
@@ -1399,6 +1439,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         client_transport->client_stats.bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
 
         rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address, packet, packet_bytes );
+        rocketnet_client_link_flush( client_transport );
     }
 
     // one callback per update crossing: enough to observe every terminal,
@@ -1741,7 +1782,7 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
     rocketnet_assert( client_transport );
     client_transport->packet_leases.reset();
 
-    if ( client_transport->io_thread || client_transport->step_in_update )
+    if ( rocketnet_client_io_core( client_transport ) )
     {
         // RNClientIo HandOff or Defer: no driver call on the main thread.
         // The arena resets as at BASE: finish already copied every arena
@@ -1780,6 +1821,8 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
     }
 
     ring->num_packets = 0;
+
+    rocketnet_client_link_flush( client_transport );
 
     rocketnet_send_arena_reset( client_transport->send_arena );
 }
@@ -1939,7 +1982,7 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     if ( client_transport->protocol.state != state_before && client_transport->config.state_change_callback )
         client_transport->config.state_change_callback( client_transport->context, (enum rocketnet_client_state_t) state_before, (enum rocketnet_client_state_t) client_transport->protocol.state );
 
-    if ( client_transport->io_thread || client_transport->step_in_update )
+    if ( rocketnet_client_io_core( client_transport ) )
     {
         // the burst is sealed into slots of the Filling ring and handed off
         // like any packet: deferred when the other ring is busy, retried by
@@ -1964,6 +2007,7 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
                                     burst + i * ROCKETNET_SEND_BUDGET,
                                     burst_bytes );
     }
+    rocketnet_client_link_flush( client_transport );
 }
 
 const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketnet_client_transport_t * client_transport )
@@ -2057,7 +2101,9 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         if ( packet_bytes < ROCKETNET_PREFILTER_BYTES || packet_bytes > ROCKETNET_RECEIVE_CEILING )
             continue;
 
-        const double receive_time = rocketnet_platform_time();
+        const double receive_time = ( client_transport->step_in_update && rocketnet_client_link_patterns( client_transport ) )
+            ? client_transport->time
+            : rocketnet_platform_time();
 
         rocketnet_platform_mutex_acquire( &client_transport->mutex );
 
