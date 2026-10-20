@@ -3617,7 +3617,11 @@ an input ([t1.4 Conventions](#t1.4)).
 11. A server SHOULD apply the failed-signature budget before the signature
     verification. When it does, a request from a source that has already
     failed in the current failed-signature window MUST be refused before the
-    verification runs and counted as a refusal.
+    verification runs and counted as a refusal. The budget MUST NOT refuse a
+    request from a source with no recorded failure in the window, even when
+    the budget is spent and the server can record no further sources; the
+    verifications such requests cost are bounded by the handshake work budget
+    of item 10.
 
 The values this section introduces are:
 

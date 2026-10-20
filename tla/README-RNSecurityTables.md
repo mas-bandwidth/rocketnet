@@ -97,6 +97,16 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   budget, while the cap switch is in its code position.
 - **`TablesBounded`**: neither table passes its capacity, and slots
   plus other clients never pass `MaxClients`.
+- **`HonestConnectsUnderFlood`** (temporal, under `FloodSpec`): an honest
+  client with a valid token connects while forging sources, each past the
+  cookie gate at its own address, keep the failed-signature budget spent
+  and its source table full. `FloodSpec` models
+  `rocketnet_signature_verify_budget_allow` and
+  `rocketnet_signature_verify_budget_record_failure` with a budget of 2, one
+  table slot and two forgers (definitions `FailBudget`, `FailSlots`,
+  `Forgers`), each request spending the per-update work budget
+  (`VerifyBudget`) first; `FloodInvariants` bounds both. `Spec` leaves the
+  flood variables at their initial values, so its state counts are unchanged.
 
 ## Switches: the code and the fixed code
 
@@ -112,6 +122,7 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
 | `CapVerifyBudget` | `TRUE`: the per-update budget caps verifies | mutant `FALSE` guards the cap |
 | `AcceptPrevious` | `TRUE`: previous generation accepted while `clock < prevUntil` | reversed witness `FALSE` drops the previous-key window |
 | `PreviousOutlivesWindow` | `FALSE`: a stall past the window drops the previous generation | mutant `TRUE` keeps the previous generation across a stall |
+| `RefuseUnremembered` (a definition, overridden with `<-`) | `FALSE` since 2026-10-20: once the failed-signature budget is spent only a source with a recorded failure is refused | reversed witness `TRUE`: a full table refuses every source it does not hold, the code before |
 
 ## Findings
 
@@ -131,6 +142,7 @@ guarded by its two reversed witnesses.
 | `DeniedTokenStaysUsable` | 5 states (mutant) | slots check before the admitted add in `rocketnet_server_process_connection_response`; request-rung denied creates no mapping | The code holds this invariant: a denied for a full server consumes nothing, at both rungs (with `HoldUntilExpire`, it was sent before the set took its entry). The reversed witness is a mutant that consumes the token on a denied; TLC rejects it, which guards the ordering against a future edit. |
 | `TypeOK` verify bound | 7 states (mutant) | handshake budget check in the request path (`ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE` in `sdk/rocketnet_counters.h`); 64-slot failed-verify table in `sdk/rocketnet_server.h` | The code holds this invariant: past the cookie gate, verifies per update are counted and capped before asymmetric work runs. The reversed witness removes the cap; TLC rejects `SafetyInvariants` through the `TypeOK` bound when `verifies = 4` with `VerifyBudget = 2`. `VerifyBudgetRespected` itself is conditional on `CapVerifyBudget`, so it does not reject the disabled-cap mutant. |
 | `InFlightCookieSurvivesRotation` | 3 states (`AcceptPrevious = FALSE`) | `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_protocol_rotate_cookie_key_if_due` and the previous-key branch of the cookie gate at `:377`) | An on-time rotation moves the outgoing key to `previous_cookie_key` with `previous_cookie_key_expire_time = cookie_key_rotation_time + period`, so a cookie minted before the rotation is accepted across it while `current_time < previous_cookie_key_expire_time`. Turning `AcceptPrevious` off drops the outgoing generation at the rotation tick (`clock = 1 -> 2`) and fails `InFlightCookieSurvivesRotation`. |
+| `HonestConnectsUnderFlood` | 5 states, a stuttering lasso (`RefuseUnremembered = TRUE`) | `if ( empty_slot == -1 ) return 0;` in `rocketnet_signature_verify_budget_allow` at the base before 2026-10-20 | `F1` forges and fails (recorded in the one slot, count 1), forges again (the budget is not spent, so it verifies; count 2 = budget), an update resets the work budget, and the honest client's request finds the budget spent, itself not in the table and the table full, so it is refused before the verify for the rest of the window. `handshake_failure_budget_no_global_lockout` (test_unit_handshake_budgets.cpp) reproduced it at the base with 64 slots and a budget of 90: the honest client from a 65th address failed `result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE`; with the refusal removed it gets the challenge and connects. |
 | `PreviousBoundedToOnePeriod` | 2 states (mutant `PreviousOutlivesWindow = TRUE`) | `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_protocol_rotate_cookie_key_if_due`, stall branch when `current_time >= cookie_key_rotation_time + period`, and the gate check `current_time < server->previous_cookie_key_expire_time`) | When `update` stalls past an entire rotation window (`clock = 0 -> 4`), the outgoing key's acceptance window `[2, 4)` has already elapsed, so the code zeroes `previous_cookie_key` and clears `has_previous_cookie_key`. The mutant `PreviousOutlivesWindow = TRUE` keeps the outgoing key until `current_time + period` (`prevUntil = 6 > 4`), which TLC rejects on the stall step. |
 
 ## How to run it
@@ -156,8 +168,12 @@ Each reversed witness has a committed configuration registered in
 | `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `SafetyInvariants` (`TypeOK` verify bound) |
 | `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
 | `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
+| `BrokenGlobalLockout.cfg` | `RefuseUnremembered <- MCRefuseUnremembered` (`TRUE`), under `FloodSpec` | `HonestConnectsUnderFlood` |
 
-Refresh all eleven cases through the pinned `tlacheck` runner and merge with
+`MCRNSecurityTablesFlood.cfg` is the fixed-code run of `FloodSpec`: 121 states
+generated, 39 distinct, `FloodInvariants` and `HonestConnectsUnderFlood` hold.
+
+Refresh all thirteen cases through the pinned `tlacheck` runner and merge with
 `--keep tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
 one row per configuration; earlier seven-column records remain in
 `RUNS-HISTORY.tsv`.
