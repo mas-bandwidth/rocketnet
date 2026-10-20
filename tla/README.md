@@ -91,8 +91,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 
 ## Case inventory
 
-The table below is generated from `CASES.tsv`: 231 declared cases in 37 groups,
-213 required and 18 `bench` debt cases. A `bench` case has not finished
+The table below is generated from `CASES.tsv`: 232 declared cases in 37 groups,
+214 required and 18 `bench` debt cases. A `bench` case has not finished
 inside the 110-second budget: its `debt` column in `CASES.tsv` names the reason, and its
 record in `RUNS.tsv` is an exit-124 measurement, so the case is unverified, not a completed
 check. Regenerate the rows from the checkout root with:
@@ -139,7 +139,7 @@ awk -F'\t' 'NR>1 {n[$6]++; if ($7=="bench") b[$6]++} END {for (g in n) printf "|
 | `rnxdpreceivering` | 2 | 0 |
 | `rnxdpreplay` | 3 | 0 |
 | `serverconnection` | 5 | 0 |
-| `serversession` | 9 | 0 |
+| `serversession` | 10 | 0 |
 
 ## Initial migration measurements
 
