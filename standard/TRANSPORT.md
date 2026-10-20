@@ -3922,6 +3922,7 @@ The registry of counters, in index order, is:
 | `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` | `expected` | `none` |
 | `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT` | `expected` | `none` |
 | `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK` | `expected` | `none` |
+| `SEND_FAILED` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4037,7 +4038,7 @@ f9 00 00 00 eb 03 7f 49 00 00 00 11 1a 37 e1 00
 b1 00 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00
 08 00 8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00
 9b 86 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84
-f0 6e 01 00 00
+f0 6e 01 00 00 25 11 95 dc 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

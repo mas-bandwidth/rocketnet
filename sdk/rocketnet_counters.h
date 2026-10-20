@@ -858,7 +858,10 @@
     /* before CONNECTED take it. Counted on the owner's counters, once per */ \
     /* message. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK: Counts fitting unreliable messages that took the queued path instead of being written in place in a packet buffer; one count per message, on the owner's counters. Unit: messages. Class: expected; family: none. */ \
-    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE )
+    X( MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK, EXPECTED, NONE ) \
+    \
+    /** @brief ROCKETNET_COUNTER_SEND_FAILED: Counts datagrams the transport's socket dropped because the send call failed (ENOBUFS from a full interface queue, EAGAIN from a full send buffer, a refused destination); the socket counts each one (sdk/rocketnet_platform.cpp:80) and the transport reads the driver's send_failures into this counter when the counters are read (sdk/rocketnet_client_transport.cpp:2020, sdk/rocketnet_server_transport.cpp:2764); a driver without send_failures leaves it zero. Appended: indices are the contract. Unit: datagrams. Class: refusal; family: none. */ \
+    X( SEND_FAILED, REFUSAL, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

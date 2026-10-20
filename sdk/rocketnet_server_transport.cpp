@@ -2714,6 +2714,9 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         server_transport->io.operations->prefilter_counters( server_transport->io.instance, prefilter );
         rocketnet_counters_apply_prefilter( &server_transport->counters, prefilter );
     }
+    // SEND_FAILED is the driver's own cumulative count, assigned on read
+    if ( server_transport->io.operations && server_transport->io.operations->send_failures )
+        server_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = server_transport->io.operations->send_failures( server_transport->io.instance );
     return &server_transport->counters;
 }
 
