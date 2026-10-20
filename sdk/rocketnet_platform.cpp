@@ -4155,7 +4155,11 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     buffers[1].buf = (char*) overflow;
     buffers[1].len = sizeof(overflow);
 
-    const bool dual_stack = false;
+    // every windows ipv6 socket clears IPV6_V6ONLY at create (the setsockopt
+    // in rocketnet_platform_socket_create above), so it is dual
+    // stack and a mapped source is an ipv4 client.
+
+    const bool dual_stack = socket->ipv6;
 
     int result;
 receive_again:
