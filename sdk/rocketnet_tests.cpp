@@ -3833,12 +3833,24 @@ void rocketnet_test_replay_long_skip_clears_whole_window()
     memset( &replay, 0, sizeof(replay) );
 
     const uint64_t window_bits = ROCKETNET_REPLAY_WINDOW_BITS;
+    const int window_words = (int) ( ROCKETNET_REPLAY_WINDOW_BITS / 64 );
     for ( uint64_t sequence = 1; sequence <= window_bits; sequence++ )
         rocketnet_replay_advance( &replay, sequence );
+
+    // every bit of the ring is set before the skip, so the clear below cannot
+    // pass by the ring never having held anything
+    for ( int w = 0; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == ~(uint64_t) 0 );
 
     rocketnet_replay_advance( &replay, 3 * window_bits );
     for ( uint64_t sequence = 2 * window_bits + 1; sequence < 3 * window_bits; sequence++ )
         rocketnet_check( !rocketnet_replay_already_received( &replay, sequence ) );
+
+    // the full-window skip clears every word of the ring; the newest
+    // sequence's own bit is the only survivor
+    rocketnet_check( replay.window[0] == (uint64_t) 1 );
+    for ( int w = 1; w < window_words; w++ )
+        rocketnet_check( replay.window[w] == 0 );
 
     uint8_t encoded[ROCKETNET_ACK_BLOCK_MAX_BYTES];
     struct rocketnet_ack_block_t decoded;
@@ -14598,6 +14610,14 @@ void rocketnet_unit_prepare()
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
     }
     rocketnet_forbid_xdp_commit();
+    // the unit suite runs over the loopback driver with no sockets, so a
+    // transport pin in the environment must not reach it: the pin replaces
+    // the candidate list at create and the ladder falls through to a real
+    // driver. Both pins are cleared for the run, as posix_pair_create does
+    // around its creates (functional/posix_socket_errors.cpp). A case that
+    // tests pin handling itself sets and reads its own pins after this.
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
     if ( rocketnet_unit_environment == NULL )
         rocketnet_unit_environment = new rocketnet_test_environment_t();
 }
