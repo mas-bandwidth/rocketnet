@@ -112,6 +112,17 @@ verifying loopback scale up to 1000 concurrent clients across five pass criteria
 (`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
 `unreliable_integrity`, and `counters_agree`).
 
+The soak test runs the public API under load until stopped, or for a bound:
+
+    ./bin/soak --seconds 60
+    ./bin/soak 10000
+
+The examples build into `bin/` with everything else. Check and run them from
+the repository root ([examples/README.md](examples/README.md) lists them):
+
+    python3 tools/check_examples.py
+    python3 tools/run_examples.py --build build
+
 ### Test binaries and their tiers
 
 Every test binary is in exactly one tier. A unit binary opens no socket,
