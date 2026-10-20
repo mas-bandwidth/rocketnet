@@ -475,18 +475,11 @@ static int posix_count( const posix_cell_t * cell, int count )
     return count;
 }
 
-// posix_server_create_destroy_1000 runs 250 cycles on the gso and io_uring
-// cells. 1000 cycles took 24.9 s on each in one Debug suite on a 16-core
-// Linux member and 58.7 s with a second suite running beside it; another
-// 16-core member took 39.6 s alone and more than the 120 s case limit with
-// two suites at once. 250 cycles took 21.3 s to 23.4 s with two suites at
-// once on the first member, under a quarter of that limit. The counts are
-// compared after the first cycle and after the last, so a leak per cycle
-// still fails.
+// posix_server_create_destroy_1000 runs 1000 cycles on the gso and io_uring
+// cells. The counts are compared after the first cycle and after the last, so
+// a leak per cycle still fails.
 static int posix_server_create_destroy_count( const posix_cell_t * cell )
 {
-    if ( strcmp( cell->server_granted, "gso" ) == 0 || strcmp( cell->server_granted, "io_uring" ) == 0 )
-        return 250;
     return posix_count( cell, 1000 );
 }
 
