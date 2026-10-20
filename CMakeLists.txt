@@ -426,6 +426,11 @@ if(ROCKETNET_BUILD_TESTS)
     # every object, so it links in either order.
     set(ROCKETNET_UNIT_TRANSPORT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_loopback.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_SOURCE}")
+    # Included by the loopback translation unit, which compiles the server
+    # transport, so the driver-result cases can swap that transport's
+    # receive_batch. Not a second translation unit.
+    set(ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_driver_results_checked.cpp")
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_DRIVER_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1)
     if(WIN32)
