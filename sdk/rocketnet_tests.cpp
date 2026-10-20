@@ -3829,6 +3829,16 @@ void rocketnet_test_replay_long_skip_clears_whole_window()
         rocketnet_replay_advance( &replay, sequence );
 
     rocketnet_replay_advance( &replay, 3 * window_bits );
+
+    // every word of the ring is clear except the one bit 3 * window_bits sets:
+    // a full-window skip clears the whole ring (sdk/rocketnet_replay.cpp:62),
+    // so a clear narrowed to the low words leaves the first lap's bits above it
+    const uint64_t set_bit = ( 3 * window_bits ) % window_bits;
+    const size_t words = sizeof( replay.window ) / sizeof( replay.window[0] );
+    rocketnet_check( words * 64 == window_bits );
+    for ( size_t word = 0; word < words; word++ )
+        rocketnet_check( replay.window[word] == ( word == set_bit / 64 ? ( 1ULL << ( set_bit % 64 ) ) : 0ULL ) );
+
     for ( uint64_t sequence = 2 * window_bits + 1; sequence < 3 * window_bits; sequence++ )
         rocketnet_check( !rocketnet_replay_already_received( &replay, sequence ) );
 

@@ -276,11 +276,15 @@ static void server_transport_create_ex_reports_every_status()
 
     // S10 and S14: a fault-injecting allocator failing at each allocation in
     // turn yields OUT_OF_MEMORY, and once every allocation succeeds the create
-    // completes with ROCKETNET_STATUS_OK
+    // completes with ROCKETNET_STATUS_OK. max_clients 1 keeps the allocation
+    // sequence and shrinks each per-client block, so the ladder of up to 64
+    // creates stays far under the suite's per-case memory limit
+    // (test/suite_runner.h ROCKETNET_TEST_MAX_CASE_RSS_MB)
     {
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
         strcpy( config.driver, "loopback" );
+        config.max_clients = 1;
 
         int reached_success = 0;
         int out_of_memory = 0;

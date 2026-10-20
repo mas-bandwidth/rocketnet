@@ -16,10 +16,13 @@
 // blake2b-192(epk || server_pk)). Every key is a fixed test key from
 // sdk/rocketnet_test_vectors.h.
 //
-// Running the suite rewrites the vectors file from the inputs below, so
-// `git diff --exit-code test/connect_token_vectors.json` after a run proves
-// the committed file is what this code generates. No case reads a clock,
-// opens a socket or touches anything outside the repository's test/ dir.
+// A normal run compares the committed vectors file with the text the inputs
+// below generate, in memory, and writes nothing. Setting the environment
+// variable ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS to 1 rewrites the file
+// from the inputs first (vectors_regenerate_byte_identical), and
+// `git diff --exit-code test/connect_token_vectors.json` after that run proves
+// the committed file is what this code generates. No case reads a clock or
+// opens a socket, and only the regenerate run writes, inside test/.
 
 #include "test_unit_registry.h"
 
@@ -37,6 +40,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <string>
@@ -417,19 +421,10 @@ static std::vector<ctv_file_vector_t> ctv_load()
 // ---------------------------------------------------------------------------
 // the cases
 
-// the file is exactly what the inputs above mint; the run rewrites it (via a
-// rename, so a reader never sees half a file) and the committed copy must
-// already be byte identical
-static void vectors_regenerate_byte_identical()
+// writes the generated vectors file through a temporary and a rename, so a
+// reader never sees half a file; only the regenerate run calls it
+static void ctv_write_file( const std::string & path, const std::string & generated )
 {
-    std::string generated = ctv_generate_json();
-    std::string generated_again = ctv_generate_json();
-    rocketnet_unit_check( generated == generated_again );
-
-    std::string path = ctv_path();
-    std::string existing;
-    int existed = ctv_read_file( path, existing );
-
     std::string temp = path + ".tmp";
     FILE * file = rocketnet_test_fopen( temp, "wb" );
     rocketnet_unit_check( file != NULL );
@@ -444,6 +439,25 @@ static void vectors_regenerate_byte_identical()
 #else
     rocketnet_unit_check( rename( temp.c_str(), path.c_str() ) == 0 );
 #endif
+}
+
+// the file is exactly what the inputs above mint: the committed copy must be
+// byte identical to the generated text, compared in memory. Only with
+// ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS=1 is the file rewritten first;
+// a normal run writes nothing, so a read-only checkout passes
+static void vectors_regenerate_byte_identical()
+{
+    std::string generated = ctv_generate_json();
+    std::string generated_again = ctv_generate_json();
+    rocketnet_unit_check( generated == generated_again );
+
+    std::string path = ctv_path();
+    std::string existing;
+    int existed = ctv_read_file( path, existing );
+
+    const char * regenerate = getenv( "ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS" );
+    if ( regenerate != NULL && strcmp( regenerate, "1" ) == 0 )
+        ctv_write_file( path, generated );
 
     rocketnet_unit_check( existed );
     rocketnet_unit_check( existing == generated );
