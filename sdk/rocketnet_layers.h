@@ -1686,10 +1686,11 @@ uint32_t rocketnet_message_client_send( struct rocketnet_message_client_t * clie
 // counted no-op that returns 0.
 int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int * channel, const uint8_t ** data, int * bytes );
 
-// The batch form of the same queue: up to ROCKETNET_RECEIVE_BATCH_MESSAGES next
-// messages, valid until the next batch call or update and released by it. a
-// NULL client is a counted no-op that returns NULL.
-const struct rocketnet_received_messages_t * rocketnet_message_client_receive_messages( struct rocketnet_message_client_t * client );
+// The pumped batch form of the same queue: fills messages with up to
+// ROCKETNET_RECEIVE_BATCH_MESSAGES next messages and returns how many; views
+// valid until the next receive or update, which releases them. a NULL client
+// or messages is a counted no-op that returns 0.
+int rocketnet_message_client_receive_messages( struct rocketnet_message_client_t * client, struct rocketnet_message_batch_t * messages );
 
 // Copies this update's receipt list into out, up to capacity entries; returns
 // the copied count. Repeated calls see the same list until the next update.
@@ -1799,9 +1800,9 @@ int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * serv
 // none. a NULL server, data or bytes is a counted no-op that returns 0.
 int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int * client_index, int * channel, const uint8_t ** data, int * bytes );
 
-// The batch form of the same queue, each entry naming its sender's slot. a
-// NULL server is a counted no-op that returns NULL.
-const struct rocketnet_received_messages_t * rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server );
+// The pumped batch form of the same queue, each entry naming its sender's
+// slot. a NULL server or messages is a counted no-op that returns 0.
+int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * messages );
 
 // As rocketnet_message_client_receipts for one connected client slot. Invalid inputs return zero.
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity );

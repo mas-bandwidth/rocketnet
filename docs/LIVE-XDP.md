@@ -266,8 +266,8 @@ modes 1, 3, 4 and 7 run on channels 0 to 30, because channel 31 carries the
 progress reports and the HELLO (below and section 6). That is
 2 x (4 x 32 + 4 x 31) = 504 streams per connection. Each update, the
 receiver drains its one receive queue, every channel's messages, each naming
-the channel it was delivered on: `rocketnet_client_receive_messages` (the batch
-form) on a client, and the message layer's `rocketnet_message_server_receive`
+the channel it was delivered on: `rocketnet_client_receive_messages` (pumped)
+on a client, and the message layer's `rocketnet_message_server_receive`
 on the server, which releases every view before the next update
 (`client.c:437-535`, `server.c:656-667`).
 The receive channel is checked against the sender's channel byte. Codes 1,

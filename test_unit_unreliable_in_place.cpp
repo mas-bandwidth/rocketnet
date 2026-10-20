@@ -345,29 +345,29 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
     // it was delivered on
     for ( ;; )
     {
-        const rocketnet_received_messages_t * batch = rocketnet_message_server_receive_messages( pair->server );
-        check( batch != NULL );
-        if ( !batch || batch->num_messages == 0 )
+        rocketnet_message_batch_t batch;
+        const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
+        if ( count == 0 )
             break;
-        for ( int i = 0; i < batch->num_messages && server_got; i++ )
+        for ( int i = 0; i < batch.num_messages && server_got; i++ )
         {
             ip_received_t r;
-            r.channel = batch->channel[i];
-            r.bytes.assign( batch->data[i], batch->data[i] + batch->bytes[i] );
+            r.channel = batch.channel[i];
+            r.bytes.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
             server_got->push_back( r );
         }
     }
     for ( ;; )
     {
-        const rocketnet_received_messages_t * batch = rocketnet_message_client_receive_messages( pair->client );
-        check( batch != NULL );
-        if ( !batch || batch->num_messages == 0 )
+        rocketnet_message_batch_t batch;
+        const int count = rocketnet_message_client_receive_messages( pair->client, &batch );
+        if ( count == 0 )
             break;
-        for ( int i = 0; i < batch->num_messages && client_got; i++ )
+        for ( int i = 0; i < batch.num_messages && client_got; i++ )
         {
             ip_received_t r;
-            r.channel = batch->channel[i];
-            r.bytes.assign( batch->data[i], batch->data[i] + batch->bytes[i] );
+            r.channel = batch.channel[i];
+            r.bytes.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
             client_got->push_back( r );
         }
     }

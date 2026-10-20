@@ -107,15 +107,22 @@ int main( void )
         // next batch call or update releases a batch
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
-        const int slot = rocketnet_client_index( client );
-        const struct rocketnet_received_messages_t * batch;
-        while ( ( batch = rocketnet_server_receive_messages( server ) ) && batch->num_messages > 0 )
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_client_receive_messages( client, &incoming ) )
         {
-            for ( int i = 0; i < batch->num_messages; i++ )
+            for ( int i = 0; i < incoming.num_messages; i++ )
             {
-                if ( batch->client_index[i] == (uint64_t) slot && batch->channel[i] == 1 )
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+            }
+        }
+        const int slot = rocketnet_client_index( client );
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( server, &batch ) )
+        {
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                if ( batch.client_index[i] == (uint64_t) slot && batch.channel[i] == 1 )
                     reliable_received++;
             }
         }

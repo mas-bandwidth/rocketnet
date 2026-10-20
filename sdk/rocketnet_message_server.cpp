@@ -966,7 +966,7 @@ void rn_message_object_release( struct rn_message_object_t * object, const uint8
 // reset since the batch cleared its views already) is released.
 static void rn_message_object_release_batch( struct rn_message_object_t * object )
 {
-    for ( int n = 0; n < object->batch.num_messages; n++ )
+    for ( int n = 0; n < object->batch_count; n++ )
     {
         rn_message_connection_t * connection = &object->connections[object->batch_connection[n]];
         const uint32_t k = object->batch_entry[n];
@@ -976,33 +976,36 @@ static void rn_message_object_release_batch( struct rn_message_object_t * object
             connection->held--;
         }
     }
-    object->batch.num_messages = 0;
+    object->batch_count = 0;
 }
 
-const struct rocketnet_received_messages_t * rn_message_object_receive_messages( struct rn_message_object_t * object )
+int rn_message_object_receive_messages( struct rn_message_object_t * object, struct rocketnet_message_batch_t * out )
 {
-    // the batch form of the one queue (flow's batch handoff to the game): one
-    // call fills the arrays with up to ROCKETNET_RECEIVE_BATCH_MESSAGES next
-    // deliveries, in the order rn_message_object_receive hands them out
+    // the pumped receive of the one queue (flow's batch handoff to the game):
+    // the last call's entries are released, then out is filled with up to
+    // ROCKETNET_RECEIVE_BATCH_MESSAGES next deliveries, in the order
+    // rn_message_object_receive hands them out. The views point into the
+    // transport's batch or the receive ring, never copied
     rn_message_object_release_batch( object );
-    struct rocketnet_received_messages_t * batch = &object->batch;
-    while ( batch->num_messages < ROCKETNET_RECEIVE_BATCH_MESSAGES )
+    out->num_messages = 0;
+    while ( out->num_messages < ROCKETNET_RECEIVE_BATCH_MESSAGES )
     {
         int connection_index = 0;
         uint32_t entry = 0;
         const rn_delivery_t * delivery = rn_message_object_next( object, &connection_index, &entry );
         if ( !delivery )
             break;
-        const int n = batch->num_messages++;
+        const int n = out->num_messages++;
         object->batch_connection[n] = connection_index;
         object->batch_entry[n] = entry;
-        batch->client_index[n] = (uint64_t) connection_index;
-        batch->channel[n] = delivery->channel;
-        batch->reliability[n] = (enum rocketnet_reliability_t) delivery->code;
-        batch->bytes[n] = delivery->bytes;
-        batch->data[n] = delivery->data;
+        object->batch_count = out->num_messages;
+        out->client_index[n] = connection_index;
+        out->channel[n] = delivery->channel;
+        out->reliability[n] = (enum rocketnet_reliability_t) delivery->code;
+        out->bytes[n] = delivery->bytes;
+        out->data[n] = delivery->data;
     }
-    return batch;
+    return out->num_messages;
 }
 
 bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps )
@@ -1303,11 +1306,11 @@ int rocketnet_message_server_receive( struct rocketnet_message_server_t * server
     return rn_message_object_receive( &server->object, client_index, channel, data, bytes );
 }
 
-const struct rocketnet_received_messages_t * rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server )
+int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * messages )
 {
-    if ( !rocketnet_api_null_guard( server ) )
-        return NULL;
-    return rn_message_object_receive_messages( &server->object );
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( messages ) )
+        return 0;
+    return rn_message_object_receive_messages( &server->object, messages );
 }
 
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity )

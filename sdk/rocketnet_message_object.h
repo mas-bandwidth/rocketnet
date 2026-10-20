@@ -175,7 +175,7 @@ struct rn_message_object_t
     // ROCKETNET_RECEIVE_BATCH_MESSAGES of the same queue per call, released
     // together at the next batch call or update.
     int receive_connection;
-    struct rocketnet_received_messages_t batch;
+    int batch_count;                            // the entries the last receive handed out
     int32_t batch_connection[ROCKETNET_RECEIVE_BATCH_MESSAGES];
     uint32_t batch_entry[ROCKETNET_RECEIVE_BATCH_MESSAGES];
 
@@ -238,9 +238,10 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes );
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data );
 
-// The batch form over the same queue: releases the last batch, then hands out
-// up to ROCKETNET_RECEIVE_BATCH_MESSAGES next deliveries in queue order.
-const struct rocketnet_received_messages_t * rn_message_object_receive_messages( struct rn_message_object_t * object );
+// The batch form over the same queue: releases the last batch, then fills
+// out with up to ROCKETNET_RECEIVE_BATCH_MESSAGES next deliveries in queue
+// order and returns how many (out->num_messages too); 0 when none is pending.
+int rn_message_object_receive_messages( struct rn_message_object_t * object, struct rocketnet_message_batch_t * out );
 
 bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps );
 int rn_message_object_disconnect_reason( const struct rn_message_object_t * object, int index );

@@ -95,7 +95,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - Fill `struct rocketnet_client_config_t` with `rocketnet_client_default_config_sized(&client_config, sizeof(client_config))` (or `rocketnet_client_default_config(&client_config)`), call `rocketnet_client_create_sized` (or `rocketnet_client_create`), then call `rocketnet_client_connect(client, connect_token)` with a `ROCKETNET_CONNECT_TOKEN_BYTES`-byte connect token. The client connects using the token alone; the handshake begins on the first `rocketnet_client_update`.
 3. **Run the five-step frame loop in exact order every tick** (using the caller's monotonic `double time` in seconds):
    - **Step 1 — Update:** Call `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` first to pump the transport, process incoming packets and ACKs, and advance connection state.
-   - **Step 2 — Receive and release:** Drain the one receive queue with `rocketnet_client_receive_message` / `rocketnet_server_receive_message`, as RakNet's `Receive` does: every channel's messages in one queue, and on the server one queue across all clients, each message naming its sender's client index (`sdk/rocketnet.h:1105`, `sdk/rocketnet.h:1294`). Copy or process its payload, and release the view in the **same** frame before the next update with `rocketnet_client_release_message` / `rocketnet_server_release_message`. The batch form, `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`, hands out the same queue in the same order as arrays of up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` entries per call, with no call per message and no release call: the next batch call or update releases the batch (`sdk/rocketnet.h:1388`, `sdk/rocketnet.h:1391`). Read any ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
+   - **Step 2 — Receive:** Pump `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages` until it returns false, as RakNet's `Receive` but one call per batch: each call fills the caller's `struct rocketnet_message_batch_t` with up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` messages from one queue holding every channel's messages, and on the server one queue across all clients; each message names its sender's `client_index` (on a client, index = 0, the server), its channel, its wire reliability, its length and a pointer to its bytes in the library's storage, never copied (`sdk/rocketnet.h:1109`, `sdk/rocketnet.h:1300`). The pointers are valid until the next receive call or update of the same object, whichever comes first, which releases them; there is no release call. Copy what is kept longer. Read any ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`). To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
@@ -206,28 +206,39 @@ int main( void )
 
         const uint8_t * data = NULL;
         int bytes = 0;
-        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( client, &batch ) )
         {
-            if ( bytes == 4 && memcmp( data, "pong", 4 ) == 0 )
-                client_received_reply = 1;
-            rocketnet_client_release_message( client, data );
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+                if ( bytes == 4 && memcmp( data, "pong", 4 ) == 0 )
+                    client_received_reply = 1;
+            }
         }
 
         uint64_t slot = 0;    /* the sender's client index */
-        while ( rocketnet_server_receive_message( server, &slot, &data, &bytes ) )
+        while ( rocketnet_server_receive_messages( server, &batch ) )
         {
-            if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
-                server_received_and_replied = 1;
-            rocketnet_server_release_message( server, data );
-
-            if ( server_received_and_replied )
+            for ( int i = 0; i < batch.num_messages; i++ )
             {
-                uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-                if ( !reply )
-                    return 1;
-                memcpy( reply, "pong", 4 );
-                if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
-                    return 1;
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+                slot = (uint64_t) batch.client_index[i];
+                if ( bytes == 4 && memcmp( data, "ping", 4 ) == 0 )
+                    server_received_and_replied = 1;
+
+
+                if ( server_received_and_replied )
+                {
+                    uint8_t * reply = rocketnet_server_start_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+                    if ( !reply )
+                        return 1;
+                    memcpy( reply, "pong", 4 );
+                    if ( rocketnet_server_finish_message( server, slot, 4 ) == 0 )
+                        return 1;
+                }
             }
         }
 
@@ -328,8 +339,8 @@ RocketNet never clamps invalid configuration or silently ignores API misuse; eve
   - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.
   - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
   - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `ROCKETNET_STATUS_SERVER_NOT_STOPPED`, `ROCKETNET_STATUS_FLOW_ID_RESERVED`: lifecycle and destination refusals from `rocketnet_client_connect`, `rocketnet_server_start`, and server sends.
-- **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start_message`, `rocketnet_server_start_message`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish_message`, `rocketnet_server_finish_message`, `rocketnet_client_receive_message`, `rocketnet_server_receive_message`) return `0` when refused. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` return `enum rocketnet_status_t` like the lifecycle calls: `0` is `ROCKETNET_STATUS_OK` (the new rate took), and a refusal is a nonzero status (`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` above `ROCKETNET_SEND_BUDGET_MAX_KBPS`, `ROCKETNET_STATUS_INVALID_ARGUMENT` for a NULL handle or a connection that is not CONNECTED, client handshake states and a server slot with no CONNECTED client included, `ROCKETNET_STATUS_FLOW_ID_RESERVED` for a server flow id). API misuse that the library records increments the process-wide counter returned by `rocketnet_api_misuse_count()`; the comment on `rocketnet_api_misuse_count` in sdk/rocketnet.h is the full list. It includes a `NULL` handle passed to a call, a server start or finish to an index at or past `max_clients`, releasing a view that is not held, a destination id with `ROCKETNET_FLOW_ID_BIT` set, an in-place start left open across `update` or `send_packets`, and lifecycle or allocator misuse (a create before `rocketnet_init`, a repeated server start, a refused allocator replacement, an unusable update time). A send on a connection that is not CONNECTED (a client in any state but `ROCKETNET_CLIENT_STATE_CONNECTED`, a server index below `max_clients` with no CONNECTED client, a stopped server) is a normal drop, not misuse: it is counted in `ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS` or `ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS`. A second `start`, an out-of-range channel or an oversized message is counted in the library's internal send-refusal counters instead, not in `rocketnet_api_misuse_count()`; a bad `bytes_written` is refused with `0` and leaves the start pending, with no counter of its own.
-- **Update return codes:** `rocketnet_client_update` and `rocketnet_server_update` return `ROCKETNET_UPDATE_OK` (`0`), or `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` (`-1`) if the caller failed to release a received message view before the next update.
+- **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start_message`, `rocketnet_server_start_message`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish_message`, `rocketnet_server_finish_message`, `rocketnet_client_receive_messages`, `rocketnet_server_receive_messages`) return `0` or false when refused. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` return `enum rocketnet_status_t` like the lifecycle calls: `0` is `ROCKETNET_STATUS_OK` (the new rate took), and a refusal is a nonzero status (`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE` above `ROCKETNET_SEND_BUDGET_MAX_KBPS`, `ROCKETNET_STATUS_INVALID_ARGUMENT` for a NULL handle or a connection that is not CONNECTED, client handshake states and a server slot with no CONNECTED client included, `ROCKETNET_STATUS_FLOW_ID_RESERVED` for a server flow id). API misuse that the library records increments the process-wide counter returned by `rocketnet_api_misuse_count()`; the comment on `rocketnet_api_misuse_count` in sdk/rocketnet.h is the full list. It includes a `NULL` handle passed to a call, a server start or finish to an index at or past `max_clients`, releasing a view that is not held, a destination id with `ROCKETNET_FLOW_ID_BIT` set, an in-place start left open across `update` or `send_packets`, and lifecycle or allocator misuse (a create before `rocketnet_init`, a repeated server start, a refused allocator replacement, an unusable update time). A send on a connection that is not CONNECTED (a client in any state but `ROCKETNET_CLIENT_STATE_CONNECTED`, a server index below `max_clients` with no CONNECTED client, a stopped server) is a normal drop, not misuse: it is counted in `ROCKETNET_CLIENT_COUNTER_NOT_CONNECTED_DROPS` or `ROCKETNET_SERVER_COUNTER_NOT_CONNECTED_DROPS`. A second `start`, an out-of-range channel or an oversized message is counted in the library's internal send-refusal counters instead, not in `rocketnet_api_misuse_count()`; a bad `bytes_written` is refused with `0` and leaves the start pending, with no counter of its own.
+- **Update return codes:** `rocketnet_client_update` and `rocketnet_server_update` return `ROCKETNET_UPDATE_OK` (`0`), or `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` (`-1`) when a view of the internal message layer is held across the update; the public receive's batch is released by the update, so through the public API the update returns `ROCKETNET_UPDATE_OK`.
 - **Client states (`enum rocketnet_client_state_t`, `rocketnet_client_state`, `rocketnet_client_state_name`):**
   - Progress states: `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), `ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE` (`1`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST` (`2`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE` (`3`), `ROCKETNET_CLIENT_STATE_CONNECTED` (`4`).
   - Negative terminal failure states: `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`).
@@ -349,7 +360,7 @@ RocketNet never clamps invalid configuration or silently ignores API misuse; eve
 
 ## Threading rules
 
-- **Main-thread ownership:** A `rocketnet_client_t` or `rocketnet_server_t` instance is owned by one caller thread for its frame loop. Run `rocketnet_client_update` / `rocketnet_server_update`, `rocketnet_client_receive_message` / `rocketnet_server_receive_message`, `rocketnet_client_release_message` / `rocketnet_server_release_message`, `rocketnet_client_start_message` / `rocketnet_server_start_message`, `rocketnet_client_finish_message` / `rocketnet_server_finish_message`, `rocketnet_client_abort_message` / `rocketnet_server_abort_message`, `rocketnet_client_send_packets` / `rocketnet_server_send_packets`, `rocketnet_client_receipts` / `rocketnet_server_receipts`, and `rocketnet_client_disconnect` / `rocketnet_server_disconnect_client` sequentially on that owning thread—never concurrently on the same object.
+- **Main-thread ownership:** A `rocketnet_client_t` or `rocketnet_server_t` instance is owned by one caller thread for its frame loop. Run `rocketnet_client_update` / `rocketnet_server_update`, `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`, `rocketnet_client_start_message` / `rocketnet_server_start_message`, `rocketnet_client_finish_message` / `rocketnet_server_finish_message`, `rocketnet_client_abort_message` / `rocketnet_server_abort_message`, `rocketnet_client_send_packets` / `rocketnet_server_send_packets`, `rocketnet_client_receipts` / `rocketnet_server_receipts`, and `rocketnet_client_disconnect` / `rocketnet_server_disconnect_client` sequentially on that owning thread—never concurrently on the same object.
 - **What the background I/O thread does:** By default (`step_driven == 0`), socket drivers run background I/O threads that pull UDP datagrams off the NIC, decrypt and authenticate packets off the main thread, and drain staged outgoing batches when `rocketnet_client_send_packets` / `rocketnet_server_send_packets` flushes them. The caller thread never touches locks during message reads or writes; handoff happens inside `update` and `send_packets`.
 - **Step-driven client mode (`step_driven`):** Setting `client_config.step_driven = 1` (or `ROCKETNET_CLIENT_STEP_DRIVEN=1` in the environment) disables the client's background I/O thread. The client then runs its socket/transport receive step inside `rocketnet_client_update` and its send step inside `rocketnet_client_send_packets` directly on the caller's thread. Use `step_driven = 1` in deterministic simulations, single-threaded harnesses, or when the host engine manages every thread explicitly.
 
@@ -365,7 +376,7 @@ RocketNet never clamps invalid configuration or silently ignores API misuse; eve
 
 ## Common mistakes
 
-1. **Holding a received message pointer across `update`:** The `const uint8_t *` returned by `rocketnet_client_receive_message` or `rocketnet_server_receive_message` is a zero-copy view valid only until the next `update`. Failing to call `rocketnet_client_release_message` or `rocketnet_server_release_message` before the next `rocketnet_client_update` / `rocketnet_server_update` triggers an assert in debug builds, returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in release builds, and increments `ROCKETNET_CLIENT_COUNTER_MESSAGES_NOT_RELEASED` / `ROCKETNET_SERVER_COUNTER_MESSAGES_NOT_RELEASED`.
+1. **Holding a received message pointer past the next receive or `update`:** The `data` pointers of a `struct rocketnet_message_batch_t` filled by `rocketnet_client_receive_messages` or `rocketnet_server_receive_messages` point into the library's storage and are valid only until the next receive call or the next `rocketnet_client_update` / `rocketnet_server_update` of the same object, whichever comes first; that call releases them. Copy anything kept longer.
 2. **Calling a second `start` before `finish` or `abort`:** Only one `rocketnet_client_start_message` (per client) or `rocketnet_server_start_message` (per server) may be pending at a time. Calling `start` again while one is open returns `NULL` and leaves the first reservation open; the refusal is counted inside the library (as a refused send), not in `rocketnet_api_misuse_count()`.
 3. **Keeping the `start` pointer after `finish` or `abort`:** Once `rocketnet_client_finish_message` / `rocketnet_server_finish_message` or `rocketnet_client_abort_message` / `rocketnet_server_abort_message` is called, the buffer belongs to the transport queue or free pool. Never read or write through the pointer after committing or aborting.
 4. **Passing a dishonest maximum to `start` or writing past it:** `start` reserves room for `bytes` bytes (`1 .. max_message_bytes`). Writing past `bytes` corrupts adjacent region memory; passing `bytes_written < 1` or `bytes_written > bytes` to `finish` is refused (`0` returned, `start` stays pending).

@@ -486,17 +486,17 @@ static void mo_drain_server( mo_pair_t * pair, std::vector<mo_received_t> * out 
     // entry names its sender's slot and the channel it was delivered on
     for ( ;; )
     {
-        const rocketnet_received_messages_t * batch = rocketnet_message_server_receive_messages( pair->server );
-        check( batch != NULL );
-        if ( !batch || batch->num_messages == 0 )
+        rocketnet_message_batch_t batch;
+        const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
+        if ( count == 0 )
             break;
-        for ( int i = 0; i < batch->num_messages; i++ )
+        for ( int i = 0; i < batch.num_messages; i++ )
         {
-            check( batch->client_index[i] < (uint64_t) MO_MAX_SLOTS );
+            check( batch.client_index[i] >= 0 && batch.client_index[i] < MO_MAX_SLOTS );
             mo_received_t r;
-            r.slot = (int) batch->client_index[i];
-            r.channel = batch->channel[i];
-            r.bytes.assign( batch->data[i], batch->data[i] + batch->bytes[i] );
+            r.slot = (int) batch.client_index[i];
+            r.channel = batch.channel[i];
+            r.bytes.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
             if ( out )
                 out->push_back( r );
         }
@@ -507,17 +507,17 @@ static void mo_drain_client( rocketnet_message_client_t * client, std::vector<mo
 {
     for ( ;; )
     {
-        const rocketnet_received_messages_t * batch = rocketnet_message_client_receive_messages( client );
-        check( batch != NULL );
-        if ( !batch || batch->num_messages == 0 )
+        rocketnet_message_batch_t batch;
+        const int count = rocketnet_message_client_receive_messages( client, &batch );
+        if ( count == 0 )
             break;
-        for ( int i = 0; i < batch->num_messages; i++ )
+        for ( int i = 0; i < batch.num_messages; i++ )
         {
-            check( batch->client_index[i] == 0 );
+            check( batch.client_index[i] == 0 );
             mo_received_t r;
             r.slot = 0;
-            r.channel = batch->channel[i];
-            r.bytes.assign( batch->data[i], batch->data[i] + batch->bytes[i] );
+            r.channel = batch.channel[i];
+            r.bytes.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
             if ( out )
                 out->push_back( r );
         }
@@ -2789,18 +2789,31 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
         const uint8_t * data = NULL;
         int bytes = 0;
         uint64_t sender = ~0ULL;
-        while ( rocketnet_server_receive_message( world->server, &sender, &data, &bytes ) )
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_server_receive_messages( world->server, &batch ) )
         {
-            check( sender == 0 );
-            check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
-            rocketnet_server_release_message( world->server, data );
-            at_server++;
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+                sender = batch.client_index[i];
+                check( sender == 0 );
+                check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
+
+                at_server++;
+            }
         }
-        while ( rocketnet_client_receive_message( c, &data, &bytes ) )
+        struct rocketnet_message_batch_t incoming;
+        while ( rocketnet_client_receive_messages( c, &incoming ) )
         {
-            check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_client );
-            rocketnet_client_release_message( c, data );
-            at_client++;
+            for ( int i = 0; i < incoming.num_messages; i++ )
+            {
+                data = incoming.data[i];
+                bytes = incoming.bytes[i];
+                check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_client );
+
+                at_client++;
+            }
         }
     }
     return at_server == want && at_client == want;

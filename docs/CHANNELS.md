@@ -1297,8 +1297,8 @@ dropped at start message: `NULL`, counted once in `MESSAGE_SEND_NOT_CONNECTED`
 tla/ClientSession.tla DropSend); the server drops a send to a slot that is not
 CONNECTED the same way. Only the CONFIG control record, announced at create, is
 held, unnumbered, until CONNECTED. One client object makes one connection, like the
-transport. The client receives with `rocketnet_client_receive_message`, RakNet's
-`Receive`: one queue holding every channel's messages. CONNECTED is emitted
+transport. The client receives with `rocketnet_client_receive_messages`, RakNet's
+`Receive` pumped: one queue holding every channel's messages. CONNECTED is emitted
 when the transport first reports state 4. DISCONNECTED is emitted when the
 transport leaves state 4, or when the endpoint errors, in which case the
 object calls `rocketnet_client_disconnect`.
@@ -1331,25 +1331,25 @@ header; the internal transport and message layers are in
   its receipt serial, nonzero. `abort` gives the room back, and `send` is the
   copying convenience. The one
   copy on the path is THE COPIES (a), record to frame, in layer 6's writer.
-- **The receive.** One queue, as RakNet's `Receive`: a client's holds every
-  channel's messages, and a server's holds every client's, each message naming
-  its sender's client index. `rocketnet_client_receive_message` or
-  `rocketnet_server_receive_message` hands out the queue's next message as a
-  const view and a length; `rocketnet_client_release_message` or
-  `rocketnet_server_release_message` gives it back. The queue is the update's
-  deliveries connection by connection in index order, each connection's in its
-  delivery order, never filtered by channel
+- **The receive.** One queue, as RakNet's `Receive`, pumped: a client's holds
+  every channel's messages, and a server's holds every client's.
+  `rocketnet_client_receive_messages` or `rocketnet_server_receive_messages`
+  fills the caller's `struct rocketnet_message_batch_t` with up to
+  `ROCKETNET_RECEIVE_BATCH_MESSAGES` next messages, each naming its sender's
+  `client_index` (index = 0, the server, on a client), its channel, its wire
+  reliability, its length and a pointer to its bytes, never copied, and
+  returns true; false when nothing is pending. The caller pumps it until
+  false, with no per-update cap (`sdk/rocketnet_message_server.cpp:982-1009`).
+  The queue is the update's deliveries connection by connection in index
+  order, each connection's in its delivery order, never filtered by channel
   (`sdk/rocketnet_message_server.cpp:870-896`): ordered messages keep send
   order within their channel and sender, and sequenced messages never go
-  backwards on theirs. The batch form, `rocketnet_client_receive_messages` or
-  `rocketnet_server_receive_messages`, hands out the same queue in the same
-  order as arrays of up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` entries per call,
-  each naming its sender, channel, wire reliability, length and view; the next
-  batch call or update releases the batch
-  (`sdk/rocketnet_message_server.cpp:982-1006`). Every view
-  is released before the next update: update with one held asserts in a debug
-  build and returns `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build,
-  counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
+  backwards on theirs. The pointers are valid until the next receive call or
+  update, which releases them; there is no release call. The message layer's
+  own one-at-a-time receive (sdk/rocketnet_layers.h) keeps its release: an
+  update with one of its views held asserts in a debug build and returns
+  `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` in a release build, counted as
+  `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
   The views are taken back either way, so memory never grows from a held view.
 - **The send's channel** is RakNet's ordering channel: the types that are
   neither ordered nor sequenced (UNRELIABLE, RELIABLE and their receipt types)
@@ -1429,14 +1429,13 @@ ends:
 const uint8_t * data = NULL;
 int bytes = 0;
 rocketnet_client_update( client, time );                  /* 1. packets in */
-for ( ;; )                                                /* 2. receive and release */
+struct rocketnet_message_batch_t batch;                   /* 2. receive, a batch per call */
+while ( rocketnet_client_receive_messages( client, &batch ) )
 {
-    const uint8_t * view = NULL;
-    int view_bytes = 0;
-    if ( !rocketnet_client_receive_message( client, &view, &view_bytes ) )
-        break;
-    /* process view */
-    rocketnet_client_release_message( client, view );
+    for ( int i = 0; i < batch.num_messages; i++ )
+    {
+        /* process batch.data[i], batch.bytes[i] */
+    }
 }
 /* 3. run the game simulation for this frame */
 uint8_t * out = rocketnet_client_start_message( client, channel, ROCKETNET_RELIABILITY_UNRELIABLE, (int) bytes ); /* 4. queue */
@@ -1486,10 +1485,10 @@ study's §13 is outside RocketNet's library deliverable. The native C API
 covers the following protocol needs:
 
 - RakNet's `Send` maps to `rocketnet_client_start_message`/`rocketnet_client_finish_message`, or the server forms, which return a nonzero serial.
-- `Receive` and `DeallocatePacket` become `rocketnet_client_receive_message` and
-  `rocketnet_client_release_message`, or the server forms, whose one queue
-  across all clients names each message's sender in `client_index` as
-  `Packet::systemAddress` does.
+- `Receive` and `DeallocatePacket` become `rocketnet_client_receive_messages`,
+  or the server form, pumped until false: one call fills a batch, whose
+  `client_index` names each message's sender as `Packet::systemAddress` does,
+  and the next receive or update releases it.
 - Receipts and connection notices are lists. A consumer adapter can merge them into
   RakNet's single stream, so the interleaving I17 describes is reproduced above
   this layer.

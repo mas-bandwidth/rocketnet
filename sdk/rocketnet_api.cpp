@@ -737,41 +737,15 @@ void rocketnet_client_abort_message( struct rocketnet_client_t * client )
     rocketnet_message_client_abort( client->connection );
 }
 
-// the batch a stopped server or a client with no connection hands out: no messages
-static const struct rocketnet_received_messages_t rn_received_messages_empty = {};
 
-int rocketnet_client_receive_message( struct rocketnet_client_t * client, const uint8_t ** data, int * bytes )
+bool rocketnet_client_receive_messages( struct rocketnet_client_t * client, struct rocketnet_message_batch_t * messages )
 {
-    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
-        return 0;
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( messages ) )
+        return false;
+    messages->num_messages = 0;
     if ( !client->connection )
-    {
-        *data = NULL;
-        *bytes = 0;
-        return 0;
-    }
-    return rocketnet_message_client_receive( client->connection, NULL, data, bytes );
-}
-
-const struct rocketnet_received_messages_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client )
-{
-    if ( !rocketnet_api_null_guard( client ) )
-        return NULL;
-    if ( !client->connection )
-        return &rn_received_messages_empty;
-    return rocketnet_message_client_receive_messages( client->connection );
-}
-
-void rocketnet_client_release_message( struct rocketnet_client_t * client, const uint8_t * data )
-{
-    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( data ) )
-        return;
-    if ( !client->connection )
-    {
-        rocketnet_api_misuse_record();
-        return;
-    }
-    rocketnet_message_client_release( client->connection, data );
+        return false;
+    return rocketnet_message_client_receive_messages( client->connection, messages ) > 0;
 }
 
 int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity )
@@ -1471,41 +1445,14 @@ void rocketnet_server_abort_message( struct rocketnet_server_t * server, uint64_
     rocketnet_message_server_abort( rn_server( server ), slot );
 }
 
-int rocketnet_server_receive_message( struct rocketnet_server_t * server, uint64_t * client_index, const uint8_t ** data, int * bytes )
+bool rocketnet_server_receive_messages( struct rocketnet_server_t * server, struct rocketnet_message_batch_t * messages )
 {
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( client_index ) || !rocketnet_api_null_guard( data ) || !rocketnet_api_null_guard( bytes ) )
-        return 0;
-    *client_index = 0;
-    *data = NULL;
-    *bytes = 0;
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( messages ) )
+        return false;
+    messages->num_messages = 0;
     if ( !server->running )
-        return 0;
-    int slot = 0;
-    if ( !rocketnet_message_server_receive( rn_server( server ), &slot, NULL, data, bytes ) )
-        return 0;
-    *client_index = (uint64_t) slot;                    // the slot is the client index (rn_server_slot)
-    return 1;
-}
-
-const struct rocketnet_received_messages_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server )
-{
-    if ( !rocketnet_api_null_guard( server ) )
-        return NULL;
-    if ( !server->running )
-        return &rn_received_messages_empty;
-    return rocketnet_message_server_receive_messages( rn_server( server ) );
-}
-
-void rocketnet_server_release_message( struct rocketnet_server_t * server, const uint8_t * data )
-{
-    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( data ) )
-        return;
-    if ( !server->running )
-    {
-        rocketnet_api_misuse_record();
-        return;
-    }
-    rocketnet_message_server_release( rn_server( server ), data );
+        return false;
+    return rocketnet_message_server_receive_messages( rn_server( server ), messages ) > 0;
 }
 
 int rocketnet_server_receipts( struct rocketnet_server_t * server, uint64_t client_index, struct rocketnet_receipt_t * out, int capacity )

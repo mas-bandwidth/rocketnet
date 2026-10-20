@@ -226,11 +226,11 @@ int main( int argc, char ** argv ) {
                 // (2) receive every received message, in batches from the one
                 // queue: each entry names its channel, and the next batch
                 // call or update releases the batch
-                const struct rocketnet_received_messages_t * batch;
-                while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) && batch->num_messages > 0 ) {
-                    for ( int m = 0; m < batch->num_messages; m++ ) {
-                        const int ch = batch->channel[m];
-                        bool ok = soak_check_msg( batch->data[m], batch->bytes[m], seed, (uint64_t) c, ch, &s2c[c], &corrupt, &gaps );
+                struct rocketnet_message_batch_t batch;
+                while ( rocketnet_client_receive_messages( clients[c], &batch ) ) {
+                    for ( int m = 0; m < batch.num_messages; m++ ) {
+                        const int ch = batch.channel[m];
+                        bool ok = soak_check_msg( batch.data[m], batch.bytes[m], seed, (uint64_t) c, ch, &s2c[c], &corrupt, &gaps );
                         CHECK( ok );
                         if ( ch == 1 ) recv_rel++; else recv_seq++;
                     }
@@ -263,13 +263,13 @@ int main( int argc, char ** argv ) {
             CHECK( rocketnet_server_update( server, sim_time ) == ROCKETNET_UPDATE_OK );
             // (2) server receive, in batches from the one queue across every
             // client: each entry names its sender and its channel
-            const struct rocketnet_received_messages_t * batch;
-            while ( ( batch = rocketnet_server_receive_messages( server ) ) && batch->num_messages > 0 ) {
-                for ( int m = 0; m < batch->num_messages; m++ ) {
-                    CHECK( batch->client_index[m] < (uint64_t) num_clients );
-                    const int c = index_client[batch->client_index[m]];
-                    const int ch = batch->channel[m];
-                    bool ok = soak_check_msg( batch->data[m], batch->bytes[m], seed, (uint64_t) c, ch, &c2s[c], &corrupt, &gaps );
+            struct rocketnet_message_batch_t batch;
+            while ( rocketnet_server_receive_messages( server, &batch ) ) {
+                for ( int m = 0; m < batch.num_messages; m++ ) {
+                    CHECK( batch.client_index[m] >= 0 && batch.client_index[m] < num_clients );
+                    const int c = index_client[batch.client_index[m]];
+                    const int ch = batch.channel[m];
+                    bool ok = soak_check_msg( batch.data[m], batch.bytes[m], seed, (uint64_t) c, ch, &c2s[c], &corrupt, &gaps );
                     CHECK( ok );
                     if ( ch == 1 ) recv_rel++; else recv_seq++;
                 }

@@ -50,17 +50,31 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
         const uint8_t * data = NULL;
         int bytes = 0;
 
-        while ( rocketnet_client_receive_message( client, &data, &bytes ) )
-            rocketnet_client_release_message( client, data );
+        struct rocketnet_message_batch_t batch;
+        while ( rocketnet_client_receive_messages( client, &batch ) )
+        {
+            for ( int i = 0; i < batch.num_messages; i++ )
+            {
+                data = batch.data[i];
+                bytes = batch.bytes[i];
+            }
+        }
 
         {
             uint64_t sender = 0;
-            while ( rocketnet_server_receive_message( server, &sender, &data, &bytes ) )
+            struct rocketnet_message_batch_t incoming;
+            while ( rocketnet_server_receive_messages( server, &incoming ) )
             {
-                printf( "server received: %.*s\n", bytes, (const char*) data );
-                rocketnet_server_release_message( server, data );
-                if ( received )
-                    ( *received )++;
+                for ( int i = 0; i < incoming.num_messages; i++ )
+                {
+                    data = incoming.data[i];
+                    bytes = incoming.bytes[i];
+                    sender = incoming.client_index[i];
+                    printf( "server received: %.*s\n", bytes, (const char*) data );
+
+                    if ( received )
+                        ( *received )++;
+                }
             }
         }
 
