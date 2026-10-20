@@ -531,7 +531,7 @@
     /* PATH_LOSS: a lost fragment loses its whole payload, by design. */ \
     /** @brief ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED: Counts fragmented payloads abandoned after a fragment is lost or reordered. Unit: occurrences. Class: path_loss; family: none. */ \
     X( FRAGMENT_PAYLOAD_ABANDONED, PATH_LOSS, NONE ) \
-    /** @brief ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL: Counts reassembled payloads deferred because the receive batch is full. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL: Counts reassembled payloads dropped because the update's receive batch is full. Unit: occurrences. Class: refusal; family: none. */ \
     X( FRAGMENT_PAYLOAD_BATCH_FULL, REFUSAL, NONE ) \
     \
     /** @brief ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED: Counts incoming client fragment packets counted before their outcome is classified. Unit: occurrences. Class: arrival; family: none. */ \
@@ -573,7 +573,7 @@
     X( CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED, EXPECTED, NONE ) \
     /** @brief ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED: Counts client fragmented payloads abandoned after a fragment is lost or reordered. Unit: occurrences. Class: path_loss; family: none. */ \
     X( CLIENT_FRAGMENT_PAYLOAD_ABANDONED, PATH_LOSS, NONE ) \
-    /** @brief ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL: Counts client reassembled payloads deferred because the receive batch is full. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL: Counts client reassembled payloads dropped because the update's receive batch is full. Unit: occurrences. Class: refusal; family: none. */ \
     X( CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL, REFUSAL, NONE ) \
     \
     /* the send side: a payload requested above the wire's capacity found */ \
@@ -666,7 +666,7 @@
     X( MESSAGE_DUPLICATE, PATH_LOSS, NONE ) \
     /* Numbering met either the count or ring bound (CHANNELS 6.2). Count */ \
     /* once per stall, even when the scheduler retries the same head. */ \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL: Counts send numbering stalls caused by a full reliable receive window. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL: Counts reliable send numbering stalls because the sender's own send window is full (its message count bound or its ring byte bound); counted once per stall, not per retry. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_WINDOW_STALL, REFUSAL, NONE ) \
     \
     /* Layer 3 sent-packet map and resend FIFO (docs/CHANNELS.md 6.4, 15.1): */ \
@@ -686,7 +686,7 @@
     /* Exhaust). Counted once per exhausted connection, on the owner's */ \
     /* counters, beside the refusal's own counter (MESSAGE_SEND_STORE_FULL or */ \
     /* MESSAGE_SEND_QUEUE_FULL). appended: indices are the contract. */ \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED: Counts connections closed after their message memory region is exhausted. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED: Counts the exhaustion of a connection's message memory region once, plus each send refused while the region stays exhausted; an exhausted connection is then disconnected. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_MEMORY_EXHAUSTED, REFUSAL, NONE ) \
     \
     /* Layer 4's dispatch (docs/CHANNELS.md 7.2, 7.3, 7.4, 7.5): a send refused */ \
