@@ -844,8 +844,7 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
 // to, in the first round if any, else in the second; with no refusal the start
 // stays. A capacity of K frames per update so reaches every connection with a
 // send waiting within ceil(N / K) updates of N connections. A refused plan
-// writes nothing and its reliable records stay due: a capacity below the
-// connection count slows each connection down and disconnects none. Any
+// writes nothing and its reliable records stay due (rn_message_connection_write). Any
 // refusal in an update, here or at an in-place start, sets send_constrained
 // for the next update, which sends every unreliable message through this pass.
 
