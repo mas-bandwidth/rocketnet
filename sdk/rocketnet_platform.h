@@ -463,6 +463,30 @@ void rocketnet_platform_socket_fail_next_sends( struct rocketnet_platform_socket
 int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t ** sockets, int max_sockets );
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+#if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+struct sockaddr_storage;
+/**
+ * @brief Test-only receive hook: one datagram per call.
+ *
+ * Writes the datagram into packet_data (at most max_packet_size bytes) and its
+ * source into from, and returns the datagram size; -1 reads as "socket drained".
+ */
+typedef int (*rocketnet_platform_receive_hook_t)( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from );
+
+/**
+ * @brief Test-only seam: feeds one socket's single-packet receive from a hook.
+ *
+ * Compiled into the unit suite's hook library only. While set, each read in
+ * rocketnet_platform_socket_receive_packet on this socket calls the hook in
+ * place of the kernel; other sockets read the kernel. A NULL hook clears it.
+ * @param socket Socket the hook applies to.
+ * @param hook Datagram source, or NULL to clear.
+ * @param user Passed to the hook.
+ * @return None.
+ */
+void rocketnet_platform_socket_set_receive_hook( struct rocketnet_platform_socket_t * socket, rocketnet_platform_receive_hook_t hook, void * user );
+#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+
 // the name of the pump path live behind the seam ("portable", "msgx"), for
 // logging and for tests that pin the degradation contract
 

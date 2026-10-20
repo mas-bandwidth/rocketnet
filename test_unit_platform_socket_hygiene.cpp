@@ -18,6 +18,11 @@
 #include <stdint.h>
 #include <string.h>
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <sys/time.h>
 #include <sys/socket.h>
@@ -110,7 +115,118 @@ static void platform_socket_hygiene_descriptor_valid()
     rocketnet_unit_check( !rocketnet_platform_socket_handle_is_valid( -1 ) );
 }
 
+// The single-packet receive path drops a refused source and reads the next
+// datagram (goto receive_again in each rocketnet_platform_socket_receive_packet
+// in sdk/rocketnet_platform.cpp), so spoofed chaff never reads as "socket
+// drained". The receive seam feeds scripted datagrams in place of the kernel;
+// the socket object has no descriptor and nothing is opened.
+
+struct platform_socket_hygiene_datagram_t
+{
+    uint8_t addr[16];
+    uint16_t port;
+    const char * payload;
+};
+
+struct platform_socket_hygiene_script_t
+{
+    const platform_socket_hygiene_datagram_t * datagrams;
+    int count;
+    int calls;
+};
+
+static int platform_socket_hygiene_scripted_receive( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from )
+{
+    platform_socket_hygiene_script_t * script = (platform_socket_hygiene_script_t*) user;
+    const int index = script->calls++;
+    if ( index >= script->count )
+        return -1;
+    const platform_socket_hygiene_datagram_t * datagram = &script->datagrams[index];
+    struct sockaddr_in6 * in6 = (struct sockaddr_in6*) from;
+    in6->sin6_family = AF_INET6;
+    in6->sin6_port = htons( datagram->port );
+    memcpy( &in6->sin6_addr, datagram->addr, 16 );
+    const int bytes = (int) strlen( datagram->payload );
+    rocketnet_unit_check( bytes <= max_packet_size );
+    memcpy( packet_data, datagram->payload, (size_t) bytes );
+    return bytes;
+}
+
+static int platform_socket_hygiene_receive_scripted( bool ipv6, platform_socket_hygiene_script_t * script, struct rocketnet_address_t * from, uint8_t * packet, int packet_capacity )
+{
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof(socket) );
+    socket.ipv6 = ipv6;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    socket.handle = INVALID_SOCKET;
+#else
+    socket.handle = -1;
+#endif
+    rocketnet_platform_socket_set_receive_hook( &socket, platform_socket_hygiene_scripted_receive, script );
+    const int bytes = rocketnet_platform_socket_receive_packet( &socket, from, packet, packet_capacity );
+    rocketnet_platform_socket_set_receive_hook( &socket, NULL, NULL );
+    return bytes;
+}
+
+static const platform_socket_hygiene_datagram_t platform_socket_hygiene_mapped = { { 0,0,0,0, 0,0,0,0, 0,0,0xff,0xff, 1,2,3,4 }, 40000, "spoof" };
+static const platform_socket_hygiene_datagram_t platform_socket_hygiene_native = { { 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1 }, 40001, "good" };
+
+static void platform_socket_hygiene_refused_source_reads_next()
+{
+    // a mapped source on a socket that is not dual stack is refused, and the
+    // receive goes on to the next datagram instead of returning 0
+
+    const platform_socket_hygiene_datagram_t datagrams[] = { platform_socket_hygiene_mapped, platform_socket_hygiene_native };
+    platform_socket_hygiene_script_t script = { datagrams, 2, 0 };
+    struct rocketnet_address_t from;
+    memset( &from, 0, sizeof(from) );
+    uint8_t packet[64];
+    const int bytes = platform_socket_hygiene_receive_scripted( false, &script, &from, packet, (int) sizeof(packet) );
+    rocketnet_unit_check( bytes == 4 );
+    rocketnet_unit_check( memcmp( packet, "good", 4 ) == 0 );
+    rocketnet_unit_check( script.calls == 2 );
+    rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV6 );
+    rocketnet_unit_check( from.port == 40001 );
+    rocketnet_unit_check( from.data.ipv6[7] == 1 );
+}
+
+static void platform_socket_hygiene_refused_source_then_drained()
+{
+    // only refused datagrams queued: the receive drops each, then reports
+    // drained (0) when the source runs dry
+
+    const platform_socket_hygiene_datagram_t datagrams[] = { platform_socket_hygiene_mapped, platform_socket_hygiene_mapped };
+    platform_socket_hygiene_script_t script = { datagrams, 2, 0 };
+    struct rocketnet_address_t from;
+    memset( &from, 0, sizeof(from) );
+    uint8_t packet[64];
+    const int bytes = platform_socket_hygiene_receive_scripted( false, &script, &from, packet, (int) sizeof(packet) );
+    rocketnet_unit_check( bytes == 0 );
+    rocketnet_unit_check( script.calls == 3 );
+}
+
+static void platform_socket_hygiene_dual_stack_accepts_mapped()
+{
+    // on a dual stack socket a mapped source is an ipv4 client: accepted at
+    // once and canonicalized to ipv4
+
+    const platform_socket_hygiene_datagram_t datagrams[] = { platform_socket_hygiene_mapped };
+    platform_socket_hygiene_script_t script = { datagrams, 1, 0 };
+    struct rocketnet_address_t from;
+    memset( &from, 0, sizeof(from) );
+    uint8_t packet[64];
+    const int bytes = platform_socket_hygiene_receive_scripted( true, &script, &from, packet, (int) sizeof(packet) );
+    rocketnet_unit_check( bytes == 5 );
+    rocketnet_unit_check( script.calls == 1 );
+    rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV4 );
+    rocketnet_unit_check( from.data.ipv4[0] == 1 && from.data.ipv4[1] == 2 && from.data.ipv4[2] == 3 && from.data.ipv4[3] == 4 );
+    rocketnet_unit_check( from.port == 40000 );
+}
+
 REGISTER_UNIT_TEST( platform_socket_hygiene_mapped_source_decision );
 REGISTER_UNIT_TEST( platform_socket_hygiene_timeout_timeval );
 REGISTER_UNIT_TEST( platform_socket_hygiene_sleep_split );
 REGISTER_UNIT_TEST( platform_socket_hygiene_descriptor_valid );
+REGISTER_UNIT_TEST( platform_socket_hygiene_refused_source_reads_next );
+REGISTER_UNIT_TEST( platform_socket_hygiene_refused_source_then_drained );
+REGISTER_UNIT_TEST( platform_socket_hygiene_dual_stack_accepts_mapped );

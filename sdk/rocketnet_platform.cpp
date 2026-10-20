@@ -262,6 +262,36 @@ uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * 
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// Test-only receive seam, compiled into the unit suite's hook library only
+// (CMakeLists.txt, rocketnet_test_hooks). While a hook is set for one socket,
+// the single-packet receive path on that socket takes each datagram from the
+// hook instead of the kernel, so a unit case drives the drop-and-retry of a
+// refused source with no socket. Other sockets never see the hook.
+
+#if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+
+static rocketnet_platform_socket_t * rocketnet_platform_receive_hook_socket = NULL;
+static rocketnet_platform_receive_hook_t rocketnet_platform_receive_hook_function = NULL;
+static void * rocketnet_platform_receive_hook_user = NULL;
+
+void rocketnet_platform_socket_set_receive_hook( rocketnet_platform_socket_t * socket, rocketnet_platform_receive_hook_t hook, void * user )
+{
+    rocketnet_platform_receive_hook_socket = hook ? socket : NULL;
+    rocketnet_platform_receive_hook_function = hook;
+    rocketnet_platform_receive_hook_user = user;
+}
+
+static bool rocketnet_platform_receive_hooked( rocketnet_platform_socket_t * socket, void * packet_data, int max_packet_size, struct sockaddr_storage * from, int * result )
+{
+    if ( rocketnet_platform_receive_hook_function == NULL || socket != rocketnet_platform_receive_hook_socket )
+        return false;
+    memset( from, 0, sizeof( *from ) );
+    *result = rocketnet_platform_receive_hook_function( rocketnet_platform_receive_hook_user, packet_data, max_packet_size, from );
+    return true;
+}
+
+#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+
 // Test-only send-failure seam, compiled into the development library only.
 // The next N sendto and sendmsg_x calls on one socket report the chosen errno
 // without reaching the kernel, so a functional case can drive the send error
@@ -924,6 +954,17 @@ receive_again:
 
         int flags = socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0;
         flags |= MSG_TRUNC;
+
+#if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, &result ) )
+        {
+            if ( result < 0 )
+                return 0;
+            if ( result == 0 )
+                continue;
+            break;
+        }
+#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
 
         result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
 
@@ -2639,6 +2680,17 @@ receive_again:
         msg.msg_iov = iov;
         msg.msg_iovlen = 2;
 
+#if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, &result ) )
+        {
+            if ( result < 0 )
+                return 0;
+            if ( result == 0 )
+                continue;
+            break;
+        }
+#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+
         result = int( recvmsg( socket->handle, &msg, 0 ) );
 
         if ( result < 0 )
@@ -4168,6 +4220,17 @@ receive_again:
         from_length = sizeof( sockaddr_from );
         DWORD bytes_received = 0;
         DWORD flags = 0;
+
+#if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+        if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, &result ) )
+        {
+            if ( result < 0 )
+                return 0;
+            if ( result == 0 )
+                continue;
+            break;
+        }
+#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
 
         int status = WSARecvFrom( socket->handle, buffers, 2, &bytes_received, &flags, (sockaddr*) &sockaddr_from, &from_length, NULL, NULL );
 
