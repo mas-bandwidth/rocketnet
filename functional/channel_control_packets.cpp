@@ -133,6 +133,11 @@ void control_fragment_packets_each_end()
     control_check( h.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED] == client_reassembled_before + 1,
                    "client reassembled one fragment payload" );
     control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
+    if ( h.client.reassembly )
+    {
+        rocketnet_reassembly_set_destroy( h.client.reassembly );
+        h.client.reassembly = NULL;
+    }
     rocketnet_channel_harness_destroy( &h );
 
     printf( "control_fragment_packets_each_end: both ends reassembled one fragment payload\n" );
