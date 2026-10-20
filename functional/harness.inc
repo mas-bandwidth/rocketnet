@@ -311,3 +311,81 @@ struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_
     }
     return NULL;
 }
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// The backlog fixture fills all 48 configured slots for 300 frames. Its
+// compile-time client arrays and loopback queues must retain their capacity.
+// Debug CRT malloc eagerly fills every allocated byte; use the native heap
+// for this fixture so unused pages need not become resident. Optional CRT
+// profiling for other cases measures allocations without changing allocation
+// policy. Install/restore only across a checked library shutdown boundary.
+#include <malloc.h>
+#include <mutex>
+static std::mutex rocketnet_functional_rss_mutex;
+static bool rocketnet_functional_rss_heap;
+static size_t rocketnet_functional_rss_calls, rocketnet_functional_rss_total;
+static size_t rocketnet_functional_rss_live, rocketnet_functional_rss_peak;
+static size_t rocketnet_functional_rss_sizes[128], rocketnet_functional_rss_counts[128];
+
+static void * rocketnet_functional_rss_malloc( void *, size_t bytes )
+{
+    void * p = rocketnet_functional_rss_heap ? HeapAlloc( GetProcessHeap(), 0, bytes ) : malloc( bytes );
+    if ( p )
+    {
+        std::lock_guard<std::mutex> lock( rocketnet_functional_rss_mutex );
+        ++rocketnet_functional_rss_calls;
+        rocketnet_functional_rss_total += bytes;
+        rocketnet_functional_rss_live += rocketnet_functional_rss_heap ? HeapSize( GetProcessHeap(), 0, p ) : _msize( p );
+        if ( rocketnet_functional_rss_live > rocketnet_functional_rss_peak )
+            rocketnet_functional_rss_peak = rocketnet_functional_rss_live;
+        for ( int i = 0; i < 128; ++i )
+            if ( rocketnet_functional_rss_counts[i] == 0 || rocketnet_functional_rss_sizes[i] == bytes )
+            {
+                rocketnet_functional_rss_sizes[i] = bytes;
+                ++rocketnet_functional_rss_counts[i];
+                break;
+            }
+    }
+    return p;
+}
+
+static void rocketnet_functional_rss_free( void *, void * p )
+{
+    if ( !p ) return;
+    std::lock_guard<std::mutex> lock( rocketnet_functional_rss_mutex );
+    rocketnet_functional_rss_live -= rocketnet_functional_rss_heap ? HeapSize( GetProcessHeap(), 0, p ) : _msize( p );
+    if ( rocketnet_functional_rss_heap ) HeapFree( GetProcessHeap(), 0, p ); else free( p );
+}
+
+void rocketnet_functional_rss_begin( bool native_heap )
+{
+    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_functional_rss_heap = native_heap;
+    rocketnet_functional_rss_calls = rocketnet_functional_rss_total = 0;
+    rocketnet_functional_rss_live = rocketnet_functional_rss_peak = 0;
+    memset( rocketnet_functional_rss_sizes, 0, sizeof( rocketnet_functional_rss_sizes ) );
+    memset( rocketnet_functional_rss_counts, 0, sizeof( rocketnet_functional_rss_counts ) );
+    rocketnet_check( rocketnet_allocator_ex( rocketnet_functional_rss_malloc, rocketnet_functional_rss_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+}
+
+void rocketnet_functional_rss_end( const char * name )
+{
+    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_functional_rss_live == 0 );
+    if ( getenv( "ROCKETNET_TEST_RSS_PROFILE" ) )
+    {
+        printf( "%s allocator=%s calls=%llu requested_bytes=%llu peak_allocated_bytes=%llu live_bytes=0\n", name,
+                rocketnet_functional_rss_heap ? "HeapAlloc" : "CRT",
+                (unsigned long long) rocketnet_functional_rss_calls,
+                (unsigned long long) rocketnet_functional_rss_total,
+                (unsigned long long) rocketnet_functional_rss_peak );
+        for ( int i = 0; i < 128 && rocketnet_functional_rss_counts[i]; ++i )
+            printf( "%s allocation_bytes=%llu calls=%llu\n", name,
+                    (unsigned long long) rocketnet_functional_rss_sizes[i],
+                    (unsigned long long) rocketnet_functional_rss_counts[i] );
+    }
+    rocketnet_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+}
+#endif

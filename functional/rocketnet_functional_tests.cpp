@@ -3632,6 +3632,8 @@ void rocketnet_test_config_precedence()
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    config.max_clients = 1;
 
     // default layer
 
@@ -3687,6 +3689,8 @@ static void rocketnet_test_driver_pin_exchange( const char * driver_list, const 
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    server_config.max_clients = 1;
     snprintf( server_config.driver, sizeof(server_config.driver), "%s", driver_list );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -3790,6 +3794,9 @@ void rocketnet_test_server_driver_pin_loopback()
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // Keep a spare slot so the socket-client refusal below cannot pass
+    // merely because the loopback client filled the server.
+    server_config.max_clients = 2;
     snprintf( server_config.driver, sizeof(server_config.driver), "loopback" );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -3914,6 +3921,8 @@ void rocketnet_test_driver_env_pins_loopback()
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    // This selection/configuration fixture needs one connection, not 1000 slots.
+    server_config.max_clients = 1;
     rocketnet_check( strcmp( server_config.driver, "auto" ) == 0 );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
@@ -4612,6 +4621,8 @@ void rocketnet_test_server_port_zero_driver()
 
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
+        // This selection/configuration fixture needs one connection, not 1000 slots.
+        config.max_clients = 1;
         snprintf( config.driver, sizeof(config.driver), "%s", list );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
@@ -4647,6 +4658,8 @@ void rocketnet_test_server_port_zero_driver()
 
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
+        // This selection/configuration fixture needs one connection, not 1000 slots.
+        config.max_clients = 1;
         snprintf( config.driver, sizeof(config.driver), "%s", name );
 
         rocketnet_test_captured_log[0] = '\0';
@@ -8914,7 +8927,17 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_test_log_ring_clear();
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
         fflush( stdout );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        const bool rss_profile = getenv( "ROCKETNET_TEST_RSS_PROFILE" ) != NULL &&
+            strcmp( name, "server_receive_keeps_up_with_max_clients" ) != 0;
+        if ( rss_profile )
+            rocketnet_functional_rss_begin( false );
+#endif
         rocketnet_functional_tests[i].function();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        if ( rss_profile )
+            rocketnet_functional_rss_end( name );
+#endif
         return 0;
     }
     for ( int i = 0; i < rocketnet_posix_hard_killed_peer_test_count(); i++ )

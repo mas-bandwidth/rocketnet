@@ -89,8 +89,18 @@ static bool server_receive_backlog_all_connected( const std::vector<struct rocke
     return server_receive_backlog_connected_clients( clients ) == (int) clients.size();
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void rocketnet_functional_rss_begin( bool native_heap );
+void rocketnet_functional_rss_end( const char * name );
+#endif
+
 void rocketnet_test_server_receive_keeps_up_with_max_clients()
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    // Keep all 48 clients and their full queue capacity; avoid Debug CRT's
+    // eager fill of unused packet pages in this many-client fixture.
+    rocketnet_functional_rss_begin( true );
+#endif
     server_receive_backlog_env_t driver_env( "ROCKETNET_DRIVER" );
     server_receive_backlog_env_t server_env( "ROCKETNET_SERVER_TRANSPORT" );
     server_receive_backlog_env_t client_env( "ROCKETNET_CLIENT_TRANSPORT" );
@@ -281,4 +291,7 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
     rocketnet_server_transport_destroy( server );
 
     server_receive_backlog_require( !failed );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_functional_rss_end( "server_receive_keeps_up_with_max_clients" );
+#endif
 }
