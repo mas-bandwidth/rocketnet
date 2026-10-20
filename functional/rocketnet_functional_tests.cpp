@@ -1661,15 +1661,37 @@ void rocketnet_test_transport_stats()
 
     // stale bucket exclusion: disconnect, then a second and a half of idle
     // game time. nothing is sent or received, the traffic buckets age past
-    // the window, and every published rate returns to zero.
+    // the window, and every published rate returns to zero. responses to
+    // packets already in flight can arrive after the disconnect, so the
+    // idle window starts over whenever either transport receives one.
 
     rocketnet_client_transport_disconnect( client );
 
-    for ( int i = 0; i < 90; i++ )
+    rocketnet_client_transport_stats( client, &client_stats );
+    rocketnet_server_transport_stats( server, &server_stats );
+
+    uint64_t client_received_seen = client_stats.packets_received;
+    uint64_t server_received_seen = server_stats.packets_received;
+
+    int idle_frames = 0;
+    int total_frames = 0;
+    while ( idle_frames < 90 && total_frames < 1800 )
     {
+        total_frames++;
         game_time += 1.0 / 60.0;
         rocketnet_client_transport_update( client, game_time );
         rocketnet_server_transport_update( server, game_time );
+        rocketnet_client_transport_stats( client, &client_stats );
+        rocketnet_server_transport_stats( server, &server_stats );
+        if ( client_stats.packets_received != client_received_seen ||
+             server_stats.packets_received != server_received_seen )
+        {
+            client_received_seen = client_stats.packets_received;
+            server_received_seen = server_stats.packets_received;
+            idle_frames = 0;
+        }
+        else
+            idle_frames++;
         rocketnet_platform_sleep( 0.001 );
     }
 
