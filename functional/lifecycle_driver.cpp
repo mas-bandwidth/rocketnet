@@ -146,5 +146,6 @@ void rocketnet_test_lifecycle_driver()
     }
     check( server_success );
     rocketnet_term();
-    printf( "lifecycle driver OK: client %d, server %d allocation failure stages\n", client_success - 1, server_success - 1 );
+    if ( getenv( "ROCKETNET_TEST_VERBOSE" ) != NULL )
+        printf( "lifecycle driver OK: client %d, server %d allocation failure stages\n", client_success - 1, server_success - 1 );
 }

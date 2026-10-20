@@ -66,6 +66,18 @@ may share a machine at the same time. The one exception is the root-only XDP
 veth case (`ROCKETNET_TEST_XDP_VETH`), which makes a fixed namespace and veth
 pair and binds port 40411 on it; it skips without root.
 
+Many-client load runs use the dedicated load harness:
+
+    ./bin/load <clients> <seconds> [drop-one]
+
+The load tool runs the public API (`rocketnet_server_t` and `rocketnet_client_t`
+from `rocketnet.h`) under the light profile (10 Hz updates, one message per client
+per update in each direction: the client-to-server message rotates through all
+eight reliability modes, and the server-to-client message is reliable-ordered),
+verifying loopback scale up to 1000 concurrent clients across five pass criteria
+(`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
+`unreliable_integrity`, and `counters_agree`).
+
 Dependencies, per platform, as CI installs them:
 
     # Linux -- the build links the XDP dataplane, and liburing is the bench
@@ -191,6 +203,11 @@ target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 # Or: target_link_libraries(game PRIVATE RocketNet::rocketnet_shared)
 ```
 
+When linking the static archive (`librocketnet.a`) directly in a C project
+without CMake, link against the C++ standard library runtime (`-lstdc++` on
+Linux, `-lc++` on macOS) and the required platform libraries (on Linux:
+`-lbpf -lxdp -luring -lstdc++ -lpthread -lm`; on macOS: `-lc++ -lpthread -lm`).
+
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
 Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
 is compiled into each SDK library with private symbol names; no sodium header,
@@ -238,7 +255,7 @@ verifies that the XDP archive contains the current sources. These checks are in 
 
 The current public layouts are preserved. New allocation-free `rocketnet_abi_*`
 queries expose the SDK revision, compiler-derived struct sizes, field counts,
-offsets and widths for both configs, packet context and all four stats structs.
+offsets and widths for both configs and packet context.
 They are safe before init and write no caller-owned struct. Unknown names return
 `SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
 these before calling struct-writing functions.
@@ -277,9 +294,9 @@ still requires roughly 4.2 GiB; select fewer queues or provision that explicitly
 `rocketnet_server_required_memory(config)` returns the bytes of the caller memory
 block the server needs for `config` at its `max_clients`. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
-Pass `NULL` config for defaults. The query reads the supplied configuration only:
-it does not apply environment overrides, check keys, probe hardware or approve a
-configuration against the component budgets. `rocketnet_client_required_memory` is
+Pass `NULL` config for defaults. The query reads the supplied configuration and
+applies environment overrides (matching create), but does not check keys, probe
+hardware or approve a configuration against the component budgets. `rocketnet_client_required_memory` is
 the client form. The detailed per-transport plan and the kernel-facing host memory
 estimate are internal to the transport layer (`sdk/rocketnet_layers.h`), not part
 of the public client and server API.
