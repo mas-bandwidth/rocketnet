@@ -102,6 +102,7 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
         server_config.send_buffer_bytes = 12288;
         server_config.send_queue_messages = 64;
         server_config.window_messages = 64;
+        server_config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
     }
 
     rocketnet_server_transport_set_create_send_capacity_for_test( capacity );
@@ -119,7 +120,10 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
         client_config.time_callback = fair_clock;
         fair_message_config( NULL, &client_config );
         if ( max_clients >= 256 )
+        {
             client_config.window_messages = 64;
+            client_config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
+        }
         world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL, 0 );
         check( world->clients[i] != NULL );
     }
