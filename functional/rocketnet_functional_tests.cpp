@@ -6746,36 +6746,38 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 
     rocketnet_check( rocketnet_platform_socket_receive_packets_mmsg( receiver, from, receive_data[0], stride, packet_bytes, 64 ) == 0 );
 
-    // One recvmmsg result with a truncated datagram followed by two more
-    // exercises chunk indexing: the truncated one reports its true size
-    // with its stride-sized prefix in the slot, as the per-packet path does,
-    // so the prefilter counts it as too large.
+    // One recvmmsg result with a truncated datagram, a zero-length one and a
+    // kept one exercises chunk indexing, the oversize report (true size, the
+    // stored prefix) and rejection compaction. The zero-length datagram goes
+    // by a raw sendto: the mmsg send path carries positive-size payloads only.
     uint8_t truncated_data[16];
     memset( truncated_data, 'T', sizeof(truncated_data) );
     uint8_t kept_data[2] = { 0xA1, 0xB2 };
-    struct rocketnet_platform_send_t compact_sends[3];
+
+    sockaddr_in zero_length_to;
+    rocketnet_platform_address_to_sockaddr_in( &bind_address, &zero_length_to );
+    const char zero_length_byte = 0;
+    rocketnet_check( sendto( sender->handle, &zero_length_byte, 0, 0, (sockaddr*) &zero_length_to, sizeof(zero_length_to) ) == 0 );
+
+    struct rocketnet_platform_send_t compact_sends[2];
     compact_sends[0].to = &bind_address;
     compact_sends[0].packet_data = truncated_data;
     compact_sends[0].packet_bytes = sizeof(truncated_data);
     compact_sends[1].to = &bind_address;
-    compact_sends[1].packet_data = &kept_data[0];
+    compact_sends[1].packet_data = &kept_data[1];
     compact_sends[1].packet_bytes = 1;
-    compact_sends[2].to = &bind_address;
-    compact_sends[2].packet_data = &kept_data[1];
-    compact_sends[2].packet_bytes = 1;
-    rocketnet_platform_socket_send_packets_mmsg( sender, compact_sends, 3 );
+    rocketnet_platform_socket_send_packets_mmsg( sender, compact_sends, 2 );
     rocketnet_platform_sleep( 0.01 );
 
     uint8_t compact_receive_data[3][8];
     rocketnet_address_t compact_from[3];
     int compact_bytes[3];
     const int compact_received = rocketnet_platform_socket_receive_packets_mmsg( receiver, compact_from, compact_receive_data[0], sizeof(compact_receive_data[0]), compact_bytes, 3 );
-    rocketnet_check( compact_received == 3 );
+    rocketnet_check( compact_received == 2 );
     rocketnet_check( rocketnet_address_equal( &compact_from[0], &sender_bind ) && compact_bytes[0] == (int) sizeof(truncated_data) );
     for ( int j = 0; j < (int) sizeof(compact_receive_data[0]); j++ )
         rocketnet_check( compact_receive_data[0][j] == 'T' );
-    rocketnet_check( rocketnet_address_equal( &compact_from[1], &sender_bind ) && compact_bytes[1] == 1 && compact_receive_data[1][0] == kept_data[0] );
-    rocketnet_check( rocketnet_address_equal( &compact_from[2], &sender_bind ) && compact_bytes[2] == 1 && compact_receive_data[2][0] == kept_data[1] );
+    rocketnet_check( rocketnet_address_equal( &compact_from[1], &sender_bind ) && compact_bytes[1] == 1 && compact_receive_data[1][0] == kept_data[1] );
 
     // A kernel-refused entry drops by itself and the unsent suffix is retried.
     uint8_t retry_byte = 0x5A;
@@ -7756,11 +7758,14 @@ static bool wire_totals_drain_slot( struct rocketnet_client_transport_t * client
     return false;
 }
 
+enum { WIRE_TOTALS_GAME_CLOCK_EPOCH = 1700000000ULL };
+
 static struct rocketnet_server_transport_t * wire_totals_server_create( const char * public_address, double time )
 {
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 1;
+    config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
 
     int status = -1;
@@ -7772,11 +7777,12 @@ static struct rocketnet_server_transport_t * wire_totals_server_create( const ch
 static struct rocketnet_client_transport_t * wire_totals_client_create( const char * address, uint64_t client_id, double time )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    if ( rocketnet_write_dev_connect_token( address, client_id, (uint64_t) ::time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_write_dev_connect_token( address, client_id, WIRE_TOTALS_GAME_CLOCK_EPOCH + (uint64_t) time, token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
         return NULL;
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
+    config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
     return rocketnet_client_transport_create( NULL, token, &config, time );
 }
@@ -7951,13 +7957,16 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
+    double time = 1000.0;
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
+    server_config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( server_config.driver, sizeof( server_config.driver ), "%s", "portable" );
 
     int server_status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &server_config, 1000.0, &server_status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &server_config, time, &server_status );
     rocketnet_check( server != NULL );
     rocketnet_check( server_status == ROCKETNET_STATUS_OK );
 
@@ -7966,13 +7975,12 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     snprintf( address, sizeof( address ), "%s:%d", peer_address, server_port );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_dev_connect_token( address, client_id, (uint64_t) ::time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_write_dev_connect_token( address, client_id, WIRE_TOTALS_GAME_CLOCK_EPOCH + (uint64_t) time, connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
+    client_config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "portable" );
-
-    double time = 1000.0;
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, time );
     rocketnet_check( client != NULL );
     rocketnet_check( wire_totals_connect( client, server, &time ) );
@@ -8089,6 +8097,9 @@ extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
+extern void macos_client_timing_default_qos();
+extern void macos_client_timing_taskpolicy_background();
+extern void macos_client_timing_background_thread_qos();
 
 // A destroyed client's receive thread always exits: destroy stores quit and
 // wakes the receive thread's wait explicitly before the join. These cases use
@@ -8218,6 +8229,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients },
+    { "macos_client_timing_default_qos", macos_client_timing_default_qos },
+    { "macos_client_timing_taskpolicy_background", macos_client_timing_taskpolicy_background },
+    { "macos_client_timing_background_thread_qos", macos_client_timing_background_thread_qos },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait },
