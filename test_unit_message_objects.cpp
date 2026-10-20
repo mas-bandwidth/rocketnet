@@ -903,11 +903,16 @@ static void mo_end_to_end_up()
     std::vector<uint32_t> got_ordered[MO_MAX_SLOTS][4];
     uint32_t unreliable_sent = 0, unreliable_got = 0;
 
+    uint32_t loss_random = 0x12345678u; // fixed seed: reproducible 1/7 random loss
     for ( int round = 0; round < 120; round++ )
     {
         // loss: every fifth round drops everything one way
         pair.net->drop_to_server = ( round % 5 ) == 2;
-        pair.net->drop_to_client = ( round % 7 ) == 3;
+        // Randomize the 1/7 loss phase so it cannot lock to a fixed RTO.
+        loss_random ^= loss_random << 13;
+        loss_random ^= loss_random >> 17;
+        loss_random ^= loss_random << 5;
+        pair.net->drop_to_client = ( loss_random % 7 ) == 0;
 
         if ( round < 60 )
         {
