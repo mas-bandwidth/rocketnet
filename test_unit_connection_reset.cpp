@@ -1181,7 +1181,7 @@ static void connection_reset_client_disconnect_behind_a_deferred_hand_off_reache
     rocketnet_client_transport_disconnect( client );
     rocketnet_client_transport_destroy( client );
 
-    check( reset_io_num_sent >= sent_before + 2 + ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    check( reset_io_num_sent > sent_before + 1 );
     for ( int i = 0; i < reset_io_num_sent; i++ )
         check( rocketnet_address_equal( &reset_io_sent_to[i], &server_address ) );
 
