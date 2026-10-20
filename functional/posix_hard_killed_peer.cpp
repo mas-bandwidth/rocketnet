@@ -454,8 +454,11 @@ static void rocketnet_posix_cell_hard_killed_client( int kind, bool ipv6 )
     rocketnet_address_t dead_address;
     memset( &dead_address, 0, sizeof(dead_address) );
     bool have_dead = false;
+    // at least a second, and until the child's first heartbeat: a child
+    // started on a loaded host can take longer than a second to send it
     const double warmup = rocketnet_platform_time() + 1.0;
-    while ( rocketnet_platform_time() < warmup )
+    const double warmup_limit = rocketnet_platform_time() + 10.0;
+    while ( rocketnet_platform_time() < warmup || ( !have_dead && rocketnet_platform_time() < warmup_limit ) )
     {
         const int got = rocketnet_posix_cell_receive( &cell, from );
         for ( int i = 0; i < got; i++ )
@@ -694,8 +697,11 @@ void rocketnet_test_posix_hard_killed_client()
     memset( &dead_address, 0, sizeof(dead_address) );
     bool have_dead = false;
 
+    // at least a second, and until the child's first heartbeat: a child
+    // started on a loaded host can take longer than a second to send it
     const double warmup = rocketnet_platform_time() + 1.0;
-    while ( rocketnet_platform_time() < warmup )
+    const double warmup_limit = rocketnet_platform_time() + 10.0;
+    while ( rocketnet_platform_time() < warmup || ( !have_dead && rocketnet_platform_time() < warmup_limit ) )
     {
         while ( rocketnet_platform_socket_receive_packet( server, &from, data, sizeof(data) ) > 0 )
         {
