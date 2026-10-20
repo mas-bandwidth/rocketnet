@@ -203,7 +203,17 @@ static void rocketnet_posix_start_child( pid_t * pid, const char * host, int por
 #include "rocketnet_constants.h"
 
 #define ROCKETNET_POSIX_CELL_BYTES 64
-#define ROCKETNET_POSIX_CELL_MAX 2048
+// one drain of a cell holds what one driver call can return: the gso and
+// io_uring process batches are ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+// (sdk/rocketnet_constants.h:63; the io_uring bank, sdk/rocketnet_server_uring_linux.cpp:63).
+// a cell binds an ephemeral port, which can be one another case of the suite
+// released and still sends to, so a drain can carry strays; the drains count
+// only their own peers' ports
+#define ROCKETNET_POSIX_CELL_MAX ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+
+// posix_client_server_gone starts again on a fresh port at most this many
+// times when another process binds its released port first
+#define ROCKETNET_POSIX_PORT_TAKEN_LIMIT 8
 
 enum
 {
@@ -245,7 +255,9 @@ static int rocketnet_posix_uring_disabled_value()
 
 // the server side of one cell, bound to port (0: any). false when the host
 // does not offer the cell's driver (io_uring disabled), said by name.
-static bool rocketnet_posix_cell_open( rocketnet_posix_cell_t * cell, int kind, bool ipv6, int port, const char * case_name )
+// 1 opened, 0 not run (no io_uring on this kernel), -1 the transport create
+// failed (a fixed port another process holds)
+static int rocketnet_posix_cell_try_open( rocketnet_posix_cell_t * cell, int kind, bool ipv6, int port, const char * case_name )
 {
     memset( cell, 0, sizeof(*cell) );
     cell->kind = kind;
@@ -256,26 +268,36 @@ static bool rocketnet_posix_cell_open( rocketnet_posix_cell_t * cell, int kind, 
     if ( kind == ROCKETNET_POSIX_CELL_PORTABLE )
     {
         cell->socket = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
-        rocketnet_check( cell->socket );
+        if ( !cell->socket )
+            return -1;
     }
     else if ( kind == ROCKETNET_POSIX_CELL_GSO || kind == ROCKETNET_POSIX_CELL_GSO_PLAIN )
     {
         const int flags = kind == ROCKETNET_POSIX_CELL_GSO_PLAIN ? ( ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO ) : 0;
         cell->gso = rocketnet_server_gso_create( NULL, &address, 1, flags );
-        rocketnet_check( cell->gso );
+        if ( !cell->gso )
+            return -1;
     }
     else
     {
         if ( !rocketnet_server_uring_available() )
         {
             printf( "%s cell=io_uring %s [NOT RUN this kernel offers no io_uring: io_uring_disabled=%d]\n", case_name, ipv6 ? "ipv6" : "ipv4", rocketnet_posix_uring_disabled_value() );
-            return false;
+            return 0;
         }
         cell->uring = rocketnet_server_uring_create( NULL, &address, 1 );
-        rocketnet_check( cell->uring );
+        if ( !cell->uring )
+            return -1;
     }
     cell->port = address.port;
-    return true;
+    return 1;
+}
+
+static bool rocketnet_posix_cell_open( rocketnet_posix_cell_t * cell, int kind, bool ipv6, int port, const char * case_name )
+{
+    const int opened = rocketnet_posix_cell_try_open( cell, kind, ipv6, port, case_name );
+    rocketnet_check( opened >= 0 );
+    return opened == 1;
 }
 
 static void rocketnet_posix_cell_close( rocketnet_posix_cell_t * cell )
@@ -576,18 +598,31 @@ static void rocketnet_posix_cell_client_server_gone( int kind, bool ipv6 )
     int client_port = 0;
     rocketnet_platform_socket_t * client = rocketnet_posix_bind_any( host, &client_port );
 
+    // the server's port is released while the client sends into it, then
+    // bound again. in a parallel suite another process can bind the released
+    // port first; the case then takes a fresh port and starts again, and
+    // prints how many times it did
     int server_port = 0;
-    rocketnet_platform_socket_destroy( rocketnet_posix_bind_any( host, &server_port ) );
-
-    for ( int i = 0; i < 100; i++ )
-        rocketnet_posix_peer_send( client, host, server_port, (uint8_t) i );
-    rocketnet_posix_settle();
-
+    int port_taken = 0;
     rocketnet_posix_cell_t cell;
-    if ( !rocketnet_posix_cell_open( &cell, kind, ipv6, server_port, case_name ) )
+    for ( ;; )
     {
-        rocketnet_platform_socket_destroy( client );
-        return;
+        rocketnet_platform_socket_destroy( rocketnet_posix_bind_any( host, &server_port ) );
+
+        for ( int i = 0; i < 100; i++ )
+            rocketnet_posix_peer_send( client, host, server_port, (uint8_t) i );
+        rocketnet_posix_settle();
+
+        const int opened = rocketnet_posix_cell_try_open( &cell, kind, ipv6, server_port, case_name );
+        if ( opened == 1 )
+            break;
+        if ( opened == 0 )
+        {
+            rocketnet_platform_socket_destroy( client );
+            return;
+        }
+        port_taken++;
+        rocketnet_check( port_taken < ROCKETNET_POSIX_PORT_TAKEN_LIMIT );
     }
 
     for ( int i = 0; i < 4; i++ )
@@ -615,7 +650,7 @@ static void rocketnet_posix_cell_client_server_gone( int kind, bool ipv6 )
         replies += rocketnet_posix_count_ports( from, got, &server_port, 1 );
     }
 
-    printf( "%s cell=%s %s received=%d/4 replies=%d/4\n", case_name, rocketnet_posix_cell_names[kind], ipv6 ? "ipv6" : "ipv4", received, replies );
+    printf( "%s cell=%s %s received=%d/4 replies=%d/4 port_taken=%d\n", case_name, rocketnet_posix_cell_names[kind], ipv6 ? "ipv6" : "ipv4", received, replies, port_taken );
     fflush( stdout );
     rocketnet_check( received == 4 );
     rocketnet_check( replies == 4 );
