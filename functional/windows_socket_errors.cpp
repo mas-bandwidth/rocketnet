@@ -252,7 +252,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "%s:%d", windows_socket_errors_host( transport->ipv6 ), rocketnet_server_transport_port( session->server ) );
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    windows_socket_errors_require( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    windows_socket_errors_require( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.driver, sizeof( client_config.driver ), "%s", "portable" );
