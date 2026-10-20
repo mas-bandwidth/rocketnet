@@ -20,6 +20,8 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
+#include "rocketnet_fragment.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -323,7 +325,179 @@ static void server_default_config_max_clients_is_1000()
     check( sized.max_clients == 1000 );
 }
 
+// The public creates and validate_config run one validation per side
+// (rn_client_config_valid and rn_server_config_valid, sdk/rocketnet_api.cpp:380
+// and :1047):
+// for the config's own values, validate_config returns OK exactly when create
+// accepts, and a refused config is refused by both. A create before
+// rocketnet_init returns NULL and is counted once, as the transport creates
+// count it. Every case runs in memory: the creates open no socket and read no
+// clock, and validate_config reads no environment.
+
+#define SIZED_CONFIG_CLIENT_AGREES( mutation, accepted )                                                        \
+do                                                                                                              \
+{                                                                                                               \
+    struct rocketnet_client_config_t c;                                                                         \
+    check( rocketnet_client_default_config_sized( &c, sizeof( c ) ) == ROCKETNET_STATUS_OK );                   \
+    mutation;                                                                                                   \
+    check( rocketnet_client_validate_config_sized( &c, sizeof( c ) ) == ( (accepted) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE ) ); \
+    struct rocketnet_client_t * made = rocketnet_client_create_sized( NULL, &c, sizeof( c ), NULL, 0 );         \
+    check( ( made != NULL ) == (accepted) );                                                                    \
+    if ( made )                                                                                                 \
+        rocketnet_client_destroy( made );                                                                       \
+} while ( 0 )
+
+#define SIZED_CONFIG_SERVER_AGREES( mutation, accepted )                                                        \
+do                                                                                                              \
+{                                                                                                               \
+    struct rocketnet_server_config_t c;                                                                         \
+    check( rocketnet_server_dev_config_sized( &c, sizeof( c ) ) == ROCKETNET_STATUS_OK );                       \
+    c.max_clients = 4;                                                                                          \
+    mutation;                                                                                                   \
+    check( rocketnet_server_validate_config_sized( &c, sizeof( c ) ) == ( (accepted) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE ) ); \
+    struct rocketnet_server_t * made = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &c, sizeof( c ), NULL, 0 ); \
+    check( ( made != NULL ) == (accepted) );                                                                    \
+    if ( made )                                                                                                 \
+        rocketnet_server_destroy( made );                                                                       \
+} while ( 0 )
+
+static void sized_config_create_refuses_before_init()
+{
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_set_assert_callback( sized_config_quiet_assert );
+
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    check( !rocketnet_library_initialized() );
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    struct rocketnet_server_config_t server_config;
+    check( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    server_config.max_clients = 4;
+
+    // validate_config stays safe before init: it creates nothing
+    check( rocketnet_client_validate_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_validate_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+
+    uint64_t before = rocketnet_api_misuse_count();
+    check( rocketnet_client_create( NULL, NULL, NULL, 0 ) == NULL );
+    check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    check( rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 ) == NULL );
+    check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, 0 ) == NULL );
+    check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    check( rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 ) == NULL );
+    check( rocketnet_api_misuse_count() == before + 1 );
+
+    check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+
+    // after init the same calls create
+    struct rocketnet_client_t * client = rocketnet_client_create_sized( NULL, &client_config, sizeof( client_config ), NULL, 0 );
+    check( client != NULL );
+    rocketnet_client_destroy( client );
+    struct rocketnet_server_t * server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ), NULL, 0 );
+    check( server != NULL );
+    rocketnet_server_destroy( server );
+
+    rocketnet_set_assert_callback( saved_assert );
+}
+
+static void sized_config_client_create_agrees_with_validate_config()
+{
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_set_assert_callback( sized_config_quiet_assert );
+
+    // accepted by both
+    SIZED_CONFIG_CLIENT_AGREES( (void) 0, true );
+    SIZED_CONFIG_CLIENT_AGREES( c.transport = "portable", true );
+    SIZED_CONFIG_CLIENT_AGREES( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, true );
+    SIZED_CONFIG_CLIENT_AGREES( c.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS, true );
+    // a nonzero simulated value: accepted by both in the development posture,
+    // refused by both in the production one (rocketnet_public_link_simulator_development)
+    rocketnet_public_link_simulator_test_development( 1 );
+    SIZED_CONFIG_CLIENT_AGREES( c.simulated_loss_percent = 5, true );
+    rocketnet_public_link_simulator_test_development( 0 );
+    if ( !rocketnet_public_link_simulator_development() )
+        SIZED_CONFIG_CLIENT_AGREES( c.simulated_loss_percent = 5, false );
+
+    // transport fields out of range: refused by both
+    SIZED_CONFIG_CLIENT_AGREES( c.max_payload_bytes = -1, false );
+    SIZED_CONFIG_CLIENT_AGREES( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, false );
+    SIZED_CONFIG_CLIENT_AGREES( c.num_reassembly_slots = -1, false );
+    SIZED_CONFIG_CLIENT_AGREES( c.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS + 1, false );
+
+    // negative or out-of-range simulated values: refused by both
+    SIZED_CONFIG_CLIENT_AGREES( c.simulated_loss_percent = -1, false );
+    SIZED_CONFIG_CLIENT_AGREES( c.simulated_latency_ms = -1, false );
+    SIZED_CONFIG_CLIENT_AGREES( c.simulated_jitter_ms = -1, false );
+    SIZED_CONFIG_CLIENT_AGREES( c.simulated_duplicate_percent = -1, false );
+    SIZED_CONFIG_CLIENT_AGREES( c.simulated_loss_percent = 101, false );
+
+    // a transport list that does not parse: refused by both
+    SIZED_CONFIG_CLIENT_AGREES( c.transport = "bogus", false );
+    SIZED_CONFIG_CLIENT_AGREES( c.transport = "auto,portable", false );
+
+    rocketnet_set_assert_callback( saved_assert );
+}
+
+static void sized_config_server_create_agrees_with_validate_config()
+{
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_set_assert_callback( sized_config_quiet_assert );
+
+    // accepted by both
+    SIZED_CONFIG_SERVER_AGREES( (void) 0, true );
+    SIZED_CONFIG_SERVER_AGREES( c.transport = "portable", true );
+    SIZED_CONFIG_SERVER_AGREES( c.max_timeout_seconds = 3600, true );
+    SIZED_CONFIG_SERVER_AGREES( c.handshake_deadline_seconds = 60, true );
+    // a nonzero simulated value: accepted by both in the development posture,
+    // refused by both in the production one (rocketnet_public_link_simulator_development)
+    rocketnet_public_link_simulator_test_development( 1 );
+    SIZED_CONFIG_SERVER_AGREES( c.simulated_loss_percent = 5, true );
+    rocketnet_public_link_simulator_test_development( 0 );
+    if ( !rocketnet_public_link_simulator_development() )
+        SIZED_CONFIG_SERVER_AGREES( c.simulated_loss_percent = 5, false );
+
+    // transport fields out of range: refused by both
+    SIZED_CONFIG_SERVER_AGREES( c.max_clients = 0, false );
+    SIZED_CONFIG_SERVER_AGREES( c.max_clients = ROCKETNET_MAX_CLIENTS + 1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.num_xdp_queues = -1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.num_xdp_queues = 1025, false );
+    SIZED_CONFIG_SERVER_AGREES( c.num_os_cpus = -1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.num_os_cpus = 257, false );
+    SIZED_CONFIG_SERVER_AGREES( c.max_payload_bytes = -1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.num_reassembly_slots = -1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS + 1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.max_timeout_seconds = 0, false );
+    SIZED_CONFIG_SERVER_AGREES( c.max_timeout_seconds = 3601, false );
+    SIZED_CONFIG_SERVER_AGREES( c.handshake_deadline_seconds = 0, false );
+    SIZED_CONFIG_SERVER_AGREES( c.handshake_deadline_seconds = 61, false );
+
+    // negative or out-of-range simulated values: refused by both
+    SIZED_CONFIG_SERVER_AGREES( c.simulated_loss_percent = -1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.simulated_latency_ms = -1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.simulated_jitter_ms = -1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.simulated_duplicate_percent = -1, false );
+    SIZED_CONFIG_SERVER_AGREES( c.simulated_duplicate_percent = 101, false );
+
+    // a transport list that does not parse: refused by both
+    SIZED_CONFIG_SERVER_AGREES( c.transport = "bogus", false );
+    SIZED_CONFIG_SERVER_AGREES( c.transport = "auto,portable", false );
+
+    rocketnet_set_assert_callback( saved_assert );
+}
+
 REGISTER_UNIT_TEST( sized_config_accepts_every_known_size );
 REGISTER_UNIT_TEST( sized_config_message_revision_1_reads_budget_defaults );
 REGISTER_UNIT_TEST( sized_config_refuses_unknown_size );
 REGISTER_UNIT_TEST( server_default_config_max_clients_is_1000 );
+REGISTER_UNIT_TEST( sized_config_create_refuses_before_init );
+REGISTER_UNIT_TEST( sized_config_client_create_agrees_with_validate_config );
+REGISTER_UNIT_TEST( sized_config_server_create_agrees_with_validate_config );
