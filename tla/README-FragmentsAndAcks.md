@@ -1,7 +1,5 @@
 # FragmentsAndAcks: fragment reassembly and the ack window
 
-> STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
-
 `tla/FragmentsAndAcks.tla` is one direction of a rocketnet session: a sender A hands
 payloads to a receiver B over the shared lossy link `tla/Link.tla` (instance `D2R`),
 and B sends ack blocks back over a second instance (`R2D`). A is the session sequence
@@ -12,14 +10,12 @@ and its server mirror in `sdk/rocketnet_server_transport.cpp`;
 `rocketnet_client_protocol_start_fragments` in `sdk/rocketnet_client_protocol.cpp`). B is
 the replay window as a set (`sdk/rocketnet_replay.cpp`), the block builder
 (`rocketnet_ack_block_build`) and reassembly (`rocketnet_reassembly_process_fragment` in
-`sdk/rocketnet_fragment.cpp`). The model was written against the code at `3ad4179`; the
-line citations below are re-checked against the code it lands on (`617d498`).
+`sdk/rocketnet_fragment.cpp`).
 
 `tla/MCFragmentsAndAcks.tla` and `tla/MCFragmentsAndAcks.cfg` are the small instance
 (safety); `tla/MCFragmentsAndAcksLive.cfg` is the liveness run on the same instance. Every
 other run is its own root cfg, named once in `tla/CASES.tsv` (group `fragmentsandacks`),
-and its measured record is in `tla/RUNS.tsv`, written by `tlacheck` (`tla/README.md`). The
-inventory rows are `docs/TLA-INVENTORY.md`, M8 and M9.
+and its measured record is in `tla/RUNS.tsv`, written by `tlacheck` (`tla/README.md`).
 
 ## What the model covers
 
@@ -54,13 +50,13 @@ sequences), `surfacedCount`, `deliveredCount`, `openedEver`, `namedEver`, `badSt
 |---|---|---|
 | `StartPayload` | the application | `start_packet` + `finish_packet` on the wire route: one sequence, one record with the packet id |
 | `StartFragmented(cnt)` | the application | the arena route: `rocketnet_fragment_plan`, `start_fragments` reserves `cnt - 1` sequences after the one `start_packet` spent, the payload id is drawn, `open_aggregate` pins the packet id behind `cnt` acknowledgments, `seal_fragment` records each fragment |
-| `BurnOne` | a failed finish | a sequence spent and never sent (USAGE.md, "Not every NULL from start_packet spends one") |
-| `BurnFragmented(cnt)` | a seal refusal inside the fragment loop | the whole block withdrawn after the payload id and the aggregate were drawn (USAGE.md, "one such failure burns all 14"). Only a seal refusal burns an id: a full ring or a failed `start_fragments` returns before the draw (`sdk/rocketnet_client_transport.cpp:871-903`, the draw at 905) and burns the one sequence `start_packet` spent, which is `BurnOne` |
+| `BurnOne` | a failed finish | a sequence spent and never sent |
+| `BurnFragmented(cnt)` | a seal refusal inside the fragment loop | the whole block withdrawn after the payload id and the aggregate were drawn. Only a seal refusal burns an id: in `rocketnet_client_transport_finish_arena_packet` a full ring or a failed `start_fragments` returns before `rocketnet_client_protocol_next_fragment_payload_id` draws the id, and burns the one sequence `start_packet` spent, which is `BurnOne` |
 | `DefectiveSend` | a defective sender | a sealed fragment whose header says anything (`DefectIds` non-empty) |
 | `Flush` | `send_packets` | the staged packets go to the wire in fill order, `Link!Send` |
 | `RecvAck` | a block arrives | `rocketnet_ack_endpoint_process_block` / `rocketnet_ack_apply_run`: the walk, the retained window, unknown sequences, the batch and its deferral, aggregates |
 | `SendAck` | the receiver | a session packet carrying the current block, `rocketnet_ack_block_build`: the first run, then `(gap, run)` pairs to the floor, at most `MaxRanges` |
-| `RecvData` | a packet arrives | the reading order's replay check (`rocketnet_replay_already_received`, `rocketnet_replay_advance`), then a payload or `rocketnet_reassembly_process_fragment` with the standard's checks in order |
+| `RecvData` | a packet arrives | the reading order's replay check (`rocketnet_replay_already_received`, `rocketnet_replay_advance`), then a payload or `rocketnet_reassembly_process_fragment` with the checks of [t16.2 Receiving](../standard/TRANSPORT.md#t16.2) in order |
 | `Tick` | time | one update on both ends: the batch drains, the delivered arena and the drain reset, both links `Age` |
 | `D2REnvironment`, `R2DEnvironment` | the path | Link's `Drop`, `Duplicate`, `Reorder`, `Delay` |
 
@@ -75,29 +71,29 @@ Safety, checked under every loss pattern with no fairness:
 
 | Property | The rule |
 |---|---|
-| `SurfacedOnce` | the acked batch names a packet id at most once, ever (USAGE.md, "the packet ids newly acknowledged by the last update") |
-| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which USAGE.md:146-148 allows at the fragment level; the gap is real and D1 and D2 both sit in it |
+| `SurfacedOnce` | the acked batch, the packet ids newly acknowledged by the last update, names a packet id at most once, ever |
+| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment. Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which [m1.4](../standard/MESSAGES.md#m1.4) rule 3 allows (an acknowledgement of a fragmented payload's fragments does not prove the payload was delivered); the gap is real and D1 and D2 both sit in it |
 | `BurnedNeverNamed` | a burned sequence is never opened and never named by a block, so it is never acknowledged as received |
 | `AckedMeansSurfaced` | a record with a packet id is marked acknowledged only once its id has surfaced, and an aggregate reaches zero only once its id has: the batch defers, it never drops (`sdk/rocketnet_ack.cpp`, "a packet id that cannot fit the batch is deferred, never dropped"); the safety face of `OpenedSurfacesOrLaps` |
-| `DeliveredExact` | a delivered payload is exactly the fragments of one id, each index once, every non-final fragment the stride, the final at most the stride (STANDARD.md, Fragmentation, "Fragment bytes land at index × stride") |
+| `DeliveredExact` | a delivered payload is exactly the fragments of one id, each index once, every non-final fragment the stride, the final at most the stride ([t16.2 Receiving](../standard/TRANSPORT.md#t16.2): count minus one fragments of stride bytes, then the final) |
 | `DeliveredOnce` | an honest payload is delivered at most once |
 | `CompleteDelivers` | no slot holds a complete payload: delivery happens in the fragment's own process call, so "within one update" holds with nothing to wait for |
 | `ArenaBounded` | reassembly state stays inside what was allocated at create: placed bytes inside `stride × (cnt − 1) + final ≤ max payload`, the staging buffer one fragment of the receive maximum, the received set inside the pinned count |
-| `CountPinned` (action property) | the first fragment of a payload id fixes its count (STANDARD.md, `FRAGMENT_COUNT_MISMATCH`) |
+| `CountPinned` (action property) | the first fragment of a payload id fixes its count ([t16.2 Receiving](../standard/TRANSPORT.md#t16.2) check 6, counted `FRAGMENT_COUNT_MISMATCH`) |
 | `TypeOK` | types, including both links' |
 
 Two more are the findings below, each in its own run and expected to fail on the code:
 `StaleOnlyIfOlder` (D1) and `BatchFullNeverFires` (D2).
 
 Out of scope: a liveness property for stale-slot recycling (an occupant that is never
-completed is eventually displaced). The code has no such rule, D1 is the proof, and the
-property belongs beside the fix.
+completed is eventually displaced). The model's stale rules do not encode the code's
+displacement rule (the end of D1 below).
 
 Liveness, under the fairness described below:
 
 | Property | The rule |
 |---|---|
-| `OpenedSurfacesOrLaps` | a payload every fragment of which the receiver opened surfaces in the sender's batch, unless the sender's history laps it first (USAGE.md, "Missing a notification therefore does not prove that a payload was lost"); a deferred id surfaces from a later block |
+| `OpenedSurfacesOrLaps` | a payload every fragment of which the receiver opened surfaces in the sender's batch, unless the sender's history laps it first, so a missing notification does not prove a payload was lost; a deferred id surfaces from a later block |
 
 ### Loss patterns TLC explored
 
@@ -113,11 +109,11 @@ window refuses.
 ## What the model abstracts away
 
 - **The replay window's representation.** `opened` is a set; the 64-word bitmap and
-  its large-skip clear (F1, `docs/TLA-INVENTORY.md`) belong to the ReplayWindow
+  its large-skip clear (F1, `tla/README-ReplayWindow.md`) belong to the ReplayWindow
   module. Every block here is truthful by construction, so `SurfacedOnlyIfOpened` says
-  what the ack layer does with truthful blocks. F1 broke it from below; the code now
+  what the ack layer does with truthful blocks. F1 is that failure from below; the code
   clears the whole window on a large skip (`rocketnet_replay_advance`,
-  `sdk/rocketnet_replay.cpp:56-61`).
+  `sdk/rocketnet_replay.cpp`).
 - **The 32-bit wire fields.** `largest received` is carried whole; the reconstruction
   against `highest_sent` (`rocketnet_reconstruct_ack_largest`) and the u16 range caps
   are not modelled. Payload ids are modulo `IdSpace` instead of 2^32, with `FirstId` to
@@ -134,8 +130,7 @@ window refuses.
 - **Counters.** `ACK_UNKNOWN_SEQUENCE`, and the eviction classification of
   `rocketnet_ack_endpoint_record_sent_classified` (`SEND_HISTORY_LOST`,
   `SEND_HISTORY_OVERFLOW`, from `largest_acked_sequence`), are not state here; the
-  classification is `tla/RNSentHistory.tla`'s. (The run pre-scan in
-  `rocketnet_ack_apply_run` that the code at `3ad4179` carried is gone at `617d498`.)
+  classification is `tla/RNSentHistory.tla`'s.
 - **Keep-alive, disconnect and standalone-ack records** (no packet id): nothing
   surfaces for them, so they are not sent.
 
@@ -204,8 +199,8 @@ done
   --out "$job/RUNS.tsv" "$job"/fragmentsandacks-*/RUNS.tsv
 ```
 
-`MCFragmentsAndAcks.cfg` is the committed run: the honest sender under the code's rules
-(`Witness = "none"`, `StaleRule = "code"`), burns on, both links `"arbitrary"` under
+`MCFragmentsAndAcks.cfg` is the committed run: the honest sender
+(`Witness = "none"`, `StaleRule = "code"`, the bounded-difference stale test of D1), burns on, both links `"arbitrary"` under
 `SpecSafety`, checking the twelve invariants (nine, and the three bitmap invariants
 below) and `CountPinned`. `MCFragmentsAndAcksLive.cfg`
 is the same instance under `Spec` with `OpenedSurfacesOrLaps` added. The
@@ -229,7 +224,7 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
   the two defect witnesses use it. The `defect` row itself is smaller still: `DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxSeq = 2`;
 - *pattern p*: both `Pattern` lines set to `p`;
 - *stale-small*: counts `{2}`, duplication and reordering off, pattern `"arbitrary"` (loss stays on, or nothing is ever left incomplete), burns on:
-  the instance on which the code's stale rule and the standard's are compared.
+  the instance on which the bounded-difference and serial stale rules are compared.
 
 | Run | Cfg | Changes | Expected | Gate |
 |---|---|---|---|---|
@@ -241,9 +236,9 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget on a loaded bench |
 | find-stale | `MCFragmentsAndAcksFindStale.cfg` | safety + `StaleOnlyIfOlder`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1` (the `num_slots = 256` geometry: one whole payload lost poisons) | **fails** `StaleOnlyIfOlder`: D1 | required |
 | find-stale-small | `MCFragmentsAndAcksFindStaleSmall.cfg` | find-stale + stale-small | **fails** `StaleOnlyIfOlder`: D1 | required |
-| find-stale-serial-small | `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | find-stale-small + `StaleRule = "serial"` | passes: the standard's rule | bench: over budget |
+| find-stale-serial-small | `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | find-stale-small + `StaleRule = "serial"` | passes: the serial comparison | bench: over budget |
 | find-stale-ahead2 | `MCFragmentsAndAcksFindStaleAhead2.cfg` | safety + `StaleOnlyIfOlder`, `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1` (`StaleAhead = 2`: two whole payloads lost poison), counts `{2}`, duplication and reordering off, ack link `"none"`, `Capacity = 1` | **fails** `StaleOnlyIfOlder`: D1 | required |
-| find-stale-plain | `MCFragmentsAndAcksFindStalePlain.cfg` | find-stale + `StaleRule = "plain"`, `FirstId = 6` | **fails** `StaleOnlyIfOlder`: the standard's own witness, a plain comparison across the wrap | required |
+| find-stale-plain | `MCFragmentsAndAcksFindStalePlain.cfg` | find-stale + `StaleRule = "plain"`, `FirstId = 6` | **fails** `StaleOnlyIfOlder`: a plain comparison across the wrap | required |
 | find-batchfull | `MCFragmentsAndAcksFindBatchFull.cfg` | safety + `BatchFullNeverFires`, `MaxSeq = 6`, `MaxGen = 3`, `Slots = 2`, `StaleRule = "serial"`, counts `{2}`, pattern none, duplication and burns off | **fails** `BatchFullNeverFires`: D2 | required |
 | defect | `MCFragmentsAndAcksDefect.cfg` | the small defect instance, `SpecSafety`, invariants + `CountPinned` | passes | required |
 | wit-firstfrag | `MCFragmentsAndAcksWitFirstfrag.cfg` | safety, `Witness = "firstfrag"` | **fails** `SurfacedOnlyIfOpened` | required |
@@ -263,8 +258,8 @@ from `MaxSeq = 3` with `Capacity = 2` to `MaxSeq = 2` with `Capacity = 1`; `defe
 `MaxSeq`, `MaxGen`, `StaleAhead` and jitter and drops counts `{2, 3}`, duplication,
 reordering, ack loss and the second wire slot, and still fails `StaleOnlyIfOlder` in the
 same 11 states (ids 2 and 3 burned whole, id 4's fragment 0 refused). The
-`find-stale-serial-small` pass needs the instance on which the code's rule fails
-(`MaxSeq = 6`; at `MaxSeq = 5` the code's rule finds no violation in 5 minutes), which
+`find-stale-serial-small` pass needs the instance on which the bounded-difference rule fails
+(`MaxSeq = 6`; at `MaxSeq = 5` that rule finds no violation in 5 minutes), which
 is 19.7 million distinct states, so it stays a `bench` row rather than shrink below the
 comparison it exists for.
 
@@ -314,7 +309,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 | `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 0.8 s |
 | `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 0.9 s |
 
-### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`, 2026-10-13)
+### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`)
 
 These runs completed outside the 110 s budget, before the per-case records existed. They
 are not current records; they are the evidence for the bench rows above.
@@ -324,12 +319,12 @@ are not current records; they are the evidence for the bench rows above.
 | committed (`SpecSafety`, all invariants + CountPinned) | pass | 317,743,656 | 44,927,746 | 49 | 11 min 52 s |
 | live (`Spec` + `OpenedSurfacesOrLaps`, committed instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; it carries no evidence | | | | |
 | live-small (`MaxSeq = 3`, `MaxGen = 1`, no dup, no reorder) | pass | 229,436 | 54,283 | 25 | 1 min 0 s |
-| find-stale-serial-small (find-stale-small, `StaleRule = "serial"`) | pass: the standard's rule on the instance the code's rule fails | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
+| find-stale-serial-small (find-stale-small, `StaleRule = "serial"`) | pass: the serial comparison on the instance the bounded-difference rule fails | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
 | find-stale-ahead2 (`MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on) | **StaleOnlyIfOlder violated**, 11 states (D1) | 8,174,784 | 1,739,380 | | 21 s |
 | defect (`DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxGen = 1`, `MaxSeq = 4`, `Capacity = 1`, no dup, no reorder, no burns) | pass | 82,754,545 | 17,468,462 | 30 | 2 min 44 s |
 
 The evidence for the `pat-alternate` bench row is its run with the bitmaps outside the
-budget (TLC 2.19, 2 workers, 2026-10-17, before the three invariants were in its cfg):
+budget (TLC 2.19, 2 workers, before the three invariants were in its cfg):
 pass, 5,924,703 states, 1,422,444 distinct, depth 43, 168.8 s.
 
 Never run to completion: `pat-none`, `pat-first`, `pat-burst` at the committed instance,
@@ -338,13 +333,12 @@ rule at `MaxSeq = 6` with jitter (106 million).
 
 ## The sent-ring bitmaps
 
-The design the pro card `rocketnet-ack-walk-unacked-only` implements in
-`sdk/rocketnet_ack.cpp` (owed: the fields `sent_held`, `sent_unacked` and
-`sent_bits_checked` are not in the code yet). Beside the sent ring the endpoint keeps two
-bitmaps, one bit per slot: held (the slot holds a written record) and unacked (written and
+The fields `sent_held`, `sent_unacked` and `sent_bits_checked` of
+`struct rocketnet_ack_endpoint_t` (`sdk/rocketnet_ack.h`, used in `sdk/rocketnet_ack.cpp`).
+Beside the sent ring the endpoint keeps two bitmaps, one bit per slot: held (the slot holds a written record) and unacked (written and
 not yet acknowledged), and the highest sequence whose slot has been reconciled.
 
-| Variable | Code (owed) | Meaning |
+| Variable | Code | Meaning |
 |---|---|---|
 | `held` | `sent_held` | the slots holding a written record, as a set of slot indexes |
 | `unacked` | `sent_unacked` | the slots written and not yet acknowledged |
@@ -370,12 +364,12 @@ window only when slot `s % SentRing` has its unacked bit set and holds s.
 | Property | The rule |
 |---|---|
 | `BitsCoverRing` | always: every slot whose record is in the window, written and not acknowledged is in `unacked`, and `unacked` is inside `held`; the walk never misses a record |
-| `BitsMatchRing` | when `bitsChecked = highestSent`: `held` is exactly the slots whose record is written and at or above `WindowLow`, `unacked` exactly those of them not acknowledged; the check the pro card's `ack_block_walk_bits_match_ring` test runs |
+| `BitsMatchRing` | when `bitsChecked = highestSent`: `held` is exactly the slots whose record is written and at or above `WindowLow`, `unacked` exactly those of them not acknowledged; the check the `ack_block_walk_bits_match_ring` test runs |
 | `WalkVisitsUnacked` | `lastVisited = lastExpect`: the bitmap walk visits exactly the sequences the ring says it should |
 
 **Abstracted.** The bits are sets of slot indexes, not words; the walk's word scan (find the
-next set bit) is a set filter. The unknown-sequence counter, which the design keeps as a
-popcount of `held` against the named span, is not modelled (counters are not state here,
+next set bit) is a set filter. The unknown-sequence counter, which the code computes as a
+popcount of `sent_held` against the named span, is not modelled (counters are not state here,
 as above). The reconcile runs on every block received, including an empty one.
 
 **The instance.** Every older cfg has `SentRing = MaxSeq`, so no slot is ever lapped and the
@@ -412,8 +406,8 @@ unacked bit is set). Six states: `StartPayload` records sequence 1 in slot 1 (`h
 the reconcile finds slot 1 holding 1, `lastExpect = {1}`, and the walk skips 1, so
 `lastVisited = {}` and the record stays unacknowledged with its bit set. `BitsCoverRing`
 and `BitsMatchRing` hold (the bits still match the ring); `WalkVisitsUnacked` fails. Hand
-check: the design's walk visits every named sequence in the window whose unacked bit is set
-and whose slot holds it; slot 1 holds 1 with the bit set, so the design visits it, and a
+check: the code's walk (`rocketnet_ack_endpoint_process_block`) visits every named sequence in the window whose unacked bit is set
+and whose slot holds it; slot 1 holds 1 with the bit set, so the code visits it, and a
 walk that skips it leaves a received packet unacknowledged until a later block names it.
 
 **wit-staleheld** (`Witness = "staleheld"`: the reconcile clears a mismatched slot's unacked
@@ -422,7 +416,7 @@ bit but keeps its held bit). Seven states: `StartPayload` records 1 in slot 1,
 `RecvAck`: the reconcile checks 3 and 4 (`bitsChecked + 1 = 1` clamped to 3); slot 1 holds
 1, not 3, so it is cleared from `unacked` but stays in `held`; `bitsChecked = 4`. Now
 `held = {0, 1}` while the ring's slots in the window are `{0}`: `BitsMatchRing` fails, and
-`BitsCoverRing` holds (`unacked = {0}` inside `held`). Hand check: the design's reconcile
+`BitsCoverRing` holds (`unacked = {0}` inside `held`). Hand check: the code's reconcile
 clears both bits of a slot that does not hold its sequence; sequence 1 is below the window
 (`highestSent - SentRing + 1 = 3`), so its slot is no longer held, and a held bit left set
 would let the next block's walk, or the unknown-sequence count, treat slot 1 as live.
@@ -445,24 +439,20 @@ rows; its recorded run, with the three invariants, passes in 41.0 s on an idle b
 
 Every counterexample below was replayed by hand through the functions it names.
 
-**Severity, from the cold reads.** D1 is HIGH: it is permanent for the connection's
+**Severity.** D1 is HIGH for the rule it refutes: it is permanent for the connection's
 life, and the payloads it refuses were acknowledged to the sender (the ack block is
 built from the replay window, before reassembly), so a delta-compression scheme built on
-the notifications takes a baseline the peer never delivered. Its fix is the serial
-comparison STANDARD.md:1981-1987 specifies. D2 is MEDIUM on the server and LOW on the
-client.
+the notifications takes a baseline the peer never delivered. D2 is MEDIUM on the server and
+LOW on the client for the sizing it refutes. The end of each finding states the rule the
+shipped code keeps instead.
 
-### D1. A loss burst, or one late fragment, poisons a reassembly slot for the connection's life (defect, HIGH)
+### D1. Under a bounded-difference stale test, a loss burst or one late fragment poisons a reassembly slot for the connection's life (HIGH)
 
-`sdk/rocketnet_fragment.cpp:267-273`, the stale test:
+The bounded-difference stale test (`StaleRule = "code"`) refuses a fragment of an occupied
+slot whose payload id is a different id more than `ROCKETNET_MAX_FRAGMENTS` (256) ahead of
+the occupant's, as an unsigned difference, counted `FRAGMENT_STALE`.
 
-```c
-if ( slot->payload_id != 0 && payload_id != slot->payload_id &&
-     payload_id - slot->payload_id > ROCKETNET_MAX_FRAGMENTS )
-    ... FRAGMENT_STALE, return 0;
-```
-
-The comment above it argues that the next honest id for a slot is at most
+Its argument is that the next honest id for a slot is at most
 `ROCKETNET_MAX_FRAGMENTS` (256) ahead of its occupant, because the id counter advances
 by one per fragmented payload and the slot recurs every `num_slots` ids. That holds only
 while the occupant is the slot's latest id. It is not when payloads die whole: a payload
@@ -479,27 +469,26 @@ fragment 0 arrives: `3 - 1 = 2 > 1`, refused as stale, counted `FRAGMENT_STALE`.
 whole, id 4 refused (11 states). The occupant is still id 1, incomplete, and every later
 honest id is further ahead, so every later fragmented payload for this slot is refused
 as stale until `rocketnet_reassembly_set_reset_connection` (a reconnect). The abandoned
-counter never fires for them: the loss is reported as "stale", which the standard
-reserves for superseded payloads.
+counter never fires for them: the loss is reported as "stale", the count for a
+superseded payload, not a lost one.
 
-Replayed through the code at the shipped geometry, there are two routes in.
+At the shipped geometry this rule has two routes in.
 
-*The loss route.* With `num_slots = 8` (the default, `sdk/rocketnet.h:531`) the ids of
+*The loss route.* With `num_slots = 8` (the default) the ids of
 one slot are 8 apart, so with an incomplete occupant X the slot tolerates the next 32
 payloads of its own series lost whole (X+8 .. X+256; X+256 is exactly 256 ahead and
 passes) and refuses the 33rd, X+264, and everything after. Only the slot's series has to
 be lost: the other seven slots' payloads can arrive and complete throughout. At
-`num_slots = 256`, which the configuration admits (`sdk/rocketnet.h:611` and `:851`, up to
-`ROCKETNET_MAX_FRAGMENTS`), the tolerance is zero. A seal refusal inside the fragment
+`num_slots = 256`, which the configuration admits (up to `ROCKETNET_MAX_FRAGMENTS`), the tolerance is zero. A seal refusal inside the fragment
 loop (`BurnFragmented`) consumes an id with nothing reaching the wire and counts toward
 the same 32.
 
-*The one-packet route.* The stale test is skipped for an empty slot
-(`slot->payload_id != 0`, `fragment.cpp:267`). A delayed fragment of a payload that was
+*The one-packet route.* The bounded-difference test is skipped for an
+empty slot. A delayed fragment of a payload that was
 abandoned long ago lands in a slot that a completion has just emptied, re-occupies it
 with its old id, and from then on every live id is more than 256 ahead of the occupant:
-from id X+264 on, every payload in that slot is refused, with no loss burst at all. The
-reader's harness (to become the fix card's test) drove this: 644 of 736 payloads delivered, 92 `FRAGMENT_STALE`, exactly one slot
+from id X+264 on, every payload in that slot is refused, with no loss burst at all. A
+harness replay of this route delivers 644 of 736 payloads and refuses 92 as `FRAGMENT_STALE`, exactly one slot
 in eight, no other loss. It holds for payloads of up to about 15 fragments (past that the
 delayed fragment is outside the 4,096-sequence replay window and refused there). The
 model's window (`Window = SentRing = MaxSeq = 4`) is too small to tell "late but inside
@@ -507,57 +496,65 @@ the replay window" from "too late", so this route is in the hand replay, not in 
 trace.
 
 In both routes the refused payloads were acknowledged to the sender, and the abandoned
-counter never fires for them: the loss is reported as "stale", which the standard
-reserves for superseded payloads.
+counter never fires for them: the loss is reported as "stale", the count for a
+superseded payload, not a lost one.
 
-The standard (Fragmentation, "Older is serial-number arithmetic on the 32-bit values,
-so no id can poison a slot", STANDARD.md:1981-1987) specifies the half-space comparison.
-The model's `StaleRule = "serial"` is that comparison; `find-stale-serial-small` checks
-it on the instance where the code's rule fails (`find-stale-small`), and the result is
-in the table. The code's comment chose the bounded difference against a hostile id
-"just under 2^31 ahead", which only the connection's own sealed sender can produce.
-`find-stale-plain` (`StaleRule = "plain"`, `FirstId = 6` so the id counter wraps during
-the run) fails as the standard says a plain comparison must. The fix is a code card, not
-this one: the serial comparison the standard names.
+The model's `StaleRule = "serial"` is the half-space serial comparison;
+`find-stale-serial-small` checks it on the instance where the bounded-difference rule
+fails (`find-stale-small`), and the result is in the table. `find-stale-plain`
+(`StaleRule = "plain"`, `FirstId = 6` so the id counter wraps during the run) shows that
+a plain comparison fails across the wrap.
 
-### D2. `BATCH_FULL` fires under legitimate load (design claim contradicted; MEDIUM on the server, LOW on the client)
+The shipped stale test is neither. `rocketnet_reassembly_process_fragment` applies the
+two-reference test of [t16.2 Receiving](../standard/TRANSPORT.md#t16.2): an id further than
+`ROCKETNET_REASSEMBLY_REACH` from the connection's newest completed payload id in both
+directions is stale, which refuses a hostile id near 2^31 ahead whether its
+slot is occupied or empty; an id 1 to `ROCKETNET_REASSEMBLY_BEHIND` (256) behind the
+slot's occupant is stale; any other id displaces the occupant, counted abandoned when it
+is incomplete. A newer honest id is never refused however many of its slot's ids were lost
+whole, which is what `StaleOnlyIfOlder` asks. The model does not encode the two-reference
+rule; the D1 rows check the three rules it does encode.
 
-`sdk/rocketnet_fragment.h:108-117` and `sdk/rocketnet_client_transport.cpp:260-267`:
-`delivered_capacity` is sized to half the receive drain ("a payload takes at least two
-fragments, so one update completes at most half the packets it drains"), and
-`BATCH_FULL` is called "a true invariant: zero under any legitimate load". On the client
-the half-the-drain argument counts only fragments drained this update; a payload whose
-first fragments arrived in an earlier update completes on one packet. On the server the
-argument is simply not the code's sizing (below).
+### D2. `BATCH_FULL` fires under legitimate load when the delivered batch is half the drain (MEDIUM on the server, LOW on the client)
+
+Sizing `delivered_capacity` to half the receive drain rests on the argument that a
+payload takes at least two fragments, so one update completes at most half the packets
+it drains. The argument counts only fragments drained this update; a payload whose first
+fragments arrived in an earlier update completes on one packet.
 
 TLC's trace (`find-batchfull`, 18 states, `Slots = 2`, `DrainCap = 4`,
 `DeliveredCap = 2`, no loss, in-order delivery except one `Reorder`): update 1 drains
 fragment 0 of payload 1 (sequence 1) and fragment 0 of payload 2 (sequence 3, reordered
 ahead of sequence 2), two slots half full; `Tick`; update 2 drains sequence 2 (payload 1
-complete, delivered), sequence 4 (payload 2 complete, delivered, `num_delivered = 2 = delivered_capacity`), then sequences 5 and 6, payload 3, whose completion is dropped at
-`sdk/rocketnet_fragment.cpp:463-467`, counted `FRAGMENT_PAYLOAD_BATCH_FULL`, the slot
+complete, delivered), sequence 4 (payload 2 complete, delivered, `num_delivered = 2 = delivered_capacity`), then sequences 5 and 6, payload 3, whose completion is dropped in
+`rocketnet_reassembly_process_fragment`, counted `FRAGMENT_PAYLOAD_BATCH_FULL`, the slot
 cleared: a payload lost with nothing lost on the wire, four packets drained in the
 update that the sizing says can complete at most two.
 
-Replayed at the shipped sizes.
+At the shipped constants, a half-the-drain sizing overflows on both ends.
 
-*Client (LOW).* `delivered_capacity = 1024 / 2 = 512` (`ROCKETNET_NUM_CLIENT_PACKETS / 2`), 8 slots: 8 carried-over completions plus `(1024 - 8) / 2 = 508` fresh ones is 516.
+*Client (LOW).* `delivered_capacity = ROCKETNET_NUM_CLIENT_PACKETS / 2 = 512`, 8 slots: 8 carried-over completions plus `(1024 - 8) / 2 = 508` fresh ones is 516.
 This needs the carried-over half payloads, which take reordering (as in the trace) or
-interleaved fill threads on the sender (each fragment's ring slot is its own
-`atomic_add`, `sdk/rocketnet_client_transport.cpp:881`), and a 1,024-packet update.
+interleaved fill threads on the sender (each fragment takes its own ring slot), and a
+1,024-packet update.
 
 *Server (MEDIUM).* The server has no per-client drain. It drains one global array of
-`ROCKETNET_RECEIVE_PACKETS_PER_CLIENT × ROCKETNET_MAX_CLIENTS = 16 × 1000 = 16,000`
-packets per update (`sdk/rocketnet_constants.h:63`,
-`sdk/rocketnet_server_socket_linux.cpp:1946`), while the delivered pool is
-`max_clients × num_reassembly_slots` (`sdk/rocketnet_server_transport.cpp:851-852`), 64 × 8
-= 512 at the defaults (`sdk/rocketnet.h:842`). So it overflows with no carried-over
-payloads at all: 64 clients each completing 9 two-fragment payloads in one update is
-1,152 fragments drained, 576 reassembled, 64 `BATCH_FULL`. The comment at
-`sdk/rocketnet_server_transport.cpp:842-849` makes the same false claim as
-`fragment.h` ("completions cap at eight per client at the defaults"). `drain / 2 + num_slots` would not fix the server; the pool has to follow the drain (16,000 / 2) or
-the drain the pool. A model of one connection cannot see this: the overflow is across
-connections, in a pool the model's receiver does not share. The fix is a code card.
+`ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS` packets per update
+(`ROCKETNET_RECEIVE_PACKETS_PER_CLIENT × ROCKETNET_MAX_CLIENTS = 16 × 1000 = 16,000`).
+A delivered pool of `max_clients × num_reassembly_slots`, 64 × 8 = 512 at the defaults,
+overflows with no carried-over payloads at all: 64 clients each completing 9
+two-fragment payloads in one update is 1,152 fragments drained, 576 reassembled, 64
+`BATCH_FULL`. The pool has to follow the drain, not the slots. A model of one connection
+cannot see this: the overflow is across connections, in a pool the model's receiver does
+not share.
+
+The shipped sizing follows the drain. `rocketnet_server_reassembly_delivered_capacity`
+and `rocketnet_client_reassembly_delivered_capacity` (`sdk/rocketnet_fragment.cpp`) size
+the batch for a drain of N packets to `( N + min( N, connections × slots ) ) / 2`: a
+payload begun in the update takes two of the drained packets, one begun earlier takes
+one, and at most connections × slots are begun earlier, so `BATCH_FULL` stays zero under
+any load the drain delivers. On the `find-batchfull` instance that bound is
+(4 + 2) / 2 = 3, above the `DeliveredCap = 2` the witness uses.
 
 ### Model errors found and fixed on the way
 

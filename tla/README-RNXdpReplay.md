@@ -1,17 +1,22 @@
 # RNXdpReplay: kernel replay protection with a read-only high-water map
 
-`tla/RNXdpReplay.tla` is the design of kernel replay protection for the XDP
-server driver: a BPF hash map `server_xdp_replay_map` that the XDP program
+`tla/RNXdpReplay.tla` models kernel replay protection for the XDP server
+transport: a BPF hash map `server_xdp_replay_map` that the XDP program
 (`server_xdp/server_xdp.c`) only reads, and that the transport writes once per
 server update from the session replay windows (`sdk/rocketnet_replay.h`,
 `highest_opened`). The worked example of a replay model is
 `tla/ReplayWindow.tla`; that module is the userspace window, this one is the
 kernel's coarse filter in front of it.
 
-The model is written before the code. `server_xdp/server_xdp.c` holds no
-replay map yet; the code card `rocketnet-xdp-kernel-replay-check` implements
-it, names its steps after the actions below and cites this module. Until then
-the `xdp-replay-high-water` row of `tla/COVERAGE.tsv` is `owed`.
+The code cites this module at each step. `KernelFilter` is the replay rule
+of `server_xdp_udp` in `server_xdp/server_xdp.c`, which only looks
+`server_xdp_replay_map` up. `Walk` is `rocketnet_server_replay_marks_walk`
+(`sdk/rocketnet_server_replay_marks.cpp`), called from
+`rocketnet_server_transport_update` in `sdk/rocketnet_server_transport.cpp`
+after the maintenance sweep, and `Commit` is the transport's `replay_commit`,
+on Linux `rocketnet_server_socket_replay_commit`
+(`sdk/rocketnet_server_socket_linux.cpp`), which applies every forget and
+then every mark to the pinned map.
 
 `tla/MCRNXdpReplay.tla` and `tla/MCRNXdpReplay.cfg` are the small instance.
 `tla/MCRNXdpReplayBrokenKernelAdvances.cfg` and
@@ -19,7 +24,7 @@ the `xdp-replay-high-water` row of `tla/COVERAGE.tsv` is `owed`.
 are rows of `tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
 `tla/RUNS.tsv`.
 
-## The design
+## The rule
 
 - The map: `ROCKETNET_XDP_REPLAY_MAX_ENTRIES` (1024) entries, keyed by the
   source family, port and address, valued by a 32-bit `high_water`.
@@ -47,7 +52,7 @@ highest sequence sent or forged), `W` (the kernel window), `Sessions` (the
 sessions over the whole run, so a reconnect from one address is reachable),
 `MaxInFlight` (the bound on packets in the network).
 
-| Variable | Design | Meaning |
+| Variable | Code | Meaning |
 |---|---|---|
 | `session[a]` | the slot's connection | the live session id, `0` for none |
 | `sent[a]` | client send sequence | highest genuine sequence the live session sent |
@@ -62,11 +67,11 @@ sessions over the whole run, so a reconnect from one address is reachable),
 | `dropped` | (ghost) | genuine packets the kernel dropped, with the session of the mark it dropped them against |
 | `nextSession` | (ghost) | the id the next connection takes |
 
-Two rule switches are definitions with the design's values, each overridden
+Two rule switches are definitions with the code's values, each overridden
 by one witness configuration: `KernelAdvances` (`FALSE`) and `WalkForgets`
 (`TRUE`).
 
-Actions, each against the design sentence it models:
+Actions, each against the code it models:
 
 - `Connect(a)`: a new session; sequences restart at 1 and `highest_opened` is
   0. Enabled only when `settle[a] = "clear"`, that is once a `Walk` and a
@@ -77,7 +82,7 @@ Actions, each against the design sentence it models:
 - `Duplicate(p)`: the network delivers a second copy of a packet.
 - `KernelFilter(p)`: THE KERNEL RULE. With an entry and `hw - seq >= W`, the
   packet is dropped (a genuine one is recorded in `dropped`); otherwise it
-  passes to userspace. The design leaves `kmap` unchanged; the broken shape
+  passes to userspace. The code leaves `kmap` unchanged; the broken shape
   writes `kmap[a] := seq` on every pass. The kernel runs beside the update,
   so this is enabled in both phases.
 - `UserOpen(p)`: a genuine packet of the live session opens and raises
@@ -88,7 +93,7 @@ Actions, each against the design sentence it models:
   session), then marks (every live session with `opened[a] # 0` and
   `opened[a] # marked[a]`), into the pending sets; `marked` records them.
 - `Commit`: the driver applies all forgets, then all marks, to `kmap`. The
-  only action that writes `kmap` in the design.
+  only action that writes `kmap`.
 
 `Connect`, `UserOpen`, `Release` and `Walk` are userspace steps of one
 update, so they run only in phase `"run"`; `Commit` ends the flush.
@@ -146,7 +151,7 @@ assumption is what makes the one-update lag safe for a new session.
 
 ## Running
 
-From the Rocketnet checkout, with the pinned runner and JAR of
+From the Rocketnet checkout, with the pinned `tlacheck` and JAR of
 `tla/README.md`:
 
 ```sh
@@ -184,7 +189,7 @@ no-forget shape fails `MarkNeverAhead` at depth 11 (the reconnect, with the
 old session's entry still in the map). Both were bench experiments, not
 cases.
 
-### KernelAdvances, checked by hand against the design
+### KernelAdvances, checked by hand against the code
 
 1. `Connect(A1)`: session 1; `ClientSend(A1)` puts genuine sequence 1 on the
    wire.
@@ -194,12 +199,12 @@ cases.
 4. `KernelFilter` on genuine 1: `3 - 1 >= 2`, dropped, with `highest_opened`
    still 0.
 
-In the design the kernel never writes at step 3; the forgery reaches
+In the code the kernel never writes at step 3; the forgery reaches
 userspace, fails the open, and the entry stays absent, so genuine 1 passes.
 At the real window of 16 the forgery need only be 16 ahead of the genuine
 traffic: one spoofed packet would silence a client.
 
-### NoForget, checked by hand against the design
+### NoForget, checked by hand against the code
 
 1. `Connect(A1)`: session 1 sends 1, 2, 3; the kernel passes 1 and 3, and
    userspace opens both (`highest_opened = 3`); 2 is still on the wire.
@@ -209,7 +214,7 @@ traffic: one spoofed packet would silence a client.
 5. `KernelFilter` on session 2's sequence 1: `3 - 1 >= 2`, dropped against
    session 1's mark.
 
-In the design the walk at step 3 forgets `A1` and the commit deletes the
+In the code the walk at step 3 forgets `A1` and the commit deletes the
 entry before session 2 can exist (HandshakeSpansAnUpdate), so session 2's
 first packets pass. At the real window, a client reconnecting from the same
 address and port would lose every packet until its sequence passed the old

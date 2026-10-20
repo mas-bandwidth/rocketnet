@@ -1,7 +1,8 @@
 # RNConnectionMemory
 
-Per-connection message memory, and the kick on exhaustion: docs/CHANNELS.md
-section 4 ("Who owns each region, and exhaustion kicks"), implemented in
+Per-connection message memory, and the kick on exhaustion that ends a
+connection with `MESSAGE_MEMORY_EXHAUSTED` (a counter of
+[t18 Error handling and counters](../standard/TRANSPORT.md#t18)), implemented in
 `sdk/rocketnet_allocator.cpp` by `rn_region_send_alloc`, `rn_region_exhaust`,
 `rn_connection_memory_decide` and `rn_region_reset`, and the arena's create
 paths (`rn_arena_create`, `rn_arena_create_in_block`). The unit tests are in
@@ -69,8 +70,8 @@ The traces TLC printed, checked against the code by hand:
 - **BrokenCarryOn**, depth 7: `Connect(s1, c1)`, three `Use(s1)`,
   `Exhaust(s1)`, then `Release(s1)` on the exhausted slot. This is the step
   the code's region still allows: `rn_region_send_free` works after
-  exhaustion, because the layer 1 tests free and refill after a refusal. The
-  guarantee is the owner's: it reads `rn_connection_memory_decide` before any
+  exhaustion, because the allocator's unit tests free and refill after a
+  refusal. The guarantee is the owner's: it reads `rn_connection_memory_decide` before any
   other work of the update and kicks. The witness shows that a caller who
   skips the decision breaks the property.
 
@@ -92,10 +93,12 @@ The instance: three slots, four clients, a region of three records.
 - `Capacity` stands for every part of the region at once. The code has
   several pools (the three store classes, the descriptor pool, the receive
   ring, the holds). Any one of them refusing is `Exhaust`.
-- The receive side's no-room sites are not wired to `rn_region_exhaust` yet;
-  the objects layer wires them with the kick.
-- `Connect`, `Leave` and the disconnect itself are the objects' (layer 8). The
-  region provides the state, the reason, the decision and the reset.
+- The receive side's no-room sites (`rn_channels_dispatch_ordered` and
+  `rn_channels_dispatch_chunk` in `sdk/rocketnet_channel.cpp`) also call
+  `rn_region_exhaust`, and the owner's next `rn_connection_memory_decide`
+  kicks the connection.
+- `Connect`, `Leave` and the disconnect itself belong to the message objects.
+  The region provides the state, the reason, the decision and the reset.
 
 ## How to run it
 

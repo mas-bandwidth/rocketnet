@@ -49,6 +49,9 @@ The heading is written
     <a id="t6"></a>
     ## t6. Connect token
 
+<a id="t5.1"></a>
+<a id="t6.1"></a>
+<a id="t6.2"></a>
 The anchor line is the link target; the heading text after `t6. ` is exactly
 the outline's heading. Subsections are `### t6.1. Private connect token data`
 and so on, with an anchor `t6.1`; a subsection id is never reused or
@@ -146,7 +149,7 @@ its rule.
 RN-1 and RN-2 never contain: history, past rulings, corrections, "previously",
 comparisons with other protocols (Appendix B of RN-1 is the one place a
 difference from netcode 1.02 is listed, as a list of facts), source file names
-or `file:line`, build card names, TLA+ module names, test function names, or
+or `file:line`, work item names, TLA+ module names, test function names, or
 names of people, machines or customers. A requirement carries at most one
 sentence of reason; the rest goes to RN-R under the same section id. The
 checker refuses file paths, `TLA+` and `test_` identifiers in RN-1 and RN-2.
@@ -259,7 +262,7 @@ unpinned row; the checker fails every `#unpinned` line in a pin file.
 
 Pin files are owned by sections. `transport.tsv` holds rows of RN-1 t1 to t3
 and `messages.tsv` rows of RN-2 m1, the sections this skeleton wrote. A
-section card adds rows only to its own pin file, `standard/pins/<section id>.tsv` (for example `t8.tsv`), never to a shared one, and every row of that
+section's change adds rows only to its own pin file, `standard/pins/<section id>.tsv` (for example `t8.tsv`), never to a shared one, and every row of that
 file lies in that section; the document is RN-1 for a `t` id and RN-2 for an
 `m` id. The checker fails a row outside its file's sections.
 
@@ -270,7 +273,7 @@ subsection, and its text is the target's id and heading, prefixed by the
 document tag when it crosses documents:
 
     [t6 Connect token](#t6)
-    [t2.3 Configuration surface](#t2.3)
+    [t6.1 Private connect token data](#t6.1)
     [RN-1 t14 Replay protection](TRANSPORT.md#t14)
     [RN-R t6 Connect token](RATIONALE.md#t6)
 

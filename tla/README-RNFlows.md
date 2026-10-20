@@ -1,17 +1,17 @@
 # RNFlows
 
-`RNFlows.tla` models flows on the message server, the design of
-`docs/FLOWS.md`: a fixed flow table whose ids never repeat, subscriptions
-tagged with the connection id of their slot, a send that queues one copy to
-each subscriber slot's endpoint the way `rocketnet_message_server_broadcast`
-does, and the transport's slot churn between object updates. No code
-implements it yet; `tla/COVERAGE.tsv` holds the `rn-flows` row as owed to
-the first implementation card, `rocketnet-flows-table`.
+`RNFlows.tla` models flows on the message server: a fixed flow table whose
+ids never repeat, subscriptions tagged with the connection id of their slot,
+a send that queues one copy to each subscriber slot's endpoint the way
+`rocketnet_message_server_broadcast` does, and the transport's slot churn
+between object updates. The SDK does not ship flows, so the `rn-flows` row of
+`tla/COVERAGE.tsv` is `owed`: the module is the specification an
+implementation of flows is checked against.
 
 ## Abstraction
 
 - **Phases.** `application` is the main thread between updates: Create,
-  Destroy, Subscribe, Unsubscribe and Send run only there (FLOWS.md F6).
+  Destroy, Subscribe, Unsubscribe and Send run only there.
   `BeginUpdate` hands over to `transport`, where any number of `Connect`,
   `Disconnect` and `Deliver` steps run; `Observe` ends the update. `Kick`
   runs in the application phase, as `rn_message_object_kick` does from the
@@ -35,26 +35,28 @@ the first implementation card, `rocketnet-flows-table`.
   them.
 - **Send.** `Send` queues to every slot that appears in the flow's
   subscriber list and has a bound endpoint, with no connection-tag check.
-  The design's `FLOW_STALE_SUBSCRIPTION` check is therefore not what keeps
-  the model safe: the drop at `Observe` alone does.
-- **Refusals** (FLOWS.md section 4) are taken in the design's order and
-  change no state, so each is a stutter step; their counters are not
-  modelled.
+  A connection-tag check at the send would be a second guard, and it is not
+  what keeps the model safe: the drop at `Observe` alone does.
+- **Refusals** (`Refuse(r)`: `FLOW_TABLE_FULL`, `FLOW_UNKNOWN`,
+  `FLOW_NOT_CONNECTED`, `FLOW_ALREADY_SUBSCRIBED`, `FLOW_SUBSCRIBERS_FULL`,
+  `FLOW_CLIENT_FLOWS_FULL` and `FLOW_NOT_SUBSCRIBED`, the model's reason
+  names) are taken in a fixed order and change no state, so each is a stutter
+  step; their counters are not modelled.
 - **Bounds.** `MaxFlows`, `MaxSubsPerFlow` and `MaxFlowsPerClient` are the
-  design's three bounds. `MaxIds` bounds the ids issued in one run (the
-  design's 2^32 - 1, `FLOW_IDS_EXHAUSTED`), `MaxConn` the connections and
-  `MaxMessages` the sends.
+  flow table's three bounds. `MaxIds` bounds the ids issued in one run
+  (standing for 2^32 - 1 ids, past which create refuses), `MaxConn` the
+  connections and `MaxMessages` the sends.
 
-| Action | Planned code (docs/FLOWS.md section 3) |
+| Action | What it stands for |
 |---|---|
-| `Create` | `rn_flows_create` under `rocketnet_message_server_flow_create` |
-| `Destroy` | `rn_flows_destroy` under `rocketnet_message_server_flow_destroy` |
-| `Subscribe` | `rn_flows_subscribe` under `rocketnet_message_server_flow_subscribe` |
-| `Unsubscribe` | `rn_flows_unsubscribe` under `rocketnet_message_server_flow_unsubscribe` |
-| `Send` | `rn_flows_first`/`rn_flows_next` and the per-slot send under `rocketnet_message_server_flow_send` |
-| `Observe` | `rn_flows_drop_slot` for each changed slot in `rocketnet_message_server_update`'s Observe loop |
-| `Kick` | `rn_message_object_kick` (no flow call; the drop is the next Observe) |
-| `Connect`, `Disconnect`, `Deliver`, `BeginUpdate` | the transport and the existing object update |
+| `Create` | an application call that takes a free table index and issues a fresh flow id |
+| `Destroy` | an application call that frees the flow's index and every subscription on it |
+| `Subscribe` | an application call that links a slot into the flow's subscriber list and the flow into the slot's row |
+| `Unsubscribe` | an application call that unlinks the slot from the flow's list and the flow from the slot's row in one step |
+| `Send` | one queued copy per subscriber slot with a bound endpoint, as `rocketnet_message_server_broadcast` queues per slot |
+| `Observe` | the drop of every subscription of a changed slot, in the RNSlots Observe loop of `rocketnet_message_server_update` |
+| `Kick` | `rn_message_object_kick` (no flow change; the drop is the next Observe) |
+| `Connect`, `Disconnect`, `Deliver`, `BeginUpdate` | the transport and the object update of `rocketnet_message_server_update` |
 
 ## Properties
 
@@ -71,7 +73,7 @@ the first implementation card, `rocketnet-flows-table`.
 
 ## Measured cases
 
-Both cases are required, group `rnflows`, measured with the pinned runner
+Both cases are required, group `rnflows`, measured with the pinned `tlacheck`
 and JAR of `README.md`, one shard each, 110-second budget. The records are
 in `RUNS.tsv`.
 
@@ -103,15 +105,14 @@ measured trace: create flow 1; begin an update and connect connection 1;
 removes the pair from `wants` while the flow list keeps the slot; send to
 flow 1, which queues a copy to slot 1 with nobody entitled; begin an update
 and `Deliver` it to connection 1. `DeliveredOnlyToSubscribers` fails at
-state 10. Checked by hand against FLOWS.md: the design's unsubscribe
-unlinks the node from the flow's list in the same call that frees it from
-the slot's row (sections 2 and 3), which is the step the mutant skips; card
-1's test `flows_unsubscribe_stops_later_sends` replays this trace.
+state 10. Checked by hand against the rule: an unsubscribe unlinks the slot
+from the flow's list in the same step that frees the flow from the slot's
+row, which is the step the mutant skips. An implementation of flows carries a
+unit test that replays this trace.
 
 ## Uncommitted checks of the reuse rule
 
-`NoSubscriptionSurvivesReuse` has no committed reversed witness (the card
-names one). In a scratch copy, `Broken = {"keepatreuse"}` (Observe skips the
+`NoSubscriptionSurvivesReuse` has no committed reversed witness. In a scratch copy, `Broken = {"keepatreuse"}` (Observe skips the
 drop) with one slot, two connections, one flow, one id and one send was run
 twice with TLC and the pinned JAR:
 

@@ -12,8 +12,8 @@ calls through the vendored sodium subset:
   `rocketnet_verify_signed_connect_data` performs
   (sdk/rocketnet_connect_token.cpp).
 
-Source: C2SP/wycheproof, commit `3fa63dd0344abb611f1fb1d77e119938603ea230`
-(2026-09-02). License: Apache-2.0 (beside these files, `LICENSE`).
+Source: C2SP/wycheproof, commit `3fa63dd0344abb611f1fb1d77e119938603ea230`.
+License: Apache-2.0 (beside these files, `LICENSE`).
 
 The fetch (run from `test/wycheproof/`):
 
@@ -34,4 +34,4 @@ sha256 checksums (verify with `sha256sum -c SHA256SUMS`):
     58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd  LICENSE
 
 These files are never edited; a pin move re-fetches them and rewrites
-SHA256SUMS. The sibling test cards read them through test/wycheproof.h.
+SHA256SUMS. The tests read them through test/wycheproof.h.

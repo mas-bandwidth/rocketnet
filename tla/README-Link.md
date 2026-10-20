@@ -4,9 +4,9 @@
 It is the module every other rocketnet model drives its state transitions through, so
 that the connection, security and fragment machines are checked under packet loss,
 latency, jitter, duplication and reordering rather than over a perfect wire. The
-transport itself never resends and a lost fragment loses its payload (USAGE.md,
-"The transport never resends"); the link models the path, not the transport's answer
-to it.
+transport itself never resends a fragment, and a lost fragment loses the whole payload
+([t16.1 Sending](../standard/TRANSPORT.md#t16.1)); the link models the path, not the
+transport's answer to it.
 
 `tla/MCLink.tla` and `tla/MCLink.cfg` are the small instance that proves the module
 itself. Current measured cases are in `tla/RUNS.tsv`; earlier records are
@@ -45,7 +45,7 @@ decided when the packet is sent (`rocketnet_network_simulator_send`, the
 `packet_loss_percent` roll), a duplicate gets its own latency and jitter (the
 `duplicate_percent` branch), and delivery order is not send order (the file's header:
 "Slot-index order is not delivery-time order and it is not FIFO"). The simulator's
-"queue full, packet dropped" is a harness artefact at 4096 slots and is not modelled:
+full-queue drop is a harness artefact at 4096 slots and is not modelled:
 `Capacity` disables `Send` and `Duplicate` rather than dropping, so it is a model-size
 knob and never a hidden loss source.
 
@@ -58,7 +58,7 @@ terrain at a time as well as the arbitrary one:
 |---|---|
 | `"none"` | nothing |
 | `"first"` | the first send on this link |
-| `"alternate"` | the 1st, 3rd, 5th ... sends; even ones arrive ("first packet dropped, second packet comes through") |
+| `"alternate"` | the 1st, 3rd, 5th ... sends; even ones arrive (the first packet dropped, the second through) |
 | `"burst"` | sends `BurstStart .. BurstStart + BurstLen - 1` |
 | `"arbitrary"` | nothing at send; `Drop(i)` may remove any copy at any time |
 
@@ -74,7 +74,7 @@ may depend on it.
   infinitely often (`SF` on `Deliver(p)` for every `p`), and time passes
   (`WF` on `Age`). This is the wire being a wire; it never brings a dropped copy back.
 - `EventualDelivery`: a packet sent infinitely often is delivered infinitely often.
-  This is the assumption "a packet re-sent without bound is eventually delivered". It
+  This is the assumption that a packet re-sent without bound is eventually delivered. It
   is what rules out the adversary who drops every copy forever under `"arbitrary"`,
   and (TLC showed) it is also needed under the deterministic patterns when
   `Reordering` is on: see "What TLC found".
@@ -99,7 +99,7 @@ cautions:
 
 - Packet contents, sizes, addresses, sealing. `Packets` is whatever the model says.
 - The transport's answer to loss: acks, the replay window, fragment reassembly, the
-  "never resends" rule. Those are the models above this one.
+  rule that a fragment is never resent. Those are the models above this one.
 - Real time. `due` and `Age` are ticks; the model owns the clock.
 - An attacker. Replay of a captured packet is `Duplicate` at a later time. Forging is a
   model's own action because it is about what the attacker can construct, not about
@@ -144,8 +144,8 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ C2S!Fairness /\ S2C!Fairness
 Conjoin `Send` into the action that sends, `Deliver` into the action that receives, and
 `Age` into `Tick`. Give every deliverable packet a receive action (caution 1 above).
 Check safety under every pattern; it needs no fairness. Check liveness under
-`Fairness`. Start with `"first"` and `"alternate"`: those are the terrains the request
-named.
+`Fairness`. Start with `"first"` and `"alternate"`: those are the terrains where a
+packet sent once and lost is most likely to strand a peer.
 
 ## How to run it
 
@@ -159,7 +159,8 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCLink.cfg 
 `MCLink.cfg` is the committed run: `Pattern = "arbitrary"` under `Spec`
 (`Link!Fairness`), checking `MCTypeOK`, `InFlightBounded`, `DeliveredWereSent`,
 `WireCarriesOnlySent`, `FirstSendLost` and the liveness property `ResentIsDelivered`.
-The other ten runs in `RUNS.tsv` are the same file with up to three lines changed:
+The other ten runs in `RUNS.tsv` are the same instance with up to three lines changed,
+each committed as its own `MCLink*.cfg` (listed under "Reproducible case files"):
 
 | Run | `SPECIFICATION` | `Pattern` | `PROPERTIES` | Expected |
 |---|---|---|---|---|
@@ -218,9 +219,8 @@ run passing while the witness fails shows the assumption is doing the work.
 
 The original seven-column records are preserved unchanged in
 [`RUNS-HISTORY.tsv`](RUNS-HISTORY.tsv). Current measurements use the runner
-and refresh procedure in [`README.md`](README.md). Each historical row now
-has its own committed configuration; no edit to a shared file is needed.
-The table follows the original ledger order. A declared debt retains its
+and refresh procedure in [`README.md`](README.md). Each historical row
+has its own committed configuration, listed in ledger order. A declared debt retains its
 original parameters and is not a completed proof.
 
 | Historical row | Committed configuration | Declared outcome |

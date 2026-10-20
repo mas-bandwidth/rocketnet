@@ -7,14 +7,15 @@ environment value refused.
 
 1. Print two server-field defaults from the development config:
    `max_clients` and `max_timeout_seconds`.
-2. Set them in the config struct, create a server, and print the struct
-   `max_clients` (16) back.
+2. Set them in the config struct (`max_clients` 16, `max_timeout_seconds`
+   90), create a server, and print the struct `max_clients` (16) back.
 3. Re-run itself with `ROCKETNET_SERVER_MAX_CLIENTS=5` set, create a server
    whose struct still says 16, and show the environment wins: the library logs
    the override and the server reports 5.
 4. Re-run itself with `ROCKETNET_SERVER_MAX_CLIENTS=99999` (out of range for
-   `1 .. ROCKETNET_MAX_CLIENTS`), and show the create is refused with
-   `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`.
+   `1 .. ROCKETNET_MAX_CLIENTS`), and show the create is refused: it returns
+   `NULL`, and the example prints the name of the status for an out-of-range
+   config, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`.
 
 The C standard library cannot set an environment variable in-process, and the
 header offers no config-read call taking an explicit environment, so the
@@ -39,9 +40,9 @@ a moment, prints `PASS` as its last line, and exits 0; any failure prints one
 default max_clients: 1000
 default max_timeout_seconds: 60
 struct max_clients: 16
-[library: env override ... ROCKETNET_SERVER_MAX_CLIENTS=5 ...]
+0.000124: info: server config override ROCKETNET_SERVER_MAX_CLIENTS=5 (displaces 16)
 environment max_clients: 5
-[library: ... ROCKETNET_SERVER_MAX_CLIENTS=99999 ... out of range]
+0.000136: info: server config override ROCKETNET_SERVER_MAX_CLIENTS=99999 (displaces 16)
 bad value refused: CONFIG_OUT_OF_RANGE
 PASS
 ```
@@ -49,8 +50,12 @@ PASS
 `default` lines are the field defaults. `struct max_clients: 16` is the
 struct value in force. The library's override log line then shows the
 environment displacing the struct value, and `environment max_clients: 5`
-confirms it won. The final library error line and `bad value refused: CONFIG_OUT_OF_RANGE` confirm the out-of-range value was refused. `PASS`
-means each precedence held and the bad value was refused.
+confirms it won. The second override line and
+`bad value refused: CONFIG_OUT_OF_RANGE` show the out-of-range value reaching
+the config and the create refusing it. `PASS` means each precedence held and
+the bad value was refused. The other library log lines (version, platform) are
+informational. When the output goes to a pipe instead of a terminal, the
+parent's buffered lines can print after its children's; `PASS` is still last.
 
 ## Public calls it uses
 

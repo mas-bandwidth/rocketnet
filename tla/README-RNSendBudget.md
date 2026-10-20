@@ -5,7 +5,10 @@ client's one connection and each server client slot): a rate in kilobits per
 second, counted in the transport's wire bytes, enforced as a token bucket the
 packet writer asks before it writes each item. The code is
 `sdk/rocketnet_send_budget.h`; each of its functions names the action it
-implements. The model was written before the code.
+implements. The runtime setter is `rn_endpoint_set_send_kbps`
+(`sdk/rocketnet_endpoint.cpp`). The rule is
+[m9.4 Send budget](../standard/MESSAGES.md#m9) of the message
+standard.
 
 `tla/MCRNSendBudget.tla` and `tla/MCRNSendBudget.cfg` are the small instance.
 The three `tla/MCRNSendBudgetBroken*.cfg` files are the reversed witnesses. The
@@ -32,7 +35,8 @@ records in `tla/RUNS.tsv`.
 - **Defaults.** 1000 kbps for the client, 10000 kbps for each server client
   slot; configuration fields in the message config, overridable at create and
   at runtime. A capped budget is 1 kbps to 10000000 kbps.
-- **Uncapped.** A value of 0 or lower, at create or to `set_send_kbps`,
+- **Uncapped.** A value of 0 or lower, at create or to `rocketnet_client_set_send_kbps` or
+  `rocketnet_server_set_send_kbps`,
   disables that connection's budget: it sends every item, nothing is dropped
   or waits by the budget, and `NeverOverspend` claims nothing about it. A
   positive value caps it again with a fresh full bucket; a value above the
@@ -66,7 +70,7 @@ Actions:
 | `Drop` | `admit` returning DROP | the next class is unreliable and its head does not fit: dropped, counted |
 | `EndUpdate` | `admit` returning WAIT | nothing more fits: every queue empty, or a reliable head waits; unreliable items behind it are dropped, counted |
 | `SetKbps(k)` | `rn_endpoint_set_send_kbps` | 0 or lower uncaps (no bucket, no drops or waits); a positive value up to `MaxKbps` caps it, a fresh full bucket when it was uncapped; above the maximum is refused, unchanged |
-| `Ack(r)` | the transport's packet ack (R1) | the packet that carried `r` was acked |
+| `Ack(r)` | the transport's packet ack | the packet that carried `r` was acked |
 | `Lose(r)` | the transport's loss | that packet was lost: `r` queues again as a retransmit |
 
 Properties:

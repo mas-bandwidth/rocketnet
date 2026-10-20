@@ -1,53 +1,54 @@
-# Native transport drivers
+# Native transports
 
 The public transport API in `rocketnet.h` is independent of the backend.
-Native drivers implement `rocketnet_driver.h`; they do not add binding or
+Native transports implement `sdk/rocketnet_driver.h`; they do not add binding or
 wire-format rules.
 
-`rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
+`sdk/rocketnet_drivers.inc` is the built-in registry. Each row supplies a symbol, a name,
 bound-port discovery property, backend record, platform mask, and server/client
 preference ranks. Lower nonzero ranks come first in `auto`; zero means that
 endpoint is unsupported. IDs, names, diagnostics and platform availability are
-derived from these rows. Existing IDs and preference orders are preserved.
+derived from these rows.
 
 The backend record points to immutable server and/or client operations. The
 transport retains the selected operations and opaque instance for its lifetime.
-Factories, resources and platform decisions stay in the driver layer. The
+Factories, resources and platform decisions stay in the backend layer. The
 transport branches on generic capabilities, never a specific backend identity.
 
-A driver with a preference rank at or above `ROCKETNET_DRIVER_PIN_ONLY`
+A transport with a preference rank at or above `ROCKETNET_DRIVER_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
 always selects it, but `auto` never chooses it. The loopback transport is the
 one pin-only row. It is in-process, carries datagrams through memory with no
 socket and no system network call, and serves tests and examples; it is never
 chosen by auto. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
-allocates its queue at create, `ROCKETNET_LOOPBACK_QUEUE_PACKETS` x
+allocates its queue when it starts, `ROCKETNET_LOOPBACK_QUEUE_PACKETS` x
 `sizeof(rocketnet_loopback_packet_t)` = 1,531,904 bytes, so a full table of
 live endpoints is about 1,533,435,904 bytes. The cost is paid only by a process
 that instantiates the loopback transport, which is tests and examples, never a
 game on auto. Lookups scan the table linearly under the mutex.
 
 The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
-and `rocketnet_server_uring_leaked_drivers` are internal driver helpers
-(`sdk/rocketnet_server_uring.h`); a game uses `rocketnet_server_create`,
+and `rocketnet_server_uring_leaked_drivers` are internal helpers of the io_uring
+transport (`sdk/rocketnet_server_uring.h`); a game uses `rocketnet_server_create`,
 `rocketnet_server_required_memory` and the other server entry points in
 `sdk/rocketnet.h`.
 
 ## Server capabilities and ownership
 
-Two I/O shapes preserve the existing implementations:
+A server backend has one of two I/O shapes:
 
 - **Buffered:** the transport supplies its common control, payload and receive
   buffers. `send_batch` and `receive_batch` borrow that storage only for the call.
-  This is the portable/msgx shape. It does not require a backend-owned pool.
-- **Staged:** the driver supplies frame storage and a complete receive batch.
-  XDP, GSO and IOCP use this shape, with their own pools and worker arrangements.
+  This is the shape of portable, msgx and loopback. It does not require a backend-owned pool.
+- **Staged:** the backend supplies frame storage and a complete receive batch.
+  XDP, GSO, io_uring, IOCP and RIO use this shape, with their own pools and worker arrangements.
   The transport does not allocate, recycle or schedule those backend frames.
 
-The staged callbacks are start, finish, abort, flush and receive. Start returns
-a `ROCKETNET_FRAME_STRIDE` root; the wire starts at `ROCKETNET_FRAME_WIRE_OFFSET`.
-The caller-visible payload alignment must remain valid. Receive returns at most
+The staged callbacks are `start_packet`, `finish_packet`, `abort_packet`,
+`flush` and `receive`. `start_packet` returns a `ROCKETNET_FRAME_STRIDE` root;
+the wire starts at `ROCKETNET_FRAME_WIRE_OFFSET`. The caller-visible payload
+alignment must remain valid. `receive` returns at most
 `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS` datagrams, each within the receive
 ceiling, with normalized source addresses. Its data remains valid until the
 next receive or destruction, including while workers accept further packets.
@@ -56,7 +57,7 @@ The flags express the differences the transport needs:
 
 | Flag | Meaning |
 | --- | --- |
-| `STAGED` | Use driver-owned frames and receive views instead of borrowed transport buffers. |
+| `STAGED` | Use backend-owned frames and receive views instead of borrowed transport buffers. |
 | `FLUSH_ON_UPDATE` | Flush staged control traffic at the end of update. Buffered control traffic completes by the end of update; full batches may flush during the update walk. |
 | `FINISH_FINAL` | A finished frame cannot be withdrawn. Otherwise abort may withdraw it before flush. Unfinished reservations can always be aborted. |
 | `BINDS_PUBLIC_ADDRESS` | The factory binds the advertised address rather than the transport's ordinary bind address. |
@@ -66,19 +67,19 @@ keeps operation buffers until completion retirement. The backend owns that
 decision; it must never hand a still-owned frame to another producer.
 
 An optional kernel replay capability protects session packets from replay on a
-kernel dataplane. A driver with it implements `replay_forget`,
+kernel dataplane. A backend with it implements `replay_forget`,
 `replay_mark` and `replay_commit` together, all three or none; the transport
 calls them on the main thread once per update, after packet processing, and
-nothing else writes the driver's replay map. XDP is the only built-in backend
+nothing else writes the backend's replay map. XDP is the only built-in backend
 that reports it.
 
 ## UDP coalescing
 
 The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
 at the stride the kernel reports, and a send run of same-destination frames of
-one size with at most one shorter tail. Each coalescing driver probes its
-offloads at create on the bound socket; a refusal is a tier, not an error, and
-the create log line names each feature as yes or no.
+one size with at most one shorter tail. Each coalescing transport probes its
+offloads when it starts on the bound socket; a refusal is a tier, not an error,
+and the start log line names each feature as yes or no.
 
 - **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive.
 - **IOCP (Windows 11, Server 2022 or later):** USO on send through the
@@ -94,37 +95,39 @@ the create log line names each feature as yes or no.
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
   resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
 
-Start/finish/abort may run on concurrent fill threads, with one producer per
+`start_packet`, `finish_packet` and `abort_packet` may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
 once for a staging generation; the backend retains ownership until it can
-safely reuse that storage. None
-of these rules sets a frame, packet-send or ACK rate.
+safely reuse that storage. None of these rules sets a frame, packet-send or ACK
+rate.
 
 ## Creation and shutdown
 
 The factory borrows resolved configuration for the call and retains only what
 its instance needs. It owns partial-construction cleanup. A failed candidate's
 tentative bind address cannot constrain the next candidate. A discovering
-factory reports its actual port on success. Existing XDP preflight and the
-commit barrier remain in its adapter/backend.
+factory reports its actual port on success. The XDP pre-flight and the commit
+barrier live in the XDP backend.
 
 Server stop is an idempotent stop/poll callback: false means work remains; true
 allows the transport to report stopped. It must not wait for outstanding I/O
 inside update. Destroy handles partial setup and a created instance that never
-received an update, and drains/joins its owned operations before releasing
-their storage. GSO/XDP preserve their existing stop/destruction behavior; IOCP
-uses its cancellation and completion-drain implementation.
+received an update, and drains and joins its owned operations before releasing
+their storage. IOCP cancels its outstanding operations and drains their
+completions before it releases them.
 
-Clients use create/destroy/send/receive callbacks. The existing transport
-receive thread and buffers remain shared infrastructure. Receive can run
-concurrently with sends; both calls borrow their buffers synchronously. Destroy
-runs after that thread has joined and must release any additional backend-owned
-work. Client fast-path I/O is not required by this interface.
+Clients use create, destroy, send and receive callbacks, plus four optional
+ones: `send_batch`, `receive_batch`, `wait` and `wake`. A client backend with
+`wait` and `wake` runs on the transport's client I/O thread, which sends and
+receives off the main thread; one without them runs with the transport's
+polling receive thread and per-packet sends from the main thread. Every call
+borrows its buffers synchronously. Destroy runs after the transport's thread
+has joined and must release any additional backend-owned work.
 
 ## Adding a backend without editing the transport
 
-For an in-tree driver, define a `const rocketnet_driver_backend_t`, add its row
-to `rocketnet_drivers.inc`, and add its source to the build. It may support one
+For an in-tree transport, define a `const rocketnet_driver_backend_t`, add its row
+to `sdk/rocketnet_drivers.inc`, and add its source to the build. It may support one
 endpoint or both. There are no transport switches, members or platform guards
 to extend.
 
@@ -132,31 +135,28 @@ An embedding project can also supply its own registry rows and implementation:
 
 ```sh
 cmake -S . -B build \
-  -DROCKETNET_DRIVER_REGISTRY_HEADER=/path/to/my_drivers.inc \
-  -DROCKETNET_DRIVER_SOURCES=/path/to/my_driver.cpp
+  -DROCKETNET_DRIVER_REGISTRY_HEADER=/path/to/my_transports.inc \
+  -DROCKETNET_DRIVER_SOURCES=/path/to/my_transport.cpp
 ```
 
 The `.inc` has `ROCKETNET_DRIVER(...)` rows in the same format as the built-in
 file, and no include guard: it is intentionally expanded more than once. Native
 registration is compiled into the SDK; this is not a dynamic plugin ABI.
-Backend symbols are not public C exports. Per-driver settings and resource
-validation belong in the factory; the public transport configuration is unchanged.
+Backend symbols are not public C exports. Per-transport settings and resource
+validation belong in the factory; they do not extend the public transport configuration.
 
 `test/driver_extension` is an executable example: an external row and backend
 serve both ends of an encrypted handshake and payload exchange through only
 the public transport API. `tools/check_driver_extension.py build` builds and
 runs it independently. `test_driver` checks registry ordering, factory refusal,
-address isolation, lifecycle and buffered I/O. Existing GSO/IOCP and complete
-transport tests cover the real staged paths; hosted tests do not replace XDP
+address isolation, lifecycle and buffered I/O. The GSO and IOCP tests and the
+full transport tests cover the real staged paths; hosted tests do not replace XDP
 hardware failure tests or per-platform line-rate measurements.
 
-Dispatch measurements and their limits are recorded in
-[bench/transport_fill.md](bench/transport_fill.md).
-
-## The RIO server driver
+## The RIO server transport
 
 `rio` (`sdk/rocketnet_server_rio_windows.cpp`, `sdk/rocketnet_server_rio.h`)
-is a Windows staged server driver with one registered memory region, polled
+is a Windows staged server transport with one registered memory region, polled
 send and receive completion queues, deferred sends committed once per flush,
 and two send phases so a phase stays owned until its sends complete. It uses no
 worker threads. Its server rank is 45, after IOCP's 40, so automatic selection
@@ -167,20 +167,20 @@ dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
 send phases, receive banks and destruction are modelled in
 `tla/RNRioDriver.tla`.
 
-## The io_uring server driver
+## The io_uring server transport
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
-is a staged Linux server driver with one io_uring per driver, used only on the
+is a staged Linux server transport with one io_uring per server, used only on the
 main thread, and no worker threads. An `SO_REUSEPORT` socket group, bound the
-way the GSO driver binds its group, shards receives across queues. Each queue
+way the GSO transport binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
 batched `SENDMSG` per staged slot, in chunks no larger than the free submission
 queue space, and returns once every send has completed. A queue count past
-`ROCKETNET_URING_MAX_QUEUES` refuses the create; zero selects
+`ROCKETNET_URING_MAX_QUEUES` refuses the server start; zero selects
 `ROCKETNET_URING_DEFAULT_QUEUES`.
 
-The driver needs liburing at build time (`ROCKETNET_IO_URING`, on by default
+The transport needs liburing at build time (`ROCKETNET_IO_URING`, on by default
 and used when liburing is found). A build without it keeps the registry row with
 no platform: the row is absent from the availability lists and a pin of
 `io_uring` is skipped by the ladder. At run time `rocketnet_server_uring_available()`
@@ -200,7 +200,7 @@ The send staging, the two receive banks and destroy are modelled in
 ## The XDP receive filter
 
 `server_xdp/server_xdp.c` accepts both address families. IPv4 is parsed as
-before (a 20-byte header, UDP). IPv6 is parsed as the fixed 40-byte header with
+a 20-byte header with UDP behind it. IPv6 is parsed as the fixed 40-byte header with
 UDP directly behind it. Both families then run one shared function: the
 destination port and address against the config map, the wire size bounds, the
 filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the redirect
@@ -245,7 +245,7 @@ one interface runs `xdp` for one family and another transport (`gso`,
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
 per-CPU totals each time the transport counter surface is read. Only a
-driver with a kernel prefilter fills them; a driver with none leaves them
+backend with a kernel prefilter fills them; one with none leaves them
 zero.
 
 The replay map is read-only to the kernel: it drops a session packet 16 or
@@ -266,7 +266,7 @@ verifies, and with room for the server's UMEM and queues (the default guest
 memory runs out and the server is killed):
 
 ```sh
-vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
+vng --run /path/to/vmlinuz --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- sudo ./bin/test_xdp_filter -v
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from
@@ -280,16 +280,16 @@ that resolves to no MAC is refused at start and counted as
 ## Embedded XDP source maintenance
 
 The XDP frame codec (`sdk/rocketnet_xdp_frame.h`) synthesises Ethernet + IP +
-UDP for both address families: IPv4 byte-identical to the historical builder
-(ihl 5, DF set, ttl 64, header checksum, UDP checksum 0) and IPv6 with the
+UDP for both address families: IPv4 with ihl 5, DF set, ttl 64, the header
+checksum and a UDP checksum of 0, and IPv6 with the
 mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
 pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
-or later) is a follow-up, not yet used.
+or later) is not used.
 
 The filter's decisions also run as ordinary host C in the unit suite, with no
 kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target
 compiles `test/xdp_host/server_xdp_host.c`, which includes
-`server_xdp/server_xdp.c` unchanged, with the BPF build's defines
+`server_xdp/server_xdp.c` as shipped, with the BPF build's defines
 (`-D__linux__ -D__BPF__ -ffreestanding`) and `test/xdp_host/` first on that
 one target's include path. That directory is a shim: minimal `linux/*.h` and
 `bpf/bpf_helpers.h` with only the types, constants and map macros the filter
@@ -307,7 +307,7 @@ exactly its length, so the sanitizer legs catch a read past `data_end`.
 
 The host tier covers both address families, the address and port match, the
 size bounds, the epoch and filter value, every type at every size against the
-STANDARD.md size table, the IPv6 extension and fragment passes, and the
+[standard/TRANSPORT.md](standard/TRANSPORT.md) size table, the IPv6 extension and fragment passes, and the
 redirect decision per receive queue. It also covers the `config == NULL`
 branch, which the kernel's one-entry array never reaches. Only the kernel
 tier (`test_xdp_filter`) shows what the verifier accepts, the real helpers'
@@ -316,8 +316,8 @@ GCC or Clang on a little-endian, non-Windows host. Elsewhere, including the
 MSVC unit suite on Windows, the cases print `SKIPPED`. When the filter adopts
 a new kernel header, helper or map, the shim follows in the same change, with
 the helper's kernel source cited. `xdp_host_every_counter_has_a_case` fails
-when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
-a historical filter, configure with
+when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To run the
+host tier against another filter source, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 
 `cmake/XdpSources.cmake` is the source list for staging, archiving, CMake rebuild

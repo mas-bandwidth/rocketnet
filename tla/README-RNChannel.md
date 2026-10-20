@@ -1,6 +1,11 @@
 # RNChannel
 
-RNChannel checks a bounded message-layer instance of `docs/CHANNELS.md` §§6–9.
+RNChannel checks a bounded instance of the message layer of `standard/MESSAGES.md`:
+numbering and the reliable window ([m5](../standard/MESSAGES.md#m5)), delivery ([m6](../standard/MESSAGES.md#m6) and
+[m7](../standard/MESSAGES.md#m7)), blocks ([m8](../standard/MESSAGES.md#m8)) and acknowledgement mapping and resend
+([m9](../standard/MESSAGES.md#m9)). The code it stands for is `sdk/rocketnet_channel.cpp`
+(`rn_channels_dispatch`, `rn_channels_drain`, `rn_channels_feed_acks`,
+`rn_channels_end_update` and the functions beside them).
 It restates the relevant RNWindow actions and instantiates the unchanged Link
 module in each direction. It does not add a message ACK: opening a transport
 packet makes its ID ACKable, and a returned packet ACK marks every reliable
@@ -19,9 +24,9 @@ serialization, byte order, allocator layout, or zero-copy proof here.
 `SendCapacity` bounds outstanding message records; `W` bounds unacked reliable
 units and live receiver ring slots. The example has K=2 and C=2. Full-buffer
 send attempts have an explicit `RefuseSend` transition, which does not advance
-the accepted input. An environment retry can later succeed. This is the card's
-capacity abstraction; allocator exhaustion/disconnection (R5) belongs to the
-memory model and implementation.
+the accepted input. An environment retry can later succeed. This is the model's
+capacity abstraction; allocator exhaustion and the disconnect it causes belong
+to `RNConnectionMemory` and the code.
 
 `NumberRecord` is RNWindow's atomic whole-block reservation, after application
 enqueue, in the packet builder. `WritePacket` commits first emissions in
@@ -51,19 +56,19 @@ not a claim that every message has a permanently allocated payload buffer.
 
 ## State and transitions
 
-| State/action | Meaning and design section |
+| State/action | Meaning and MESSAGES section |
 |---|---|
-| `ordered_write`, `sequenced_write`, `ordered_read`, `sequenced_watermark` | Four coupled channel counters, §7.1. Ordered send and delivery reset their respective sequenced counter. |
-| `Enqueue`, `RefuseSend`, `sentTrace` | Accept or refuse one application message; assign its ordering index at acceptance, §§7.1, 9.3. |
-| `NumberRecord`, `Unacked`, `UPrime` | Late reliable numbering and whole-block window admission, §§6.2, 8.2; restates RNWindow `NumberRecord`. |
-| `WritePacket`, `smap` | Small-message packing, one chunk per packet, retransmission and bounded packet-reference map, §§6.2, 8, 9.3; restates RNWindow `WritePacket`. |
-| `OpenPacket`, `received`, `live`, `chunks` | Transport replay suppression, per-number duplicate suppression, ring claims and indexed chunk placement, §§6.3, 8.3; restates RNWindow `OpenPacket`. |
-| `DeliverMessage`, `trace` | Whole-message and per-channel ordering gate; reset sequenced receive watermark, §§7.2, 8.3. |
-| `FixBatch`, `SendAck`, `EndUpdate` | Drain all ready messages before publishing ACKs; keep returned payloads live until the next update, §6.3 P6. |
-| `ReceiveAck` | Translate packet IDs into all reliable references; unknown/evicted packet IDs do nothing, §6.2; restates RNWindow `ReceiveAck`. |
-| `DropUnreliableForBudget`, `uDropped` | A bounded code-0 budget-drop option, counted separately from transport loss; no reliable number or resend, §§9.1–9.3 and R6. |
+| `ordered_write`, `sequenced_write`, `ordered_read`, `sequenced_watermark` | Four coupled channel counters. Ordered send and delivery reset their respective sequenced counter; m6.1 rule 10, m7.3 rule 7. |
+| `Enqueue`, `RefuseSend`, `sentTrace` | Accept or refuse one application message; assign its ordering index at acceptance, m6.1 rule 10. |
+| `NumberRecord`, `Unacked`, `UPrime` | Late reliable numbering and whole-block window admission, m5.1, m8; restates RNWindow `NumberRecord`. |
+| `WritePacket`, `smap` | Small-message packing, one chunk per packet, retransmission and bounded packet-reference map, m8, m9.1, m9.3; restates RNWindow `WritePacket`. |
+| `OpenPacket`, `received`, `live`, `chunks` | Transport replay suppression, per-number duplicate suppression, ring claims and indexed chunk placement, m5.2, m8; restates RNWindow `OpenPacket`. |
+| `DeliverMessage`, `trace` | Whole-message and per-channel ordering gate; reset sequenced receive watermark, m7.2, m7.3, m8. |
+| `FixBatch`, `SendAck`, `EndUpdate` | Drain all ready messages before publishing ACKs; keep returned payloads live until the next update (`rn_channels_drain`, `rn_channels_end_update`); m1.4 rule 6. |
+| `ReceiveAck` | Translate packet IDs into all reliable references; unknown/evicted packet IDs do nothing, m9.1; restates RNWindow `ReceiveAck`. |
+| `DropUnreliableForBudget`, `uDropped` | A bounded code-0 budget-drop option, counted separately from transport loss; no reliable number or resend, m9.4. |
 | `waitedForRoom`, `roomReturned` | Ghost observation of a large message queued without room and a later transport ACK that returns room. |
-| `GhostSequencedWrite`, `GhostSequencedRead` | Approved counter-only future-sequenced interference probe. No sequenced wire message or application delivery exists. |
+| `GhostSequencedWrite`, `GhostSequencedRead` | A counter-only sequenced interference probe. No sequenced wire message or application delivery exists. |
 
 The accepted input order is fixed, while channel delivery, packet composition,
 loss, retries and chunk arrival order vary. This is bounded exploration, not
@@ -118,14 +123,13 @@ There is no kbps clock or complete priority scheduler. Fair resend opportunity
 abstracts eventual reliable send-budget availability. Reliable messages are
 never discarded for budget, and code-0 budget drop is explicit and counted.
 No rate, latency, bandwidth-priority, zero-copy, or concrete memory-allocation
-claim follows from this model. Those implementation obligations remain in the
-design and their assigned cards. Neither `docs/CHANNELS.md` nor
-`docs/TLA-INVENTORY.md` is changed here.
+claim follows from this model. Those obligations belong to the code and its
+tests.
 
 ## Reversed witnesses and measurements
 
-Measured with the pinned runner and JAR in [README.md](README.md), on Linux
-2026-10-15, two workers for passing cases and one for counterexamples. Every
+Measured with the pinned runner and JAR in [README.md](README.md), on Linux with
+two workers for passing cases and one for counterexamples. Every
 case is within its 110-second bounded shard. `PASS` for a broken case means
 the expected invariant (exit 12) or temporal property (exit 13) failed.
 
@@ -154,23 +158,23 @@ The final counterexamples are read as follows:
   Message 1 reaches channel 2 and is ACKed; both chunks of message 2 then
   arrive. The broken arrival gate delivers channel 1 trace `<<2>>` while its
   accepted trace begins with 0. This is precisely the missing predecessor
-  hold in §7.2, with whole-block receipt from §8.3.
+  hold of m7.2 rule 1, with whole-block receipt from m8 rule 5.
 - **Twice — `OrderedExactlyOnceInOrder`:** reliable number 0 is written again
   under another packet ID. Its first copy is delivered, then the second
   packet is opened. Treating that already-received number as fresh releases
   message 0 again, producing `<<0,0>>` from one accepted message. Transport
-  packet replay protection alone cannot replace §6.3's per-number duplicate
-  suppression on retransmissions.
+  packet replay protection alone cannot replace the per-number duplicate
+  rule of m5.2 rule 8 on retransmissions.
 - **DropOnRetransmit — `EveryOrderedMessageDelivered`:** the first packet
   carrying number 0 is lost and the broken sender removes that number from
   resend eligibility. It remains unacked, but no oldest-number retransmit
   is enabled. The receive/process update loop continues forever without
-  delivering it. This violates §6.2's retention of unacked records, even
-  when a packet reference is lost or evicted.
+  delivering it. This violates m9.1 and m9.3, which keep every unacknowledged
+  number resendable, even when a packet reference is lost or evicted.
 - **PartialChunk — `WholeMessagesOnly`:** the first small messages are
   delivered and ACKed. Chunk 0 of message 2 (number 2) is sent and dropped;
   chunk 1 (number 3) arrives. The broken last-index gate appends message 2
-  while only number 3 is present. §8.3 requires all indices, not arrival of
+  while only number 3 is present. m8 rule 5 requires all indices, not arrival of
   the greatest index.
 - **ChunkBlocksSmall — `NoHeadOfLineDeadlock`:** message 2 queues while there
   is insufficient reliable room. The bad early admission reserves all
@@ -178,42 +182,36 @@ The final counterexamples are read as follows:
   actual window room and sets `roomReturned`. The large block is then
   numbered, but its premature whole-ring reservation leaves no free staging
   slot for its first write. The following small message is also queued;
-  the update loop repeats with neither delivered. §8.2 requires whole-block
+  the update loop repeats with neither delivered. m5.1 rules 4 and 5 require whole-block
   admission only when room is available, without consuming progress room
   while waiting. This witness reaches the property antecedent; it is not
   merely a generic transport stall.
-- **NoSequencedReset — `OrderedTraceUnchangedBySequenced`:** the approved
-  ghost write probe raises channel 1's sequenced counter to 1. The first
+- **NoSequencedReset — `OrderedTraceUnchangedBySequenced`:** the ghost
+  write probe raises channel 1's sequenced counter to 1. The first
   ordered enqueue advances its ordered counter but omits the reset, leaving
-  1 and making `resetOK` false. This exercises §7.1's reset obligation;
+  1 and making `resetOK` false. This exercises the reset rule of m6.1 rule 10;
   no sequenced application message is delivered and no relational trace
   equivalence is claimed.
 
-Additional private diagnostics retain exact source/config hashes and logs.
-On the healthy model, negative invariants find a returned-room episode
-(11,504 generated / 4,498 distinct), chunk 1 received before chunk 0
-(333,704 / 83,989), and the two initial small records packed together
-(231 / 123). A separate private mutation replaces indexed block placement
-with next-arrival-position placement; `ChunksPlacedByIndex` fails
-(331,074 / 83,455). These are nonvacuity/diagnostic checks, not extra committed
-acceptance cases and not invented ledger rows.
+On the healthy model, scratch negative invariants (not committed) find a
+returned-room episode (11,504 generated / 4,498 distinct), chunk 1 received
+before chunk 0 (333,704 / 83,989), and the two initial small records packed
+together (231 / 123). A scratch mutation that replaces indexed block placement
+with next-arrival-position placement fails `ChunksPlacedByIndex`
+(331,074 / 83,455). These are nonvacuity checks, not committed cases.
 
-Earlier diagnostics include parse/domain mistakes and over-budget larger
-state spaces. In particular, the first duplicate witness encounters a
-`SubSeq` domain error rather than an invariant violation; the final prefix
-predicate explicitly checks the length before taking the prefix. Only the
-final eight measured rows above count as acceptance evidence.
+The ordered-prefix predicate checks the length before taking `SubSeq`, so a
+duplicate delivery is reported as an invariant violation rather than a domain
+error. Only the eight measured rows above count as acceptance evidence.
 
-`tlacheck merge --keep tla/RUNS.tsv` adds the eight new measured rows. Every
-pre-existing row and `RUNS-HISTORY.tsv` remains byte-for-byte unchanged, and
-`tlacheck groups --root . --stale` returns `[]`. Existing unrelated bench
-debt remains recorded; this card does not turn those historical timeouts into
-passes.
+The eight rows are in `tla/RUNS.tsv`, and `tlacheck groups --root . --stale`
+returns `[]`.
 
 To reproduce, build the runner at the pin in [README.md](README.md), then run
 one bounded shard at a time with `--group rnchannel --shards 8 --shard N`
 for N=0 through 7, `--workers 2 --timeout 110s`, the pinned JAR, and a private
 output directory per shard. Merge the eight `RUNS.tsv` files with `--keep`,
-and check `groups --stale`. No C++ changes, Go/C++ tests, sequenced wire types,
-allocator proof, rate scheduler proof, or full-width wrap proof are part of
-this card.
+and check `groups --stale`.
+
+Sequenced wire types, an allocator proof, a rate scheduler proof and a
+full-width wrap proof are outside this model.

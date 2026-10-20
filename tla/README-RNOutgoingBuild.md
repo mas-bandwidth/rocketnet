@@ -1,8 +1,9 @@
 # RNOutgoingBuild
 
 The outgoing build of one connection: how a message the game starts, writes
-and finishes reaches the transport (docs/OUTGOING-BUILD.md). A fitting
-unreliable message is written in place in the transport frame start took;
+and finishes reaches the transport ([docs/OUTGOING-BUILD.md](../docs/OUTGOING-BUILD.md)).
+A fitting unreliable message is written in place, in the transport frame that
+start takes;
 every other message, and a fitting one that fell back, is written into its
 region record and copied into a frame by the write pass.
 
@@ -52,7 +53,7 @@ Code: `sdk/rocketnet_message_server.cpp` (`rn_message_object_start`,
 | Case | Expected | Instance |
 |---|---|---|
 | `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R), two frames, one packet per update, one ack, one fault |
-| `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before this change |
+| `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: a fitting unreliable message is built in its region record and copied |
 | `MCRNOutgoingBuildOwnQuota.cfg` | `PacketQuota` violated | the same with `SharedQuota` FALSE: in-place packets on an allowance of their own |
 | `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work |
 
@@ -60,18 +61,18 @@ The reversed witness's counterexample: message 1 (UNRELIABLE, fitting) is
 started on the queued path with no fallback reason, written into its region
 record, finished into the queue, and copied by `SendUnreliable` into frame 1;
 the staged packet's buffer is frame 1 while start handed out the region
-record. That is the code before this change: `rn_endpoint_start` returned
+record. That is a build in which `rn_endpoint_start` returns
 `rn_region_send_write_pointer` for a fitting UNRELIABLE message and
-`rn_endpoint_write_packet` copied the record into the frame at send_packets
-(`rocketnet_message_writer_add`).
+`rn_endpoint_write_packet` copies the record into the frame at send_packets
+(`rocketnet_message_writer_add`). The code instead hands out the frame itself
+for a fitting UNRELIABLE message that does not fall back.
 
 The own-quota witness's counterexample: messages 1 (UNRELIABLE) and 2
 (UNRELIABLE_SEQUENCED) both start and finish in place in one update, and
 the allowance of one packet is exceeded (`packetsThisUpdate = 2`). That is
-the first attempt's code, in which the in-place path kept a cap of its own
-reset at each queued write pass; `rn_endpoint_in_place_header` now reads the
-endpoint's one `written` counter, which only `rn_endpoint_begin_update`
-resets (unit cases `mixed_in_place_and_queued_respect_packet_cap` and
+an in-place path that keeps a cap of its own, reset at each queued write pass.
+In the code, `rn_endpoint_in_place_header` reads the endpoint's one `written`
+counter, which only `rn_endpoint_begin_update` resets (unit cases `mixed_in_place_and_queued_respect_packet_cap` and
 `repeated_fill_flush_respects_packet_cap`).
 
 The no-reserve witness's counterexample: message 1 goes in place and spends
@@ -79,9 +80,10 @@ the allowance; message 2 is aborted; message 3 (reliable) is queued with no
 room; the next update begins and owes message 3 a packet; message 4
 (UNRELIABLE) starts and finishes in place and takes the update's only
 packet; the flush's reliable phase has no room, and the flush ends with
-message 3 still queued. In the code without the reservation,
-`rn_endpoint_in_place_header` compared `written` alone with
-`max_packets_per_update`, so the in-place packet was admitted while
-`rn_endpoint_ordered_due` held, and the write pass's reliable phase
-(`written < max_packets`) sent nothing. The unit case
-`reliable_not_starved_by_in_place` is the same run at a cap of two.
+message 3 still queued. Without the reservation,
+`rn_endpoint_in_place_header` would compare `written` alone with
+`max_packets_per_update` and admit the in-place packet while
+`rn_endpoint_ordered_due` holds, and the write pass's reliable phase
+(`written < max_packets`) would send nothing. The code keeps one packet back
+for due reliable work; the unit case `reliable_not_starved_by_in_place` is
+the same run at a cap of two.
