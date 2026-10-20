@@ -111,10 +111,8 @@ jobs:
         run: python3 tools/run_examples.py --build build
 
   examples-windows:
-    name: windows-2025
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
-    runs-on: windows-2025
+    name: windows
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     steps:
       - uses: actions/checkout@v4
 

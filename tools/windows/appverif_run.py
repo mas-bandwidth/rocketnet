@@ -51,6 +51,7 @@ STOP_ERROR_REPORT = "0x2"
 
 AVRF_NS = "{Application Verifier}"
 FRAMES_SHOWN = 8
+MAX_EXPORTED_LOGS = 4096
 
 # Frames from these modules are the verifier itself or the system call path
 # that raised the stop; the frames shown start at the system API the caller
@@ -153,17 +154,10 @@ def log_path_for(xml_path: Path, offset: int) -> Path:
 
 
 def export_logs(appverif: str, image_name: str, exe_path: Path, xml_path: Path) -> list:
-    """Export every verifier log of the image, the most recent first.
-
-    appverif keeps one log per process, and `-export log` exports only the most
-    recent one; Log=-N names the Nth log before it and fails once no log is
-    left. Every process the run starts with this image name (the suite runners
-    start one child per case) has its own log. The logs are deleted before the
-    run, so every log exported belongs to it.
-    """
+    """Export verifier logs in reverse order, up to the safety limit."""
     paths = []
-    offset = 0
-    while True:
+    for index in range(MAX_EXPORTED_LOGS + 1):
+        offset = -index
         path = log_path_for(xml_path, offset)
         if path.exists():
             path.unlink()
@@ -177,8 +171,45 @@ def export_logs(appverif: str, image_name: str, exe_path: Path, xml_path: Path) 
         )
         if proc.returncode != 0 or not path.is_file():
             return paths
+        if len(paths) == MAX_EXPORTED_LOGS:
+            path.unlink()
+            raise RuntimeError(
+                f"more than {MAX_EXPORTED_LOGS} verifier logs for {image_name}; refusing an unbounded export"
+            )
         paths.append(path)
-        offset -= 1
+    raise RuntimeError(f"verifier log export limit reached for {image_name}")
+
+
+def terminate_process_tree(process: subprocess.Popen) -> None:
+    """Stop the timed-out executable and every child it started on Windows."""
+    if sys.platform != "win32":
+        process.kill()
+        process.wait()
+        return
+
+    taskkill = shutil.which("taskkill.exe")
+    if taskkill is None:
+        candidate = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "taskkill.exe"
+        if candidate.is_file():
+            taskkill = str(candidate)
+    if taskkill is None:
+        raise RuntimeError("taskkill.exe not found; cannot stop the timed-out process tree")
+
+    stopped = subprocess.run(
+        [taskkill, "/PID", str(process.pid), "/T", "/F"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+    if stopped.returncode != 0:
+        output = " ".join((stopped.stdout + " " + stopped.stderr).split())
+        raise RuntimeError(f"taskkill failed to stop process tree {process.pid} (exit {stopped.returncode}): {output}")
 
 
 def main() -> int:
@@ -220,7 +251,9 @@ def main() -> int:
     elapsed = 0.0
     timed_out = False
     cleanup_failed = False
+    logtofile_attempted = False
     try:
+        logtofile_attempted = True
         appverif_call(appverif, ["-logtofile", "enable"])
         appverif_call(appverif, ["-delete", "logs", "-for", image_name], check=False)
         appverif_call(appverif, ["-enable", *BASICS_LAYERS, "-for", image_name])
@@ -234,12 +267,12 @@ def main() -> int:
             raise RuntimeError(f"layers not enabled for {image_name}: {', '.join(missing)}")
 
         start = time.monotonic()
+        process = subprocess.Popen([str(exe_path), *command[1:]], cwd=os.getcwd())
         try:
-            exit_code = subprocess.run(
-                [str(exe_path), *command[1:]], cwd=os.getcwd(), timeout=args.timeout
-            ).returncode
+            exit_code = process.wait(timeout=args.timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
+            terminate_process_tree(process)
         elapsed = time.monotonic() - start
 
         log_paths = export_logs(appverif, image_name, exe_path, xml_path)
@@ -254,6 +287,12 @@ def main() -> int:
     finally:
         appverif_call(appverif, ["-disable", "*", "-for", image_name], check=False)
         appverif_call(appverif, ["-delete", "settings", "-for", image_name], check=False)
+        if logtofile_attempted:
+            try:
+                appverif_call(appverif, ["-logtofile", "disable"])
+            except RuntimeError as error:
+                cleanup_failed = True
+                print(f"appverif_run: failed to restore -logtofile: {error}", file=sys.stderr)
         left = enabled_layers(appverif, image_name)
         if left:
             cleanup_failed = True

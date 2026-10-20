@@ -6,14 +6,14 @@
 #
 # The macOS leg runs the same script with --report-only on the fleet's
 # Apple-silicon runner: it records the msgx per-frame latency every night
-# without gating on a machine that is not reserved quiet. The Windows leg runs
-# report-only on a shared hosted image so its numbers are recorded without
-# flaking the gate on a noisy multi-tenant host.
+# without gating on a machine that is not reserved quiet. The Windows leg also
+# runs report-only on the shared native Windows runner, so its numbers are
+# recorded without gating on a noisy machine.
 #
 # Hosted minutes budget:
 #   - linux-frame-budget:   0 hosted minutes (self-hosted rocketnet-quiet)
 #   - macos-frame-budget:   0 hosted minutes (self-hosted rocketnet-macos)
-#   - windows-frame-budget: timeout-minutes: 10 (~2 min/night actual)
+#   - windows-frame-budget: 0 hosted minutes (self-hosted rocketnet-windows)
 
 name: Nightly Client Frame Budget
 
@@ -115,10 +115,8 @@ jobs:
           python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --driver msgx --report-only
 
   windows-frame-budget:
-    name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
-    runs-on: windows-2025
+    name: frame budget (${{ matrix.ref }} / windows portable report-only)
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -134,7 +132,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build client_main_thread_cost (Release)
-        run: cmake --build build --config Release --target client_main_thread_cost --parallel
+        run: cmake --build build --config Release --target client_main_thread_cost --parallel 4
 
       - name: Report P=32 frame budget (portable, report-only)
         run: python tools/check_frame_budget.py --bin ./bin/Release/client_main_thread_cost.exe --driver portable --report-only

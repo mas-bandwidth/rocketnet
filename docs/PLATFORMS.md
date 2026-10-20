@@ -118,16 +118,18 @@ new support claim:
   `self-hosted, macOS, ARM64, rocketnet-macos` label, its soak-windows job on
   the `self-hosted, Windows, X64, rocketnet-windows` label, and its
   sanitized-soak job on the `self-hosted, Linux, X64, fleet` label.
-- `nightly-frame-budget.yml` has its Linux leg on
-  `self-hosted, Linux, X64, rocketnet-quiet`, macOS leg on
-  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
-  `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
-- `nightly-examples.yml` has its Linux leg on
-  `self-hosted, Linux, X64, fleet`, macOS leg on
-  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
-  `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
-- `nightly.yml`'s `windows-driver-extension` job (hosted `windows-2025`) is
-  disabled (`if: false`, no Windows fleet runner registered).
+- `nightly-frame-budget.yml` runs its Linux leg on
+  `self-hosted, Linux, X64, rocketnet-quiet`, its macOS leg on
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and its `windows-frame-budget`
+  leg on `self-hosted, Windows, X64, rocketnet-windows`. The Windows leg reports
+  the P=32 frame budget without gating on the shared runner.
+- `nightly-examples.yml` runs its Linux leg on
+  `self-hosted, Linux, X64, fleet`, its macOS leg on
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and its `examples-windows`
+  leg on `self-hosted, Windows, X64, rocketnet-windows`.
+- `nightly.yml` runs `windows-driver-extension` and `windows-toolchains` on
+  `self-hosted, Windows, X64, rocketnet-windows`. The clang-cl build treats
+  compiler warnings as errors.
 - `ci.yml`'s `platform-selftests` job runs on the
   `self-hosted, Linux, X64, fleet` and
   `self-hosted, macOS, ARM64, rocketnet-macos` labels.
