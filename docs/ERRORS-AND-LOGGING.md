@@ -34,15 +34,13 @@ returns `NULL` from start message and `0` from finish message, and counts in
 | `rocketnet_init( context )` | the status code: `ALREADY_INITIALIZED`, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED` |
 | `rocketnet_term( void )` | the status code: `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`; nothing changes |
 | `rocketnet_set_allocator( malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT`, `ALREADY_INITIALIZED` or `LIVE_ALLOCATIONS` |
-| `rocketnet_client_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
-| `rocketnet_client_validate_config( config )` | `CONFIG_OUT_OF_RANGE`, with a log line naming the rule |
-| `rocketnet_client_create( context, config, memory, memory_bytes )` | `NULL`, with one error line |
+| `rocketnet_client_default_config( config, config_bytes )` (macro: `rocketnet_client_default_config( config )`) | `INVALID_ARGUMENT` for a NULL config, counted, or an unknown size |
+| `rocketnet_client_validate_config( config, config_bytes )` (macro: one argument) | `CONFIG_OUT_OF_RANGE`, with a log line naming the rule; `INVALID_ARGUMENT` for an unknown size |
+| `rocketnet_client_create( context, config, config_bytes, memory, memory_bytes, status )` (macro: no `config_bytes`) | `NULL` with one error line; `status` holds the refusal's code (`NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`, `INVALID_TRANSPORT_LIST`, `MEMORY_BUDGET_EXCEEDED`, `OUT_OF_MEMORY`), or `OK` with the handle |
 | `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
-| `rocketnet_client_create_sized(...)` | `NULL` for an unknown config size |
-| `rocketnet_server_default_config( config )` / `rocketnet_server_dev_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
-| `rocketnet_server_validate_config( config )` | `CONFIG_OUT_OF_RANGE`, with a log line naming the rule |
-| `rocketnet_server_create( context, address, config, memory, memory_bytes )` | `NULL`, with one error line |
-| `rocketnet_server_create_sized(...)` | `NULL` for an unknown config size |
+| `rocketnet_server_default_config( config, config_bytes )` / `rocketnet_server_dev_config( config, config_bytes )` (macros: one argument) | `INVALID_ARGUMENT` for a NULL config, counted, or an unknown size |
+| `rocketnet_server_validate_config( config, config_bytes )` (macro: one argument) | `CONFIG_OUT_OF_RANGE`, with a log line naming the rule; `INVALID_ARGUMENT` for an unknown size |
+| `rocketnet_server_create( context, address, config, config_bytes, memory, memory_bytes, status )` (macro: no `config_bytes`) | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an over-long address), or `OK` with the handle |
 | `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | `ROCKETNET_UPDATE_OK` or `ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED` |
 | key and token writers, `*_set_send_kbps`, the `_sized` config calls | the status code; see each declaration in `sdk/rocketnet.h` |
@@ -145,8 +143,10 @@ including `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`,
 
 Init, term and the allocator return the section-2.1 code directly (the
 SDK's internal `_ex` forms write the same code to an `int *`). The client and server create
-calls return a handle or `NULL`; the reason is one `ERROR` log line, and the
-refusal is counted in `rocketnet_api_misuse_count`. `rocketnet_status_name`
+calls return a handle or `NULL` and write the refusal's code through the final
+status out-parameter (sdk/rocketnet.h, the create declarations); the reason is
+also one `ERROR` log line, and the refusal is counted in
+`rocketnet_api_misuse_count`. `rocketnet_status_name`
 names any code, and `rocketnet_num_status_codes` gives the count. The internal
 transport layer keeps `_ex` create forms for the SDK's own tests.
 
@@ -306,12 +306,12 @@ SDK (`sdk/rocketnet_layers.h`).
 ## 6. QUESTIONS
 
 1. **`Q1` (`_create_ex` additive exports vs replacing `_create` under an ABI bump)**:
-   Section 2.3 recommends adding `rocketnet_*_create_ex(..., int * status)` and
-   `rocketnet_init_ex(void * context, int * status)` while keeping the existing
-   `rocketnet_*_create` and `rocketnet_init` signatures intact as `status = NULL`
-   wrappers. Should we keep both forms, or add `int * status` directly to
-   `rocketnet_client_create`, `rocketnet_server_create`, and
-   `rocketnet_frame_sync_create` as part of a `ROCKETNET_ABI_VERSION` bump?
+   Closed by the owner ruling of 2026-10-20: no `_ex` form is added. Each public
+   create takes a final status out-parameter directly (`rocketnet_client_create`
+   and `rocketnet_server_create` in sdk/rocketnet.h), one sized form per side
+   with the same-named convenience macros passing `sizeof(*config)`, and the
+   `_sized` creates are removed. The internal transport `_ex` forms stay
+   internal.
 2. **`Q2` (Null-pointer arguments at public `*_create` boundaries)**:
    Today `rocketnet_client_create` (`the internal client transport:157`)
    and `rocketnet_server_create` (`the internal server transport:467`)

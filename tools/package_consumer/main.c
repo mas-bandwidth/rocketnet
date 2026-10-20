@@ -79,7 +79,8 @@ int main(void)
     config.max_clients = 1;
     config.transport = "portable";
     CHECK(rocketnet_server_validate_config(&config) == ROCKETNET_STATUS_OK);
-    struct rocketnet_server_t * server = rocketnet_server_create(NULL, "127.0.0.1:0", &config, NULL, 0);
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", &config, NULL, 0, &create_status );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );

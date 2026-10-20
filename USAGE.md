@@ -19,7 +19,7 @@ Call `rocketnet_init` once before creating a client or a server, and check its
 result. Every call that can fail returns `enum rocketnet_status_t`, and
 `ROCKETNET_STATUS_OK` (0) is success; `rocketnet_status_name` names a code. A
 second init returns `ROCKETNET_STATUS_ALREADY_INITIALIZED` without disturbing
-the live library. A create before init returns NULL and allocates nothing. Call
+the live library. A create before init returns NULL, allocates nothing, and writes `ROCKETNET_STATUS_NOT_INITIALIZED` through its status out-parameter. Call
 `rocketnet_term` after every client and server is destroyed; termination with
 live allocations is refused with `ROCKETNET_STATUS_LIVE_ALLOCATIONS` and
 logged, and a repeated termination returns `ROCKETNET_STATUS_NOT_INITIALIZED`. Startup,
@@ -84,9 +84,7 @@ with a log line.
 
 A value that does not parse, or is out of range, **refuses the create with one
 error line; nothing is ever clamped**. A secret key logs redacted, on both the
-old and the new value. The `_sized` create and default calls accept a struct
-size so a program built against an older header keeps working; an unknown size
-is refused before anything is read or written.
+old and the new value. The create, default and validate calls each take the struct size (`config_bytes`) so a program built against an older header keeps working; the same-named convenience macros pass `sizeof(*config)` for a current caller. An unknown size is refused before anything is read or written. Each create takes a final status out-parameter (NULL is accepted): it holds `ROCKETNET_STATUS_OK` with a non-NULL result, or the refusal's code with NULL (sdk/rocketnet.h, the create declarations).
 
 ```c
 #include "rocketnet.h"

@@ -55,16 +55,16 @@ static_assert( rn_same<decltype( rocketnet_generate_backend_keypair( NULL, NULL 
 static_assert( rn_same<decltype( rocketnet_generate_backend_keypair_from_seed( NULL, NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1: seeded keypair" );
 static_assert( rn_same<decltype( rocketnet_generate_server_keypair( NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1: server keypair" );
 static_assert( rn_same<decltype( rocketnet_write_production_connect_token( NULL, NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: production token" );
-static_assert( rn_same<decltype( rocketnet_client_default_config( NULL ) ), rocketnet_status_t>::value, "ruling 1: client default config" );
-static_assert( rn_same<decltype( rocketnet_client_default_config_sized( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: client default config sized" );
-static_assert( rn_same<decltype( rocketnet_server_default_config( NULL ) ), rocketnet_status_t>::value, "ruling 1: server default config" );
-static_assert( rn_same<decltype( rocketnet_server_default_config_sized( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server default config sized" );
-static_assert( rn_same<decltype( rocketnet_server_dev_config( NULL ) ), rocketnet_status_t>::value, "ruling 1: server dev config" );
-static_assert( rn_same<decltype( rocketnet_server_dev_config_sized( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server dev config sized" );
-static_assert( rn_same<decltype( rocketnet_client_validate_config( NULL ) ), rocketnet_status_t>::value, "ruling 1: client validate" );
-static_assert( rn_same<decltype( rocketnet_client_validate_config_sized( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: client validate sized" );
-static_assert( rn_same<decltype( rocketnet_server_validate_config( NULL ) ), rocketnet_status_t>::value, "ruling 1: server validate" );
-static_assert( rn_same<decltype( rocketnet_server_validate_config_sized( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server validate sized" );
+static_assert( rn_same<decltype( (rocketnet_client_default_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: client default config" );
+static_assert( rn_same<decltype( (rocketnet_client_default_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: client default config sized" );
+static_assert( rn_same<decltype( (rocketnet_server_default_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server default config" );
+static_assert( rn_same<decltype( (rocketnet_server_default_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server default config sized" );
+static_assert( rn_same<decltype( (rocketnet_server_dev_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server dev config" );
+static_assert( rn_same<decltype( (rocketnet_server_dev_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server dev config sized" );
+static_assert( rn_same<decltype( (rocketnet_client_validate_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: client validate" );
+static_assert( rn_same<decltype( (rocketnet_client_validate_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: client validate sized" );
+static_assert( rn_same<decltype( (rocketnet_server_validate_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server validate" );
+static_assert( rn_same<decltype( (rocketnet_server_validate_config)( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: server validate sized" );
 static_assert( rn_same<decltype( rocketnet_client_set_send_kbps( NULL, 0 ) ), rocketnet_status_t>::value, "ruling 1: client set_send_kbps" );
 static_assert( rn_same<decltype( rocketnet_server_set_send_kbps( NULL, 0, 0 ) ), rocketnet_status_t>::value, "ruling 1: server set_send_kbps" );
 static_assert( rn_same<decltype( rocketnet_client_connect( NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1: connect" );
@@ -103,14 +103,14 @@ static void api_polish_status_returns()
 
     // validate and the default config: OK is 0, where the old form's success was 1
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_client_validate_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) - 4 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( (rocketnet_client_default_config)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_validate_config)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config)( &client_config, sizeof( client_config ) - 4 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     client_config.num_channels = 0;
-    check( rocketnet_client_validate_config_sized( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    check( (rocketnet_client_validate_config)( &client_config, sizeof( client_config ) ) == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     struct rocketnet_server_config_t server_config;
-    check( rocketnet_server_dev_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_server_validate_config_sized( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_dev_config)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_server_validate_config)( &server_config, sizeof( server_config ) ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( api_polish_status_returns );
 
@@ -215,7 +215,7 @@ static void api_polish_bool_field_abi()
     check( rocketnet_abi_type_size( "rocketnet_client_config_t" ) == sizeof( rocketnet_client_config_t ) );
     check( rocketnet_abi_version() == 1 );
     struct rocketnet_client_config_t config;
-    check( rocketnet_client_default_config_sized( &config, sizeof( config ) ) == ROCKETNET_STATUS_OK );
+    check( (rocketnet_client_default_config)( &config, sizeof( config ) ) == ROCKETNET_STATUS_OK );
     check( config.step_driven == false );
 }
 REGISTER_UNIT_TEST( api_polish_bool_field_abi );
@@ -301,10 +301,8 @@ static_assert( rn_same<decltype( rocketnet_client_required_memory( NULL ) ), siz
 static_assert( rn_same<decltype( rocketnet_client_required_memory_sized( NULL, 0 ) ), size_t>::value, "ruling 8: client required memory sized" );
 static_assert( rn_same<decltype( rocketnet_server_required_memory( NULL ) ), size_t>::value, "ruling 8: server required memory" );
 static_assert( rn_same<decltype( rocketnet_server_required_memory_sized( NULL, 0 ) ), size_t>::value, "ruling 8: server required memory sized" );
-static_assert( rn_same<decltype( &rocketnet_client_create ), rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, void *, size_t )>::value, "ruling 8: client create" );
-static_assert( rn_same<decltype( &rocketnet_client_create_sized ), rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, size_t, void *, size_t )>::value, "ruling 8: client create sized" );
-static_assert( rn_same<decltype( &rocketnet_server_create ), rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, void *, size_t )>::value, "ruling 8: server create" );
-static_assert( rn_same<decltype( &rocketnet_server_create_sized ), rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, size_t, void *, size_t )>::value, "ruling 8: server create sized" );
+static_assert( rn_same<decltype( &rocketnet_client_create ), rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, size_t, void *, size_t, rocketnet_status_t * )>::value, "ruling 8: client create" );
+static_assert( rn_same<decltype( &rocketnet_server_create ), rocketnet_server_t * (*)( void *, const char *, const rocketnet_server_config_t *, size_t, void *, size_t, rocketnet_status_t * )>::value, "ruling 8: server create" );
 
 // --- ruling 9: a NULL client reads INVALID, counted ----------------------------
 

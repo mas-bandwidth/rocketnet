@@ -111,7 +111,8 @@ int main( int argc, char ** argv )
     memcpy( config.server_public_key, server_public_key, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
 
-    server = rocketnet_server_create( NULL, address, &config, NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, address, &config, NULL, 0, &create_status );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );

@@ -154,8 +154,8 @@ int main( int argc, char ** argv ) {
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     struct rocketnet_server_config_t s_cfg;
     struct rocketnet_client_config_t c_cfg;
-    CHECK( rocketnet_server_dev_config_sized( &s_cfg, sizeof( s_cfg ) ) == ROCKETNET_STATUS_OK );
-    CHECK( rocketnet_client_default_config_sized( &c_cfg, sizeof( c_cfg ) ) == ROCKETNET_STATUS_OK );
+    CHECK( (rocketnet_server_dev_config)( &s_cfg, sizeof( s_cfg ) ) == ROCKETNET_STATUS_OK );
+    CHECK( (rocketnet_client_default_config)( &c_cfg, sizeof( c_cfg ) ) == ROCKETNET_STATUS_OK );
     s_cfg.max_clients = num_clients; c_cfg.step_driven = true; s_cfg.transport = c_cfg.transport = transport_name;
     s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000; s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
     s_cfg.num_channels = c_cfg.num_channels = s_cfg.num_reassembly_slots = c_cfg.num_reassembly_slots = 2;
@@ -164,7 +164,8 @@ int main( int argc, char ** argv ) {
     s_cfg.receive_ring_bytes = c_cfg.receive_ring_bytes = s_cfg.send_buffer_bytes = c_cfg.send_buffer_bytes = 32768;
     s_cfg.sequenced_holds = c_cfg.sequenced_holds = 8; s_cfg.simulated_loss_percent = c_cfg.simulated_loss_percent = 1;
     s_cfg.rto_min_ms = c_cfg.rto_min_ms = s_cfg.rto_initial_ms = c_cfg.rto_initial_ms = 200; s_cfg.rto_max_ms = c_cfg.rto_max_ms = 500;
-    server = rocketnet_server_create_sized( NULL, "127.0.0.1:0", &s_cfg, sizeof( s_cfg ), NULL, 0 );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    server = (rocketnet_server_create)( NULL, "127.0.0.1:0", &s_cfg, sizeof( s_cfg ), NULL, 0, &create_status );
     if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         rocketnet_server_destroy( server );
@@ -176,7 +177,8 @@ int main( int argc, char ** argv ) {
     for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ ) {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         CHECK( rocketnet_write_dev_connect_token( addr, c + 1, 4102444800ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-        clients[c] = rocketnet_client_create_sized( NULL, &c_cfg, sizeof( c_cfg ), NULL, 0 );
+        enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
+        clients[c] = (rocketnet_client_create)( NULL, &c_cfg, sizeof( c_cfg ), NULL, 0, &create_status_2 );
         if ( clients[c] && rocketnet_client_connect( clients[c], token ) != ROCKETNET_STATUS_OK )
         {
             rocketnet_client_destroy( clients[c] );
