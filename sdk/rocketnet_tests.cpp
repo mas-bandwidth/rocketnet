@@ -60,38 +60,6 @@
 #include <dlfcn.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-static void * swarm_rss_malloc( void *, size_t bytes )
-{
-    return HeapAlloc( GetProcessHeap(), 0, bytes );
-}
-
-static void swarm_rss_free( void *, void * memory )
-{
-    if ( memory )
-        HeapFree( GetProcessHeap(), 0, memory );
-}
-
-// The Windows Debug CRT malloc fills every block it returns, which touches every
-// page of the swarm's server ACK history and reassembly sets, sized for all 1000
-// clients up front. rocketnet_test_swarm touches only the parts its traffic
-// uses; HeapAlloc returns the block unfilled, so untouched pages stay out of the
-// resident set. Every buffer keeps its size.
-static void swarm_rss_allocator_begin()
-{
-    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_allocator_ex( swarm_rss_malloc, swarm_rss_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-}
-
-static void swarm_rss_allocator_end()
-{
-    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
-}
-#endif
-
 #include <limits.h>
 #include <math.h>
 #include <stdarg.h>
@@ -6284,6 +6252,38 @@ void rocketnet_test_client_server_lossy_wire()
     rocketnet_test_server_teardown( &test );
     rocketnet_counters_assert_conserved( &client_counters );
 }
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static void * swarm_rss_malloc( void *, size_t bytes )
+{
+    return HeapAlloc( GetProcessHeap(), 0, bytes );
+}
+
+static void swarm_rss_free( void *, void * memory )
+{
+    if ( memory )
+        HeapFree( GetProcessHeap(), 0, memory );
+}
+
+// The Windows Debug CRT malloc fills every block it returns, which touches every
+// page of the swarm's server ACK history and reassembly sets, sized for all 1000
+// clients up front. rocketnet_test_swarm touches only the parts its traffic
+// uses; HeapAlloc returns the block unfilled, so untouched pages stay out of the
+// resident set. Every buffer keeps its size.
+static void swarm_rss_allocator_begin()
+{
+    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator_ex( swarm_rss_malloc, swarm_rss_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+}
+
+static void swarm_rss_allocator_end()
+{
+    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL ) == ROCKETNET_STATUS_OK );
+}
+#endif
 
 void rocketnet_test_swarm()
 {
