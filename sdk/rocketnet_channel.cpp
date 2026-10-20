@@ -303,6 +303,28 @@ bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t ch
     return true;
 }
 
+// The counter a reader or window violation (ROCKETNET_MESSAGE_VIOLATION_*,
+// sdk/rocketnet_message.h) moves besides MESSAGE_PROTOCOL_VIOLATION: checks 5
+// to 8 have their own counters, the same ones the dispatch moves; a violation
+// with no counter of its own returns MESSAGE_PROTOCOL_VIOLATION, which
+// rn_channels_count_violation counts once.
+static_assert( ROCKETNET_MESSAGE_NUM_VIOLATIONS == 13, "a new message violation is mapped in rn_violation_counter" );
+static_assert( ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL == 5 && ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED == 6 &&
+               ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK == 7 && ROCKETNET_MESSAGE_VIOLATION_BAD_RING == 8,
+               "rn_violation_counter maps checks 5 to 8 to their counters" );
+
+static int rn_violation_counter( int violation )
+{
+    switch ( violation )
+    {
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL:       return ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL;
+        case ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED:  return ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED;
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK:         return ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK;
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_RING:          return ROCKETNET_COUNTER_MESSAGE_BAD_RING;
+        default:                                            return ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION;
+    }
+}
+
 void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
 {
     if ( !channels )
@@ -330,6 +352,17 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
     // 7 is a violation and a receipt type is dispatched under its base
     // (7.2's last line).
     const int code = record->code;
+
+    // 7.5: an application record whose wire code the mask does not admit is
+    // refused here, once for every code (rocketnet_message_enabled_codes,
+    // sdk/rocketnet_message.cpp:289, maps
+    // a receipt type to the base code it travels as). A control record is
+    // the layer's own and is never refused by the mask, as in the reader.
+    if ( code >= 0 && code < ROCKETNET_MESSAGE_NUM_CODES && !record->control && ( channels->enabled_codes & ( 1u << code ) ) == 0 )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     switch ( code )
     {
@@ -857,8 +890,16 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     // (RNBlocks!NumberMessage, Count: k = ceil(bytes / F)).
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     descriptor->bytes = bytes;
+    // A code-4 record's header is 15 bytes, 16 with the WIDE channel field
+    // on a channel of 256 or more (rocketnet_message_flags_header_bytes,
+    // sdk/rocketnet_message.cpp:52); the form byte follows it.
+    struct rocketnet_message_record_t sequenced_shape;
+    memset( &sequenced_shape, 0, sizeof( sequenced_shape ) );
+    sequenced_shape.code = ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED;
+    sequenced_shape.channel = channel;
     const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 :
-        type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ? channels->payload_capacity - 16 : rn_channels_small_limit( channels );
+        type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ? channels->payload_capacity - 1 - (uint32_t) rocketnet_message_record_header_bytes( &sequenced_shape ) :
+        rn_channels_small_limit( channels );
     descriptor->fragments = (uint16_t) ( bytes <= small_limit ? 1 : ( bytes + F - 1 ) / F );
     descriptor->channel = (uint16_t) channel;
     descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
@@ -971,9 +1012,10 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
 
     struct rocketnet_message_config_body_t peer;
     memset( &peer, 0, sizeof( peer ) );
-    if ( rocketnet_message_read_config_body( record->data, record->bytes, &peer ) != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    const int body_violation = rocketnet_message_read_config_body( record->data, record->bytes, &peer );
+    if ( body_violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        rn_channels_count_violation( channels, rn_violation_counter( body_violation ) );
         return channels->error;
     }
 
@@ -1320,7 +1362,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
     const int violation = rocketnet_message_reader_begin( &reader, payload, bytes, &ordered->limits );
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        rn_channels_count_violation( channels, rn_violation_counter( violation ) );
         return violation;
     }
 
@@ -1338,7 +1380,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
                 continue;                                       // counted by layer 3; normal after a resend
             if ( accepted == RN_WINDOW_RECEIVE_VIOLATION )
             {
-                rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+                rn_channels_count_violation( channels, rn_violation_counter( ordered->receive.violation ) );
                 return ordered->receive.violation;
             }
         }
