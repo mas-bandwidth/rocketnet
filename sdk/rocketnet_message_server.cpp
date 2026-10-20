@@ -209,6 +209,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
     object->pending_connection = -1;
+    object->send_next_connection = 0;
     object->block = block;
     object->owns_block = owns_block ? 1 : 0;
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
@@ -599,6 +600,14 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     if ( unreliable && object->link.start_packet )
     {
         int header = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
+        // Reserve a complete round for the rotating pass, including this
+        // connection's reliable work. In-place writes may use surplus slots,
+        // but application call order cannot consume another client's turn.
+        const int send_connections = object->link.send_connected_count ?
+            object->link.send_connected_count( object->link.transport ) : object->num_connections;
+        if ( header >= 0 && object->link.send_capacity_available &&
+             object->link.send_capacity_available( object->link.transport ) <= send_connections )
+            header = RN_ENDPOINT_IN_PLACE_QUEUED;
         if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
             header = RN_ENDPOINT_IN_PLACE_QUEUED;               // the bucket cannot pay it now: the write pass decides
         if ( header >= 0 )
@@ -744,7 +753,7 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 // writes it in place (THE COPIES (a)), and the object finishes it and tells the
 // endpoint whether it left, under the transport's packet id (RNSlots Send).
 
-static void rn_message_connection_write( rn_message_object_t * object, int index )
+static bool rn_message_connection_write( rn_message_object_t * object, int index )
 {
     rn_message_connection_t * connection = &object->connections[index];
     rn_message_link_t * link = &object->link;
@@ -754,7 +763,7 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
     {
         const int request = rn_endpoint_next_packet_bytes( connection, now );
         if ( request == 0 )
-            break;
+            return false;
 
         rocketnet_packet_context_t context;
         uint8_t * frame = link->start_packet( link->transport, index, request, &context );
@@ -776,24 +785,46 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
             rn_endpoint_packet_sent( connection, context.packet_id, wire_bytes, now );
         else
             rn_endpoint_packet_failed( connection, context.packet_id, now );
+        return true;
     }
 }
 
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     rn_message_object_close_in_place( object );
-    for ( int i = 0; i < object->num_connections; i++ )
+
+    // RNSlots Send, fair rotation: start at the first connection not yet
+    // offered a frame, and stop when the transport's send capacity for this
+    // update is spent. The cursor names the next unserved connection, so a
+    // cap below the client count serves every client in turn rather than
+    // forever serving the low indices. A connection that finds no capacity
+    // leaves its queued sends for the next update; reliability keeps them
+    // due, so nothing is lost.
+    const int num_connections = object->num_connections;
+    const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
+    bool progress;
+    do
     {
-        rn_message_connection_t * connection = &object->connections[i];
-        if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
-            continue;
-        // the client transport accepts sends only while CONNECTED (11.3):
-        // until then the queue holds only the CONFIG control record, which
-        // waits unnumbered; application sends were dropped at start
-        if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
-            continue;
-        rn_message_connection_write( object, i );
-    }
+        progress = false;
+        for ( int offset = 0; offset < num_connections; offset++ )
+        {
+            const int i = ( start + offset ) % num_connections;
+            rn_message_connection_t * connection = &object->connections[i];
+            if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
+                continue;
+            // The client's CONFIG waits unnumbered until the transport connects.
+            if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
+                continue;
+            if ( object->link.send_capacity_available &&
+                 object->link.send_capacity_available( object->link.transport ) <= 0 )
+                goto flush;
+            // One frame per connection per round, including when the per-client
+            // allowance is larger than one. A busy client cannot take K turns.
+            progress |= rn_message_connection_write( object, i );
+            object->send_next_connection = ( i + 1 ) % num_connections;
+        }
+    } while ( progress );
+flush:
     object->link.send_packets( object->link.transport );
 }
 
@@ -922,6 +953,16 @@ static void rn_server_link_send_packets( void * transport )
     rocketnet_server_transport_send_packets( (rocketnet_server_transport_t *) transport );
 }
 
+static int rn_server_link_send_connected_count( void * transport )
+{
+    return rocketnet_server_transport_num_connected_clients( (rocketnet_server_transport_t *) transport );
+}
+
+static int rn_server_link_send_capacity_available( void * transport )
+{
+    return rocketnet_server_transport_send_capacity_available( (const rocketnet_server_transport_t *) transport );
+}
+
 // P9a: the transport's id of the connection in the slot, 0 while it is free;
 // a reconnect into the slot has a new id even with the same client id and
 // inside one update, so Observe resets the slot for it
@@ -975,6 +1016,8 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->finish_packet = rn_server_link_finish_packet;
     link->abort_packet = rn_server_link_abort_packet;
     link->send_packets = rn_server_link_send_packets;
+    link->send_capacity_available = rn_server_link_send_capacity_available;
+    link->send_connected_count = rn_server_link_send_connected_count;
     link->connection = rn_server_link_connection;
     link->disconnect = rn_server_link_disconnect;
     link->state = rn_server_link_state;
