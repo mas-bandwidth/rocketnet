@@ -89,13 +89,19 @@ static int rocketnet_unit_worker( const char * name )
     setvbuf( stderr, NULL, _IOLBF, 0 );
 #endif
 
-    // init reads this before the suite installs its config isolation.
+    // init reads this before the suite installs its config isolation. The
+    // unit suite must never run against a pin-selected real-socket driver, so
+    // both transport pins are cleared for every case, like LOG_LEVEL above.
 #if defined(_WIN32)
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
+    const int cleared_server = _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
+    const int cleared_client = _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
 #else
     const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
+    const int cleared_server = unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const int cleared_client = unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 #endif
-    if ( cleared != 0 )
+    if ( cleared != 0 || cleared_server != 0 || cleared_client != 0 )
         return 1;
 
     rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_ERROR );
