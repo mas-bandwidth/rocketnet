@@ -449,34 +449,6 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * driver, co
                     rocketnet_platform_sleep( 0.001 );
                 }
             }
-            if ( !payload )
-            {
-                // name which refusal held for the whole deadline: a client no
-                // longer connected (start_payload refuses), or a Filling ring
-                // the I/O thread never released (SEND_RING_FULL with deferred
-                // hand-offs), or the lease table
-                const uint64_t * values = rocketnet_client_transport_counters( client )->values;
-                printf( "%s: start refused for 5 s at tag %d: client_state=%d server_connected=%d ring_full=%llu deferred=%llu lease_full=%llu\n",
-                        name, tag, rocketnet_client_transport_state( client ), rocketnet_server_transport_num_connected_clients( server ),
-                        (unsigned long long) values[ROCKETNET_COUNTER_SEND_RING_FULL],
-                        (unsigned long long) values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED],
-                        (unsigned long long) values[ROCKETNET_COUNTER_SEND_LEASE_FULL] );
-                // the two send rings (FILLING 0, HANDED_OFF 1, SENDING 2, SENT 3): a held
-                // ring is HANDED_OFF (the I/O thread never took it) or SENDING (the I/O
-                // thread is inside the driver send); pump on and time how long it is held
-                rocketnet_client_io_t * held_io = rocketnet_client_transport_client_io( client );
-                const int held_fill = held_io->rings.fill;
-                const int held_state = held_io->rings.state[held_fill ^ 1].load();
-                printf( "%s: rings fill=%d state0=%d state1=%d committed0=%llu committed1=%llu fill_slots=%d\n", name, held_fill,
-                        held_io->rings.state[0].load(), held_io->rings.state[1].load(),
-                        (unsigned long long) held_io->rings.committed[0], (unsigned long long) held_io->rings.committed[1], held_io->fill_slots );
-                const double held_start = rocketnet_platform_time();
-                while ( rocketnet_platform_time() - held_start < 15.0 && held_io->rings.state[held_fill ^ 1].load() == held_state )
-                    rocketnet_platform_sleep( 0.001 );
-                printf( "%s: the held ring left state %d after a further %.3f s (now %d)\n", name, held_state,
-                        rocketnet_platform_time() - held_start, held_io->rings.state[held_fill ^ 1].load() );
-                fflush( stdout );
-            }
             rocketnet_check( payload );
             payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
             payload[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
