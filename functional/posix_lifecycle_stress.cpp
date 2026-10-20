@@ -1082,3 +1082,43 @@ POSIX_LINUX_CELL_CASES( posix_destroy_under_traffic_100 )
 #endif // #if defined(__linux__)
 
 #endif // #if !defined(_WIN32)
+
+/*
+    macOS record (Darwin arm64, Apple clang 21.0.0, Debug build). Each run is
+    one ./bin/functional --run <case> over the six macOS cells
+    (functional/posix_lifecycle_stress.cpp:248-253); every cell of every run
+    printed fds 4 -> 4 and threads 1 -> 1. Seconds per run, all PASS:
+
+        case                                 r1     r2    r3    r4    r5
+        posix_init_term_1000                 43.5   24    PASS  24    25
+        posix_server_create_destroy_1000     432    564   PASS  608   463
+        posix_client_create_destroy_1000     69     60    PASS  59    64
+        posix_server_restart_same_port_100   64     67    PASS  56    41
+        posix_connect_disconnect_1000        89     79    75    81    86
+        posix_destroy_under_traffic_100      132    131   126   112   133
+
+    r3's first four cases passed with no time recorded. Outside the five
+    runs, one run made while other processes ran the same suites on the host
+    went red once, in posix_server_restart_same_port_100 [server msgx forced
+    portable, client msgx], with TRANSPORT_LADDER_EXHAUSTED at the client
+    create, and passed when rerun alone.
+
+    The red proof, each a scratch build that is not kept, each run as
+    ./bin/functional --run posix_client_create_destroy_1000 and failing at
+    posix_case_result (functional/posix_lifecycle_stress.cpp:740):
+
+    - the macOS socket destroy skips its close (sdk/rocketnet_platform.cpp:2467):
+      [server portable, client portable] FAIL fds 4 -> 1004, threads 1 -> 1.
+    - the macOS thread join skips pthread_join (sdk/rocketnet_platform.cpp:3103)
+      and the thread, its function returned, does not exit:
+      [server portable, client portable] FAIL fds 4 -> 4, threads 1 -> 1001.
+
+    The thread count is pti_threadnum (posix_threads,
+    functional/posix_lifecycle_stress.cpp:151-158), the threads alive in the
+    task. A skipped join of a thread that then exits leaves no live thread
+    and the case stays green, threads 1 -> 1 in every cell. A
+    skipped join in the client destroy (sdk/rocketnet_client_transport.cpp:1098)
+    lets destroy free the client while its I/O thread still steps it, and the
+    process ends in SIGSEGV in rocketnet_client_io_step, called from
+    rocketnet_client_io_thread_function (sdk/rocketnet_client_io.h:497).
+*/
