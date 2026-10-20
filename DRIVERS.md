@@ -282,7 +282,12 @@ CAP_NET_ADMIN; `-v` prints the verifier's last log line. One case,
 runs the example server and client across it, so it skips outside a
 virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
 verifies, and with room for the server's UMEM and queues (the default guest
-memory runs out and the server is killed):
+memory runs out and the server is killed). The case starts the server with
+`--max-clients 4`, so its message object is sized for the one client it
+connects rather than the example's default 1000 (test_xdp_filter.cpp:1280,
+server.c:872), and it gives the server and client a pipe it holds open as
+stdin, because the server stops when its stdin reaches end of file
+(server.c:150-165) and a guest run without a terminal starts there:
 
 ```sh
 vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
