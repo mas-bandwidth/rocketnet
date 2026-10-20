@@ -4662,7 +4662,9 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_set_log_callback( rocketnet_test_capture_log, NULL );
         rocketnet_set_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-        server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", &config);
+        char real_port_address[64];
+        rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
+        server = rocketnet_server_transport_create( NULL, real_port_address, &config);
 
         rocketnet_set_log_level( saved_level );
         rocketnet_set_log_callback( rocketnet_test_suite_log_function, NULL );
@@ -4787,7 +4789,10 @@ void rocketnet_test_server_driver_pin_xdp()
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
-    const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40111", 7 );
+    char real_port_address[64];
+    rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
+
+    const bool provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
 
     if ( !provisioned )
     {
@@ -4795,7 +4800,7 @@ void rocketnet_test_server_driver_pin_xdp()
         rocketnet_server_transport_dev_config( &config );
         snprintf( config.driver, sizeof(config.driver), "xdp" );
 
-        rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40111", &config) == NULL );
+        rocketnet_check( rocketnet_server_transport_create( NULL, real_port_address, &config) == NULL );
     }
 
     rocketnet_test_env_restore( &driver_guard );
@@ -4831,7 +4836,10 @@ void rocketnet_test_server_driver_ladder_fall()
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
 
-    const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40112", 7 );
+    char real_port_address[64];
+    rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
+
+    const bool provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
 
     if ( !provisioned )
     {
