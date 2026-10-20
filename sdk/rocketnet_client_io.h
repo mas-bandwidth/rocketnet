@@ -389,7 +389,9 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
     // 2. RNClientIo IoReceive: drain into the buffer the handshake gives the
     // I/O thread. Every received datagram becomes a record, a runt or an
-    // oversize one too: the main thread's prefilter refuses it and counts
+    // oversize one too: the main thread's prefilter
+    // (sdk/rocketnet_client_protocol.cpp:1248, sizes checked at
+    // sdk/rocketnet_protocol.cpp:176-180) refuses it and counts
     // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE. One clock read per driver
     // call.
     rocketnet_client_receive_handshake_t * handshake = &io->receive;
