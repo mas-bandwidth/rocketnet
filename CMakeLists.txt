@@ -329,6 +329,15 @@ if(ROCKETNET_BUILD_TESTS)
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
     add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1)
+    if(ROCKETNET_SANITIZE_ADDRESS AND MSVC)
+        # AddressSanitizer pads every stack local with redzones. Under it the
+        # largest unit-test frames (server_refuses_a_token_connected_now,
+        # standard_receive_processing_counters) overflow the 1 MB main-thread
+        # stack a Windows executable reserves by default, and ASan reports a
+        # stack-overflow in __chkstk. The unit binary reserves 8 MB under ASan,
+        # the main-thread stack the Linux sanitizer legs run it on.
+        target_link_options(test PRIVATE /STACK:8388608)
+    endif()
     if(WIN32)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
         # the library in test builds, matching the filter-epoch seam above, so
