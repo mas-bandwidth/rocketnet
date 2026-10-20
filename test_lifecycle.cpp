@@ -418,7 +418,8 @@ static void check_component_create_sweeps( allocator_state & state )
         [&]() { return rocketnet_encryption_map_create( &state, 16 ); },
         []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 6 );
 
-    // 2. rocketnet_used_token_history_create: 17 allocations (fail N=1..17, succeed N=18).
+    // 2. rocketnet_used_token_history_create: 17 allocations: the history plus its
+    //    bound and claimed token tables, eight each (fail N=1..17, succeed N=18).
     check( sweep_component_create<rocketnet_used_token_history_t>(
         state,
         [&]() { return rocketnet_used_token_history_create( &state, 16 ); },
